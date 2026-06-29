@@ -1,0 +1,27 @@
+# Binaries
+nvx
+nvx.exe
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test / Cache / Temp dirs
+downloads/
+versions/
+current/
+npm_global/
+.nvx/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Build distribution
+dist/
+
+# Release Notes (Temporary)
+release-notes.md
+
+

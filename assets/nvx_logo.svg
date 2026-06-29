@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 100" width="320" height="100">
+  <defs>
+    <!-- Deep royal purple to electric magenta gradient -->
+    <linearGradient id="purpleMagenta" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8A2BE2" />
+      <stop offset="100%" stop-color="#FF007F" />
+    </linearGradient>
+  </defs>
+
+  <!-- Dark container background for local/dark mode compatibility -->
+  <rect width="320" height="100" rx="12" fill="#16161a" />
+
+  <!-- Left Icon: Minimalist Shield/Container Symbol (Design F style) -->
+  <g transform="translate(15, 0)">
+    <!-- Container Outline -->
+    <path d="M 35,28 
+             L 35,55 
+             C 35,70 55,80 55,80 
+             C 55,80 75,70 75,55 
+             L 75,28 
+             Z" 
+          stroke="url(#purpleMagenta)" 
+          stroke-width="3.5" 
+          stroke-linejoin="round" 
+          stroke-linecap="round" 
+          fill="none" />
+    
+    <!-- Central Protected Node Core -->
+    <circle cx="55" cy="50" r="5" fill="url(#purpleMagenta)" />
+  </g>
+
+  <!-- Right Typography: Connected Upright Ligature "nvx" in White -->
+  <g fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" transform="translate(30, 0)">
+    <!-- 
+      Connected path for n, v, and forward-slash of x (Upright):
+      1. n left vertical: (120,68) -> (120,36)
+      2. n arch: curve to (140,36)
+      3. n right leg / v left leg diagonal: (140,36) -> (140,48) -> (152,68)
+      4. v right leg / x forward-slash: (152,68) -> (172,36)
+    -->
+    <path d="M 120,68 
+             L 120,38 
+             C 120,36 126,36 136,36
+             L 140,36
+             L 140,48
+             L 152,68 
+             L 172,36" />
+    
+    <!-- x backslash cross: (152,36) -> (172,68) -->
+    <path d="M 152,36 L 172,68" />
+  </g>
+</svg>
