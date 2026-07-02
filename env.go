@@ -45,13 +45,18 @@ func GetVersionBinDir(versionDir string) string {
 	return filepath.Join(versionDir, "bin")
 }
 
+// GetNpmPrefixBinDir returns the executable directory for a given npm prefix
+// (on Windows npm places global binaries in the prefix itself, on Unix in bin/)
+func GetNpmPrefixBinDir(prefixDir string) string {
+	if runtime.GOOS == "windows" {
+		return prefixDir
+	}
+	return filepath.Join(prefixDir, "bin")
+}
+
 // GetNpmGlobalBinDir returns the directory containing globally installed npm packages
 func GetNpmGlobalBinDir(versionDir string) string {
-	globalDir := filepath.Join(versionDir, "npm_global")
-	if runtime.GOOS == "windows" {
-		return globalDir
-	}
-	return filepath.Join(globalDir, "bin")
+	return GetNpmPrefixBinDir(filepath.Join(versionDir, "npm_global"))
 }
 
 // CreateLink creates a link (Junction on Windows, Symlink on Unix)
@@ -81,8 +86,14 @@ func CreateLink(link, target string) error {
 	return nil
 }
 
-// CleanAndBuildPath cleans nvx-related directories from the PATH and prepends the new one
-func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir string) string {
+// projectToolsMarker matches PATH entries produced by project-scoped tool
+// isolation (<project>/.nvx/npm_global[/bin]) so stale ones can be removed.
+var projectToolsMarker = string(os.PathSeparator) + ".nvx" + string(os.PathSeparator) + "npm_global"
+
+// CleanAndBuildPath cleans nvx-related directories from the PATH and prepends
+// the new version and npm prefix directories. npmPrefixDir may be a
+// version-level npm_global dir or a project-local .nvx/npm_global dir.
+func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir string) string {
 	parts := filepath.SplitList(currentPath)
 	var cleaned []string
 
@@ -111,6 +122,10 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir string) string {
 			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkNpm) {
 			continue
 		}
+		// Remove stale project-scoped tool dirs from previously visited projects
+		if strings.Contains(strings.ToLower(normPart), strings.ToLower(projectToolsMarker)) {
+			continue
+		}
 
 		cleaned = append(cleaned, part)
 	}
@@ -126,10 +141,13 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir string) string {
 	}
 	cleaned = finalCleaned
 
-	// Prepend the new target version directory and its npm global bin directory
+	// Prepend the new target version directory and the npm prefix bin directory
 	if targetVersionDir != "" {
 		binDir := GetVersionBinDir(targetVersionDir)
-		npmBinDir := GetNpmGlobalBinDir(targetVersionDir)
+		if npmPrefixDir == "" {
+			npmPrefixDir = filepath.Join(targetVersionDir, "npm_global")
+		}
+		npmBinDir := GetNpmPrefixBinDir(npmPrefixDir)
 		cleaned = append([]string{npmBinDir, binDir}, cleaned...)
 	}
 
@@ -147,25 +165,19 @@ func generateShims(nvxHome string) {
 	if err != nil {
 		exePath = "nvx"
 	}
-	// On Windows, the path needs to be formatted for cmd
 	exeCmd := fmt.Sprintf("\"%s\"", exePath)
 	if runtime.GOOS != "windows" {
 		exeCmd = fmt.Sprintf("'%s'", exePath)
 	}
 
-	commands := []string{"npm", "npx", "yarn", "pnpm", "bunx", "nvxs"}
-
-	for _, cmd := range commands {
+	for _, cmd := range allShimCommands() {
 		if runtime.GOOS == "windows" {
-			// .cmd shim
 			content := fmt.Sprintf("@echo off\r\n%s shim %s %%*\r\n", exeCmd, cmd)
 			os.WriteFile(filepath.Join(shimDir, cmd+".cmd"), []byte(content), 0755)
-			
-			// .ps1 shim (optional, but good for powershell native execution)
+
 			contentPs1 := fmt.Sprintf("& %s shim %s @args\r\n", exeCmd, cmd)
 			os.WriteFile(filepath.Join(shimDir, cmd+".ps1"), []byte(contentPs1), 0755)
 		} else {
-			// shell script shim
 			content := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", exeCmd, cmd)
 			shimPath := filepath.Join(shimDir, cmd)
 			os.WriteFile(shimPath, []byte(content), 0755)
@@ -173,57 +185,69 @@ func generateShims(nvxHome string) {
 	}
 }
 
-func runShim(cmdName string, args []string, nvxHome string) int {
-	// Security audit for install commands
-	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" {
-		isInstall := false
-		var pkgs []string
-		if len(args) > 0 {
-			cmdArg := args[0]
-			if cmdArg == "install" || cmdArg == "i" || cmdArg == "add" {
-				isInstall = true
-				for _, arg := range args[1:] {
-					if !strings.HasPrefix(arg, "-") {
-						pkgs = append(pkgs, arg)
-					}
-				}
-			}
-		}
+// installAliases covers the install/add spellings accepted by npm, yarn, and
+// pnpm, including npm's typo aliases (isntall etc.) which would otherwise
+// bypass verification.
+var installAliases = map[string]bool{
+	"install": true, "i": true, "in": true, "ins": true, "inst": true,
+	"insta": true, "instal": true, "isnt": true, "isnta": true,
+	"isntall": true, "add": true,
+}
 
-		if isInstall && len(pkgs) > 0 {
+// detectInstallPackages scans package manager arguments for an install-style
+// subcommand and returns the package names being installed. The subcommand is
+// the first non-flag argument, so leading flags (e.g. `npm --loglevel=error
+// install pkg`) cannot bypass detection.
+func detectInstallPackages(args []string) []string {
+	subIdx := -1
+	for i, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			subIdx = i
+			break
+		}
+	}
+	if subIdx == -1 || !installAliases[args[subIdx]] {
+		return nil
+	}
+
+	var pkgs []string
+	for _, arg := range args[subIdx+1:] {
+		if !strings.HasPrefix(arg, "-") {
+			pkgs = append(pkgs, arg)
+		}
+	}
+	return pkgs
+}
+
+func runShim(cmdName string, args []string, nvxHome string) int {
+	opts := parseShimOptions(args)
+	args = opts.args
+
+	policy, _ := LoadPolicy(nvxHome)
+
+	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" {
+		if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
 			runVerifyInstall(pkgs, nvxHome)
 		}
 	}
 
-	// Route executor commands through sandbox if NVX_SANDBOX is not already set
-	if (cmdName == "npx" || cmdName == "bunx") && os.Getenv("NVX_SANDBOX") == "" {
+	if shouldSandbox(cmdName, policy, opts) {
 		return runSandbox(SandboxConfig{
-			NvxHome: nvxHome,
-			Command: cmdName,
-			Args:    args,
-		})
-	}
-	
-	if cmdName == "nvxs" {
-		if len(args) == 0 {
-			return 0
-		}
-		return runSandbox(SandboxConfig{
-			NvxHome: nvxHome,
-			Command: args[0],
-			Args:    args[1:],
+			NvxHome:            nvxHome,
+			Command:            cmdName,
+			Args:               args,
+			FilesystemProvider: opts.filesystemProvider,
 		})
 	}
 
-	// We need to execute the real command. 
+	rt := runtimeForShim(cmdName)
 	nodeVer := getActiveShellVersion(nvxHome)
 	if nodeVer == "" {
 		nodeVer = getGlobalDefaultVersion(nvxHome)
 	}
-	
-	binaryPath := resolvePinnedCommandPath(cmdName, nvxHome, nodeVer)
+
+	binaryPath := resolvePinnedCommandPath(cmdName, nvxHome, nodeVer, rt)
 	if binaryPath == "" {
-		// Fallback to searching the system PATH (excluding our shim dir)
 		shimDir := filepath.Join(nvxHome, "bin")
 		pathEnv := os.Getenv("PATH")
 		var newPathParts []string
@@ -235,7 +259,7 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 		}
 		newPath := strings.Join(newPathParts, string(filepath.ListSeparator))
 		os.Setenv("PATH", newPath)
-		
+
 		var err error
 		binaryPath, err = exec.LookPath(cmdName)
 		if err != nil {
@@ -248,7 +272,7 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	
+
 	if err := cmd.Run(); err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
 			return exitError.ExitCode()

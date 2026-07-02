@@ -17,6 +17,12 @@ func init() {
 			yesFlag = true
 			os.Args = append(os.Args[:i], os.Args[i+1:]...)
 			i--
+			continue
+		}
+		if os.Args[i] == "--no-sandbox" {
+			noSandboxFlag = true
+			os.Args = append(os.Args[:i], os.Args[i+1:]...)
+			i--
 		}
 	}
 }
@@ -52,17 +58,18 @@ func main() {
 		runUninstall(os.Args[2], nvxHome)
 
 	case "use":
-		if len(os.Args) < 3 {
+		useVersion := ""
+		for _, arg := range os.Args[2:] {
+			if !strings.HasPrefix(arg, "-") {
+				useVersion = arg
+				break
+			}
+		}
+		if useVersion == "" {
 			LogError("Please specify a version to use. Example: nvx use 20")
 			os.Exit(1)
 		}
-		shell := "powershell"
-		if len(os.Args) >= 4 && strings.HasPrefix(os.Args[3], "--shell=") {
-			shell = strings.TrimPrefix(os.Args[3], "--shell=")
-		} else if len(os.Args) >= 4 {
-			shell = os.Args[3]
-		}
-		runUse(os.Args[2], nvxHome, shell)
+		runUse(useVersion, nvxHome, parseShellArg(os.Args[2:]))
 
 	case "default":
 		if len(os.Args) < 3 {
@@ -78,41 +85,16 @@ func main() {
 		runListRemote()
 
 	case "env":
-		shell := "powershell"
-		if len(os.Args) >= 3 && strings.HasPrefix(os.Args[2], "--shell=") {
-			shell = strings.TrimPrefix(os.Args[2], "--shell=")
-		} else if len(os.Args) >= 3 {
-			shell = os.Args[2]
-		}
-		runEnv(shell, nvxHome)
+		runEnv(parseShellArg(os.Args[2:]), nvxHome)
 
 	case "auto":
-		shell := "powershell"
-		if len(os.Args) >= 3 && strings.HasPrefix(os.Args[2], "--shell=") {
-			shell = strings.TrimPrefix(os.Args[2], "--shell=")
-		} else if len(os.Args) >= 3 {
-			shell = os.Args[2]
-		}
-		runAuto(nvxHome, shell)
+		runAuto(nvxHome, parseShellArg(os.Args[2:]))
 
 	case "verify-install":
 		if len(os.Args) < 3 {
 			os.Exit(0)
 		}
 		runVerifyInstall(os.Args[2:], nvxHome)
-
-	case "sandbox", "exec", "s":
-		if len(os.Args) < 3 {
-			LogError("Please specify a command to run in the sandbox. Example: nvx s node app.js")
-			os.Exit(1)
-		}
-		exitCode := runSandbox(SandboxConfig{
-			NvxHome: nvxHome,
-			Command: os.Args[2],
-			Args:    os.Args[3:],
-		})
-		os.Exit(exitCode)
-
 
 	case "init-shims":
 		generateShims(nvxHome)
@@ -131,6 +113,14 @@ func main() {
 		cleanupStaleSandboxes(nvxHome)
 		LogSuccess("Sandbox cleanup complete.")
 
+	case "__landlock-exec":
+		guestHome, workDir, nvxHome, networkMode, proxyPort, cmdPath, cmdArgs, ok := parseLandlockExecArgs(os.Args[2:])
+		if !ok {
+			LogError("Invalid __landlock-exec arguments")
+			os.Exit(1)
+		}
+		os.Exit(runLandlockExecChild(guestHome, workDir, nvxHome, networkMode, proxyPort, cmdPath, cmdArgs))
+
 	case "help", "-h", "--help":
 		printHelp()
 
@@ -139,6 +129,35 @@ func main() {
 		printHelp()
 		os.Exit(1)
 	}
+}
+
+// defaultShell returns the shell whose syntax is emitted when none is specified.
+func defaultShell() string {
+	if runtime.GOOS == "windows" {
+		return "powershell"
+	}
+	return "bash"
+}
+
+// parseShellArg extracts the target shell from trailing command arguments.
+// It accepts "--shell=bash", "--shell bash", and a bare positional "bash".
+func parseShellArg(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "--shell=") {
+			if v := strings.TrimPrefix(arg, "--shell="); v != "" {
+				return v
+			}
+		} else if arg == "--shell" && i+1 < len(args) {
+			return args[i+1]
+		} else if !strings.HasPrefix(arg, "-") {
+			switch strings.ToLower(arg) {
+			case "powershell", "pwsh", "bash", "zsh":
+				return strings.ToLower(arg)
+			}
+		}
+	}
+	return defaultShell()
 }
 
 func printHelp() {
@@ -157,18 +176,20 @@ Commands:
   env [--shell=<type>]   Print shell integration script (powershell, bash, zsh)
   auto [--shell=<type>]  Auto-switch version based on .nvmrc / .node-version / package.json
   verify-install <pkgs>  Verify package safety before installing (called by wrappers)
-  sandbox, s <cmd> [arg] Run a command inside the nvx sandbox (env isolation + OS primitives)
   init-shims             Generate PATH shims in ~/.nvx/bin
   shim <cmd> [args]      Internal shim router for package managers
   cleanup                Remove stale sandbox sessions from previous runs
 
 Options:
   --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
+  --filesystem-provider=<name>  Override isolation.filesystem.provider
+  --no-sandbox           Disable sandbox for this shim invocation
+  -y, --yes              Auto-approve all prompts
 
 Examples:
   nvx install lts
   nvx use 20.11.0
-  nvx s npx create-react-app my-app
+  npm run dev
   nvx default 18.16.0`)
 }
 
@@ -352,21 +373,7 @@ func runUse(query string, nvxHome string, shell string) {
 	}
 
 	targetDir := filepath.Join(nvxHome, "versions", provider.Name(), resolvedVer)
-	currentPath := os.Getenv("PATH")
-
-	newPath := CleanAndBuildPath(currentPath, nvxHome, targetDir)
-	formattedPath := FormatPathForShell(shell, newPath)
-
-	npmGlobalDir := filepath.Join(targetDir, "npm_global")
-	formattedNpmGlobal := FormatPathForShell(shell, npmGlobalDir)
-
-	if shell == "bash" || shell == "zsh" {
-		fmt.Printf("export PATH=\"%s\"\n", formattedPath)
-		fmt.Printf("export NPM_CONFIG_PREFIX=\"%s\"\n", formattedNpmGlobal)
-	} else {
-		fmt.Printf("$env:PATH = \"%s\"\n", formattedPath)
-		fmt.Printf("$env:NPM_CONFIG_PREFIX = \"%s\"\n", formattedNpmGlobal)
-	}
+	emitSessionEnv(shell, nvxHome, targetDir)
 
 	activeVer := getActiveShellVersion(nvxHome)
 	if activeVer != "" && activeVer != resolvedVer {
@@ -480,11 +487,19 @@ func runEnv(shell string, nvxHome string) {
 	exePath = strings.ReplaceAll(exePath, "\\", "/")
 
 	if shell == "bash" || shell == "zsh" {
-		fmt.Printf(`nvx() {
+		fmt.Printf(`__nvx_shell_type() {
+    if [ -n "$ZSH_VERSION" ]; then
+        echo "zsh"
+    else
+        echo "bash"
+    fi
+}
+
+nvx() {
     local cmd="$1"
     if [ "$cmd" = "use" ] || [ "$cmd" = "auto" ]; then
         local stdout
-        stdout=$(%q "$@")
+        stdout=$(%q "$@" --shell="$(__nvx_shell_type)")
         if [ -n "$stdout" ]; then
             eval "$stdout"
         fi
@@ -498,7 +513,7 @@ nvx_prompt_hook() {
     if [ "$PWD" != "$__nvx_last_pwd" ]; then
         export __nvx_last_pwd="$PWD"
         local stdout
-        stdout=$(%q auto --shell %s)
+        stdout=$(%q auto --shell="$(__nvx_shell_type)")
         if [ -n "$stdout" ]; then
             eval "$stdout"
         fi
@@ -510,7 +525,7 @@ if [[ -n "$ZSH_VERSION" ]]; then
     # Optimize using native zsh chpwd hook instead of prompt command
     nvx_chpwd_hook() {
         local stdout
-        stdout=$(%q auto --shell zsh)
+        stdout=$(%q auto --shell=zsh)
         if [ -n "$stdout" ]; then
             eval "$stdout"
         fi
@@ -522,7 +537,7 @@ elif [[ -n "$BASH_VERSION" ]]; then
         PROMPT_COMMAND="nvx_prompt_hook; $PROMPT_COMMAND"
     fi
 fi
-`, exePath, exePath, exePath, shell, exePath)
+`, exePath, exePath, exePath, exePath)
 	} else {
 		// PowerShell default
 		fmt.Printf(`$global:__nvx_last_pwd = ""
@@ -530,7 +545,7 @@ fi
 function nvx {
     $cmd = $args[0]
     if ($cmd -eq "use" -or $cmd -eq "auto") {
-        $stdout = & %q @args
+        $stdout = & %q @args --shell=powershell
         if ($stdout) {
             $stdout | Out-String | Invoke-Expression
         }
@@ -542,7 +557,7 @@ function nvx {
 function nvx_prompt_hook {
     if ($global:__nvx_last_pwd -ne $pwd) {
         $global:__nvx_last_pwd = $pwd
-        $stdout = & %q auto --shell powershell
+        $stdout = & %q auto --shell=powershell
         if ($stdout) {
             $stdout | Out-String | Invoke-Expression
         }
@@ -602,19 +617,38 @@ func runAuto(nvxHome string, shell string) {
 	LogInfo("[nvx] Found %s: switching to Node.js %s", filepath.Base(sourceFile), resolvedVer)
 
 	targetDir := filepath.Join(nvxHome, "versions", provider.Name(), resolvedVer)
-	currentPath := os.Getenv("PATH")
-	newPath := CleanAndBuildPath(currentPath, nvxHome, targetDir)
-	formattedPath := FormatPathForShell(shell, newPath)
+	emitSessionEnv(shell, nvxHome, targetDir)
+}
 
-	npmGlobalDir := filepath.Join(targetDir, "npm_global")
-	formattedNpmGlobal := FormatPathForShell(shell, npmGlobalDir)
+// resolveNpmPrefixDir returns the npm global prefix for the session: the
+// project-local .nvx/npm_global dir when isolated tools are enabled by policy,
+// otherwise the per-version npm_global dir shared across projects.
+func resolveNpmPrefixDir(nvxHome, targetVersionDir string) string {
+	policy, err := LoadPolicy(nvxHome)
+	if err == nil && policy.Environment.IsolatedTools && policy.ProjectDir != "" {
+		prefixDir := filepath.Join(policy.ProjectDir, ".nvx", "npm_global")
+		if mkErr := os.MkdirAll(prefixDir, 0755); mkErr == nil {
+			return prefixDir
+		}
+		LogWarn("Failed to create project tools directory %s; falling back to version-level npm prefix.", prefixDir)
+	}
+	return filepath.Join(targetVersionDir, "npm_global")
+}
+
+// emitSessionEnv prints the shell statements that activate a Node version
+// (and its npm prefix) for the current terminal session.
+func emitSessionEnv(shell, nvxHome, targetDir string) {
+	npmPrefixDir := resolveNpmPrefixDir(nvxHome, targetDir)
+	newPath := CleanAndBuildPath(os.Getenv("PATH"), nvxHome, targetDir, npmPrefixDir)
+	formattedPath := FormatPathForShell(shell, newPath)
+	formattedNpmPrefix := FormatPathForShell(shell, npmPrefixDir)
 
 	if shell == "bash" || shell == "zsh" {
 		fmt.Printf("export PATH=\"%s\"\n", formattedPath)
-		fmt.Printf("export NPM_CONFIG_PREFIX=\"%s\"\n", formattedNpmGlobal)
+		fmt.Printf("export NPM_CONFIG_PREFIX=\"%s\"\n", formattedNpmPrefix)
 	} else {
 		fmt.Printf("$env:PATH = \"%s\"\n", formattedPath)
-		fmt.Printf("$env:NPM_CONFIG_PREFIX = \"%s\"\n", formattedNpmGlobal)
+		fmt.Printf("$env:NPM_CONFIG_PREFIX = \"%s\"\n", formattedNpmPrefix)
 	}
 }
 
@@ -630,35 +664,28 @@ func PromptYesNo(message string) bool {
 	var ttyIn, ttyOut *os.File
 	var err error
 
+	// Fail closed when no interactive TTY is available. Auto-approving in CI
+	// would silently bypass security prompts (vulnerability warnings, install
+	// script confirmations) in exactly the environments where supply-chain
+	// attacks land. Non-interactive users must opt in via -y or NVX_YES=true.
 	if runtime.GOOS == "windows" {
 		ttyOut, err = os.OpenFile("CONOUT$", os.O_WRONLY, 0)
 		if err != nil {
-			LogWarn("Non-TTY environment detected. Proceeding automatically in CI or aborting. Use -y / --yes or set NVX_YES=true to bypass. Prompt was: %s", message)
-			// In standard CI if we can't open TTY, check if CI variable is set.
-			// For safety reasons, default to true for version installs, but for package vulnerability checks, maybe false.
-			// Actually, let's treat CI=true as auto-approving unless NVX_STRICT=true is set. Let's do:
-			if os.Getenv("CI") == "true" || os.Getenv("CI") == "1" {
-				return true
-			}
+			LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
 			return false
 		}
 		defer ttyOut.Close()
 
 		ttyIn, err = os.OpenFile("CONIN$", os.O_RDONLY, 0)
 		if err != nil {
-			if os.Getenv("CI") == "true" || os.Getenv("CI") == "1" {
-				return true
-			}
+			LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
 			return false
 		}
 		defer ttyIn.Close()
 	} else {
 		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 		if err != nil {
-			LogWarn("Non-TTY environment detected. Proceeding automatically in CI or aborting. Use -y / --yes or set NVX_YES=true to bypass. Prompt was: %s", message)
-			if os.Getenv("CI") == "true" || os.Getenv("CI") == "1" {
-				return true
-			}
+			LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
 			return false
 		}
 		defer tty.Close()
