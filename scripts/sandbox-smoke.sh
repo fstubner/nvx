@@ -15,6 +15,11 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   exit 0
 fi
 
+if ! unshare -n -- true 2>/dev/null; then
+  echo "Network namespace unavailable in this environment; skipping Linux sandbox smoke." >&2
+  exit 0
+fi
+
 KERNEL="$(uname -r | cut -d. -f1-2)"
 MAJOR="${KERNEL%%.*}"
 MINOR="${KERNEL#*.}"
