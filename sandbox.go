@@ -308,12 +308,22 @@ func runSandbox(config SandboxConfig) int {
 	pinnedVer := policy.PinnedRuntimeVersion(rt.Name())
 
 	ctx := context.Background()
-	egress, err := startEgressProxy(ctx, policy, rt)
-	if err != nil {
-		LogError("Egress proxy failed: %v", err)
-		return 1
+	var egress *EgressProxy
+	// Linux native re-execs into a loopback-only network namespace and starts its
+	// own egress proxy inside the child; a parent proxy would be unreachable.
+	skipParentProxy := runtime.GOOS == "linux" && provider == "native" &&
+		networkModeRequiresNamespace(policy.Isolation.Network.Mode)
+	if !skipParentProxy {
+		var err error
+		egress, err = startEgressProxy(ctx, policy, rt)
+		if err != nil {
+			LogError("Egress proxy failed: %v", err)
+			return 1
+		}
+		if egress != nil {
+			defer egress.Close()
+		}
 	}
-	defer egress.Close()
 
 	netCtx := NetworkLaunchContext{Mode: policy.Isolation.Network.Mode}
 	if egress != nil {

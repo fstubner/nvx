@@ -57,6 +57,9 @@ func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
 	}
 	cmdPath, err := exec.LookPath(config.Command)
 	if err != nil {
+		if p := resolveProjectBinCommand(config.Command); p != "" {
+			return p
+		}
 		LogError("Command not found: %s", config.Command)
 		return ""
 	}
@@ -64,7 +67,7 @@ func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
 }
 
 // parseLandlockExecArgs parses internal __landlock-exec arguments.
-func parseLandlockExecArgs(argv []string) (guestHome, workDir, nvxHome, networkMode string, proxyPort int, cmdPath string, cmdArgs []string, ok bool) {
+func parseLandlockExecArgs(argv []string) (guestHome, workDir, nvxHome, networkMode, shimCommand string, proxyPort int, cmdPath string, cmdArgs []string, ok bool) {
 	for i := 0; i < len(argv); i++ {
 		arg := argv[i]
 		switch {
@@ -76,16 +79,18 @@ func parseLandlockExecArgs(argv []string) (guestHome, workDir, nvxHome, networkM
 			nvxHome = strings.TrimPrefix(arg, "--nvx-home=")
 		case strings.HasPrefix(arg, "--network-mode="):
 			networkMode = strings.TrimPrefix(arg, "--network-mode=")
+		case strings.HasPrefix(arg, "--command="):
+			shimCommand = strings.TrimPrefix(arg, "--command=")
 		case strings.HasPrefix(arg, "--proxy-port="):
 			fmt.Sscanf(strings.TrimPrefix(arg, "--proxy-port="), "%d", &proxyPort)
 		case arg == "--":
 			if i+1 < len(argv) {
 				cmdPath = argv[i+1]
 				cmdArgs = argv[i+2:]
-				return guestHome, workDir, nvxHome, networkMode, proxyPort, cmdPath, cmdArgs, guestHome != "" && workDir != "" && cmdPath != ""
+				return guestHome, workDir, nvxHome, networkMode, shimCommand, proxyPort, cmdPath, cmdArgs, guestHome != "" && workDir != "" && cmdPath != ""
 			}
-			return "", "", "", "", 0, "", nil, false
+			return "", "", "", "", "", 0, "", nil, false
 		}
 	}
-	return "", "", "", "", 0, "", nil, false
+	return "", "", "", "", "", 0, "", nil, false
 }

@@ -3,9 +3,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -165,7 +167,31 @@ func applyLandlockSandbox(guestHome, workDir, nvxHome string) error {
 	return nil
 }
 
-func runLandlockExecChild(guestHome, workDir, nvxHome, networkMode string, proxyPort int, cmdPath string, args []string) int {
+func runLandlockExecChild(guestHome, workDir, nvxHome, networkMode, shimCommand string, proxyPort int, cmdPath string, args []string) int {
+	if networkModeRequiresNamespace(networkMode) {
+		if err := setupLoopbackNetworkNamespace(); err != nil {
+			LogError("Network isolation failed (fail-closed): %v", err)
+			return 1
+		}
+		LogInfo("Linux loopback-only network namespace active")
+	}
+
+	var egress *EgressProxy
+	if strings.ToLower(networkMode) != "open" {
+		policy, err := LoadPolicy(nvxHome)
+		if err != nil {
+			LogWarn("Failed to load policy: %v", err)
+			policy = DefaultPolicy()
+		}
+		rt := runtimeForShim(shimCommand)
+		egress, err = startEgressProxy(context.Background(), policy, rt)
+		if err != nil {
+			LogError("Egress proxy failed: %v", err)
+			return 1
+		}
+		defer egress.Close()
+	}
+
 	if err := applyLandlockSandbox(guestHome, workDir, nvxHome); err != nil {
 		LogError("Landlock isolation failed: %v", err)
 		return 1
@@ -179,6 +205,7 @@ func runLandlockExecChild(guestHome, workDir, nvxHome, networkMode string, proxy
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = applyProxyEnv(os.Environ(), egress)
 	if workDir != "" {
 		cmd.Dir = workDir
 	}

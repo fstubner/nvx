@@ -23,6 +23,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		"--work-dir=" + workDir,
 		"--nvx-home=" + config.NvxHome,
 		"--network-mode=" + netCtx.Mode,
+		"--command=" + config.Command,
 		fmt.Sprintf("--proxy-port=%d", netCtx.HTTPProxyPort),
 		"--",
 		cmdPath,
