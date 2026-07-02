@@ -40,14 +40,24 @@ jobs:
       run: |
         go build -o nvx.exe .
         ./scripts/sandbox-smoke.ps1
+        ./scripts/sandbox-smoke-egress.ps1
 
     - name: Linux sandbox smoke
       if: matrix.os == 'ubuntu-latest'
       shell: bash
       run: |
         go build -o nvx .
-        chmod +x scripts/sandbox-smoke.sh
+        chmod +x scripts/sandbox-smoke.sh scripts/sandbox-smoke-egress.sh
         ./scripts/sandbox-smoke.sh
+        ./scripts/sandbox-smoke-egress.sh
+
+    - name: macOS sandbox smoke
+      if: matrix.os == 'macos-latest'
+      shell: bash
+      run: |
+        go build -o nvx .
+        chmod +x scripts/sandbox-smoke-macos.sh
+        ./scripts/sandbox-smoke-macos.sh
 
   security-scan:
     name: Security Scan
