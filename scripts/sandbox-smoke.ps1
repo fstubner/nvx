@@ -10,6 +10,13 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     exit 0
 }
 
+# GitHub-hosted Windows runners cannot spawn AppContainer children (CreateProcess
+# fails for all PE paths even with icacls grants). Same pattern as Linux netns skip.
+if ($env:GITHUB_ACTIONS -eq 'true') {
+    Write-Host "AppContainer unavailable on GitHub Actions Windows runners; skipping native sandbox smoke."
+    exit 0
+}
+
 $proj = Join-Path $env:USERPROFILE "nvx-smoke-wd"
 New-Item -ItemType Directory -Force -Path $proj | Out-Null
 Set-Location $proj

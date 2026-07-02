@@ -5,6 +5,10 @@ $nvx = Join-Path $root "nvx.exe"
 if (-not (Test-Path $nvx)) {
     Write-Error "Build nvx.exe first (go build -o nvx.exe .)"
 }
+if ($env:GITHUB_ACTIONS -eq 'true') {
+    Write-Host "AppContainer unavailable on GitHub Actions Windows runners; skipping egress smoke."
+    exit 0
+}
 
 $proj = Join-Path $env:USERPROFILE "nvx-egress-smoke"
 New-Item -ItemType Directory -Force -Path $proj | Out-Null
