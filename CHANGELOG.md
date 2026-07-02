@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+* **Isolation v1 policy schema**: `isolation.filesystem.provider` and `isolation.network.mode` replace the flat `isolation.provider`; top-level `runtime` and `prompts` blocks.
+* **Shim-only sandbox path**: `npm`, `node`, `npx`, `yarn`, `pnpm`, and `bunx` run sandboxed by default when `isolation.enabled` is true; use `--no-sandbox` to bypass per invocation.
+* **Embedded egress proxy**: `network.mode: proxy` starts an in-process HTTP CONNECT + SOCKS5 proxy on loopback with policy allowlist and interactive approval for unknown hosts (persisted to `.nvx-policy.json` on approve).
+* **RuntimeProvider execution hooks**: binary resolution and default network allowlists go through `RuntimeProvider` so sandbox code is not Node-specific.
+* **Cross-platform smoke tests**: `scripts/sandbox-smoke.ps1` (Windows) and `scripts/sandbox-smoke.sh` (Linux) in CI.
+
+### Changed
+* **Default isolation**: `isolation.enabled` defaults to `true`; `network.mode` defaults to `proxy`.
+* **Removed legacy CLI**: `nvx sandbox`, `nvx s`, `nvx exec`, and the `nvxs` shim target are removed; shims are the sole sandbox entry point.
+* **Fail-closed Windows native path**: AppContainer setup failure no longer falls back to Low IL alone.
+
+### Removed
+* **`--provider` flag**: use `--filesystem-provider=` on shim invocations instead.
+
 ## [0.1.0] - 2026-06-30
 
 ### Added
@@ -17,5 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * Typosquatting audits based on Levenshtein distance and registry download comparison.
   * Release-age warning for packages published less than 24 hours ago.
   * Install script blocking/warning to prevent arbitrary code execution during dependencies installation.
-* **Flexible Process Sandboxing**: Runs executions inside isolated environments across platforms: using OS-native isolation (Windows Low Integrity Levels and Linux Namespaces with environment scrubbing/home folder virtualization), containerized via Docker, or natively via Windows Subsystem for Linux Containers (`wslc`), macOS native sandboxing (`sandbox-exec`), or Linux container runtimes (`systemd-nspawn`).
+* **Flexible Process Sandboxing**: Runs executions inside isolated environments across platforms with selectable filesystem providers: OS-native isolation (`native`), Docker containers (`docker`), Microsoft WSL Containers via `wslc.exe` (`wslc` — Hyper-V utility VM, separate from WSL distros), default-WSL-distro fallback (`wsl`), macOS Seatbelt sandboxing (`sandbox-exec`), and Linux volatile containers (`systemd-nspawn`, requires root). Providers are selected via `isolation.filesystem.provider` or the `--filesystem-provider` shim flag, and unknown providers fail closed.
+* **Project-Scoped Tool Isolation**: Optional `environment.isolated_tools` policy setting scopes globally installed npm packages to `<project>/.nvx/npm_global`, so different projects can pin different versions of global CLI tools.
+* **Fail-Closed Prompts**: Security prompts deny by default in non-interactive environments (including CI); approval requires an explicit `-y` / `--yes` or `NVX_YES=true`.
 * **CI Integration**: Added remote GitHub Actions CI pipeline testing across Windows, macOS, and Linux matrix with `gosec` and `govulncheck` static analysis scanners.

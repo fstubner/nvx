@@ -25,7 +25,7 @@ Along the way, I wanted to tackle a few other common frustrations:
 - **Agentic & AI Safety**: If you use AI coding agents (like Gemini, Claude, or Copilot) to build projects, they execute terminal commands in your local workspace. By automatically wrapping typical package manager commands (`npm`, `yarn`, `pnpm`, `npx`), `nvx` ensures that any package installed or run by an AI agent is audited and secured out of the box. You don't have to worry about agents running raw commands in your shell; they are wrapped automatically, significantly reducing the risk of an agent pulling down a compromised package or executing rogue code.
 - **Process Isolation**: I wanted a sandbox to run untrusted stuff (like `npx` packages) with a clean slate, scrubbing env secrets and locking down filesystem writes.
 - **Sub-millisecond Performance**: The tool has to be fast enough that there's no noticeable overhead compared to running raw commands.
-- **Clean UX**: I am constantly polishing the interface and shell integration hooks, with interactive documentation hosted on GitHub Pages and Cloudflare.
+- **Clean UX**: Polished CLI output and automatic shell integration hooks for PowerShell, bash, and zsh.
 
 
 ---
@@ -42,7 +42,7 @@ Along the way, I wanted to tackle a few other common frustrations:
 - **Native Sandbox Engine**: 
   - Purges credential/secret environment keys before execution.
   - Redirects home profile path (`HOME` / `USERPROFILE`) to temporary guest environments.
-  - Uses Windows Low Integrity Level tokens and Linux Kernel Namespaces (`CLONE_NEWNS`, `CLONE_NEWPID`, `CLONE_NEWUSER`) for secure sandboxing.
+  - Uses Windows AppContainer + Low Integrity Level, Linux Landlock + kernel namespaces, and macOS Seatbelt (`sandbox-exec`) for secure sandboxing.
 - **Shell Integrations**: Automatic shell configuration for bash, zsh, and PowerShell.
 
 ---
@@ -54,7 +54,7 @@ Along the way, I wanted to tackle a few other common frustrations:
 Run the installer via PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/nvx-project/nvx/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex
 ```
 
 *Note: In future releases, I plan to make `nvx` accessible directly via **WinGet**, the **Windows Store**, and other popular repository managers for even easier setup.*
@@ -64,7 +64,7 @@ irm https://raw.githubusercontent.com/nvx-project/nvx/main/install.ps1 | iex
 Run the installer via bash:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nvx-project/nvx/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh
 ```
 
 ---
@@ -84,10 +84,31 @@ Commands:
   env [--shell=<type>]   Print shell integration script (powershell, bash, zsh)
   auto [--shell=<type>]  Auto-switch version based on .nvmrc / .node-version / package.json
   verify-install <pkgs>  Verify package safety before installing (called by wrappers)
-  sandbox, s <cmd> [arg] Run a command inside the nvx sandbox (env isolation + OS primitives)
+  init-shims             Generate PATH shims in ~/.nvx/bin
   cleanup                Remove stale sandbox sessions from previous runs
   version, -v            Print version info
+
+Shim flags (npm, node, npx, yarn, pnpm, bunx via PATH):
+  --no-sandbox           Run without sandbox for this invocation
+  --filesystem-provider=<name>  Override isolation.filesystem.provider
+  -y, --yes              Auto-approve prompts
 ```
+
+### Zero-config sandbox
+
+After `nvx env` / `init-shims`, **`npm`, `node`, `npx`, `yarn`, `pnpm`, and `bunx` are sandboxed by default** when `isolation.enabled` is true. No separate sandbox subcommand — just run commands normally:
+
+```bash
+npm install
+npm run dev
+node server.js
+```
+
+Use `--no-sandbox` on a shim invocation to bypass isolation for one command.
+
+### Non-Interactive Use (CI)
+
+Security prompts (vulnerability warnings, install script confirmations, typosquatting alerts) **fail closed** when no interactive terminal is available: the operation is denied rather than silently approved. In CI pipelines, pass `-y` / `--yes` or set `NVX_YES=true` to approve prompts explicitly.
 
 ### Auto-Swapping
 
@@ -108,24 +129,49 @@ Corporate policies can be defined globally in `~/.nvx/policy.json` and customize
     "max_distance": 2,
     "trusted_packages": ["my-internal-helper"]
   },
+  "runtime": {
+    "default": "node",
+    "versions": { "node": "20" }
+  },
   "isolation": {
     "enabled": true,
-    "provider": "native",
-    "runtime": {
-      "command": "node",
-      "version": "20"
+    "filesystem": {
+      "provider": "native",
+      "mode": "strict"
+    },
+    "network": {
+      "mode": "proxy",
+      "default_allow": ["registry.npmjs.org:443", "api.osv.dev:443"],
+      "allow_hosts": ["localhost:5432"],
+      "prompt_unknown": true
     }
+  },
+  "prompts": {
+    "interactive": "ask",
+    "non_interactive": "deny",
+    "network_unknown": "ask"
+  },
+  "environment": {
+    "isolated_tools": false
   }
 }
 ```
 
+Policies cascade: the global policy applies everywhere, and local policy files merge over it as you get closer to the working directory (the nearest policy wins on conflicting settings; blocklists and trusted packages are unioned).
+
 ### Policy Reference
 * **`enforce_ignore_scripts`**: When `true`, this forces npm/yarn/pnpm to install packages with `--ignore-scripts`. This blocks execution of hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine.
-* **`isolation.provider`**: The sandbox engine to use.
-  - `native`: Uses OS-native isolation primitives (Windows Low Integrity Level tokens and Linux Namespaces).
-  - `docker`: Spawns executions inside a Docker container.
-* **`isolation.runtime.command`**: Optional name of the command to restrict pinning to (e.g. `node`). If specified, only matches of this command will run on the pinned version.
-* **`isolation.runtime.version`**: Pin a specific runtime version query (e.g. `20`, `lts`, `18.16.0`) to be used inside the sandbox instead of inheriting the host terminal session's active version.
+* **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary).
+  - `native`: AppContainer + Low IL (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Fail-closed.
+  - `docker`, `wslc`, `wsl`, `sandbox-exec`, `systemd-nspawn`: container or alternate providers (see below).
+* **`isolation.network.mode`**: How egress is governed.
+  - `proxy` (default): parent-process HTTP CONNECT + SOCKS5 proxy with policy allowlist; injects `HTTP_PROXY` / `HTTPS_PROXY`.
+  - `open`: no egress filtering.
+  - `offline` / `loopback`: block non-loopback egress at the proxy.
+* **`runtime.versions`**: Pin runtime versions used inside the sandbox (e.g. `"node": "20"`).
+* **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project (`<project>/.nvx/npm_global`) instead of being shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch.
+
+Override filesystem provider per shim: `npm --filesystem-provider=docker install`.
 
 
 
@@ -133,22 +179,28 @@ Corporate policies can be defined globally in `~/.nvx/policy.json` and customize
 
 ## Sandboxed Executions
 
-To execute commands isolated from your host's credentials and files, use the `sandbox` (or `s`) subcommand. This runs the guest process under actual process-level containerization (container isolation, not just simple fencing or env key scrubbing):
+Shimmed commands run in a sandbox session automatically:
 
 ```bash
-nvx s npx create-react-app my-app
-```
-Alternatively, you can use the direct `nvxs` command shorthand provided by the shell integration:
-
-
-```bash
-nvxs npx create-react-app my-app
+npm run dev
+node app.js
 ```
 
 When running in the sandbox:
-* Environment secrets (e.g. `AWS_*`, `GITHUB_*`, `SSH_*`) are automatically scrubbed from the process.
-* The home profile path (`HOME` or `USERPROFILE`) is virtualized to a clean temporary guest directory.
-* OS-level privilege tokens are lowered to prevent writes to host paths.
+* Environment secrets (e.g. `AWS_*`, `GITHUB_*`, `SSH_*`) are scrubbed.
+* Home and temp paths are virtualized to an ephemeral guest profile.
+* **Filesystem** (`isolation.filesystem`): Windows AppContainer + Low IL; Linux Landlock + namespaces; macOS Seatbelt.
+* **Network** (`isolation.network.mode: proxy`): egress via loopback proxy with allowlist; unknown hosts prompt interactively (fail-closed in CI unless `-y`).
+
+### Verification matrix
+
+| Guarantee | Windows (native) | Linux (native) | macOS (native) |
+|-----------|------------------|----------------|----------------|
+| Host profile write blocked | Yes (AppContainer + Low IL) | Yes (Landlock) | Yes (Seatbelt) |
+| Workdir write allowed | Yes | Yes | Yes |
+| Egress via policy proxy | Yes (AppContainer blocks WAN; loopback to parent proxy) | Yes (parent proxy; seccomp blocks new inet sockets in offline/loopback) | Yes (Seatbelt `(deny network*)` + loopback proxy ports) |
+| Raw TCP bypass blocked at OS | Yes (no internet capability) | Partial (proxy for HTTP/SOCKS stacks; raw connect not filtered by seccomp) | Yes (Seatbelt) |
+| Fail-closed if FS primitive missing | Yes | Yes (kernel 5.13+) | Yes |
 
 ---
 
@@ -159,7 +211,7 @@ Traditional managers change system-wide paths or symbolic links, which can disru
 
 ### How do sandboxed containers handle local servers, ports, and networking?
 Web development requires running local dev servers (e.g. listening on port `3000`) and calling external backend APIs or databases:
-* **Native Sandbox (Windows LIL / Linux Namespaces)**: Guest processes are restricted from making malicious disk writes, but retain the ability to bind to TCP ports (`localhost`) and connect to local services running on the host out of the box.
+* **Native Sandbox**: Loopback bind/connect works for dev servers. With `network.mode: proxy`, outbound TCP goes through the nvx allowlist proxy (HTTP_PROXY / SOCKS5). Host services on `localhost` remain reachable via `allow_hosts`.
 * **Docker Sandbox**: The Docker container automatically exposes loopback TCP configurations so that the containerized process can reach a backend running locally on the host machine.
 
 ### What if a project needs multiple runtimes (e.g., Node frontend and Python/Go backend)?
