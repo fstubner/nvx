@@ -4,6 +4,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -32,6 +34,39 @@ type processInformation struct {
 // CreateProcessAsUserW + PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES. When
 // lowILToken is non-zero, Low IL is stacked on the AppContainer boundary.
 func launchAppContainerProcess(
+	cmdPath string,
+	args []string,
+	env []string,
+	workDir string,
+	appContainerSID uintptr,
+	lowILToken syscall.Token,
+) (exitCode int, err error) {
+	exitCode, err = launchAppContainerProcessOnce(cmdPath, args, env, workDir, appContainerSID, lowILToken)
+	if err == nil || !isCreateProcessMissingFile(err) {
+		return exitCode, err
+	}
+
+	sysRoot := os.Getenv("SystemRoot")
+	if sysRoot == "" {
+		sysRoot = `C:\Windows`
+	}
+	cmdExe := filepath.Join(sysRoot, "System32", "cmd.exe")
+	if grantErr := grantAppContainerPathReadExec(appContainerSID, cmdExe); grantErr != nil {
+		return exitCode, err
+	}
+	wrapped := append([]string{"/c", cmdPath}, args...)
+	return launchAppContainerProcessOnce(cmdExe, wrapped, env, workDir, appContainerSID, lowILToken)
+}
+
+func isCreateProcessMissingFile(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "cannot find the file") || strings.Contains(msg, "the system cannot find")
+}
+
+func launchAppContainerProcessOnce(
 	cmdPath string,
 	args []string,
 	env []string,
