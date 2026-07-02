@@ -233,6 +233,34 @@ func grantAppContainerPathReadExec(sid uintptr, path string) error {
 	return nil
 }
 
+// grantAppContainerWindowsDLLSearch grants AppContainer read/execute on the
+// System32 and SysWOW64 directories so PE images can resolve OS DLLs.
+func grantAppContainerWindowsDLLSearch(sid uintptr) error {
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	for _, sub := range []string{"System32", "SysWOW64"} {
+		if err := grantAppContainerPathReadExecTreePermissive(sid, filepath.Join(root, sub)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func grantAppContainerPathReadExecTreePermissive(sid uintptr, path string) error {
+	sidStr, err := appContainerSidToString(sid)
+	if err != nil {
+		return err
+	}
+	grantArg := fmt.Sprintf("*%s:(OI)(CI)(RX)", sidStr)
+	out, err := exec.Command("icacls", path, "/grant", grantArg, "/t", "/c", "/q").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("icacls RX tree grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func appContainerSidToString(sid uintptr) (string, error) {
 	var strPtr *uint16
 	ret, _, err := modAdvapi32.NewProc("ConvertSidToStringSidW").Call(
