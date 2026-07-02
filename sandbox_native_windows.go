@@ -21,7 +21,8 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		LogError("AppContainer filesystem setup failed: %v", err)
 		return 1
 	}
-	if err := grantAppContainerExecutable(sid, cmdPath); err != nil {
+	cmdPath, err = ensureAppContainerCommand(sid, config.NvxHome, cmdPath)
+	if err != nil {
 		LogError("AppContainer executable access failed: %v", err)
 		return 1
 	}

@@ -3,7 +3,11 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -96,22 +100,108 @@ func grantAppContainerPath(sid uintptr, path string) error {
 	return nil
 }
 
-// grantAppContainerExecutable grants read/execute on the sandboxed binary and its install tree.
-func grantAppContainerExecutable(sid uintptr, cmdPath string) error {
+// ensureAppContainerCommand grants AppContainer read/execute on cmdPath. Binaries
+// outside ~/.nvx/versions are copied into nvxHome first so icacls can succeed
+// on paths the runner user owns (e.g. hostedtoolcache on GitHub Actions).
+func ensureAppContainerCommand(sid uintptr, nvxHome, cmdPath string) (string, error) {
 	if cmdPath == "" {
-		return nil
+		return "", fmt.Errorf("empty command path")
 	}
 	cmdPath = filepath.Clean(cmdPath)
-	dir := filepath.Dir(cmdPath)
-	if err := grantAppContainerPathReadExecTree(sid, dir); err != nil {
-		return err
+	usePath := cmdPath
+	if !isNvxManagedRuntimePath(nvxHome, cmdPath) {
+		staged, err := stageAppContainerExecutable(nvxHome, cmdPath)
+		if err != nil {
+			return "", err
+		}
+		usePath = staged
 	}
-	if dir != cmdPath {
-		if err := grantAppContainerPathReadExec(sid, cmdPath); err != nil {
-			return err
+	dir := filepath.Dir(usePath)
+	if err := grantAppContainerPathReadExecTree(sid, dir); err != nil {
+		return "", err
+	}
+	if dir != usePath {
+		if err := grantAppContainerPathReadExec(sid, usePath); err != nil {
+			return "", err
 		}
 	}
-	return nil
+	return usePath, nil
+}
+
+func isNvxManagedRuntimePath(nvxHome, cmdPath string) bool {
+	if nvxHome == "" {
+		return false
+	}
+	versionsRoot := filepath.Join(nvxHome, "versions")
+	rel, err := filepath.Rel(versionsRoot, cmdPath)
+	if err != nil {
+		return false
+	}
+	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
+}
+
+func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {
+	cmdPath = filepath.Clean(cmdPath)
+	srcDir := filepath.Dir(cmdPath)
+	base := filepath.Base(cmdPath)
+
+	st, err := os.Stat(cmdPath)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(strings.ToLower(srcDir) + fmt.Sprintf(":%d", st.ModTime().UnixNano())))
+	destDir := filepath.Join(nvxHome, "sandbox-exec", hex.EncodeToString(sum[:16]))
+	destExe := filepath.Join(destDir, base)
+
+	if _, err := os.Stat(destExe); err == nil {
+		return destExe, nil
+	}
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return "", err
+	}
+	if err := copyDirTree(srcDir, destDir); err != nil {
+		return "", err
+	}
+	return destExe, nil
+}
+
+func copyDirTree(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		return copyFile(path, target, info.Mode())
+	})
+}
+
+func copyFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode.Perm())
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
 }
 
 func grantAppContainerPathReadExecTree(sid uintptr, path string) error {
@@ -120,7 +210,7 @@ func grantAppContainerPathReadExecTree(sid uintptr, path string) error {
 		return err
 	}
 	grantArg := fmt.Sprintf("*%s:(OI)(CI)(RX)", sidStr)
-	out, err := exec.Command("icacls", path, "/grant", grantArg, "/t", "/c", "/q").CombinedOutput()
+	out, err := exec.Command("icacls", path, "/grant", grantArg, "/t", "/q").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("icacls RX tree grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
