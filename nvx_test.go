@@ -742,7 +742,7 @@ func TestBuildSeatbeltProfile(t *testing.T) {
 		`(subpath "/guest/home")`,
 		`(subpath "/work/dir")`,
 		`(subpath "/private/tmp")`,
-		`(allow network-outbound (remote tcp "127.0.0.1:8080"))`,
+		`(allow network-outbound (remote tcp "localhost:8080"))`,
 	} {
 		if !strings.Contains(profile, expected) {
 			t.Errorf("expected profile to contain %q, got:\n%s", expected, profile)
