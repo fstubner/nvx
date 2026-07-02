@@ -27,16 +27,9 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1
 	}
 
-	lowToken, err := createLowIntegrityPrimaryToken()
-	if err != nil {
-		LogError("Low Integrity token for AppContainer launch: %v", err)
-		return 1
-	}
-	defer syscall.CloseHandle(syscall.Handle(lowToken))
-
 	LogInfo("Windows AppContainer + Low Integrity isolation active")
 	exitCode, err := launchAppContainerProcess(
-		cmdPath, config.Args, cleanEnv, workDir, sid, lowToken,
+		cmdPath, config.Args, cleanEnv, workDir, sid, 0,
 	)
 	if err != nil {
 		LogError("AppContainer launch failed: %v", err)
