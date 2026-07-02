@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -51,19 +50,28 @@ func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
 	if pinned != "" {
 		if policy.Runtime.Command == "" || strings.EqualFold(config.Command, policy.Runtime.Command) {
 			if p := resolvePinnedCommandPath(config.Command, config.NvxHome, pinned, rt); p != "" {
-				return p
+				return preferWindowsRuntimeExe(p)
 			}
 		}
 	}
-	cmdPath, err := exec.LookPath(config.Command)
+
+	nodeVer := getActiveShellVersion(config.NvxHome)
+	if nodeVer == "" {
+		nodeVer = getGlobalDefaultVersion(config.NvxHome)
+	}
+	if p := resolvePinnedCommandPath(config.Command, config.NvxHome, nodeVer, rt); p != "" {
+		return preferWindowsRuntimeExe(p)
+	}
+	if p := resolveProjectBinCommand(config.Command); p != "" {
+		return preferWindowsRuntimeExe(p)
+	}
+
+	cmdPath, err := lookPathSkippingNvxShims(config.Command, config.NvxHome)
 	if err != nil {
-		if p := resolveProjectBinCommand(config.Command); p != "" {
-			return p
-		}
 		LogError("Command not found: %s", config.Command)
 		return ""
 	}
-	return cmdPath
+	return preferWindowsRuntimeExe(cmdPath)
 }
 
 // parseLandlockExecArgs parses internal __landlock-exec arguments.
