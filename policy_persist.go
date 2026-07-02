@@ -7,6 +7,28 @@ import (
 	"strings"
 )
 
+// nearestProjectPolicyPath walks from cwd upward for .nvx-policy.json.
+func nearestProjectPolicyPath() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	dir := cwd
+	for {
+		candidate := filepath.Join(dir, ".nvx-policy.json")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	cwd, _ = os.Getwd()
+	return filepath.Join(cwd, ".nvx-policy.json")
+}
+
 // persistNetworkAllowHost appends host:port to the nearest .nvx-policy.json allow_hosts.
 func persistNetworkAllowHost(hostPort string) {
 	hostPort = strings.TrimSpace(strings.ToLower(hostPort))
@@ -14,12 +36,7 @@ func persistNetworkAllowHost(hostPort string) {
 		return
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-
-	policyPath := filepath.Join(cwd, ".nvx-policy.json")
+	policyPath := nearestProjectPolicyPath()
 	var local Policy
 	if data, err := os.ReadFile(policyPath); err == nil {
 		_ = json.Unmarshal(data, &local)
