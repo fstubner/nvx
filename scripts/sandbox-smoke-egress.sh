@@ -10,6 +10,11 @@ if [[ ! -x "$NVX" ]]; then
   exit 1
 fi
 
+if [[ "$(uname -s)" == "Linux" ]] && ! unshare -n -- true 2>/dev/null; then
+  echo "Network namespace unavailable; skipping egress smoke." >&2
+  exit 0
+fi
+
 if [[ "$(uname -s)" == "Linux" ]] && [[ "$(uname -r | cut -d. -f1-2)" < "5.13" ]]; then
   echo "Skipping egress smoke (Landlock/network namespace requires kernel 5.13+)." >&2
   exit 0
