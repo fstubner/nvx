@@ -24,11 +24,9 @@ const (
 	seccompRetAllow = 0x7fff0000
 	seccompRetErrno = 0x00050000 + 1 // EPERM
 
-	afInet      = 2
-	afInet6     = 10
-	sockDgram   = 2
-	sockStream  = 1
-
+	afInet     = 2
+	afInet6    = 10
+	sockDgram  = 2
 	sdOffsetNr    = 0
 	sdOffsetArgs0 = 16
 	sdOffsetArgs1 = 24
@@ -53,18 +51,23 @@ func applyLinuxNetworkSeccomp(networkMode string, proxyPort int) error {
 }
 
 func installSeccompFilter(filter []syscall.SockFilter) error {
-	if err := prctlNoNewPrivs(); err != nil {
+	trap := seccompSyscall()
+	if trap == 0 {
+		return fmt.Errorf("seccomp not supported on this architecture")
+	}
+	if err := prctlSetNoNewPrivs(); err != nil {
 		return fmt.Errorf("prctl NO_NEW_PRIVS: %w", err)
 	}
 	prog := syscall.SockFprog{
 		Len:    uint16(len(filter)),
 		Filter: &filter[0],
 	}
-	_, _, errno := syscall.Syscall(
-		syscall.SYS_SECCOMP,
+	_, _, errno := syscall.RawSyscall6(
+		trap,
 		seccompSetModeFilter,
 		uintptr(unsafe.Pointer(&prog)),
 		seccompFilterFlagTSync,
+		0, 0, 0,
 	)
 	if errno != 0 {
 		return fmt.Errorf("seccomp install: %w", errno)
@@ -72,21 +75,12 @@ func installSeccompFilter(filter []syscall.SockFilter) error {
 	return nil
 }
 
-func prctlNoNewPrivs() error {
-	const prSetNoNewPrivs = 38
-	_, _, errno := syscall.Syscall(prctlSyscall(), prSetNoNewPrivs, 1, 0, 0)
-	if errno != 0 && errno != syscall.EINVAL {
-		return errno
-	}
-	return nil
-}
-
 func bpfStmt(code, k uint32) syscall.SockFilter {
-	return syscall.SockFilter{Code: code, K: k}
+	return syscall.SockFilter{Code: uint16(code), K: k}
 }
 
 func bpfJump(code, k, jt, jf uint32) syscall.SockFilter {
-	return syscall.SockFilter{Code: code, K: k, Jt: jt, Jf: jf}
+	return syscall.SockFilter{Code: uint16(code), K: k, Jt: uint8(jt), Jf: uint8(jf)}
 }
 
 func ldWAbs(off uint32) syscall.SockFilter {
