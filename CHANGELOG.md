@@ -7,17 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-beta] - 2026-07-02
+
 ### Added
 * **Isolation v1 policy schema**: `isolation.filesystem.provider` and `isolation.network.mode` replace the flat `isolation.provider`; top-level `runtime` and `prompts` blocks.
 * **Shim-only sandbox path**: `npm`, `node`, `npx`, `yarn`, `pnpm`, and `bunx` run sandboxed by default when `isolation.enabled` is true; use `--no-sandbox` to bypass per invocation.
 * **Embedded egress proxy**: `network.mode: proxy` starts an in-process HTTP CONNECT + SOCKS5 proxy on loopback with policy allowlist and interactive approval for unknown hosts (persisted to `.nvx-policy.json` on approve).
 * **RuntimeProvider execution hooks**: binary resolution and default network allowlists go through `RuntimeProvider` so sandbox code is not Node-specific.
-* **Cross-platform smoke tests**: `scripts/sandbox-smoke.ps1` (Windows) and `scripts/sandbox-smoke.sh` (Linux) in CI.
+* **Cross-platform smoke tests**: filesystem, egress block, and macOS runtime smokes in CI.
+* **`nvx policy init`**: scaffold global and project policy files.
+* **Project bin shims**: sandbox `node_modules/.bin` tools via `.nvx/project-bin/`.
 
 ### Changed
 * **Default isolation**: `isolation.enabled` defaults to `true`; `network.mode` defaults to `proxy`.
 * **Removed legacy CLI**: `nvx sandbox`, `nvx s`, `nvx exec`, and the `nvxs` shim target are removed; shims are the sole sandbox entry point.
 * **Fail-closed Windows native path**: AppContainer setup failure no longer falls back to Low IL alone.
+* **Linux network isolation**: loopback-only network namespace with in-child egress proxy; seccomp blocks UDP and offline TCP.
 
 ### Removed
 * **`--provider` flag**: use `--filesystem-provider=` on shim invocations instead.
