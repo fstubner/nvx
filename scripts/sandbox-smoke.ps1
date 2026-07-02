@@ -14,6 +14,18 @@ $proj = Join-Path $env:USERPROFILE "nvx-smoke-wd"
 New-Item -ItemType Directory -Force -Path $proj | Out-Null
 Set-Location $proj
 
+# AppContainer icacls grants succeed on user-owned ~/.nvx paths; mirror setup-node into versions.
+$ver = & node -p "process.version.slice(1)"
+$nodeSrc = Split-Path (Get-Command node).Source -Parent
+$nvxNode = Join-Path $env:USERPROFILE ".nvx\versions\node\$ver"
+if (-not (Test-Path (Join-Path $nvxNode "node.exe"))) {
+    New-Item -ItemType Directory -Force -Path $nvxNode | Out-Null
+    Copy-Item -Path "$nodeSrc\*" -Destination $nvxNode -Recurse -Force
+}
+@{
+    runtime = @{ default = "node"; versions = @{ node = $ver } }
+} | ConvertTo-Json -Depth 4 | Set-Content -Path ".nvx-policy.json" -Encoding utf8
+
 & $nvx init-shims | Out-Null
 
 Write-Host "Testing sandboxed node via shim..."

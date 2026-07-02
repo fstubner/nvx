@@ -85,6 +85,11 @@ func launchAppContainerProcess(
 		return 1, fmt.Errorf("command line: %w", err)
 	}
 
+	appName, err := syscall.UTF16PtrFromString(cmdPath)
+	if err != nil {
+		return 1, fmt.Errorf("application name: %w", err)
+	}
+
 	var workDirPtr *uint16
 	if workDir != "" {
 		workDirPtr, err = syscall.UTF16PtrFromString(workDir)
@@ -111,7 +116,7 @@ func launchAppContainerProcess(
 	if lowILToken != 0 {
 		createOK, _, createErr = procCreateProcessAsUserW.Call(
 			uintptr(lowILToken),
-			0,
+			uintptr(unsafe.Pointer(appName)),
 			uintptr(unsafe.Pointer(&cmdLineUTF16[0])),
 			0, 0,
 			1, // inherit std handles
@@ -123,7 +128,7 @@ func launchAppContainerProcess(
 		)
 	} else {
 		createOK, _, createErr = procCreateProcessW.Call(
-			0,
+			uintptr(unsafe.Pointer(appName)),
 			uintptr(unsafe.Pointer(&cmdLineUTF16[0])),
 			0, 0,
 			1,
