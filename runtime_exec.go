@@ -1,0 +1,82 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+)
+
+var shimToRuntime = map[string]string{}
+
+func initRuntimeRegistry() {
+	shimToRuntime = map[string]string{}
+	for name, p := range Providers {
+		for _, cmd := range p.ShimCommands() {
+			shimToRuntime[strings.ToLower(cmd)] = name
+		}
+	}
+}
+
+func runtimeForShim(cmdName string) RuntimeProvider {
+	if len(shimToRuntime) == 0 {
+		initRuntimeRegistry()
+	}
+	if rt, ok := shimToRuntime[strings.ToLower(cmdName)]; ok {
+		return Providers[rt]
+	}
+	return Providers["node"]
+}
+
+func resolvePinnedCommandPath(command string, nvxHome string, pinnedVer string, provider RuntimeProvider) string {
+	if provider == nil {
+		provider = runtimeForShim(command)
+	}
+	if pinnedVer == "" {
+		return ""
+	}
+	return provider.ResolveBinary(command, nvxHome, pinnedVer)
+}
+
+func (n NodeProvider) ShimCommands() []string {
+	return []string{"node", "npm", "npx", "yarn", "pnpm", "bunx"}
+}
+
+func (n NodeProvider) DefaultNetworkAllow() []string {
+	return []string{
+		"registry.npmjs.org:443",
+		"api.osv.dev:443",
+	}
+}
+
+func (n NodeProvider) ResolveBinary(cmd string, nvxHome string, pinnedVer string) string {
+	resolvedVer, err := resolveLocalVersion(n, pinnedVer, nvxHome)
+	if err != nil {
+		return ""
+	}
+
+	cmd = strings.ToLower(cmd)
+	var binaryPath string
+	if runtime.GOOS == "windows" {
+		switch cmd {
+		case "node":
+			binaryPath = filepath.Join(nvxHome, "versions", "node", resolvedVer, "node.exe")
+		case "npm":
+			binaryPath = filepath.Join(nvxHome, "versions", "node", resolvedVer, "npm.cmd")
+		case "npx":
+			binaryPath = filepath.Join(nvxHome, "versions", "node", resolvedVer, "npx.cmd")
+		}
+	} else {
+		switch cmd {
+		case "node", "npm", "npx":
+			binaryPath = filepath.Join(nvxHome, "versions", "node", resolvedVer, "bin", cmd)
+		}
+	}
+
+	if binaryPath != "" {
+		if _, err := os.Stat(binaryPath); err == nil {
+			return binaryPath
+		}
+	}
+	return ""
+}
