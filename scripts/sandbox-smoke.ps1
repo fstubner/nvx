@@ -10,7 +10,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     exit 0
 }
 
-$proj = Join-Path $env:TEMP "nvx-smoke-wd"
+$proj = Join-Path $env:USERPROFILE "nvx-smoke-wd"
 New-Item -ItemType Directory -Force -Path $proj | Out-Null
 Set-Location $proj
 
