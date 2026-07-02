@@ -117,7 +117,7 @@ func ResolveVersion(query string, releases []Release) (Release, error) {
 	return Release{}, fmt.Errorf("no release found matching query: %s", query)
 }
 
-// RuntimeProvider defines version management operations for any language runtime
+// RuntimeProvider defines version management and execution hooks for a runtime.
 type RuntimeProvider interface {
 	Name() string
 	Install(version string, nvxHome string) error
@@ -126,6 +126,10 @@ type RuntimeProvider interface {
 	ListRemote() ([]string, error)
 	ListLocal(nvxHome string) ([]string, error)
 	DetectConfig(dir string) (version string, sourceFile string, err error)
+
+	ShimCommands() []string
+	ResolveBinary(cmd string, nvxHome string, pinnedVer string) string
+	DefaultNetworkAllow() []string
 }
 
 // NodeProvider implements RuntimeProvider for Node.js
