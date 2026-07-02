@@ -103,7 +103,7 @@ func TestCleanAndBuildPath(t *testing.T) {
 	}
 	currentPath := strings.Join(currentPathList, string(filepath.ListSeparator))
 
-	res := CleanAndBuildPath(currentPath, nvwHome, targetVersionDir)
+	res := CleanAndBuildPath(currentPath, nvwHome, targetVersionDir, "")
 	parts := filepath.SplitList(res)
 
 	// In nvx, target binary directory and its npm global bin directory should be prepended after shimDir
@@ -382,8 +382,10 @@ func TestMergePolicies(t *testing.T) {
 			TrustedPackages: []string{"trust-a"},
 		},
 		Isolation: IsolationPolicy{
-			Enabled:  false,
-			Provider: "native",
+			Enabled: false,
+			Filesystem: FilesystemPolicy{
+				Provider: "native",
+			},
 		},
 	}
 
@@ -396,8 +398,10 @@ func TestMergePolicies(t *testing.T) {
 			TrustedPackages: []string{"trust-b", "trust-a"},
 		},
 		Isolation: IsolationPolicy{
-			Enabled:  true,
-			Provider: "custom",
+			Enabled: true,
+			Filesystem: FilesystemPolicy{
+				Provider: "custom",
+			},
 		},
 	}
 
@@ -432,8 +436,8 @@ func TestMergePolicies(t *testing.T) {
 	if !merged.Isolation.Enabled {
 		t.Error("expected Isolation.Enabled to be true")
 	}
-	if merged.Isolation.Provider != "custom" {
-		t.Errorf("expected Isolation.Provider to be 'custom', got %q", merged.Isolation.Provider)
+	if merged.Isolation.Filesystem.Provider != "custom" {
+		t.Errorf("expected Isolation.Filesystem.Provider to be 'custom', got %q", merged.Isolation.Filesystem.Provider)
 	}
 }
 
@@ -442,7 +446,7 @@ func TestCleanAndBuildPath_EdgeCases(t *testing.T) {
 	targetVer := `/home/user/.nvx/versions/node/v18.16.0`
 
 	// Test with empty path
-	res := CleanAndBuildPath("", nvHome, targetVer)
+	res := CleanAndBuildPath("", nvHome, targetVer, "")
 	parts := filepath.SplitList(res)
 	if len(parts) < 2 {
 		t.Fatalf("expected at least 2 components in path, got %d", len(parts))
@@ -461,7 +465,7 @@ func TestCleanAndBuildPath_EdgeCases(t *testing.T) {
 		`/usr/bin`,
 	}, string(filepath.ListSeparator))
 
-	res2 := CleanAndBuildPath(duplicatedPath, nvHome, targetVer)
+	res2 := CleanAndBuildPath(duplicatedPath, nvHome, targetVer, "")
 	parts2 := filepath.SplitList(res2)
 	for _, p := range parts2 {
 		if strings.Contains(p, "v20.0.0") {
@@ -515,6 +519,269 @@ func TestCleanupStaleSandboxes(t *testing.T) {
 	// Verify it is gone
 	if _, err := os.Stat(fakeSandboxPath); !os.IsNotExist(err) {
 		t.Error("expected fake sandbox path to be deleted by cleanupStaleSandboxes")
+	}
+}
+
+func TestParseShellArg(t *testing.T) {
+	def := defaultShell()
+	tests := []struct {
+		args     []string
+		expected string
+	}{
+		{[]string{"--shell=bash"}, "bash"},
+		{[]string{"--shell", "zsh"}, "zsh"},
+		{[]string{"bash"}, "bash"},
+		{[]string{"20", "--shell=zsh"}, "zsh"},
+		{[]string{"20", "powershell"}, "powershell"},
+		{[]string{"20"}, def},
+		{nil, def},
+		{[]string{"--shell="}, def},
+	}
+
+	for _, tc := range tests {
+		res := parseShellArg(tc.args)
+		if res != tc.expected {
+			t.Errorf("parseShellArg(%v) = %q, expected %q", tc.args, res, tc.expected)
+		}
+	}
+}
+
+func TestDetectInstallPackages(t *testing.T) {
+	tests := []struct {
+		args     []string
+		expected []string
+	}{
+		{[]string{"install", "lodash"}, []string{"lodash"}},
+		{[]string{"i", "lodash", "express"}, []string{"lodash", "express"}},
+		{[]string{"add", "react"}, []string{"react"}},
+		// Leading flags must not bypass detection
+		{[]string{"--loglevel=error", "install", "evil-pkg"}, []string{"evil-pkg"}},
+		{[]string{"-g", "install", "evil-pkg"}, []string{"evil-pkg"}},
+		// npm typo aliases
+		{[]string{"isntall", "lodash"}, []string{"lodash"}},
+		{[]string{"in", "lodash"}, []string{"lodash"}},
+		// Non-install commands
+		{[]string{"run", "build"}, nil},
+		{[]string{"test"}, nil},
+		{[]string{}, nil},
+		// Install with only flags after (e.g. plain `npm install`)
+		{[]string{"install", "--save-dev"}, nil},
+	}
+
+	for _, tc := range tests {
+		res := detectInstallPackages(tc.args)
+		if len(res) != len(tc.expected) {
+			t.Errorf("detectInstallPackages(%v) = %v, expected %v", tc.args, res, tc.expected)
+			continue
+		}
+		for i := range res {
+			if res[i] != tc.expected[i] {
+				t.Errorf("detectInstallPackages(%v) = %v, expected %v", tc.args, res, tc.expected)
+				break
+			}
+		}
+	}
+}
+
+func TestCleanAndBuildPathProjectTools(t *testing.T) {
+	nvHome := filepath.Join("home", "user", ".nvx")
+	targetVer := filepath.Join(nvHome, "versions", "node", "v20.0.0")
+	projectPrefix := filepath.Join("projects", "app", ".nvx", "npm_global")
+	staleProjectBin := filepath.Join("projects", "old-app", ".nvx", "npm_global", "bin")
+
+	currentPath := strings.Join([]string{
+		filepath.Join("usr", "bin"),
+		staleProjectBin,
+	}, string(filepath.ListSeparator))
+
+	res := CleanAndBuildPath(currentPath, nvHome, targetVer, projectPrefix)
+	parts := filepath.SplitList(res)
+
+	expectedNpmBin := GetNpmPrefixBinDir(projectPrefix)
+	if len(parts) < 3 || parts[1] != expectedNpmBin {
+		t.Errorf("expected project npm prefix bin %q at index 1, got parts: %v", expectedNpmBin, parts)
+	}
+
+	for _, p := range parts {
+		if strings.Contains(p, "old-app") {
+			t.Errorf("expected stale project tools dir to be removed from PATH: %s", res)
+		}
+	}
+}
+
+func TestLoadPolicyProjectTools(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nvx-envpolicy-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	origWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origWd) }()
+
+	nvxHome := filepath.Join(tmpDir, ".nvx")
+	projectDir := filepath.Join(tmpDir, "project")
+	subDir := filepath.Join(projectDir, "sub")
+	if err := os.MkdirAll(nvxHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	policyJSON := `{"environment": {"isolated_tools": true}}`
+	if err := os.WriteFile(filepath.Join(projectDir, ".nvx-policy.json"), []byte(policyJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chdir(subDir); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadPolicy(nvxHome)
+	if err != nil {
+		t.Fatalf("LoadPolicy failed: %v", err)
+	}
+
+	if !loaded.Environment.IsolatedTools {
+		t.Error("expected Environment.IsolatedTools to be true")
+	}
+	// Resolve symlinks to tolerate macOS /var -> /private/var temp paths
+	gotDir, _ := filepath.EvalSymlinks(loaded.ProjectDir)
+	wantDir, _ := filepath.EvalSymlinks(projectDir)
+	if gotDir != wantDir {
+		t.Errorf("expected ProjectDir %q, got %q", wantDir, gotDir)
+	}
+}
+
+func TestLoadPolicyNearestWins(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "nvx-precedence-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	origWd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(origWd) }()
+
+	nvxHome := filepath.Join(tmpDir, ".nvx")
+	parentDir := filepath.Join(tmpDir, "project")
+	childDir := filepath.Join(parentDir, "sub")
+	if err := os.MkdirAll(nvxHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(childDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Parent sets max_distance 3, child overrides with 1: the policy nearest
+	// to the working directory must win.
+	parentPolicy := `{"typosquatting": {"enabled": true, "max_distance": 3}}`
+	childPolicy := `{"typosquatting": {"enabled": true, "max_distance": 1}}`
+	if err := os.WriteFile(filepath.Join(parentDir, ".nvx-policy.json"), []byte(parentPolicy), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(childDir, ".nvx-policy.json"), []byte(childPolicy), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chdir(childDir); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadPolicy(nvxHome)
+	if err != nil {
+		t.Fatalf("LoadPolicy failed: %v", err)
+	}
+
+	if loaded.Typosquatting.MaxDistance != 1 {
+		t.Errorf("expected child policy MaxDistance 1 to win over parent, got %d", loaded.Typosquatting.MaxDistance)
+	}
+}
+
+func TestExtractQuotedStrings(t *testing.T) {
+	src := `export const top = [
+  'lodash',
+  'react-dom',
+  "@types/node",
+  'UPPER_INVALID',
+  '.hidden',
+]
+`
+	list := extractQuotedStrings(src, 100)
+	expected := []string{"lodash", "react-dom", "@types/node"}
+	if len(list) != len(expected) {
+		t.Fatalf("expected %v, got %v", expected, list)
+	}
+	for i := range expected {
+		if list[i] != expected[i] {
+			t.Errorf("expected %v, got %v", expected, list)
+			break
+		}
+	}
+
+	// Limit is respected
+	limited := extractQuotedStrings(src, 2)
+	if len(limited) != 2 {
+		t.Errorf("expected limit of 2 entries, got %d", len(limited))
+	}
+}
+
+func TestBuildSeatbeltProfile(t *testing.T) {
+	netCtx := NetworkLaunchContext{Mode: "proxy", HTTPProxyPort: 8080}
+	profile := buildSeatbeltProfile(netCtx, "/guest/home", "/work/dir")
+	for _, expected := range []string{
+		"(version 1)",
+		"(allow default)",
+		"(deny file-write*)",
+		"(deny network*)",
+		`(subpath "/guest/home")`,
+		`(subpath "/work/dir")`,
+		`(subpath "/private/tmp")`,
+		`(allow network-outbound (remote tcp "127.0.0.1:8080"))`,
+	} {
+		if !strings.Contains(profile, expected) {
+			t.Errorf("expected profile to contain %q, got:\n%s", expected, profile)
+		}
+	}
+}
+
+func TestResolveWslcNodeImage(t *testing.T) {
+	nvxHome := filepath.Join("home", "user", ".nvx")
+
+	tests := []struct {
+		pinned   string
+		expected string
+	}{
+		{"v20.11.0", "node:20.11.0"},
+		{"20", "node:20"},
+		{"", "node:latest"},
+	}
+
+	for _, tc := range tests {
+		res := resolveWslcNodeImage(nvxHome, tc.pinned)
+		if res != tc.expected {
+			t.Errorf("resolveWslcNodeImage(pinned=%q) = %q, expected %q", tc.pinned, res, tc.expected)
+		}
+	}
+}
+
+func TestContainerSafeEnv(t *testing.T) {
+	env := containerSafeEnv()
+	if len(env) == 0 {
+		t.Fatal("expected non-empty container env allowlist")
+	}
+	found := false
+	for _, e := range env {
+		if e == "NVX_SANDBOX=1" {
+			found = true
+		}
+		if strings.HasPrefix(strings.ToUpper(e), "AWS_") || strings.HasPrefix(strings.ToUpper(e), "GITHUB_") {
+			t.Errorf("container env must not include host secrets, got %q", e)
+		}
+	}
+	if !found {
+		t.Error("expected NVX_SANDBOX=1 in container env")
 	}
 }
 
