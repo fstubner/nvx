@@ -10,8 +10,20 @@ $proj = Join-Path $env:USERPROFILE "nvx-egress-smoke"
 New-Item -ItemType Directory -Force -Path $proj | Out-Null
 Set-Location $proj
 
+$ver = & node -p "process.version.slice(1)"
+$nodeSrc = Split-Path (Get-Command node).Source -Parent
+$nvxNode = Join-Path $env:USERPROFILE ".nvx\versions\node\$ver"
+if (-not (Test-Path (Join-Path $nvxNode "node.exe"))) {
+    New-Item -ItemType Directory -Force -Path $nvxNode | Out-Null
+    Copy-Item -Path "$nodeSrc\*" -Destination $nvxNode -Recurse -Force
+}
+
 @'
 {
+  "runtime": {
+    "default": "node",
+    "versions": { "node": "PLACEHOLDER" }
+  },
   "isolation": {
     "enabled": true,
     "network": {
@@ -21,7 +33,7 @@ Set-Location $proj
     }
   }
 }
-'@ | Set-Content -Path ".nvx-policy.json" -Encoding utf8
+'@.Replace("PLACEHOLDER", $ver) | Set-Content -Path ".nvx-policy.json" -Encoding utf8
 
 & $nvx init-shims | Out-Null
 

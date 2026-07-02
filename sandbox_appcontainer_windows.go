@@ -121,9 +121,6 @@ func ensureAppContainerCommand(sid uintptr, nvxHome, cmdPath string) (string, er
 	if err := grantAppContainerPathReadExecTree(sid, dir); err != nil {
 		return "", err
 	}
-	if err := labelLowIntegrity(dir); err != nil {
-		return "", fmt.Errorf("low integrity label for runtime %q: %w", dir, err)
-	}
 	if dir != usePath {
 		if err := grantAppContainerPathReadExec(sid, usePath); err != nil {
 			return "", err
