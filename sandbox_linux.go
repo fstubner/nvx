@@ -8,9 +8,10 @@ import (
 	"syscall"
 )
 
-// applySandboxIsolation applies Unix-specific process isolation on Linux using namespaces.
+// applySandboxIsolation on Linux is handled by the Landlock child path.
 func applySandboxIsolation(cmd *exec.Cmd, guestHome string) {
-	applyLinuxNamespaces(cmd, guestHome)
+	_ = cmd
+	_ = guestHome
 }
 
 // applyLinuxNamespaces configures the process with Linux kernel namespaces:
