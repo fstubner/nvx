@@ -106,6 +106,7 @@ func launchAppContainerProcess(
 	creationFlags := uintptr(
 		EXTENDED_STARTUPINFO_PRESENT |
 			CREATE_UNICODE_ENVIRONMENT |
+			CREATE_BREAKAWAY_FROM_JOB |
 			syscall.CREATE_NEW_PROCESS_GROUP,
 	)
 
