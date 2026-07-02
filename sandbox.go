@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -21,6 +22,8 @@ type SandboxConfig struct {
 	Args []string
 	// WorkDir is the working directory for the sandboxed process (defaults to cwd)
 	WorkDir string
+	// FilesystemProvider overrides isolation.filesystem.provider from policy.
+	FilesystemProvider string
 }
 
 // sensitiveEnvPrefixes are environment variable prefixes that will be scrubbed
@@ -60,6 +63,10 @@ var windowsAllowedEnvKeys = map[string]bool{
 	"TEMP":              true,
 	"TMP":               true,
 	"WINDIR":            true,
+	"HTTP_PROXY":        true,
+	"HTTPS_PROXY":       true,
+	"ALL_PROXY":         true,
+	"NO_PROXY":          true,
 	"PROCESSOR_ARCHITECTURE": true,
 	"NUMBER_OF_PROCESSORS":   true,
 	"OS":                true,
@@ -75,6 +82,10 @@ var unixAllowedEnvKeys = map[string]bool{
 	"LANG":   true,
 	"LC_ALL": true,
 	"USER":   true,
+	"HTTP_PROXY":  true,
+	"HTTPS_PROXY": true,
+	"ALL_PROXY":   true,
+	"NO_PROXY":    true,
 }
 
 // generateSandboxID creates a short random identifier for an ephemeral sandbox session.
@@ -116,8 +127,9 @@ func cleanupGuestProfile(nvxHome string, sandboxID string) {
 }
 
 // scrubEnvironment filters the current process environment, removing sensitive
-// variables and only allowing known-safe keys through. It also redirects HOME /
-// USERPROFILE to the guest profile directory.
+// variables and only allowing known-safe keys through. When guestHome is
+// non-empty, home- and temp-related variables are redirected into the guest
+// profile; providers with their own filesystem view (e.g. Docker) pass "".
 func scrubEnvironment(guestHome string) []string {
 	var allowed map[string]bool
 	if runtime.GOOS == "windows" {
@@ -152,75 +164,65 @@ func scrubEnvironment(guestHome string) []string {
 			continue
 		}
 
+		// Temp dirs are redirected into the guest profile below so a
+		// low-privilege sandboxed process can still write scratch files.
+		if guestHome != "" && (keyUpper == "TEMP" || keyUpper == "TMP" || keyUpper == "TMPDIR") {
+			continue
+		}
+
 		cleanEnv = append(cleanEnv, envVar)
 	}
 
-	// Redirect home-related variables to the guest profile
-	if runtime.GOOS == "windows" {
-		cleanEnv = append(cleanEnv,
-			fmt.Sprintf("USERPROFILE=%s", guestHome),
-			fmt.Sprintf("HOMEPATH=%s", guestHome),
-			fmt.Sprintf("APPDATA=%s", filepath.Join(guestHome, "AppData", "Roaming")),
-			fmt.Sprintf("LOCALAPPDATA=%s", filepath.Join(guestHome, "AppData", "Local")),
-		)
-		// Create the AppData directories
-		_ = os.MkdirAll(filepath.Join(guestHome, "AppData", "Roaming"), 0755)
-		_ = os.MkdirAll(filepath.Join(guestHome, "AppData", "Local"), 0755)
-	} else {
-		cleanEnv = append(cleanEnv,
-			fmt.Sprintf("HOME=%s", guestHome),
-			fmt.Sprintf("XDG_CONFIG_HOME=%s", filepath.Join(guestHome, ".config")),
-			fmt.Sprintf("XDG_CACHE_HOME=%s", filepath.Join(guestHome, ".cache")),
-			fmt.Sprintf("XDG_DATA_HOME=%s", filepath.Join(guestHome, ".local", "share")),
-		)
-		_ = os.MkdirAll(filepath.Join(guestHome, ".local", "share"), 0755)
+	// Redirect home- and temp-related variables to the guest profile
+	if guestHome != "" {
+		guestTmp := filepath.Join(guestHome, "tmp")
+		if runtime.GOOS == "windows" {
+			cleanEnv = append(cleanEnv,
+				fmt.Sprintf("USERPROFILE=%s", guestHome),
+				fmt.Sprintf("HOMEDRIVE=%s", filepath.VolumeName(guestHome)),
+				fmt.Sprintf("HOMEPATH=%s", strings.TrimPrefix(guestHome, filepath.VolumeName(guestHome))),
+				fmt.Sprintf("APPDATA=%s", filepath.Join(guestHome, "AppData", "Roaming")),
+				fmt.Sprintf("LOCALAPPDATA=%s", filepath.Join(guestHome, "AppData", "Local")),
+				fmt.Sprintf("TEMP=%s", guestTmp),
+				fmt.Sprintf("TMP=%s", guestTmp),
+			)
+			// Create the AppData directories
+			_ = os.MkdirAll(filepath.Join(guestHome, "AppData", "Roaming"), 0755)
+			_ = os.MkdirAll(filepath.Join(guestHome, "AppData", "Local"), 0755)
+		} else {
+			cleanEnv = append(cleanEnv,
+				fmt.Sprintf("HOME=%s", guestHome),
+				fmt.Sprintf("XDG_CONFIG_HOME=%s", filepath.Join(guestHome, ".config")),
+				fmt.Sprintf("XDG_CACHE_HOME=%s", filepath.Join(guestHome, ".cache")),
+				fmt.Sprintf("XDG_DATA_HOME=%s", filepath.Join(guestHome, ".local", "share")),
+				fmt.Sprintf("TMPDIR=%s", guestTmp),
+			)
+			_ = os.MkdirAll(filepath.Join(guestHome, ".local", "share"), 0755)
+		}
 	}
 
-	// Set a sandbox indicator so child processes can detect they're sandboxed
+	// Sandbox depth indicator for nested invocations (internal).
 	cleanEnv = append(cleanEnv, "NVX_SANDBOX=1")
 
 	return cleanEnv
 }
 
+// NetworkLaunchContext carries egress proxy endpoints for OS network rules.
+type NetworkLaunchContext struct {
+	Mode           string
+	HTTPProxyHost  string
+	HTTPProxyPort  uint16
+	SOCKSProxyHost string
+	SOCKSProxyPort uint16
+}
+
 // runSandbox is the main entry point for executing a command inside the nvx sandbox.
 // It creates an ephemeral guest profile, scrubs the environment, applies OS-level
 // isolation primitives, runs the command, and cleans up afterward.
-// resolvePinnedCommandPath resolves standard node commands (node/npm/npx) to their pinned version binaries
-func resolvePinnedCommandPath(command string, nvxHome string, pinnedVer string) string {
-	if pinnedVer == "" {
-		return ""
-	}
-	provider := Providers["node"]
-	resolvedVer, err := resolveLocalVersion(provider, pinnedVer, nvxHome)
-	if err != nil {
-		return ""
-	}
-
-	var binaryPath string
-	if runtime.GOOS == "windows" {
-		if command == "node" {
-			binaryPath = filepath.Join(nvxHome, "versions", "node", resolvedVer, "node.exe")
-		} else if command == "npm" {
-			binaryPath = filepath.Join(nvxHome, "versions", "node", resolvedVer, "npm.cmd")
-		} else if command == "npx" {
-			binaryPath = filepath.Join(nvxHome, "versions", "node", resolvedVer, "npx.cmd")
-		}
-	} else {
-		if command == "node" || command == "npm" || command == "npx" {
-			binaryPath = filepath.Join(nvxHome, "versions", "node", resolvedVer, "bin", command)
-		}
-	}
-
-	if binaryPath != "" {
-		if _, err := os.Stat(binaryPath); err == nil {
-			return binaryPath
-		}
-	}
-	return ""
-}
+// resolvePinnedCommandPath is defined in runtime_exec.go.
 
 // runDockerSandbox runs the execution request inside a Docker container
-func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string) int {
+func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string, egress *EgressProxy) int {
 	nodeVer := pinnedVer
 	if nodeVer == "" {
 		nodeVer = getActiveShellVersion(nvxHome)
@@ -252,6 +254,7 @@ func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string) in
 
 	// Scrub and carry over safe environment variables
 	cleanEnv := scrubEnvironment("")
+	cleanEnv = applyProxyEnv(cleanEnv, egress)
 	for _, envVar := range cleanEnv {
 		parts := strings.SplitN(envVar, "=", 2)
 		if len(parts) == 2 && parts[0] != "PATH" && parts[0] != "NVX_SANDBOX" {
@@ -284,84 +287,87 @@ func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string) in
 // It creates an ephemeral guest profile, scrubs the environment, applies OS-level
 // isolation primitives, runs the command, and cleans up afterward.
 func runSandbox(config SandboxConfig) int {
+	if inSandboxSession() {
+		return execBareCommand(config)
+	}
+
+	enterSandboxSession()
+	defer leaveSandboxSession()
+
 	policy, err := LoadPolicy(config.NvxHome)
 	if err != nil {
-		LogWarn("Failed to load policy: %v. Defaulting to native provider.", err)
+		LogWarn("Failed to load policy: %v", err)
 	}
 
-	provider := "native"
-	if policy.Isolation.Enabled && policy.Isolation.Provider != "" {
-		provider = strings.ToLower(policy.Isolation.Provider)
+	provider := policy.FilesystemProvider()
+	if config.FilesystemProvider != "" {
+		provider = strings.ToLower(config.FilesystemProvider)
 	}
 
-	if provider == "docker" {
-		return runDockerSandbox(config, config.NvxHome, policy.Isolation.Runtime.Version)
-	}
+	rt := runtimeForShim(config.Command)
+	pinnedVer := policy.PinnedRuntimeVersion(rt.Name())
 
-	sandboxID, err := generateSandboxID()
+	ctx := context.Background()
+	egress, err := startEgressProxy(ctx, policy, rt)
 	if err != nil {
-		LogError("Sandbox initialization failed: %v", err)
+		LogError("Egress proxy failed: %v", err)
 		return 1
 	}
+	defer egress.Close()
 
-	LogInfo("Sandbox session: %s", sandboxID)
+	netCtx := NetworkLaunchContext{Mode: policy.Isolation.Network.Mode}
+	if egress != nil {
+		netCtx.HTTPProxyHost, netCtx.HTTPProxyPort = egress.HTTPListenHostPort()
+		netCtx.SOCKSProxyHost, netCtx.SOCKSProxyPort = egress.SOCKSListenHostPort()
+	}
 
-	// 1. Create ephemeral guest profile
-	guestHome, err := createGuestProfile(config.NvxHome, sandboxID)
-	if err != nil {
-		LogError("Failed to create sandbox guest profile: %v", err)
+	switch provider {
+	case "native":
+		return runNativeSandbox(config, policy, egress, netCtx)
+	case "docker":
+		return runDockerSandbox(config, config.NvxHome, pinnedVer, egress)
+	case "wslc", "wsl-container", "container":
+		return runWslcSandbox(config, config.NvxHome, pinnedVer)
+	case "wsl", "wsl-distro":
+		return runWslSandbox(config)
+	case "sandbox-exec", "seatbelt":
+		return runSeatbeltSandbox(config, netCtx)
+	case "systemd-nspawn", "nspawn":
+		return runNspawnSandbox(config)
+	default:
+		LogError("Unknown filesystem provider %q. Supported: native, docker, wslc, wsl, sandbox-exec, systemd-nspawn.", provider)
 		return 1
 	}
-	defer cleanupGuestProfile(config.NvxHome, sandboxID)
+}
 
-	// 2. Scrub environment
-	cleanEnv := scrubEnvironment(guestHome)
-
-	// 3. Resolve the command — if it's a bare name, look it up on PATH
-	cmdPath := ""
-	if policy.Isolation.Runtime.Version != "" {
-		if policy.Isolation.Runtime.Command == "" || strings.ToLower(config.Command) == strings.ToLower(policy.Isolation.Runtime.Command) {
-			cmdPath = resolvePinnedCommandPath(config.Command, config.NvxHome, policy.Isolation.Runtime.Version)
-		}
+func execBareCommand(config SandboxConfig) int {
+	rt := runtimeForShim(config.Command)
+	nodeVer := getActiveShellVersion(config.NvxHome)
+	if nodeVer == "" {
+		nodeVer = getGlobalDefaultVersion(config.NvxHome)
 	}
-	if cmdPath == "" {
+	binaryPath := resolvePinnedCommandPath(config.Command, config.NvxHome, nodeVer, rt)
+	if binaryPath == "" {
 		var err error
-		cmdPath, err = exec.LookPath(config.Command)
+		binaryPath, err = exec.LookPath(config.Command)
 		if err != nil {
 			LogError("Command not found: %s", config.Command)
 			return 127
 		}
 	}
-
-
-
-	// 4. Build the exec.Cmd
-	cmd := exec.Command(cmdPath, config.Args...)
-	cmd.Env = cleanEnv
+	cmd := exec.Command(binaryPath, config.Args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-
 	if config.WorkDir != "" {
 		cmd.Dir = config.WorkDir
 	}
-
-	// 5. Apply platform-specific isolation
-	applySandboxIsolation(cmd, guestHome)
-	defer closeTokenHandle(cmd)
-
-	// 6. Execute
-
-	LogInfo("Running in sandbox: %s %s", config.Command, strings.Join(config.Args, " "))
-
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode()
 		}
-		LogError("Sandbox execution failed: %v", err)
 		return 1
 	}
-
 	return 0
 }
 
