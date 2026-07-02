@@ -16,8 +16,9 @@ Set-Location $proj
 
 # AppContainer icacls grants succeed on user-owned ~/.nvx paths; mirror setup-node into versions.
 $ver = & node -p "process.version.slice(1)"
+$nvxVer = "v$ver"
 $nodeSrc = Split-Path (Get-Command node).Source -Parent
-$nvxNode = Join-Path $env:USERPROFILE ".nvx\versions\node\$ver"
+$nvxNode = Join-Path $env:USERPROFILE ".nvx\versions\node\$nvxVer"
 if (-not (Test-Path (Join-Path $nvxNode "node.exe"))) {
     New-Item -ItemType Directory -Force -Path $nvxNode | Out-Null
     Copy-Item -Path "$nodeSrc\*" -Destination $nvxNode -Recurse -Force
