@@ -85,6 +85,7 @@ Commands:
   auto [--shell=<type>]  Auto-switch version based on .nvmrc / .node-version / package.json
   verify-install <pkgs>  Verify package safety before installing (called by wrappers)
   init-shims             Generate PATH shims in ~/.nvx/bin
+  policy init            Create default policy files (--global, --project, --force)
   cleanup                Remove stale sandbox sessions from previous runs
   version, -v            Print version info
 
@@ -105,6 +106,8 @@ node server.js
 ```
 
 Use `--no-sandbox` on a shim invocation to bypass isolation for one command.
+
+After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh **project bin shims** in `.nvx/project-bin/`. These wrap `node_modules/.bin` tools so local CLIs (e.g. `vite`, `eslint`) are sandboxed too.
 
 ### Non-Interactive Use (CI)
 
@@ -198,9 +201,9 @@ When running in the sandbox:
 |-----------|------------------|----------------|----------------|
 | Host profile write blocked | Yes (AppContainer + Low IL) | Yes (Landlock) | Yes (Seatbelt) |
 | Workdir write allowed | Yes | Yes | Yes |
-| Egress via policy proxy | Yes (AppContainer blocks WAN; loopback to parent proxy) | Yes (parent proxy; seccomp blocks new inet sockets in offline/loopback) | Yes (Seatbelt `(deny network*)` + loopback proxy ports) |
-| Raw TCP bypass blocked at OS | Yes (no internet capability) | Partial (proxy for HTTP/SOCKS stacks; raw connect not filtered by seccomp) | Yes (Seatbelt) |
-| Fail-closed if FS primitive missing | Yes | Yes (kernel 5.13+) | Yes |
+| Egress via policy proxy | Yes (AppContainer + loopback proxy) | Yes (loopback netns + in-child proxy) | Yes (Seatbelt + loopback proxy) |
+| Raw TCP/UDP bypass blocked at OS | Yes | Yes (netns + seccomp UDP deny) | Yes (Seatbelt `(deny network*)`) |
+| Fail-closed if FS/network primitive missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes |
 
 ---
 
