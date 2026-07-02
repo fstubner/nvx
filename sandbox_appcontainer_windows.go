@@ -108,6 +108,7 @@ func ensureAppContainerCommand(sid uintptr, nvxHome, cmdPath string) (string, er
 		return "", fmt.Errorf("empty command path")
 	}
 	cmdPath = filepath.Clean(cmdPath)
+	cmdPath = preferWindowsRuntimeExe(cmdPath)
 	usePath := cmdPath
 	if !isNvxManagedRuntimePath(nvxHome, cmdPath) {
 		staged, err := stageAppContainerExecutable(nvxHome, cmdPath)

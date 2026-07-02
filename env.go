@@ -167,6 +167,36 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 	return strings.Join(cleaned, string(filepath.ListSeparator))
 }
 
+// lookPathSkippingNvxShims resolves cmdName on PATH with ~/.nvx/bin removed so
+// shim wrappers (node.cmd) are not mistaken for the real runtime binary.
+func lookPathSkippingNvxShims(cmdName, nvxHome string) (string, error) {
+	shimDir := filepath.Join(nvxHome, "bin")
+	pathEnv := os.Getenv("PATH")
+	var filtered []string
+	for _, part := range filepath.SplitList(pathEnv) {
+		if strings.EqualFold(filepath.Clean(part), filepath.Clean(shimDir)) {
+			continue
+		}
+		filtered = append(filtered, part)
+	}
+	restore := pathEnv
+	os.Setenv("PATH", strings.Join(filtered, string(filepath.ListSeparator)))
+	defer os.Setenv("PATH", restore)
+	return exec.LookPath(cmdName)
+}
+
+// preferWindowsRuntimeExe returns the PE executable for a Windows runtime shim path.
+func preferWindowsRuntimeExe(cmdPath string) string {
+	if runtime.GOOS != "windows" || !strings.EqualFold(filepath.Ext(cmdPath), ".cmd") {
+		return cmdPath
+	}
+	exePath := strings.TrimSuffix(cmdPath, filepath.Ext(cmdPath)) + ".exe"
+	if _, err := os.Stat(exePath); err == nil {
+		return exePath
+	}
+	return cmdPath
+}
+
 func generateShims(nvxHome string) {
 	shimDir := filepath.Join(nvxHome, "bin")
 	os.MkdirAll(shimDir, 0755)
@@ -270,25 +300,14 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 		}
 	}
 	if binaryPath == "" {
-		shimDir := filepath.Join(nvxHome, "bin")
-		pathEnv := os.Getenv("PATH")
-		var newPathParts []string
-		for _, part := range filepath.SplitList(pathEnv) {
-			if strings.EqualFold(filepath.Clean(part), filepath.Clean(shimDir)) {
-				continue
-			}
-			newPathParts = append(newPathParts, part)
-		}
-		newPath := strings.Join(newPathParts, string(filepath.ListSeparator))
-		os.Setenv("PATH", newPath)
-
 		var err error
-		binaryPath, err = exec.LookPath(cmdName)
+		binaryPath, err = lookPathSkippingNvxShims(cmdName, nvxHome)
 		if err != nil {
 			LogError("Could not find real executable for %s", cmdName)
 			return 1
 		}
 	}
+	binaryPath = preferWindowsRuntimeExe(binaryPath)
 
 	cmd := exec.Command(binaryPath, args...)
 	cmd.Stdin = os.Stdin
