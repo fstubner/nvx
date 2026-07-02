@@ -27,8 +27,8 @@ var (
 )
 
 // prepareAppContainerFilesystem grants the AppContainer SID write access to
-// guestHome and workDir and applies Low integrity labels so stacked Low IL
-// tokens can write there as well.
+// guestHome and workDir. Only guestHome gets a Low integrity label — workDir
+// stays default integrity so a medium-IL AppContainer child can use it as cwd.
 func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) error {
 	for _, dir := range []string{guestHome, workDir} {
 		if dir == "" {
@@ -37,8 +37,10 @@ func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) error
 		if err := grantAppContainerPath(sid, dir); err != nil {
 			return err
 		}
-		if err := labelLowIntegrity(dir); err != nil {
-			return fmt.Errorf("integrity label for %q: %w", dir, err)
+	}
+	if guestHome != "" {
+		if err := labelLowIntegrity(guestHome); err != nil {
+			return fmt.Errorf("integrity label for %q: %w", guestHome, err)
 		}
 	}
 	return nil
