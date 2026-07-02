@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -91,6 +92,37 @@ func grantAppContainerPath(sid uintptr, path string) error {
 	out, err := exec.Command("icacls", path, "/grant", grantArg, "/t", "/c", "/q").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("icacls grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// grantAppContainerExecutable grants read/execute on the sandboxed binary and its directory.
+func grantAppContainerExecutable(sid uintptr, cmdPath string) error {
+	if cmdPath == "" {
+		return nil
+	}
+	cmdPath = filepath.Clean(cmdPath)
+	dir := filepath.Dir(cmdPath)
+	if err := grantAppContainerPathReadExec(sid, dir); err != nil {
+		return err
+	}
+	if dir != cmdPath {
+		if err := grantAppContainerPathReadExec(sid, cmdPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func grantAppContainerPathReadExec(sid uintptr, path string) error {
+	sidStr, err := appContainerSidToString(sid)
+	if err != nil {
+		return err
+	}
+	grantArg := fmt.Sprintf("*%s:(RX)", sidStr)
+	out, err := exec.Command("icacls", path, "/grant", grantArg, "/c", "/q").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("icacls RX grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

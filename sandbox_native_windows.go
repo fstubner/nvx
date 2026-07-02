@@ -21,6 +21,10 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		LogError("AppContainer filesystem setup failed: %v", err)
 		return 1
 	}
+	if err := grantAppContainerExecutable(sid, cmdPath); err != nil {
+		LogError("AppContainer executable access failed: %v", err)
+		return 1
+	}
 
 	lowToken, err := createLowIntegrityPrimaryToken()
 	if err != nil {
