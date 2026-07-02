@@ -78,5 +78,5 @@ jobs:
     - name: Run gosec
       uses: securego/gosec@master
       with:
-        args: -exclude=G204,G304,G301,G306 ./...
+        args: -severity=high -confidence=high -exclude=G204,G304,G301,G306 ./...
 

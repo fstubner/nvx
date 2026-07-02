@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -91,6 +92,9 @@ func TestCleanEngineRange(t *testing.T) {
 }
 
 func TestCleanAndBuildPath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("uses Windows-style PATH entries")
+	}
 	nvwHome := `C:\Users\User\.nvw`
 	versionsDir := filepath.Join(nvwHome, "versions")
 	targetVersionDir := filepath.Join(versionsDir, "v18.16.0")
