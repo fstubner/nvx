@@ -47,7 +47,7 @@ func shouldSandbox(cmdName string, policy Policy, opts shimOptions) bool {
 			return true
 		}
 	}
-	return false
+	return isProjectBinCommand(cmdName)
 }
 
 func allShimCommands() []string {

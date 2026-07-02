@@ -151,8 +151,18 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 		cleaned = append([]string{npmBinDir, binDir}, cleaned...)
 	}
 
-	// Always ensure shim directory is at the absolute front
-	cleaned = append([]string{shimDir}, cleaned...)
+	// Global nvx shims first, then project node_modules/.bin shims, then runtime paths.
+	var prefix []string
+	prefix = append(prefix, shimDir)
+	if cwd, err := os.Getwd(); err == nil {
+		if root := findProjectRoot(cwd); root != "" {
+			pb := projectBinDir(root)
+			if _, err := os.Stat(pb); err == nil {
+				prefix = append(prefix, pb)
+			}
+		}
+	}
+	cleaned = append(prefix, cleaned...)
 
 	return strings.Join(cleaned, string(filepath.ListSeparator))
 }
@@ -229,6 +239,13 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 		if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
 			runVerifyInstall(pkgs, nvxHome)
 		}
+		if cwd, err := os.Getwd(); err == nil {
+			if root := findProjectRoot(cwd); root != "" {
+				if err := generateProjectBinShims(root, nvxHome); err != nil {
+					LogWarn("Failed to refresh project bin shims: %v", err)
+				}
+			}
+		}
 	}
 
 	if shouldSandbox(cmdName, policy, opts) {
@@ -247,6 +264,11 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 	}
 
 	binaryPath := resolvePinnedCommandPath(cmdName, nvxHome, nodeVer, rt)
+	if binaryPath == "" {
+		if p := resolveProjectBinCommand(cmdName); p != "" {
+			binaryPath = p
+		}
+	}
 	if binaryPath == "" {
 		shimDir := filepath.Join(nvxHome, "bin")
 		pathEnv := os.Getenv("PATH")
