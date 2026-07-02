@@ -73,7 +73,7 @@ func launchAppContainerProcess(
 
 	var si startupInfoEx
 	si.Cb = uint32(unsafe.Sizeof(si))
-	si.Flags = STARTF_USESTDHANDLES
+	si.Flags = 0
 	si.StdInput = stdin
 	si.StdOutput = stdout
 	si.StdErr = stderr
@@ -120,7 +120,7 @@ func launchAppContainerProcess(
 			uintptr(unsafe.Pointer(appName)),
 			uintptr(unsafe.Pointer(&cmdLineUTF16[0])),
 			0, 0,
-			1, // inherit std handles
+			0, // do not inherit std handles — GHA console handles may be non-inheritable
 			creationFlags,
 			uintptr(unsafe.Pointer(envBlock)),
 			uintptr(unsafe.Pointer(workDirPtr)),
@@ -132,7 +132,7 @@ func launchAppContainerProcess(
 			uintptr(unsafe.Pointer(appName)),
 			uintptr(unsafe.Pointer(&cmdLineUTF16[0])),
 			0, 0,
-			1,
+			0,
 			creationFlags,
 			uintptr(unsafe.Pointer(envBlock)),
 			uintptr(unsafe.Pointer(workDirPtr)),
