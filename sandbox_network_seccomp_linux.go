@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	seccompSetModeFilter  = 1
+	seccompSetModeFilter   = 1
 	seccompFilterFlagTSync = 1
 
 	bpfLd  = 0x00
@@ -24,44 +24,42 @@ const (
 	seccompRetAllow = 0x7fff0000
 	seccompRetErrno = 0x00050000 + 1 // EPERM
 
-	afInet  = 2
-	afInet6 = 10
+	afInet      = 2
+	afInet6     = 10
+	sockDgram   = 2
+	sockStream  = 1
 
 	sdOffsetNr    = 0
 	sdOffsetArgs0 = 16
+	sdOffsetArgs1 = 24
 )
 
 // applyLinuxNetworkSeccomp installs seccomp filters for network isolation.
-// Basic seccomp cannot inspect connect() destination addresses; proxy mode
-// relies on the parent egress proxy for HTTP(S) stacks. Offline/loopback
-// modes block connect() and new IPv4/IPv6 socket creation.
+// Loopback-only network namespaces block WAN TCP/UDP; seccomp adds defense in
+// depth by denying inet connect and UDP socket creation in restricted modes.
 func applyLinuxNetworkSeccomp(networkMode string, proxyPort int) error {
 	mode := strings.ToLower(networkMode)
 	switch mode {
 	case "open", "":
 		return nil
 	case "offline", "loopback":
-		return installInetSocketBlockSeccomp()
+		return installSeccompFilter(buildOfflineNetworkFilter())
 	case "proxy":
 		_ = proxyPort
-		// Compliant HTTP(S) stacks use HTTP_PROXY; raw TCP bypass is documented in README.
-		return nil
+		return installSeccompFilter(buildProxyNetworkFilter())
 	default:
 		return nil
 	}
 }
 
-func installInetSocketBlockSeccomp() error {
+func installSeccompFilter(filter []syscall.SockFilter) error {
 	if err := prctlNoNewPrivs(); err != nil {
 		return fmt.Errorf("prctl NO_NEW_PRIVS: %w", err)
 	}
-
-	filter := buildInetSocketBlockFilter()
 	prog := syscall.SockFprog{
 		Len:    uint16(len(filter)),
 		Filter: &filter[0],
 	}
-
 	_, _, errno := syscall.Syscall(
 		syscall.SYS_SECCOMP,
 		seccompSetModeFilter,
@@ -91,14 +89,14 @@ func bpfJump(code, k, jt, jf uint32) syscall.SockFilter {
 	return syscall.SockFilter{Code: code, K: k, Jt: jt, Jf: jf}
 }
 
-// buildInetSocketBlockFilter denies connect() and socket(AF_INET|AF_INET6).
-func buildInetSocketBlockFilter() []syscall.SockFilter {
-	ldWAbs := func(off uint32) syscall.SockFilter {
-		return bpfStmt(bpfLd|bpfW|bpfAbs, off)
-	}
+func ldWAbs(off uint32) syscall.SockFilter {
+	return bpfStmt(bpfLd|bpfW|bpfAbs, off)
+}
+
+// buildOfflineNetworkFilter denies connect() and all IPv4/IPv6 sockets (TCP and UDP).
+func buildOfflineNetworkFilter() []syscall.SockFilter {
 	retAllow := bpfStmt(bpfRet|bpfK, seccompRetAllow)
 	retErrno := bpfStmt(bpfRet|bpfK, seccompRetErrno)
-
 	connect := uint32(syscall.SYS_CONNECT)
 	socket := uint32(syscall.SYS_SOCKET)
 
@@ -113,6 +111,29 @@ func buildInetSocketBlockFilter() []syscall.SockFilter {
 		retErrno,
 		ldWAbs(sdOffsetArgs0),
 		bpfJump(bpfJmp|bpfJeq|bpfK, afInet6, 0, 1),
+		retErrno,
+		retAllow,
+	}
+}
+
+// buildProxyNetworkFilter denies IPv4/IPv6 UDP socket creation; TCP is allowed
+// for loopback proxy use while the network namespace blocks non-loopback routes.
+func buildProxyNetworkFilter() []syscall.SockFilter {
+	retAllow := bpfStmt(bpfRet|bpfK, seccompRetAllow)
+	retErrno := bpfStmt(bpfRet|bpfK, seccompRetErrno)
+	socket := uint32(syscall.SYS_SOCKET)
+
+	return []syscall.SockFilter{
+		ldWAbs(sdOffsetNr),
+		bpfJump(bpfJmp|bpfJeq|bpfK, socket, 0, 9),
+		ldWAbs(sdOffsetArgs0),
+		bpfJump(bpfJmp|bpfJeq|bpfK, afInet, 0, 1),
+		ldWAbs(sdOffsetArgs1),
+		bpfJump(bpfJmp|bpfJeq|bpfK, sockDgram, 0, 4),
+		ldWAbs(sdOffsetArgs0),
+		bpfJump(bpfJmp|bpfJeq|bpfK, afInet6, 0, 3),
+		ldWAbs(sdOffsetArgs1),
+		bpfJump(bpfJmp|bpfJeq|bpfK, sockDgram, 0, 0),
 		retErrno,
 		retAllow,
 	}
