@@ -6,7 +6,7 @@ if (-not (Test-Path $nvx)) {
     Write-Error "Build nvx.exe first (go build -o nvx.exe .)"
 }
 
-$proj = Join-Path $env:TEMP "nvx-egress-smoke"
+$proj = Join-Path $env:USERPROFILE "nvx-egress-smoke"
 New-Item -ItemType Directory -Force -Path $proj | Out-Null
 Set-Location $proj
 

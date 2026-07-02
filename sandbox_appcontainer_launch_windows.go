@@ -139,7 +139,7 @@ func launchAppContainerProcess(
 	_ = attrBuf
 
 	if createOK == 0 {
-		return 1, fmt.Errorf("CreateProcess(AppContainer): %v", createErr)
+		return 1, fmt.Errorf("CreateProcess(AppContainer) exe=%q cwd=%q: %v", cmdPath, workDir, createErr)
 	}
 	defer syscall.CloseHandle(pi.hProcess)
 	defer syscall.CloseHandle(pi.hThread)
