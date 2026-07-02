@@ -98,7 +98,29 @@ func main() {
 
 	case "init-shims":
 		generateShims(nvxHome)
+		if cwd, err := os.Getwd(); err == nil {
+			if root := findProjectRoot(cwd); root != "" {
+				if err := generateProjectBinShims(root, nvxHome); err != nil {
+					LogWarn("Failed to generate project bin shims: %v", err)
+				} else {
+					LogSuccess("Generated project bin shims in %s", projectBinDir(root))
+				}
+			}
+		}
 		LogSuccess("Generated PATH shims in ~/.nvx/bin")
+
+	case "policy":
+		if len(os.Args) < 3 {
+			LogError("Usage: nvx policy init [--global] [--project] [--force]")
+			os.Exit(1)
+		}
+		switch os.Args[2] {
+		case "init":
+			os.Exit(runPolicyInit(os.Args[3:], nvxHome))
+		default:
+			LogError("Unknown policy subcommand: %s", os.Args[2])
+			os.Exit(1)
+		}
 
 	case "shim":
 		if len(os.Args) < 3 {
@@ -114,12 +136,12 @@ func main() {
 		LogSuccess("Sandbox cleanup complete.")
 
 	case "__landlock-exec":
-		guestHome, workDir, nvxHome, networkMode, proxyPort, cmdPath, cmdArgs, ok := parseLandlockExecArgs(os.Args[2:])
+		guestHome, workDir, nvxHome, networkMode, shimCommand, proxyPort, cmdPath, cmdArgs, ok := parseLandlockExecArgs(os.Args[2:])
 		if !ok {
 			LogError("Invalid __landlock-exec arguments")
 			os.Exit(1)
 		}
-		os.Exit(runLandlockExecChild(guestHome, workDir, nvxHome, networkMode, proxyPort, cmdPath, cmdArgs))
+		os.Exit(runLandlockExecChild(guestHome, workDir, nvxHome, networkMode, shimCommand, proxyPort, cmdPath, cmdArgs))
 
 	case "help", "-h", "--help":
 		printHelp()
@@ -176,7 +198,8 @@ Commands:
   env [--shell=<type>]   Print shell integration script (powershell, bash, zsh)
   auto [--shell=<type>]  Auto-switch version based on .nvmrc / .node-version / package.json
   verify-install <pkgs>  Verify package safety before installing (called by wrappers)
-  init-shims             Generate PATH shims in ~/.nvx/bin
+  init-shims             Generate PATH shims in ~/.nvx/bin (and project bin shims when in a Node project)
+  policy init            Scaffold ~/.nvx/policy.json and/or .nvx-policy.json
   shim <cmd> [args]      Internal shim router for package managers
   cleanup                Remove stale sandbox sessions from previous runs
 
