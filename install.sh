@@ -31,6 +31,16 @@ esac
 BINARY_NAME="nvx-$OS-$ARCH_LABEL"
 DOWNLOAD_URL="https://github.com/fstubner/nvx/releases/latest/download/$BINARY_NAME"
 
+# sha256 helper: shasum (macOS, perl-based) is absent on minimal Linux images,
+# where coreutils provides sha256sum instead.
+compute_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
 
 # 2. Download Binary
 # Check if local nvx binary exists (e.g. if running from source repo)
@@ -47,7 +57,7 @@ else
         if curl -fsSL --fail "${DOWNLOAD_URL}.sha256" -o "$BIN_DIR/nvx.sha256" >/dev/null 2>&1; then
             echo "Verifying checksum..."
             EXPECTED_SHA=$(cat "$BIN_DIR/nvx.sha256" | awk '{print $1}')
-            ACTUAL_SHA=$(shasum -a 256 "$BIN_DIR/nvx" | awk '{print $1}')
+            ACTUAL_SHA=$(compute_sha256 "$BIN_DIR/nvx")
             if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
                 echo "Error: Checksum verification failed!" >&2
                 rm -f "$BIN_DIR/nvx" "$BIN_DIR/nvx.sha256"
@@ -62,7 +72,7 @@ else
         if wget -qO "$BIN_DIR/nvx.sha256" "${DOWNLOAD_URL}.sha256" >/dev/null 2>&1; then
             echo "Verifying checksum..."
             EXPECTED_SHA=$(cat "$BIN_DIR/nvx.sha256" | awk '{print $1}')
-            ACTUAL_SHA=$(shasum -a 256 "$BIN_DIR/nvx" | awk '{print $1}')
+            ACTUAL_SHA=$(compute_sha256 "$BIN_DIR/nvx")
             if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
                 echo "Error: Checksum verification failed!" >&2
                 rm -f "$BIN_DIR/nvx" "$BIN_DIR/nvx.sha256"

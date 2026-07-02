@@ -4,7 +4,7 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$scratchDir = "C:\Users\Felix\.gemini\antigravity\scratch"
+$scratchDir = Join-Path $env:TEMP "nvx-build"
 
 $goTempDir = Join-Path $scratchDir "go_temp"
 $goExe = Join-Path $goTempDir "go\bin\go.exe"
@@ -13,6 +13,7 @@ $distDir = Join-Path $PSScriptRoot "dist"
 # 1. Download and extract Go 1.23.1 if not present
 if (-not (Test-Path $goExe)) {
     Write-Host "Go 1.23.1 compiler not found. Downloading..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Path $scratchDir -Force | Out-Null
     New-Item -ItemType Directory -Path $goTempDir -Force | Out-Null
     $zipPath = Join-Path $scratchDir "go1.23.1.zip"
     
