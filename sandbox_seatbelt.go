@@ -103,18 +103,14 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, writableRoots ...string) 
 	if mode == "proxy" || mode == "offline" || mode == "loopback" {
 		b.WriteString("(deny network*)\n")
 		b.WriteString("(allow network-outbound (remote tcp \"localhost:*\"))\n")
-		b.WriteString("(allow network-outbound (remote tcp \"127.0.0.1:*\"))\n")
 		b.WriteString("(allow network-outbound (remote udp \"localhost:*\"))\n")
-		b.WriteString("(allow network-outbound (remote udp \"127.0.0.1:*\"))\n")
 		b.WriteString("(allow network-bind (local tcp \"localhost:*\"))\n")
-		b.WriteString("(allow network-bind (local tcp \"127.0.0.1:*\"))\n")
 		b.WriteString("(allow network-bind (local udp \"localhost:*\"))\n")
-		b.WriteString("(allow network-bind (local udp \"127.0.0.1:*\"))\n")
 		if netCtx.HTTPProxyPort > 0 {
-			fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"127.0.0.1:%d\"))\n", netCtx.HTTPProxyPort)
+			fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"localhost:%d\"))\n", netCtx.HTTPProxyPort)
 		}
 		if netCtx.SOCKSProxyPort > 0 {
-			fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"127.0.0.1:%d\"))\n", netCtx.SOCKSProxyPort)
+			fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"localhost:%d\"))\n", netCtx.SOCKSProxyPort)
 		}
 	}
 

@@ -15,6 +15,11 @@ if [[ ! -x "$NVX" ]]; then
   exit 1
 fi
 
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node.js not available; skipping macOS sandbox smoke." >&2
+  exit 0
+fi
+
 PROJ="$(mktemp -d)"
 trap 'rm -rf "$PROJ"' EXIT
 cd "$PROJ"

@@ -5,6 +5,10 @@ $nvx = Join-Path $root "nvx.exe"
 if (-not (Test-Path $nvx)) {
     Write-Error "Build nvx.exe first (go build -o nvx.exe .)"
 }
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Write-Host "Node.js not available; skipping Windows sandbox smoke."
+    exit 0
+}
 
 $proj = Join-Path $env:TEMP "nvx-smoke-wd"
 New-Item -ItemType Directory -Force -Path $proj | Out-Null
