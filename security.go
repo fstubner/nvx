@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,171 +20,7 @@ var EmbeddedPopularPackages = []string{
 	"minimist", "mkdirp", "glob", "rimraf", "inquirer", "rxjs", "postcss", "vite", "next",
 }
 
-// Policy defines corporate rules for npm installations
-type Policy struct {
-	BlockedPackages      []string            `json:"blocked_packages"`
-	EnforceIgnoreScripts bool                `json:"enforce_ignore_scripts"`
-	Typosquatting        TyposquattingPolicy `json:"typosquatting"`
-	Isolation            IsolationPolicy     `json:"isolation"`
-}
-
-type TyposquattingPolicy struct {
-	Enabled         bool     `json:"enabled"`
-	MaxDistance     int      `json:"max_distance"`
-	TrustedPackages []string `json:"trusted_packages"`
-}
-
-type IsolationPolicy struct {
-	Enabled  bool          `json:"enabled"`
-	Provider string        `json:"provider"`
-	Runtime  RuntimePolicy `json:"runtime"`
-}
-
-type RuntimePolicy struct {
-	Command string `json:"command"`
-	Version string `json:"version"`
-}
-
-// DefaultPolicy returns a Policy object with standard defaults
-func DefaultPolicy() Policy {
-	return Policy{
-		BlockedPackages:      []string{},
-		EnforceIgnoreScripts: false,
-		Typosquatting: TyposquattingPolicy{
-			Enabled:         true,
-			MaxDistance:     2,
-			TrustedPackages: []string{},
-		},
-		Isolation: IsolationPolicy{
-			Enabled:  false,
-			Provider: "native",
-			Runtime: RuntimePolicy{
-				Command: "",
-				Version: "",
-			},
-		},
-	}
-}
-
-
-// LoadPolicy reads and merges global and cascading local policies
-func LoadPolicy(nvxHome string) (Policy, error) {
-	policy := DefaultPolicy()
-
-	// 1. Load global policy
-	globalPolicyPath := filepath.Join(nvxHome, "policy.json")
-	if _, err := os.Stat(globalPolicyPath); err == nil {
-		data, err := os.ReadFile(globalPolicyPath)
-		if err == nil {
-			_ = json.Unmarshal(data, &policy)
-		}
-	}
-
-	// 2. Walk up directory tree to find local policy files (.nvx-policy.json or policy.json)
-	cwd, err := os.Getwd()
-	if err == nil {
-		dir := cwd
-		for {
-			var localPath string
-			localPolicy1 := filepath.Join(dir, ".nvx-policy.json")
-			localPolicy2 := filepath.Join(dir, "policy.json")
-
-			if _, err := os.Stat(localPolicy1); err == nil {
-				localPath = localPolicy1
-			} else if _, err := os.Stat(localPolicy2); err == nil {
-				if filepath.Clean(filepath.Dir(localPolicy2)) != filepath.Clean(nvxHome) {
-					localPath = localPolicy2
-				}
-			}
-
-			if localPath != "" {
-				var localPolicy Policy
-				// Initialize with default typosquatting enabled so it doesn't overwrite global unless explicitly set
-				localPolicy.Typosquatting.Enabled = true
-				data, err := os.ReadFile(localPath)
-				if err == nil {
-					if err := json.Unmarshal(data, &localPolicy); err == nil {
-						policy = MergePolicies(policy, localPolicy)
-					}
-				}
-			}
-
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
-		}
-	}
-
-	return policy, nil
-}
-
-// MergePolicies combines global and local policies according to priority rules
-func MergePolicies(global, local Policy) Policy {
-	merged := global
-
-	// 1. Blocked packages: Union
-	blockedMap := make(map[string]bool)
-	for _, p := range global.BlockedPackages {
-		blockedMap[strings.ToLower(p)] = true
-	}
-	for _, p := range local.BlockedPackages {
-		pLower := strings.ToLower(p)
-		if !blockedMap[pLower] {
-			blockedMap[pLower] = true
-			merged.BlockedPackages = append(merged.BlockedPackages, p)
-		}
-	}
-
-	// 2. Ignore scripts: Logical OR
-	if local.EnforceIgnoreScripts {
-		merged.EnforceIgnoreScripts = true
-	}
-
-	// 3. Typosquatting: trusted packages union, local enabled overrides global
-	// Since boolean defaults to false, we inspect the local values
-	// We want local policy to be able to disable typosquatting:
-	// If typosquatting block is defined in local, we honor its Enabled setting.
-	// But in standard unmarshalling, if "enabled" is absent, it is false.
-	// To prevent accidental disabling, we initialized localPolicy.Typosquatting.Enabled = true
-	// before unmarshalling. So if it is false, the user explicitly set `"enabled": false`.
-	if !local.Typosquatting.Enabled {
-		merged.Typosquatting.Enabled = false
-	}
-	if local.Typosquatting.MaxDistance > 0 {
-		merged.Typosquatting.MaxDistance = local.Typosquatting.MaxDistance
-	}
-	trustedMap := make(map[string]bool)
-	for _, t := range global.Typosquatting.TrustedPackages {
-		trustedMap[strings.ToLower(t)] = true
-	}
-	for _, t := range local.Typosquatting.TrustedPackages {
-		tLower := strings.ToLower(t)
-		if !trustedMap[tLower] {
-			trustedMap[tLower] = true
-			merged.Typosquatting.TrustedPackages = append(merged.Typosquatting.TrustedPackages, t)
-		}
-	}
-
-	// 4. Isolation: Logical OR for Enabled, Local overrides Provider and Runtime details
-	if local.Isolation.Enabled {
-		merged.Isolation.Enabled = true
-	}
-	if local.Isolation.Provider != "" {
-		merged.Isolation.Provider = local.Isolation.Provider
-	}
-	if local.Isolation.Runtime.Command != "" {
-		merged.Isolation.Runtime.Command = local.Isolation.Runtime.Command
-	}
-	if local.Isolation.Runtime.Version != "" {
-		merged.Isolation.Runtime.Version = local.Isolation.Runtime.Version
-	}
-
-	return merged
-}
-
-
+// Policy types and LoadPolicy live in policy.go.
 
 // IsBlocked checks if a package name matches any blocked package patterns
 func (p Policy) IsBlocked(pkgName string) bool {
@@ -275,47 +112,34 @@ func LoadPopularPackages(nvxHome string) []string {
 	return EmbeddedPopularPackages
 }
 
+// popularPackagesURL points at the npm-high-impact dataset (top npm packages
+// by downloads and dependents, refreshed quarterly), served from the npm
+// registry via the jsDelivr CDN. The file is an ES module exporting an array
+// of package name string literals.
+const popularPackagesURL = "https://cdn.jsdelivr.net/npm/npm-high-impact/lib/top.js"
+
+// maxPopularPackages caps the typosquatting dictionary size to keep the
+// Levenshtein comparison per install fast.
+const maxPopularPackages = 2000
+
 func syncPopularPackages(cachePath string) ([]string, error) {
-	// Querying a reliable raw json list of popular npm packages
-	client := &http.Client{Timeout: 4 * time.Second}
-	// Using a public CDN mirror containing a list of top packages
-	resp, err := client.Get("https://raw.githubusercontent.com/npm/dep-graph/master/top-1000.json")
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Get(popularPackagesURL)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %s", resp.Status)
 	}
 
-	// Some lists are arrays of strings, others are arrays of objects. We parse standard array of strings
-	var rawData interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&rawData); err != nil {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
 		return nil, err
 	}
 
-	var list []string
-	switch typed := rawData.(type) {
-	case []interface{}:
-		for _, item := range typed {
-			if str, ok := item.(string); ok {
-				list = append(list, str)
-			} else if obj, ok := item.(map[string]interface{}); ok {
-				// if object, try to parse name key
-				if name, ok := obj["name"].(string); ok {
-					list = append(list, name)
-				}
-			}
-		}
-	case map[string]interface{}:
-		// if object map, extract keys
-		for k := range typed {
-			list = append(list, k)
-		}
-	}
-
+	list := extractQuotedStrings(string(body), maxPopularPackages)
 	if len(list) == 0 {
 		return nil, fmt.Errorf("parsed list is empty")
 	}
@@ -327,6 +151,46 @@ func syncPopularPackages(cachePath string) ([]string, error) {
 		_ = os.WriteFile(cachePath, data, 0644)
 	}
 	return list, nil
+}
+
+// extractQuotedStrings pulls single- or double-quoted string literals out of a
+// JS module source. Only strings that look like npm package names are kept,
+// which makes the parser resilient to formatting changes in the upstream file.
+func extractQuotedStrings(src string, limit int) []string {
+	var list []string
+	i := 0
+	for i < len(src) && len(list) < limit {
+		c := src[i]
+		if c == '\'' || c == '"' {
+			end := strings.IndexByte(src[i+1:], c)
+			if end == -1 {
+				break
+			}
+			candidate := src[i+1 : i+1+end]
+			if isValidPackageName(candidate) {
+				list = append(list, candidate)
+			}
+			i += end + 2
+		} else {
+			i++
+		}
+	}
+	return list
+}
+
+// isValidPackageName reports whether s is a plausible npm package name.
+func isValidPackageName(s string) bool {
+	if s == "" || len(s) > 214 {
+		return false
+	}
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') ||
+			r == '-' || r == '_' || r == '.' || r == '@' || r == '/' {
+			continue
+		}
+		return false
+	}
+	return s[0] != '.' && s[0] != '_'
 }
 
 // CheckTyposquatting returns the name of a popular package if the query is suspiciously close (edit distance 1 or 2)
