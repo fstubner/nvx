@@ -46,6 +46,8 @@ func (n NodeProvider) SandboxImage(version string) string {
 	return runtimeDockerImage("node", version)
 }
 
+func (n NodeProvider) SessionEnv(versionDir string) map[string]string { return nil }
+
 func (n NodeProvider) DefaultNetworkAllow() []string {
 	return []string{
 		"registry.npmjs.org:443",

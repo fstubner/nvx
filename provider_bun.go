@@ -25,6 +25,8 @@ func (b BunProvider) SandboxImage(version string) string {
 	return runtimeDockerImage("oven/bun", version)
 }
 
+func (b BunProvider) SessionEnv(versionDir string) map[string]string { return nil }
+
 func (b BunProvider) DefaultNetworkAllow() []string {
 	return []string{
 		"registry.npmjs.org:443",

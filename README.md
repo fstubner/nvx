@@ -33,7 +33,7 @@ Along the way, I wanted to tackle a few other common frustrations:
 
 ## Features
 
-- **Multi-Runtime Core**: Built to manage multiple runtimes (currently supports Node.js; extendable via `RuntimeProvider` to Bun, Deno, or other non-JavaScript/non-TS runtimes like Python, Go, and Rust).
+- **Multi-Runtime Core**: Manages **Node.js and Bun** today through a `RuntimeProvider` interface designed to extend to other runtimes (Deno, Python, Go, Rust) — see [docs/runtime-providers.md](docs/runtime-providers.md). Select a runtime with `runtime@version` (e.g. `nvx install bun@1.2`); a bare version stays Node.js for nvm compatibility.
 - **Cascading Security Policies**: Resolves global and local directory-level policy blocks from `.nvx-policy.json`.
 - **Registry-Backed Typosquatting Audits**: Cross-checks package names against a synced list of popular packages and queries the npm registry download API dynamically to verify download counts and distinguish typosquats from legitimate packages.
 
@@ -96,7 +96,7 @@ Shim flags (npm, node, npx, yarn, pnpm, bunx via PATH):
 
 ### Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`npm`, `node`, `npx`, `yarn`, `pnpm`, and `bunx` are sandboxed by default** when `isolation.enabled` is true. No separate sandbox subcommand — just run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun`, and `bunx` are sandboxed by default** when `isolation.enabled` is true. No separate sandbox subcommand — just run commands normally:
 
 ```bash
 npm install
@@ -167,9 +167,10 @@ Policies cascade: the global policy applies everywhere, and local policy files m
 
 ### Policy Reference
 * **`enforce_ignore_scripts`**: When `true`, this forces npm/yarn/pnpm to install packages with `--ignore-scripts`. This blocks execution of hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine.
-* **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary).
-  - `native`: AppContainer (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Fail-closed.
-  - `docker`, `wslc`, `wsl`, `sandbox-exec`, `systemd-nspawn`: container or alternate providers (see below).
+* **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary). See the [enforcement matrix](docs/enforcement-matrix.md) for exact guarantees.
+  - `native` (default): AppContainer (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Zero-config, fail-closed.
+  - `docker`: runs in a container (hardened; `offline`/`loopback` enforced via `--network none`). Requires Docker running.
+  - `wsl`, `wslc`, `systemd-nspawn`: experimental; require `NVX_EXPERIMENTAL=1`.
 * **`isolation.network.mode`**: How egress is governed.
   - `proxy` (default): parent-process HTTP CONNECT + SOCKS5 proxy with policy allowlist; injects `HTTP_PROXY` / `HTTPS_PROXY`.
   - `open`: no egress filtering.
@@ -218,17 +219,18 @@ Traditional managers change system-wide paths or symbolic links, which can disru
 ### How do sandboxed containers handle local servers, ports, and networking?
 Web development requires running local dev servers (e.g. listening on port `3000`) and calling external backend APIs or databases:
 * **Native Sandbox**: Loopback bind/connect works for dev servers. With `network.mode: proxy`, outbound TCP goes through the nvx allowlist proxy (HTTP_PROXY / SOCKS5). Host services on `localhost` remain reachable via `allow_hosts`.
-* **Docker Sandbox**: The Docker container automatically exposes loopback TCP configurations so that the containerized process can reach a backend running locally on the host machine.
+* **Docker Sandbox**: With `network.mode: open`, the container can reach host services via the standard Docker host gateway. With `offline`/`loopback` the container runs with `--network none` (no network at all). Allowlisted `proxy` mode is not supported under Docker — use the native provider when you need per-host egress control.
 
-### What if a project needs multiple runtimes (e.g., Node frontend and Python/Go backend)?
-* **Native Sandbox**: Since the sandbox scrubs environment variables and configures paths on top of your host's standard toolchains, other runtimes installed on your machine (like Python or Go) are fully visible and execute alongside Node.js.
-* **Docker Sandbox**: The default Docker isolation uses a base Node.js image (e.g., `node:20`). If you require a multi-language stack (Node + Python), you can easily package a custom Dockerfile or spin them up via standard container tools (like `docker-compose`) to network them together.
+### What if a project needs multiple runtimes (e.g., Node and Bun)?
+`nvx` manages Node.js and Bun directly — `nvx use node@20` and `nvx use bun@1.2` activate independently in the same shell without evicting each other from `PATH`.
+* **Native Sandbox**: Other toolchains already installed on your host (Python, Go, etc.) remain visible and run alongside the nvx-managed runtime.
+* **Docker Sandbox**: The image is chosen from the active runtime (`node:<v>` or `oven/bun:<v>`). For a multi-language stack, supply your own image via a Dockerfile or `docker-compose`.
 
 ### Does nvx handle TypeScript and bundler commands?
 Yes! Since `nvx` hooks into the active runtime context, any globally or locally installed tools—including `tsc`, `ts-node`, `vite`, or `webpack`—execute within the selected Node.js environment automatically.
 
 ### How does automatic command wrapping protect me when using AI coding agents?
-When AI coding agents (like Gemini, Claude, or Copilot) interact with your workspace, they typically run standard commands such as `npm install <package>` or `npx <command>`. Because `nvx` automatically wraps these typical binaries inside the shell session, those commands are transparently intercepted. The packages are verified via typosquatting and vulnerability registry checks, and executors are run within the native sandbox environment. This happens automatically without any special configuration or wrapper commands required from the agent, meaning you don't have to worry about an autonomous agent accidentally downloading or executing a malicious supply-chain package.
+When AI coding agents (like Gemini, Claude, or Copilot) interact with your workspace, they typically run standard commands such as `npm install <package>` or `npx <command>`. Because `nvx` automatically wraps these typical binaries inside the shell session, those commands are transparently intercepted. The packages are checked against typosquatting and vulnerability (OSV) registries, and executors run inside the native sandbox — with no special configuration or wrapper commands required from the agent. This is defense-in-depth that raises the bar against common supply-chain patterns (typosquats, known-vulnerable versions, install-script execution); it reduces risk substantially but is not a guarantee against a determined or novel attacker. See [SECURITY.md](SECURITY.md) for the threat model and its limits.
 
 ---
 
