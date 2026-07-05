@@ -39,6 +39,36 @@ func TestParseRuntimeSpecDefaultsBareVersionsToNode(t *testing.T) {
 	}
 }
 
+func TestBinResolveCacheHitAndInvalidation(t *testing.T) {
+	nvxHome := t.TempDir()
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "node.exe")
+	if err := os.WriteFile(bin, []byte("x"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	storeBinCache(nvxHome, "node", bin)
+	if got := lookupBinCache(nvxHome, "node"); got != bin {
+		t.Fatalf("expected cache hit %q, got %q", bin, got)
+	}
+
+	// A changed PATH must invalidate the cache (different hash).
+	t.Setenv("PATH", filepath.Join(t.TempDir(), "other"))
+	if got := lookupBinCache(nvxHome, "node"); got != "" {
+		t.Fatalf("changed PATH must invalidate cache, got %q", got)
+	}
+
+	// Same PATH but the cached binary is gone -> miss (re-validated by stat).
+	t.Setenv("PATH", binDir)
+	if err := os.Remove(bin); err != nil {
+		t.Fatal(err)
+	}
+	if got := lookupBinCache(nvxHome, "node"); got != "" {
+		t.Fatalf("removed binary must invalidate cache, got %q", got)
+	}
+}
+
 func TestDockerRunArgsEnforcesOfflineAndHardening(t *testing.T) {
 	cfg := SandboxConfig{Command: "node", Args: []string{"-e", "1"}}
 
