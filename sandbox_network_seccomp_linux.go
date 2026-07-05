@@ -20,17 +20,37 @@ const (
 	bpfJeq = 0x10
 	bpfK   = 0x00
 	bpfRet = 0x06
+	bpfAlu = 0x04
+	bpfAnd = 0x50
+
+	// sockTypeMask isolates the base socket type from OR'd-in flags
+	// (SOCK_CLOEXEC/SOCK_NONBLOCK), so `socket(AF_INET, SOCK_DGRAM|SOCK_CLOEXEC)`
+	// cannot evade a type check.
+	sockTypeMask = 0xFF
 
 	seccompRetAllow = 0x7fff0000
 	seccompRetErrno = 0x00050000 + 1 // EPERM
 
-	afInet     = 2
-	afInet6    = 10
-	sockDgram  = 2
+	afInet        = 2
+	afInet6       = 10
+	sockDgram     = 2
 	sdOffsetNr    = 0
+	sdOffsetArch  = 4
 	sdOffsetArgs0 = 16
 	sdOffsetArgs1 = 24
 )
+
+// archGuard rejects any syscall issued under a foreign ABI (e.g. i386/x32 on
+// x86-64), whose syscall numbers differ from the native table this filter
+// matches against. Without it, a child can bypass the filter by switching ABI.
+// It must be prepended to every filter; it consumes 3 instructions.
+func archGuard() []syscall.SockFilter {
+	return []syscall.SockFilter{
+		ldWAbs(sdOffsetArch),
+		bpfJump(bpfJmp|bpfJeq|bpfK, auditArch(), 1, 0), // native arch -> skip the deny
+		bpfStmt(bpfRet|bpfK, seccompRetErrno),          // foreign ABI -> EPERM
+	}
+}
 
 // applyLinuxNetworkSeccomp installs seccomp filters for network isolation.
 // Loopback-only network namespaces block WAN TCP/UDP; seccomp adds defense in
@@ -94,7 +114,7 @@ func buildOfflineNetworkFilter() []syscall.SockFilter {
 	connect := uint32(syscall.SYS_CONNECT)
 	socket := uint32(syscall.SYS_SOCKET)
 
-	return []syscall.SockFilter{
+	return append(archGuard(), []syscall.SockFilter{
 		ldWAbs(sdOffsetNr),
 		bpfJump(bpfJmp|bpfJeq|bpfK, connect, 0, 1),
 		retErrno,
@@ -107,28 +127,38 @@ func buildOfflineNetworkFilter() []syscall.SockFilter {
 		bpfJump(bpfJmp|bpfJeq|bpfK, afInet6, 0, 1),
 		retErrno,
 		retAllow,
-	}
+	}...)
 }
 
 // buildProxyNetworkFilter denies IPv4/IPv6 UDP socket creation; TCP is allowed
 // for loopback proxy use while the network namespace blocks non-loopback routes.
+// Instruction offsets are hand-verified and covered by a BPF-interpreter test.
+//
+//	0: A = nr
+//	1: nr==socket ? next : ALLOW(+7)
+//	2: A = args0 (family)
+//	3: family==AF_INET  ? TYPECHK(+1) : next
+//	4: family==AF_INET6 ? TYPECHK(+0) : ALLOW(+4)   (e.g. AF_UNIX)
+//	5: A = args1 (type)          [TYPECHK]
+//	6: A &= 0xFF                 (strip SOCK_CLOEXEC/NONBLOCK)
+//	7: type==SOCK_DGRAM ? DENY(+0) : ALLOW(+1)
+//	8: ret ERRNO                 [DENY]
+//	9: ret ALLOW                 [ALLOW]
 func buildProxyNetworkFilter() []syscall.SockFilter {
 	retAllow := bpfStmt(bpfRet|bpfK, seccompRetAllow)
 	retErrno := bpfStmt(bpfRet|bpfK, seccompRetErrno)
 	socket := uint32(syscall.SYS_SOCKET)
 
-	return []syscall.SockFilter{
-		ldWAbs(sdOffsetNr),
-		bpfJump(bpfJmp|bpfJeq|bpfK, socket, 0, 9),
-		ldWAbs(sdOffsetArgs0),
-		bpfJump(bpfJmp|bpfJeq|bpfK, afInet, 0, 1),
-		ldWAbs(sdOffsetArgs1),
-		bpfJump(bpfJmp|bpfJeq|bpfK, sockDgram, 0, 4),
-		ldWAbs(sdOffsetArgs0),
-		bpfJump(bpfJmp|bpfJeq|bpfK, afInet6, 0, 3),
-		ldWAbs(sdOffsetArgs1),
-		bpfJump(bpfJmp|bpfJeq|bpfK, sockDgram, 0, 0),
-		retErrno,
-		retAllow,
-	}
+	return append(archGuard(), []syscall.SockFilter{
+		ldWAbs(sdOffsetNr),                           // 0
+		bpfJump(bpfJmp|bpfJeq|bpfK, socket, 0, 7),    // 1 -> ALLOW if not socket
+		ldWAbs(sdOffsetArgs0),                        // 2
+		bpfJump(bpfJmp|bpfJeq|bpfK, afInet, 1, 0),    // 3 -> TYPECHK
+		bpfJump(bpfJmp|bpfJeq|bpfK, afInet6, 0, 4),   // 4 -> TYPECHK / ALLOW
+		ldWAbs(sdOffsetArgs1),                        // 5 TYPECHK
+		bpfStmt(bpfAlu|bpfAnd|bpfK, sockTypeMask),    // 6
+		bpfJump(bpfJmp|bpfJeq|bpfK, sockDgram, 0, 1), // 7 -> DENY / ALLOW
+		retErrno, // 8 DENY (UDP)
+		retAllow, // 9 ALLOW (TCP, AF_UNIX, non-socket)
+	}...)
 }
