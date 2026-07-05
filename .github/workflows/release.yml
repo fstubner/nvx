@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write        # create the GitHub Release and upload assets
+  id-token: write        # build provenance attestation
+  attestations: write    # build provenance attestation
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Run tests
+        run: go test -race ./...
+
+      - name: Build release binaries
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+
+          # target triples -> published asset name (must match install.sh / install.ps1)
+          build() {
+            local goos="$1" goarch="$2" outname="$3"
+            echo "Building ${outname} (${goos}/${goarch})"
+            GOOS="$goos" GOARCH="$goarch" go build \
+              -trimpath \
+              -ldflags "-s -w -X main.appVersion=${version}" \
+              -o "dist/${outname}" .
+          }
+
+          build linux  amd64 nvx-linux-amd64
+          build linux  arm64 nvx-linux-arm64
+          build darwin amd64 nvx-darwin-amd64
+          build darwin arm64 nvx-darwin-arm64
+          build windows amd64 nvx.exe
+
+          # Per-asset checksum siblings (<hash>  <name>) + a combined manifest.
+          cd dist
+          : > SHASUMS256.txt
+          for f in nvx-linux-amd64 nvx-linux-arm64 nvx-darwin-amd64 nvx-darwin-arm64 nvx.exe; do
+            sha256sum "$f" | tee -a SHASUMS256.txt > "${f}.sha256"
+          done
+          echo "--- SHASUMS256.txt ---"
+          cat SHASUMS256.txt
+
+      - name: Generate build provenance attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            dist/nvx-linux-amd64
+            dist/nvx-linux-arm64
+            dist/nvx-darwin-amd64
+            dist/nvx-darwin-arm64
+            dist/nvx.exe
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            dist/nvx-linux-amd64
+            dist/nvx-linux-amd64.sha256
+            dist/nvx-linux-arm64
+            dist/nvx-linux-arm64.sha256
+            dist/nvx-darwin-amd64
+            dist/nvx-darwin-amd64.sha256
+            dist/nvx-darwin-arm64
+            dist/nvx-darwin-arm64.sha256
+            dist/nvx.exe
+            dist/nvx.exe.sha256
+            dist/SHASUMS256.txt

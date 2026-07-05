@@ -44,10 +44,10 @@ compute_sha256() {
 
 # 2. Download Binary
 # Check if local nvx binary exists (e.g. if running from source repo)
-if [ -f "./nvx" ]; then
+if [ "${NVX_USE_LOCAL_BINARY:-}" = "1" ] && [ -f "./nvx" ]; then
     echo "Copying local nvx binary to $BIN_DIR..."
     cp "./nvx" "$BIN_DIR/nvx"
-elif [ -f "./$BINARY_NAME" ]; then
+elif [ "${NVX_USE_LOCAL_BINARY:-}" = "1" ] && [ -f "./$BINARY_NAME" ]; then
     echo "Copying local $BINARY_NAME to $BIN_DIR/nvx..."
     cp "./$BINARY_NAME" "$BIN_DIR/nvx"
 else
@@ -65,7 +65,13 @@ else
             fi
             echo "Checksum verified successfully."
         else
-            echo "Warning: Checksum file not available. Skipping verification."
+            if [ "${NVX_INSECURE_SKIP_CHECKSUM:-}" = "1" ]; then
+                echo "Warning: Checksum file not available. Skipping verification because NVX_INSECURE_SKIP_CHECKSUM=1."
+            else
+                echo "Error: Checksum file not available. Refusing to install without verification." >&2
+                rm -f "$BIN_DIR/nvx" "$BIN_DIR/nvx.sha256"
+                exit 1
+            fi
         fi
     elif command -v wget >/dev/null 2>&1; then
         wget -qO "$BIN_DIR/nvx" "$DOWNLOAD_URL"
@@ -80,7 +86,13 @@ else
             fi
             echo "Checksum verified successfully."
         else
-            echo "Warning: Checksum file not available. Skipping verification."
+            if [ "${NVX_INSECURE_SKIP_CHECKSUM:-}" = "1" ]; then
+                echo "Warning: Checksum file not available. Skipping verification because NVX_INSECURE_SKIP_CHECKSUM=1."
+            else
+                echo "Error: Checksum file not available. Refusing to install without verification." >&2
+                rm -f "$BIN_DIR/nvx" "$BIN_DIR/nvx.sha256"
+                exit 1
+            fi
         fi
     else
         echo "Error: Neither curl nor wget was found. Please install one of them." >&2

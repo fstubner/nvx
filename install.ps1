@@ -1,5 +1,9 @@
-# Installer script for nvx (Node Version X-platform)
+param(
+    [switch]$InsecureSkipChecksum,
+    [switch]$UseLocalBinary
+)
 
+# Installer script for nvx (Node Version X-platform)
 
 $ErrorActionPreference = 'Stop'
 
@@ -91,7 +95,7 @@ if (-not $alreadyIntegrated) {
 
 # 3. Handle Binary Setup
 $localBinary = Join-Path $PSScriptRoot "nvx.exe"
-if (Test-Path $localBinary) {
+if (($UseLocalBinary -or $env:NVX_USE_LOCAL_BINARY -eq "1") -and (Test-Path $localBinary)) {
     Write-Host "Copying compiled nvx.exe to bin directory..."
     Copy-Item -Path $localBinary -Destination (Join-Path $binDir "nvx.exe") -Force
 } else {
@@ -117,7 +121,14 @@ if (Test-Path $localBinary) {
             }
             Write-Host "Checksum verified successfully."
         } catch {
-            Write-Warning "Checksum file not available. Skipping verification."
+            if ($InsecureSkipChecksum -or $env:NVX_INSECURE_SKIP_CHECKSUM -eq "1") {
+                Write-Warning "Checksum file not available. Skipping verification because insecure skip was explicitly requested."
+            } else {
+                Write-Error "Checksum file not available. Refusing to install without verification."
+                Remove-Item $binPath -Force -ErrorAction SilentlyContinue
+                Remove-Item $checksumPath -Force -ErrorAction SilentlyContinue
+                exit 1
+            }
         }
     } catch {
         Write-Error "Failed to download nvx binary: $_"

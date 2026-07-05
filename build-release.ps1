@@ -1,5 +1,10 @@
+param(
+    [string]$Version = "0.2.0-beta",
+    [string]$GoVersion = "1.26.4"
+)
+
 # build-release.ps1
-# Script to download Go 1.23.1 and cross-compile release binaries with checksums
+# Script to download Go and cross-compile release binaries with checksums
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -10,19 +15,28 @@ $goTempDir = Join-Path $scratchDir "go_temp"
 $goExe = Join-Path $goTempDir "go\bin\go.exe"
 $distDir = Join-Path $PSScriptRoot "dist"
 
-# 1. Download and extract Go 1.23.1 if not present
+# 1. Download and extract Go if not present
 if (-not (Test-Path $goExe)) {
-    Write-Host "Go 1.23.1 compiler not found. Downloading..." -ForegroundColor Cyan
+    Write-Host "Go $GoVersion compiler not found. Downloading..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $scratchDir -Force | Out-Null
     New-Item -ItemType Directory -Path $goTempDir -Force | Out-Null
-    $zipPath = Join-Path $scratchDir "go1.23.1.zip"
+    $zipPath = Join-Path $scratchDir "go$GoVersion.zip"
+    $checksumPath = "$zipPath.sha256"
     
     [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri "https://go.dev/dl/go1.23.1.windows-amd64.zip" -OutFile $zipPath -UseBasicParsing
+    $goUrl = "https://go.dev/dl/go$GoVersion.windows-amd64.zip"
+    Invoke-WebRequest -Uri $goUrl -OutFile $zipPath -UseBasicParsing
+    Invoke-WebRequest -Uri "$goUrl.sha256" -OutFile $checksumPath -UseBasicParsing
+    $expectedSha = (Get-Content $checksumPath).Split(" ")[0].Trim().ToUpper()
+    $actualSha = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToUpper()
+    if ($expectedSha -ne $actualSha) {
+        Remove-Item $zipPath, $checksumPath -Force -ErrorAction SilentlyContinue
+        throw "Go toolchain checksum verification failed."
+    }
     
-    Write-Host "Extracting Go 1.23.1..." -ForegroundColor Cyan
+    Write-Host "Extracting Go $GoVersion..." -ForegroundColor Cyan
     Expand-Archive -Path $zipPath -DestinationPath $goTempDir -Force
-    Remove-Item $zipPath -Force
+    Remove-Item $zipPath, $checksumPath -Force
 }
 
 # Verify Go version
@@ -54,7 +68,7 @@ foreach ($target in $matrix) {
     $env:GOOS = $target.os
     $env:GOARCH = $target.arch
     
-    & $goExe build -ldflags="-s -w" -o $outPath .
+    & $goExe build -ldflags="-s -w -X main.appVersion=$Version" -o $outPath .
     
     # Reset env variables
     $env:GOOS = $null
