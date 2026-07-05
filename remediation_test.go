@@ -414,21 +414,22 @@ func TestLoadPolicyHonorsTrustedLooseningProjectPolicy(t *testing.T) {
 	}
 
 	// Pre-record trust for the exact file contents (as an accepted prompt would).
-	// Key the pin by the resolved cwd path, matching what LoadPolicy discovers
-	// (macOS resolves /var -> /private/var, so the literal projectDir differs).
-	resolvedWd, err := os.Getwd()
+	// Pin the exact path LoadPolicy discovers, via the same helper, so the key
+	// matches on every platform regardless of symlink/short-path spelling.
+	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
-	}
-	resolvedPolicyPath := filepath.Join(resolvedWd, ".nvx-policy.json")
-	hash, ok := hashPolicyFile(resolvedPolicyPath)
-	if !ok {
-		t.Fatal("failed to hash policy file")
 	}
 	scope := projectScopeDir()
 	g := loadProjectGrants(nvxHome, scope)
 	g.ProjectPath = scope
-	g.PolicyPins[filepath.Clean(resolvedPolicyPath)] = hash
+	for _, p := range collectProjectPolicyPaths(cwd, nvxHome) {
+		if strings.HasSuffix(p, ".nvx-policy.json") {
+			if hash, ok := hashPolicyFile(p); ok {
+				g.PolicyPins[filepath.Clean(p)] = hash
+			}
+		}
+	}
 	if err := saveProjectGrants(nvxHome, g); err != nil {
 		t.Fatal(err)
 	}

@@ -847,20 +847,25 @@ func TestLoadPolicyCascading(t *testing.T) {
 	}
 
 	// Trust the parent policy's current contents (as an accepted prompt would).
-	// Resolve symlinks so the pin key matches the path LoadPolicy discovers from
-	// the resolved cwd (macOS maps /var -> /private/var).
-	resolvedParentPath := parentPath
-	if rp, err := filepath.EvalSymlinks(parentPath); err == nil {
-		resolvedParentPath = rp
+	// Pin the exact path LoadPolicy will discover from the resolved cwd, via the
+	// same collectProjectPolicyPaths helper, so the key matches byte-for-byte on
+	// every platform (macOS /var symlink, Windows 8.3 TEMP paths, etc.).
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if hash, ok := hashPolicyFile(resolvedParentPath); ok {
-		scope := projectScopeDir()
-		g := loadProjectGrants(nvxHome, scope)
-		g.ProjectPath = scope
-		g.PolicyPins[filepath.Clean(resolvedParentPath)] = hash
-		if err := saveProjectGrants(nvxHome, g); err != nil {
-			t.Fatal(err)
+	scope := projectScopeDir()
+	g := loadProjectGrants(nvxHome, scope)
+	g.ProjectPath = scope
+	for _, p := range collectProjectPolicyPaths(cwd, nvxHome) {
+		if strings.HasSuffix(p, ".nvx-policy.json") {
+			if hash, ok := hashPolicyFile(p); ok {
+				g.PolicyPins[filepath.Clean(p)] = hash
+			}
 		}
+	}
+	if err := saveProjectGrants(nvxHome, g); err != nil {
+		t.Fatal(err)
 	}
 
 	// Load policy using nvxHome
