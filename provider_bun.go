@@ -21,6 +21,10 @@ func (b BunProvider) Name() string { return "bun" }
 
 func (b BunProvider) ShimCommands() []string { return []string{"bun", "bunx"} }
 
+func (b BunProvider) SandboxImage(version string) string {
+	return runtimeDockerImage("oven/bun", version)
+}
+
 func (b BunProvider) DefaultNetworkAllow() []string {
 	return []string{
 		"registry.npmjs.org:443",

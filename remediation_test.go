@@ -39,6 +39,81 @@ func TestParseRuntimeSpecDefaultsBareVersionsToNode(t *testing.T) {
 	}
 }
 
+func TestDockerRunArgsEnforcesOfflineAndHardening(t *testing.T) {
+	cfg := SandboxConfig{Command: "node", Args: []string{"-e", "1"}}
+
+	offline := dockerRunArgs("node:20", "/work", cfg, nil, NetworkLaunchContext{Mode: "offline"})
+	joined := strings.Join(offline, " ")
+	if !strings.Contains(joined, "--network none") {
+		t.Fatalf("offline mode must add --network none, got: %v", offline)
+	}
+	for _, flag := range []string{"--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=512"} {
+		if !strings.Contains(joined, flag) {
+			t.Fatalf("expected hardening flag %s, got: %v", flag, offline)
+		}
+	}
+	// image, then command, then its args, in order at the tail.
+	tail := offline[len(offline)-4:]
+	want := []string{"node:20", "node", "-e", "1"}
+	if strings.Join(tail, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("expected image/command tail %v, got: %v", want, tail)
+	}
+
+	open := dockerRunArgs("node:20", "/work", cfg, nil, NetworkLaunchContext{Mode: "open"})
+	if strings.Contains(strings.Join(open, " "), "--network none") {
+		t.Fatalf("open mode must not add --network none, got: %v", open)
+	}
+}
+
+func TestFilesystemProviderRegistryAndExperimentalGating(t *testing.T) {
+	for _, alias := range []string{"native", "docker", "seatbelt", "sandbox-exec", "wslc", "container", "wsl", "nspawn", "systemd-nspawn"} {
+		if _, ok := lookupFilesystemProvider(alias); !ok {
+			t.Errorf("expected registry to resolve alias %q", alias)
+		}
+	}
+	if _, ok := lookupFilesystemProvider("does-not-exist"); ok {
+		t.Error("unknown provider must not resolve")
+	}
+
+	firstClass := []string{"native", "docker", "sandbox-exec"}
+	for _, name := range firstClass {
+		p, _ := lookupFilesystemProvider(name)
+		if p.Experimental() {
+			t.Errorf("%s must not be experimental", name)
+		}
+	}
+	for _, name := range []string{"wsl", "wslc", "systemd-nspawn"} {
+		p, _ := lookupFilesystemProvider(name)
+		if !p.Experimental() {
+			t.Errorf("%s must be experimental", name)
+		}
+	}
+}
+
+func TestProviderSupportsNetworkModeDockerEnforcesOffline(t *testing.T) {
+	if !providerSupportsNetworkMode("docker", "offline") {
+		t.Error("docker should enforce offline via --network none")
+	}
+	if !providerSupportsNetworkMode("docker", "loopback") {
+		t.Error("docker should enforce loopback via --network none")
+	}
+	if providerSupportsNetworkMode("docker", "proxy") {
+		t.Error("docker must not claim proxy-mode enforcement")
+	}
+}
+
+func TestSandboxImageSelection(t *testing.T) {
+	if got := (NodeProvider{}).SandboxImage("v20.11.0"); got != "node:20.11.0" {
+		t.Errorf("node image = %q, want node:20.11.0", got)
+	}
+	if got := (BunProvider{}).SandboxImage("v1.2.19"); got != "oven/bun:1.2.19" {
+		t.Errorf("bun image = %q, want oven/bun:1.2.19", got)
+	}
+	if got := (NodeProvider{}).SandboxImage(""); got != "node:latest" {
+		t.Errorf("node image (no version) = %q, want node:latest", got)
+	}
+}
+
 func TestParseRuntimeSpecSelectsBun(t *testing.T) {
 	cases := []struct {
 		arg         string
