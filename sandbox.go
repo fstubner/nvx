@@ -22,8 +22,8 @@ type SandboxConfig struct {
 	Args []string
 	// WorkDir is the working directory for the sandboxed process (defaults to cwd)
 	WorkDir string
-	// FilesystemProvider overrides isolation.filesystem.provider from policy.
-	FilesystemProvider string
+	// IsolationProvider overrides the isolation backend selected by policy.
+	IsolationProvider string
 }
 
 // sensitiveEnvPrefixes are environment variable prefixes that will be scrubbed
@@ -55,37 +55,41 @@ var sensitiveEnvPrefixes = []string{
 // windowsAllowedEnvKeys are the only environment variables allowed through on Windows
 // when running in sandbox mode.
 var windowsAllowedEnvKeys = map[string]bool{
-	"PATH":              true,
-	"PATHEXT":           true,
-	"SYSTEMROOT":        true,
-	"SYSTEMDRIVE":       true,
-	"COMSPEC":           true,
-	"TEMP":              true,
-	"TMP":               true,
-	"WINDIR":            true,
-	"HTTP_PROXY":        true,
-	"HTTPS_PROXY":       true,
-	"ALL_PROXY":         true,
-	"NO_PROXY":          true,
+	"PATH":                   true,
+	"PATHEXT":                true,
+	"SYSTEMROOT":             true,
+	"SYSTEMDRIVE":            true,
+	"COMSPEC":                true,
+	"TEMP":                   true,
+	"TMP":                    true,
+	"WINDIR":                 true,
+	"HTTP_PROXY":             true,
+	"HTTPS_PROXY":            true,
+	"ALL_PROXY":              true,
+	"NO_PROXY":               true,
 	"PROCESSOR_ARCHITECTURE": true,
 	"NUMBER_OF_PROCESSORS":   true,
-	"OS":                true,
+	"OS":                     true,
+	// Set by nvx itself to enforce enforce_ignore_scripts on Yarn Berry.
+	"YARN_ENABLE_SCRIPTS": true,
 }
 
 // unixAllowedEnvKeys are the only environment variables allowed through on Unix
 // when running in sandbox mode.
 var unixAllowedEnvKeys = map[string]bool{
-	"PATH":   true,
-	"TMPDIR": true,
-	"SHELL":  true,
-	"TERM":   true,
-	"LANG":   true,
-	"LC_ALL": true,
-	"USER":   true,
+	"PATH":        true,
+	"TMPDIR":      true,
+	"SHELL":       true,
+	"TERM":        true,
+	"LANG":        true,
+	"LC_ALL":      true,
+	"USER":        true,
 	"HTTP_PROXY":  true,
 	"HTTPS_PROXY": true,
 	"ALL_PROXY":   true,
 	"NO_PROXY":    true,
+	// Set by nvx itself to enforce enforce_ignore_scripts on Yarn Berry.
+	"YARN_ENABLE_SCRIPTS": true,
 }
 
 // generateSandboxID creates a short random identifier for an ephemeral sandbox session.
@@ -299,9 +303,9 @@ func runSandbox(config SandboxConfig) int {
 		LogWarn("Failed to load policy: %v", err)
 	}
 
-	provider := policy.FilesystemProvider()
-	if config.FilesystemProvider != "" {
-		provider = strings.ToLower(config.FilesystemProvider)
+	provider := policy.IsolationProviderName()
+	if config.IsolationProvider != "" {
+		provider = strings.ToLower(config.IsolationProvider)
 	}
 
 	rt := runtimeForShim(config.Command)
@@ -331,23 +335,20 @@ func runSandbox(config SandboxConfig) int {
 		netCtx.SOCKSProxyHost, netCtx.SOCKSProxyPort = egress.SOCKSListenHostPort()
 	}
 
-	switch provider {
-	case "native":
-		return runNativeSandbox(config, policy, egress, netCtx)
-	case "docker":
-		return runDockerSandbox(config, config.NvxHome, pinnedVer, egress)
-	case "wslc", "wsl-container", "container":
-		return runWslcSandbox(config, config.NvxHome, pinnedVer)
-	case "wsl", "wsl-distro":
-		return runWslSandbox(config)
-	case "sandbox-exec", "seatbelt":
-		return runSeatbeltSandbox(config, netCtx)
-	case "systemd-nspawn", "nspawn":
-		return runNspawnSandbox(config)
-	default:
-		LogError("Unknown filesystem provider %q. Supported: native, docker, wslc, wsl, sandbox-exec, systemd-nspawn.", provider)
-		return 1
+	// Isolation backends are looked up from an open registry (see
+	// isolation_providers.go and docs/EXTENDING.md) rather than a fixed switch,
+	// so third parties can add a provider by registering it.
+	if p, ok := GetIsolationProvider(provider); ok {
+		return p.Launch(SandboxLaunchContext{
+			Config:    config,
+			Policy:    policy,
+			Egress:    egress,
+			Network:   netCtx,
+			PinnedVer: pinnedVer,
+		})
 	}
+	LogError("Unknown isolation provider %q. Available: %s.", provider, strings.Join(IsolationProviderNames(), ", "))
+	return 1
 }
 
 func execBareCommand(config SandboxConfig) int {
@@ -380,7 +381,6 @@ func execBareCommand(config SandboxConfig) int {
 	}
 	return 0
 }
-
 
 // cleanupStaleSandboxes removes any leftover sandbox home directories from
 // previous sessions that failed to clean up (e.g., due to crashes).

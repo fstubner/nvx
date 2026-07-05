@@ -5,9 +5,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
-var shimToRuntime = map[string]string{}
+var (
+	shimToRuntime = map[string]string{}
+	shimRuntimeMu sync.Mutex
+)
 
 func initRuntimeRegistry() {
 	shimToRuntime = map[string]string{}
@@ -19,13 +23,16 @@ func initRuntimeRegistry() {
 }
 
 func runtimeForShim(cmdName string) RuntimeProvider {
+	shimRuntimeMu.Lock()
 	if len(shimToRuntime) == 0 {
 		initRuntimeRegistry()
 	}
-	if rt, ok := shimToRuntime[strings.ToLower(cmdName)]; ok {
+	rt, ok := shimToRuntime[strings.ToLower(cmdName)]
+	shimRuntimeMu.Unlock()
+	if ok {
 		return Providers[rt]
 	}
-	return Providers["node"]
+	return Providers[defaultRuntime]
 }
 
 func resolvePinnedCommandPath(command string, nvxHome string, pinnedVer string, provider RuntimeProvider) string {
@@ -39,7 +46,9 @@ func resolvePinnedCommandPath(command string, nvxHome string, pinnedVer string, 
 }
 
 func (n NodeProvider) ShimCommands() []string {
-	return []string{"node", "npm", "npx", "yarn", "pnpm", "bunx"}
+	// yarn/pnpm are Node-ecosystem tools (resolved via corepack/PATH fallback);
+	// bun/bunx belong to the Bun runtime provider (see runtime_bun.go).
+	return []string{"node", "npm", "npx", "yarn", "pnpm"}
 }
 
 func (n NodeProvider) DefaultNetworkAllow() []string {

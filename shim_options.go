@@ -5,9 +5,9 @@ import "strings"
 var noSandboxFlag bool
 
 type shimOptions struct {
-	noSandbox          bool
-	filesystemProvider string
-	args               []string
+	noSandbox         bool
+	isolationProvider string
+	args              []string
 }
 
 func parseShimOptions(args []string) shimOptions {
@@ -18,10 +18,16 @@ func parseShimOptions(args []string) shimOptions {
 		switch {
 		case arg == "--no-sandbox":
 			opts.noSandbox = true
+		// Preferred flag; --filesystem-provider is kept as a deprecated alias.
+		case strings.HasPrefix(arg, "--isolation-provider="):
+			opts.isolationProvider = strings.TrimPrefix(arg, "--isolation-provider=")
+		case arg == "--isolation-provider" && i+1 < len(args):
+			opts.isolationProvider = args[i+1]
+			i++
 		case strings.HasPrefix(arg, "--filesystem-provider="):
-			opts.filesystemProvider = strings.TrimPrefix(arg, "--filesystem-provider=")
+			opts.isolationProvider = strings.TrimPrefix(arg, "--filesystem-provider=")
 		case arg == "--filesystem-provider" && i+1 < len(args):
-			opts.filesystemProvider = args[i+1]
+			opts.isolationProvider = args[i+1]
 			i++
 		default:
 			filtered = append(filtered, arg)
