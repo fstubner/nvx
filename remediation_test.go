@@ -193,21 +193,21 @@ func TestBunTagToVersion(t *testing.T) {
 }
 
 func TestIsFullBunVersionAndMatch(t *testing.T) {
-	if !isFullBunVersion("v1.2.19") || !isFullBunVersion("1.0.0") {
+	if !isExactSemver("v1.2.19") || !isExactSemver("1.0.0") {
 		t.Fatal("expected 3-part versions to be full")
 	}
-	if isFullBunVersion("v1.2") || isFullBunVersion("v1") || isFullBunVersion("v1.2.x") {
+	if isExactSemver("v1.2") || isExactSemver("v1") || isExactSemver("v1.2.x") {
 		t.Fatal("partial or non-numeric versions must not be full")
 	}
 	versions := []string{"v1.2.19", "v1.2.5", "v1.1.40", "v0.8.1"}
-	if got := matchBunVersion("v1.2", versions); got != "v1.2.19" {
-		t.Errorf("matchBunVersion(v1.2) = %q, want v1.2.19 (newest match)", got)
+	if got := matchVersionPrefix("v1.2", versions); got != "v1.2.19" {
+		t.Errorf("matchVersionPrefix(v1.2) = %q, want v1.2.19 (newest match)", got)
 	}
-	if got := matchBunVersion("v1", versions); got != "v1.2.19" {
-		t.Errorf("matchBunVersion(v1) = %q, want v1.2.19", got)
+	if got := matchVersionPrefix("v1", versions); got != "v1.2.19" {
+		t.Errorf("matchVersionPrefix(v1) = %q, want v1.2.19", got)
 	}
-	if got := matchBunVersion("v1.2.5", versions); got != "v1.2.5" {
-		t.Errorf("matchBunVersion(v1.2.5) = %q, want exact", got)
+	if got := matchVersionPrefix("v1.2.5", versions); got != "v1.2.5" {
+		t.Errorf("matchVersionPrefix(v1.2.5) = %q, want exact", got)
 	}
 }
 
@@ -228,6 +228,81 @@ func TestBunProviderDetectConfig(t *testing.T) {
 	ver2, _, err := (BunProvider{}).DetectConfig(tmp2)
 	if err != nil || ver2 != "1.1.0" {
 		t.Fatalf("DetectConfig(engines.bun) = %q, want 1.1.0", ver2)
+	}
+}
+
+func TestParseRuntimeSpecSelectsDeno(t *testing.T) {
+	provider, version := parseRuntimeSpec("deno@2.3")
+	if provider.Name() != "deno" || version != "2.3" {
+		t.Fatalf("parseRuntimeSpec(deno@2.3) = (%s, %q)", provider.Name(), version)
+	}
+	provider, version = parseRuntimeSpec("deno")
+	if provider.Name() != "deno" || version != "latest" {
+		t.Fatalf("parseRuntimeSpec(deno) = (%s, %q)", provider.Name(), version)
+	}
+	if got := runtimeForShim("deno").Name(); got != "deno" {
+		t.Fatalf("runtimeForShim(deno) = %q, want deno", got)
+	}
+}
+
+func TestDenoProviderDetectConfig(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, ".deno-version"), []byte("2.3.1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ver, src, err := (DenoProvider{}).DetectConfig(tmp)
+	if err != nil || ver != "2.3.1" || !strings.HasSuffix(src, ".deno-version") {
+		t.Fatalf("DetectConfig = (%q, %q, %v), want 2.3.1", ver, src, err)
+	}
+}
+
+func TestDenoSandboxImageAndNetworkAllow(t *testing.T) {
+	if got := (DenoProvider{}).SandboxImage("v2.3.1"); got != "denoland/deno:2.3.1" {
+		t.Errorf("deno image = %q, want denoland/deno:2.3.1", got)
+	}
+	allow := (DenoProvider{}).DefaultNetworkAllow()
+	joined := strings.Join(allow, ",")
+	for _, host := range []string{"deno.land:443", "jsr.io:443", "registry.npmjs.org:443"} {
+		if !strings.Contains(joined, host) {
+			t.Errorf("expected %s in deno default allowlist, got %v", host, allow)
+		}
+	}
+}
+
+func TestDetectShimPackagesForVerificationDenoNpmSpecifiers(t *testing.T) {
+	got := detectShimPackagesForVerification("deno", []string{"add", "npm:left-pad@1.3.0", "jsr:@std/fs", "npm:lodash"})
+	want := []string{"left-pad@1.3.0", "lodash"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("deno add packages = %v, want %v", got, want)
+	}
+	if pkgs := detectShimPackagesForVerification("deno", []string{"run", "main.ts"}); len(pkgs) != 0 {
+		t.Fatalf("deno run must not trigger verification, got %v", pkgs)
+	}
+}
+
+func TestFindShasumEntryFormats(t *testing.T) {
+	hash := strings.Repeat("ab", 32)
+	cases := []struct {
+		name    string
+		content string
+		file    string
+		want    string
+	}{
+		{"standard two-field", hash + "  deno-x.zip\n", "deno-x.zip", hash},
+		{"binary-mode star", hash + " *deno-x.zip\n", "deno-x.zip", hash},
+		{"dot-slash prefix", hash + "  ./deno-x.zip\n", "deno-x.zip", hash},
+		{"lone hash single entry", hash + "\n", "deno-x.zip", hash},
+		{"wrong filename", hash + "  other.zip\n", "deno-x.zip", ""},
+		{"lone hash but multiple lines", hash + "\n" + hash + "  other.zip\n", "deno-x.zip", ""},
+		{"not a hash", "hello  deno-x.zip\n", "deno-x.zip", ""},
+		{"get-filehash format", "\r\nAlgorithm : SHA256\r\nHash      : " + hash + "\r\nPath      : C:\\w\\deno-x.zip\r\n", "deno-x.zip", hash},
+		{"get-filehash no path line", "Algorithm : SHA256\nHash : " + hash + "\n", "deno-x.zip", hash},
+		{"get-filehash wrong path", "Hash : " + hash + "\nPath : C:\\w\\other.zip\n", "deno-x.zip", ""},
+	}
+	for _, tc := range cases {
+		if got := findShasumEntry(tc.content, tc.file); got != tc.want {
+			t.Errorf("%s: findShasumEntry = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

@@ -122,19 +122,7 @@ func VerifyChecksumFromShasums(shaUrl, archivePath, archiveFilename string) erro
 		return fmt.Errorf("failed to read checksum file: %w", err)
 	}
 
-	expectedSHA := ""
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
-		parts := strings.Fields(line)
-		if len(parts) >= 2 {
-			// Parts[0] is checksum, Parts[1] is filename
-			if parts[1] == archiveFilename {
-				expectedSHA = parts[0]
-				break
-			}
-		}
-	}
-
+	expectedSHA := findShasumEntry(string(content), archiveFilename)
 	if expectedSHA == "" {
 		return fmt.Errorf("checksum entry not found for %s in SHASUMS256.txt", archiveFilename)
 	}
@@ -151,6 +139,72 @@ func VerifyChecksumFromShasums(shaUrl, archivePath, archiveFilename string) erro
 
 	LogSuccess("Checksum verified successfully.")
 	return nil
+}
+
+// findShasumEntry extracts the expected hash for filename from checksum-file
+// content. Accepted forms: sha256sum lines ("<hash>  <filename>", with optional
+// "*" binary marker or "./" prefix); PowerShell Get-FileHash output ("Hash : <hex>",
+// as published for Deno's Windows assets, validated against the Path line's base
+// name when present); and — for per-asset sidecar files — a lone 64-char hash
+// when the file contains exactly one entry.
+func findShasumEntry(content, filename string) string {
+	isHex64 := func(s string) bool {
+		if len(s) != 64 {
+			return false
+		}
+		for _, r := range s {
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				return false
+			}
+		}
+		return true
+	}
+	baseName := func(p string) string {
+		if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+			return p[i+1:]
+		}
+		return p
+	}
+
+	var loneHash, kvHash, kvPath string
+	entries := 0
+	for _, line := range strings.Split(content, "\n") {
+		parts := strings.Fields(strings.TrimSpace(line))
+		if len(parts) == 0 {
+			continue
+		}
+		entries++
+		if len(parts) >= 2 && isHex64(parts[0]) {
+			name := strings.TrimPrefix(parts[1], "*")
+			if name == filename || strings.TrimPrefix(name, "./") == filename {
+				return parts[0]
+			}
+		}
+		if len(parts) == 1 && isHex64(parts[0]) {
+			loneHash = parts[0]
+		}
+		// Get-FileHash key/value lines: "Hash : <hex>", "Path : C:\...\asset.zip"
+		if len(parts) >= 3 && parts[1] == ":" {
+			switch strings.ToLower(parts[0]) {
+			case "hash":
+				if isHex64(parts[2]) {
+					kvHash = parts[2]
+				}
+			case "path":
+				kvPath = parts[len(parts)-1]
+			}
+		}
+	}
+
+	if kvHash != "" && (kvPath == "" || strings.EqualFold(baseName(kvPath), filename)) {
+		return kvHash
+	}
+	// A single-hash file (e.g. <asset>.sha256sum) unambiguously refers to the
+	// asset it was fetched for.
+	if entries == 1 && loneHash != "" {
+		return loneHash
+	}
+	return ""
 }
 
 type progressWriter struct {
@@ -202,8 +256,19 @@ func (pw *progressWriter) printProgress() {
 	}
 }
 
-// ExtractZip extracts a zip file into destDir, stripping the top-level folder inside the zip
+// ExtractZip extracts a zip file into destDir, stripping the top-level folder
+// inside the zip (e.g. node-vX/, bun-<target>/).
 func ExtractZip(zipPath, destDir string) error {
+	return extractZip(zipPath, destDir, true)
+}
+
+// ExtractZipFlat extracts a zip whose members are already at the archive root
+// (e.g. Deno's deno[.exe]), without stripping a leading folder.
+func ExtractZipFlat(zipPath, destDir string) error {
+	return extractZip(zipPath, destDir, false)
+}
+
+func extractZip(zipPath, destDir string, strip bool) error {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return fmt.Errorf("failed to open zip file: %w", err)
@@ -219,7 +284,7 @@ func ExtractZip(zipPath, destDir string) error {
 	remaining := maxExtractedArchiveBytes
 
 	for _, f := range r.File {
-		fpath, skip, err := safeArchiveTarget(destDir, f.Name)
+		fpath, skip, err := safeArchiveTargetStrip(destDir, f.Name, strip)
 		if err != nil {
 			return fmt.Errorf("illegal file path in zip: %w", err)
 		}
@@ -366,13 +431,24 @@ func ExtractTarGz(tarPath, destDir string) error {
 }
 
 func safeArchiveTarget(destDir, archiveName string) (string, bool, error) {
+	return safeArchiveTargetStrip(destDir, archiveName, true)
+}
+
+// safeArchiveTargetStrip resolves an archive member to a path under destDir,
+// rejecting traversal. When strip is true the leading path segment is dropped
+// (flattening wrapper folders like node-vX/); when false, members are placed
+// as-is (for archives whose files sit at the root).
+func safeArchiveTargetStrip(destDir, archiveName string, strip bool) (string, bool, error) {
 	normalized := strings.ReplaceAll(archiveName, "\\", "/")
 	parts := strings.Split(normalized, "/")
-	if len(parts) <= 1 {
-		return "", true, nil
+	if strip {
+		if len(parts) <= 1 {
+			return "", true, nil
+		}
+		parts = parts[1:]
 	}
 
-	strippedParts := parts[1:]
+	strippedParts := parts
 	for _, part := range strippedParts {
 		if part == "" || part == "." {
 			continue

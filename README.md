@@ -33,7 +33,7 @@ Along the way, I wanted to tackle a few other common frustrations:
 
 ## Features
 
-- **Multi-Runtime Core**: Manages **Node.js and Bun** today through a `RuntimeProvider` interface designed to extend to other runtimes (Deno, Python, Go, Rust) — see [docs/runtime-providers.md](docs/runtime-providers.md). Select a runtime with `runtime@version` (e.g. `nvx install bun@1.2`); a bare version stays Node.js for nvm compatibility.
+- **Multi-Runtime Core**: Manages **Node.js, Bun, and Deno** today through a `RuntimeProvider` interface designed to extend to other runtimes (Python, Go, Rust) — see [docs/runtime-providers.md](docs/runtime-providers.md). Select a runtime with `runtime@version` (e.g. `nvx install bun@1.2`, `nvx install deno@2.1`); a bare version stays Node.js for nvm compatibility.
 - **Cascading Security Policies**: Resolves global and local directory-level policy blocks from `.nvx-policy.json`.
 - **Registry-Backed Typosquatting Audits**: Cross-checks package names against a synced list of popular packages and queries the npm registry download API dynamically to verify download counts and distinguish typosquats from legitimate packages.
 
@@ -92,7 +92,7 @@ Commands:
   cleanup                  Remove stale sandbox sessions from previous runs
   version, -v              Print version info
 
-Shim flags (node, npm, npx, yarn, pnpm, bun, bunx via PATH):
+Shim flags (node, npm, npx, yarn, pnpm, bun, bunx, deno via PATH):
   --no-sandbox             Run without sandbox for this invocation
   --filesystem-provider=<name>  Override isolation.filesystem.provider
                            (native | docker; experimental: wsl, wslc, systemd-nspawn)
@@ -100,7 +100,7 @@ Shim flags (node, npm, npx, yarn, pnpm, bun, bunx via PATH):
 
 ### Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun`, and `bunx` are sandboxed by default** when `isolation.enabled` is true. No separate sandbox subcommand — just run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun`, `bunx`, and `deno` are sandboxed by default** when `isolation.enabled` is true. No separate sandbox subcommand — just run commands normally:
 
 ```bash
 npm install
