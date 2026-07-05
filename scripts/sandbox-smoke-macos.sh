@@ -26,6 +26,17 @@ cd "$PROJ"
 
 "$NVX" init-shims >/dev/null
 
+# Baseline: can sandbox-exec run node at all on this machine with a permissive
+# profile? Distinguishes "our profile is too strict" from "sandbox-exec/arm64
+# can't run this binary regardless".
+ALLOWALL="$PROJ/allowall.sb"
+printf '(version 1)\n(allow default)\n' > "$ALLOWALL"
+set +e
+/usr/bin/sandbox-exec -f "$ALLOWALL" "$(command -v node)" -e "process.exit(0)"
+baseline_rc=$?
+set -e
+echo "baseline (allow default) sandbox-exec node rc=$baseline_rc"
+
 echo "Testing sandboxed node via shim..."
 PROBE="$PROJ/probe.txt"
 set +e
