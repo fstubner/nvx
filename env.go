@@ -186,8 +186,20 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 }
 
 // lookPathSkippingNvxShims resolves cmdName on PATH with ~/.nvx/bin removed so
-// shim wrappers (node.cmd) are not mistaken for the real runtime binary.
+// shim wrappers (node.cmd) are not mistaken for the real runtime binary. The
+// (slow, on Windows) PATH scan is memoized per PATH via the bin-resolve cache.
 func lookPathSkippingNvxShims(cmdName, nvxHome string) (string, error) {
+	if cached := lookupBinCache(nvxHome, cmdName); cached != "" {
+		return cached, nil
+	}
+	resolved, err := lookPathSkippingNvxShimsUncached(cmdName, nvxHome)
+	if err == nil {
+		storeBinCache(nvxHome, cmdName, resolved)
+	}
+	return resolved, err
+}
+
+func lookPathSkippingNvxShimsUncached(cmdName, nvxHome string) (string, error) {
 	shimDir := filepath.Join(nvxHome, "bin")
 	pathEnv := os.Getenv("PATH")
 	var filtered []string
