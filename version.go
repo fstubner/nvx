@@ -387,8 +387,9 @@ func MigrateLegacyNodeVersions(nvxHome string) {
 
 // Providers maps runtime names to their respective RuntimeProvider implementations
 var Providers = map[string]RuntimeProvider{
-	"node": NodeProvider{},
-	"bun":  BunProvider{},
-	"deno": DenoProvider{},
-	"go":   GoProvider{},
+	"node":   NodeProvider{},
+	"bun":    BunProvider{},
+	"deno":   DenoProvider{},
+	"go":     GoProvider{},
+	"python": PythonProvider{},
 }

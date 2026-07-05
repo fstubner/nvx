@@ -1,11 +1,12 @@
 # Runtime providers
 
 nvx manages runtimes through the `RuntimeProvider` interface (`version.go`).
-Four providers ship today — **Node.js** (`NodeProvider`), **Bun**
-(`BunProvider`), **Deno** (`DenoProvider`), and **Go** (`GoProvider`) — and the
-interface is designed so more can be added without touching the CLI, sandbox, or
-policy code. Go is the first non-JavaScript runtime and exercises the parts of
-the interface the JS runtimes never touch (see "Readiness" below).
+Five providers ship today — **Node.js** (`NodeProvider`), **Bun**
+(`BunProvider`), **Deno** (`DenoProvider`), **Go** (`GoProvider`), and **Python**
+(`PythonProvider`) — across two ecosystems, and the interface is designed so more
+can be added without touching the CLI, sandbox, or policy code. Go and Python are
+non-JavaScript runtimes and exercise the parts of the interface the JS runtimes
+never touch (see "Non-JavaScript runtimes" below).
 
 ## The interface
 
@@ -47,7 +48,7 @@ sidecar checksum in PowerShell `Get-FileHash` format (see `findShasumEntry`), an
 a zip whose binary sits at the archive root, extracted with `ExtractZipFlat`
 instead of the folder-stripping `ExtractZip`.
 
-## Non-JavaScript runtimes: Go (shipped), Python / Rust (roadmap)
+## Non-JavaScript runtimes: Go and Python (shipped), Rust (roadmap)
 
 Go was implemented as the first non-JavaScript runtime specifically to test the
 parts of the interface the JS runtimes never touch. It validated the design:
@@ -66,22 +67,34 @@ parts of the interface the JS runtimes never touch. It validated the design:
 - **No package audit.** Go modules are not npm packages, so the `go` shim is
   sandbox-executed but not routed through the npm-oriented verifier.
 
-Walking the interface against the remaining runtimes:
+Python (`PythonProvider`) then confirmed a second, messier non-JS shape using the
+python-build-standalone distribution:
 
-| Method | Python | Rust | Verdict |
-|---|---|---|---|
-| Install / Uninstall / List* / ResolveVersion | python-build-standalone archives | static toolchain tarballs | Holds (as Go proved) |
-| DetectConfig | `.python-version` | `rust-toolchain.toml` | Holds (Rust's is a toolchain descriptor, slightly lossy as a string) |
-| ResolveBinary | `Scripts\` vs `bin/` | `bin/` | Holds |
-| DefaultNetworkAllow | pypi.org | static.crates.io | Holds |
-| SandboxImage / SessionEnv | `python:<v>` | `rust:<v>`, `RUSTUP_HOME`-style | Holds (Go exercised both) |
-| **ShimCommands** (static) | pip console-scripts appear **after** install | rustup components (clippy, fmt) | **Still cracks** — needs a post-install hook |
+- **Date-tagged releases carrying many versions.** A release tag is a date; each
+  carries every supported minor. A version query resolves to the newest matching
+  asset *within* the latest release (`resolveInstallAsset`), rather than one
+  release per version.
+- **Platform quirks.** Interpreter at the version root on Windows, `bin/python3`
+  on Unix; the Unix tarball uses relative symlinks, which surfaced (and fixed) a
+  missing parent-dir `mkdir` in `ExtractTarGz`.
+- **`python -m pip`, not a pip launcher.** The interpreter (`python`, `python3`)
+  is shimmed; pip is a module invocation, so a standalone pip launcher is left to
+  the post-install hook (below) rather than faked.
+
+Walking the interface against the remaining runtime:
+
+| Method | Rust | Verdict |
+|---|---|---|
+| Install / Uninstall / List* / ResolveVersion | static toolchain tarballs | Holds (as Go/Python proved) |
+| DetectConfig | `rust-toolchain.toml` | Holds (a toolchain descriptor, slightly lossy as a string) |
+| ResolveBinary | `bin/` | Holds |
+| DefaultNetworkAllow / SandboxImage / SessionEnv | static.crates.io, `rust:<v>`, `RUSTUP_HOME`-style | Holds (Go/Python exercised these) |
+| **ShimCommands** (static) | rustup components (clippy, fmt) added **after** install | **Still cracks** — needs a post-install hook |
 
 **Known future need, deliberately not built yet:**
 
 - A `PostInstall(version, nvxHome)` hook (or dynamic shim enumeration) for
-  runtimes whose available commands are only known after install
-  (pip-installed console scripts, rustup components). Go does not need it — its
-  commands (`go`, `gofmt`) are fixed — which is why it was the right first
-  non-JS runtime. Adding the hook is non-breaking because all providers live
-  inside this module.
+  runtimes whose available commands are only known after install (pip-installed
+  console scripts, a standalone pip launcher, rustup components). The five
+  shipped runtimes all have fixed core commands, so none needs it yet; adding it
+  is non-breaking because all providers live inside this module.

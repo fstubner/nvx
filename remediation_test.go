@@ -387,6 +387,51 @@ func TestVerifyExpectedSHA256(t *testing.T) {
 	}
 }
 
+func TestPythonProviderSelectionAndShims(t *testing.T) {
+	provider, version := parseRuntimeSpec("python@3.12")
+	if provider.Name() != "python" || version != "3.12" {
+		t.Fatalf("parseRuntimeSpec(python@3.12) = (%s, %q)", provider.Name(), version)
+	}
+	for _, cmd := range []string{"python", "python3"} {
+		if got := runtimeForShim(cmd).Name(); got != "python" {
+			t.Errorf("runtimeForShim(%q) = %q, want python", cmd, got)
+		}
+	}
+	// pip is invoked as `python -m pip`, so it is intentionally not a shim.
+	for _, cmd := range (PythonProvider{}).ShimCommands() {
+		if cmd == "pip" || cmd == "pip3" {
+			t.Errorf("python should not shim %q (use python -m pip)", cmd)
+		}
+	}
+}
+
+func TestCompareInternalVersions(t *testing.T) {
+	if compareInternalVersions("v3.13.2", "v3.12.13") <= 0 {
+		t.Error("3.13.2 should sort above 3.12.13")
+	}
+	if compareInternalVersions("v3.12.13", "v3.12.9") <= 0 {
+		t.Error("3.12.13 should sort above 3.12.9 (numeric, not lexical)")
+	}
+	if compareInternalVersions("v3.12.0", "v3.12.0") != 0 {
+		t.Error("equal versions should compare 0")
+	}
+}
+
+func TestPythonProviderDetectConfigAndImage(t *testing.T) {
+	tmp := t.TempDir()
+	// .python-version may list multiple; take the first non-empty line.
+	if err := os.WriteFile(filepath.Join(tmp, ".python-version"), []byte("\n3.12.7\n3.11\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ver, src, err := (PythonProvider{}).DetectConfig(tmp)
+	if err != nil || ver != "3.12.7" || !strings.HasSuffix(src, ".python-version") {
+		t.Fatalf("DetectConfig(.python-version) = (%q, %q, %v), want 3.12.7", ver, src, err)
+	}
+	if got := (PythonProvider{}).SandboxImage("v3.12.13"); got != "python:3.12.13" {
+		t.Errorf("python image = %q, want python:3.12.13", got)
+	}
+}
+
 func TestRuntimeFromVersionDirRecognizesKnownRuntimes(t *testing.T) {
 	nvxHome := filepath.Join("some", "home")
 	nodeDir := filepath.Join(nvxHome, "versions", "node", "v20.0.0")

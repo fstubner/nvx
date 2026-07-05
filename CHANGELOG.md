@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **Bun runtime**: `nvx install bun@1.2` (and `bun`/`latest`), managed the same way as Node.js with mandatory checksum verification. `bun`/`bunx` shims route to the Bun provider.
 * **Deno runtime**: `nvx install deno@2.1` (and `deno`/`latest`), checksum-verified like the others; the `deno` shim audits `deno add/install npm:<pkg>`. Detects `.deno-version`.
 * **Go toolchain (first non-JavaScript runtime)**: `nvx install go@1.23` (and `go`/`latest`), verified against the go.dev index SHA-256. Activation sets `GOROOT` via the runtime session-env hook; detects `.go-version` and `go.mod` (`toolchain`/`go` directives).
+* **Python runtime**: `nvx install python@3.12` (and `python`/`latest`) via python-build-standalone, SHA256SUMS-verified. Shims `python`/`python3`; pip is used as `python -m pip`. Detects `.python-version`.
 * **`runtime@version` CLI**: install/use/default/uninstall accept a runtime prefix; a bare version stays Node.js for nvm compatibility. Multiple runtimes can be active in one shell without evicting each other from `PATH`.
 * **FilesystemProvider registry**: `native` and `docker` are first-class; `wsl`/`wslc`/`systemd-nspawn` are gated behind `NVX_EXPERIMENTAL=1`. An unavailable backend (e.g. Docker not running) fails closed before launch.
 * **Docker hardening**: image selected per runtime; `offline`/`loopback` enforced with `--network none`; `--cap-drop=ALL`, `no-new-privileges`, `--pids-limit`, `tmpfs /tmp`.
