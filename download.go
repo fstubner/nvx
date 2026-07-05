@@ -434,6 +434,11 @@ func ExtractTarGz(tarPath, destDir string) error {
 				return fmt.Errorf("illegal symlink target outside destination: %s -> %s (resolved: %s)", fpath, linkTarget, cleanTarget)
 			}
 
+			// Ensure the parent directory exists — tar entries do not always list
+			// a directory before the symlinks inside it.
+			if err := os.MkdirAll(filepath.Dir(fpath), 0700); err != nil {
+				return fmt.Errorf("failed to create subdirectory for symlink %s: %w", fpath, err)
+			}
 			// Remove existing symlink/file if it exists
 			if err := os.Remove(fpath); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("failed to remove existing symlink target %s: %w", fpath, err)
