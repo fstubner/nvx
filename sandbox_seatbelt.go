@@ -113,6 +113,10 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, writableRoots ...string) 
 	b.WriteString("(allow mach-lookup)\n")
 	b.WriteString("(allow ipc-posix-shm*)\n")
 	b.WriteString("(allow iokit-open)\n")
+	// Mapping a file's pages as executable is a distinct Seatbelt operation from
+	// reading it; under (deny default) the linker can read but not execute its
+	// libraries, so the process is killed during load. Required to run any binary.
+	b.WriteString("(allow file-map-executable)\n")
 	b.WriteString("(allow file-read*\n")
 	for _, root := range dedupeStrings(readRoots) {
 		if root == "" {
