@@ -14,6 +14,45 @@ import (
 	"time"
 )
 
+func TestParseRuntimeSpecDefaultsBareVersionsToNode(t *testing.T) {
+	cases := []struct {
+		arg         string
+		wantRuntime string
+		wantVersion string
+	}{
+		{"20", "node", "20"},
+		{"v20.11.0", "node", "v20.11.0"},
+		{"lts", "node", "lts"},
+		{"latest", "node", "latest"},
+		{"node", "node", "latest"},
+		{"node@18", "node", "18"},
+		{"node@lts", "node", "lts"},
+	}
+	for _, tc := range cases {
+		provider, version := parseRuntimeSpec(tc.arg)
+		if provider.Name() != tc.wantRuntime {
+			t.Errorf("parseRuntimeSpec(%q) runtime = %q, want %q", tc.arg, provider.Name(), tc.wantRuntime)
+		}
+		if version != tc.wantVersion {
+			t.Errorf("parseRuntimeSpec(%q) version = %q, want %q", tc.arg, version, tc.wantVersion)
+		}
+	}
+}
+
+func TestRuntimeFromVersionDirRecognizesKnownRuntimes(t *testing.T) {
+	nvxHome := filepath.Join("some", "home")
+	nodeDir := filepath.Join(nvxHome, "versions", "node", "v20.0.0")
+	if got := runtimeFromVersionDir(nvxHome, nodeDir); got != "node" {
+		t.Errorf("runtimeFromVersionDir(node path) = %q, want node", got)
+	}
+	// Legacy flat layout (no runtime segment) resolves to "" so callers keep
+	// node-compatible PATH behavior.
+	legacy := filepath.Join(nvxHome, "versions", "v20.0.0")
+	if got := runtimeFromVersionDir(nvxHome, legacy); got != "" {
+		t.Errorf("runtimeFromVersionDir(legacy path) = %q, want empty", got)
+	}
+}
+
 func TestParseStartupFlagsDoesNotConsumeShimPayloadFlags(t *testing.T) {
 	args, yes, noSandbox := parseStartupFlags([]string{"nvx", "shim", "npx", "-y", "create-vite", "--no-sandbox"})
 

@@ -107,24 +107,33 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 	currentLinkBin := GetVersionBinDir(currentLink)
 	currentLinkNpm := GetNpmGlobalBinDir(currentLink)
 
+	// Scope the strip to a single runtime when the target names one, so that
+	// switching (say) Bun does not evict an active Node from PATH. Legacy/flat
+	// version dirs and node keep the original whole-versions-dir behavior.
+	targetRuntime := runtimeFromVersionDir(nvxHome, targetVersionDir)
+	isNodeScope := targetRuntime == "" || targetRuntime == "node"
+	stripPrefix := filepath.Clean(versionsDir) + string(os.PathSeparator)
+	if targetRuntime != "" {
+		stripPrefix = filepath.Clean(filepath.Join(versionsDir, targetRuntime)) + string(os.PathSeparator)
+	}
+
 	for _, part := range parts {
 		if part == "" {
 			continue
 		}
 		normPart := filepath.Clean(part)
-		normVersionsDir := filepath.Clean(versionsDir)
 		normCurrentLink := filepath.Clean(currentLink)
 		normCurrentLinkBin := filepath.Clean(currentLinkBin)
 		normCurrentLinkNpm := filepath.Clean(currentLinkNpm)
 
-		// Remove any specific v* version paths or npm_global paths inside versions Dir
-		if strings.HasPrefix(strings.ToLower(normPart), strings.ToLower(normVersionsDir)+string(os.PathSeparator)) {
+		// Remove v* version and npm_global paths for the runtime being switched.
+		if strings.HasPrefix(strings.ToLower(normPart), strings.ToLower(stripPrefix)) {
 			continue
 		}
-		// Also clean the .nvx\current path and default npm_global paths if we are setting a terminal version
-		if strings.ToLower(normPart) == strings.ToLower(normCurrentLink) ||
+		// Clean the node default-link paths only when switching node itself.
+		if isNodeScope && (strings.ToLower(normPart) == strings.ToLower(normCurrentLink) ||
 			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkBin) ||
-			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkNpm) {
+			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkNpm)) {
 			continue
 		}
 		// Remove stale project-scoped tool dirs from previously visited projects
@@ -146,14 +155,18 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 	}
 	cleaned = finalCleaned
 
-	// Prepend the new target version directory and the npm prefix bin directory
+	// Prepend the new target version directory and (for node) its npm prefix bin.
 	if targetVersionDir != "" {
 		binDir := GetVersionBinDir(targetVersionDir)
-		if npmPrefixDir == "" {
-			npmPrefixDir = filepath.Join(targetVersionDir, "npm_global")
+		if isNodeScope {
+			if npmPrefixDir == "" {
+				npmPrefixDir = filepath.Join(targetVersionDir, "npm_global")
+			}
+			npmBinDir := GetNpmPrefixBinDir(npmPrefixDir)
+			cleaned = append([]string{npmBinDir, binDir}, cleaned...)
+		} else {
+			cleaned = append([]string{binDir}, cleaned...)
 		}
-		npmBinDir := GetNpmPrefixBinDir(npmPrefixDir)
-		cleaned = append([]string{npmBinDir, binDir}, cleaned...)
 	}
 
 	// Global nvx shims first, then project node_modules/.bin shims, then runtime paths.
