@@ -506,7 +506,7 @@ func TestCleanupStaleSandboxes(t *testing.T) {
 
 	sandboxDir := getSandboxHomeDir(tmpDir)
 	fakeSandboxPath := filepath.Join(sandboxDir, "stale-session-123")
-	
+
 	err := os.MkdirAll(fakeSandboxPath, 0755)
 	if err != nil {
 		t.Fatalf("failed to create fake stale sandbox path: %v", err)
@@ -743,6 +743,8 @@ func TestBuildSeatbeltProfile(t *testing.T) {
 		`(subpath "/work/dir")`,
 		`(subpath "/private/tmp")`,
 		`(allow network-outbound (remote tcp "localhost:8080"))`,
+		"(deny file-read*",               // home / credential read confinement
+		`(subpath "/Library/Keychains")`, // system keychain denied
 	} {
 		if !strings.Contains(profile, expected) {
 			t.Errorf("expected profile to contain %q, got:\n%s", expected, profile)
@@ -888,4 +890,3 @@ func TestLoadPolicyCascading(t *testing.T) {
 		t.Error("expected trusted-parent to be in trusted packages list")
 	}
 }
-

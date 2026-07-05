@@ -5,9 +5,35 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 )
+
+// version is the nvx build version. It is injected at build time via
+//
+//	go build -ldflags "-X main.version=$(git describe --tags --always)"
+//
+// and falls back to the module's embedded VCS info, then to "dev".
+var version = "dev"
+
+// nvxVersion resolves the effective version string for `nvx version`.
+func nvxVersion() string {
+	if version != "" && version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			return info.Main.Version
+		}
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" && len(s.Value) >= 7 {
+				return "dev+" + s.Value[:7]
+			}
+		}
+	}
+	return "dev"
+}
 
 var yesFlag = false
 
@@ -38,9 +64,8 @@ func main() {
 
 	switch command {
 	case "version", "-v", "--version":
-		fmt.Println("nvx version 0.1.0")
+		fmt.Println("nvx version " + nvxVersion())
 		return
-
 
 	case "install", "i":
 
@@ -92,7 +117,8 @@ func main() {
 
 	case "verify-install":
 		if len(os.Args) < 3 {
-			os.Exit(0)
+			LogError("Please specify one or more packages to verify. Example: nvx verify-install lodash express")
+			os.Exit(1)
 		}
 		runVerifyInstall(os.Args[2:], nvxHome)
 
@@ -134,6 +160,29 @@ func main() {
 		LogInfo("Cleaning up stale sandbox sessions...")
 		cleanupStaleSandboxes(nvxHome)
 		LogSuccess("Sandbox cleanup complete.")
+
+	case "upgrade", "self-update":
+		checkOnly := false
+		for _, a := range os.Args[2:] {
+			if a == "--check" {
+				checkOnly = true
+			}
+		}
+		os.Exit(runUpgrade(checkOnly))
+
+	case "doctor":
+		runDoctor(nvxHome)
+		maybeNotifyUpdate(nvxHome)
+
+	case "which":
+		if len(os.Args) < 3 {
+			LogError("Usage: nvx which <command>  (e.g. nvx which node)")
+			os.Exit(1)
+		}
+		os.Exit(runWhich(os.Args[2], nvxHome))
+
+	case "current":
+		runCurrent(nvxHome)
 
 	case "__landlock-exec":
 		guestHome, workDir, nvxHome, networkMode, shimCommand, proxyPort, cmdPath, cmdArgs, ok := parseLandlockExecArgs(os.Args[2:])
@@ -188,32 +237,41 @@ func printHelp() {
 Usage:
   nvx <command> [arguments]
 
+A runtime is selected with a "<runtime>@<version>" prefix; a bare version uses
+the default runtime (node). Registered runtimes: node, bun. Run "nvx doctor".
+
 Commands:
-  install <version>      Download and install a Node.js version (e.g. 20, lts, latest)
-  uninstall <version>    Remove an installed Node.js version
-  use <version>          Switch Node.js version in the current terminal session
-  default <version>      Set the global default Node.js version (creates a link)
-  list, ls               List all installed Node.js versions
+  install <ver>          Install a runtime version (e.g. 20, lts, latest, bun@1.1)
+  uninstall <ver>        Remove an installed runtime version
+  use <ver>              Switch runtime version in the current terminal session
+  default <ver>          Set the global default version (creates a link)
+  list, ls               List installed versions across all runtimes
   list-remote, ls-remote List available Node.js versions from nodejs.org
+  current                Show the active and default versions
+  which <cmd>            Print the real binary nvx resolves for a command
+  doctor                 Show runtime + isolation providers, availability, and policy
+  upgrade [--check]      Update nvx to the latest release (checksum-verified)
   env [--shell=<type>]   Print shell integration script (powershell, bash, zsh)
   auto [--shell=<type>]  Auto-switch version based on .nvmrc / .node-version / package.json
   verify-install <pkgs>  Verify package safety before installing (called by wrappers)
   init-shims             Generate PATH shims in ~/.nvx/bin (and project bin shims when in a Node project)
   policy init            Scaffold ~/.nvx/policy.json and/or .nvx-policy.json
-  shim <cmd> [args]      Internal shim router for package managers
   cleanup                Remove stale sandbox sessions from previous runs
 
 Options:
   --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
-  --filesystem-provider=<name>  Override isolation.filesystem.provider
+  --isolation-provider=<name>   Override the isolation backend (alias: --filesystem-provider)
   --no-sandbox           Disable sandbox for this shim invocation
   -y, --yes              Auto-approve all prompts
 
 Examples:
   nvx install lts
+  nvx install bun@1.1
   nvx use 20.11.0
-  npm run dev
-  nvx default 18.16.0`)
+  nvx default 18.16.0
+  nvx doctor
+
+Extending nvx: add custom runtime or isolation providers — see docs/EXTENDING.md`)
 }
 
 // UI Logging helpers (stderr)
@@ -234,6 +292,14 @@ func LogError(format string, a ...interface{}) {
 }
 
 func CompareVersions(v1, v2 string) int {
+	// Prefer the real semver comparator (handles prerelease precedence correctly);
+	// fall back to a lenient numeric compare for non-semver strings.
+	if a, err1 := parseSemver(v1); err1 == nil {
+		if b, err2 := parseSemver(v2); err2 == nil {
+			return compareSemver(a, b)
+		}
+	}
+
 	v1Clean := strings.TrimPrefix(strings.ToLower(v1), "v")
 	v2Clean := strings.TrimPrefix(strings.ToLower(v2), "v")
 
@@ -283,6 +349,15 @@ func resolveLocalVersion(provider RuntimeProvider, query string, nvxHome string)
 	query = strings.TrimSpace(strings.ToLower(query))
 	if query == "latest" || query == "current" {
 		return getLatestLocal(versions), nil
+	}
+
+	// Range expressions (^, ~, >=, x-ranges, ||, engines-style) pick the
+	// highest locally-installed version that satisfies the range.
+	if isRangeExpr(query) {
+		if best := maxSatisfyingVersion(versions, query); best != "" {
+			return best, nil
+		}
+		return "", fmt.Errorf("no installed version satisfies range '%s'", query)
 	}
 
 	q := query
@@ -360,8 +435,8 @@ func getExtension() string {
 }
 
 func runInstall(query string, nvxHome string) {
-	provider := Providers["node"]
-	err := provider.Install(query, nvxHome)
+	provider, verQuery := ResolveRuntimeSelector(query)
+	err := provider.Install(verQuery, nvxHome)
 	if err != nil {
 		LogError("Installation failed: %v", err)
 		os.Exit(1)
@@ -369,8 +444,8 @@ func runInstall(query string, nvxHome string) {
 }
 
 func runUninstall(query string, nvxHome string) {
-	provider := Providers["node"]
-	err := provider.Uninstall(query, nvxHome)
+	provider, verQuery := ResolveRuntimeSelector(query)
+	err := provider.Uninstall(verQuery, nvxHome)
 	if err != nil {
 		LogError("Uninstallation failed: %v", err)
 		os.Exit(1)
@@ -378,19 +453,23 @@ func runUninstall(query string, nvxHome string) {
 }
 
 func runUse(query string, nvxHome string, shell string) {
-	provider := Providers["node"]
-	resolvedVer, err := resolveLocalVersion(provider, query, nvxHome)
+	provider, verQuery := ResolveRuntimeSelector(query)
+	label := runtimeLabel(provider.Name())
+	resolvedVer, err := resolveLocalVersion(provider, verQuery, nvxHome)
 	if err != nil {
-		promptMsg := fmt.Sprintf("Node.js %s is not installed. Would you like to download and install it now?", query)
+		promptMsg := fmt.Sprintf("%s %s is not installed. Would you like to download and install it now?", label, verQuery)
 		if PromptYesNo(promptMsg) {
-			runInstall(query, nvxHome)
-			resolvedVer, err = resolveLocalVersion(provider, query, nvxHome)
+			if ierr := provider.Install(verQuery, nvxHome); ierr != nil {
+				LogError("Installation failed: %v", ierr)
+				os.Exit(1)
+			}
+			resolvedVer, err = resolveLocalVersion(provider, verQuery, nvxHome)
 			if err != nil {
 				LogError("Failed to resolve newly installed version: %v", err)
 				os.Exit(1)
 			}
 		} else {
-			LogError("Could not find installed version matching '%s': %v", query, err)
+			LogError("Could not find installed version matching '%s': %v", verQuery, err)
 			os.Exit(1)
 		}
 	}
@@ -400,15 +479,15 @@ func runUse(query string, nvxHome string, shell string) {
 
 	activeVer := getActiveShellVersion(nvxHome)
 	if activeVer != "" && activeVer != resolvedVer {
-		LogSuccess("Node.js swapped: %s ➔ %s (active in this shell)", activeVer, resolvedVer)
+		LogSuccess("%s swapped: %s ➔ %s (active in this shell)", label, activeVer, resolvedVer)
 	} else {
-		LogSuccess("Now using Node.js %s in this terminal.", resolvedVer)
+		LogSuccess("Now using %s %s in this terminal.", label, resolvedVer)
 	}
 }
 
 func runDefault(query string, nvxHome string) {
-	provider := Providers["node"]
-	resolvedVer, err := resolveLocalVersion(provider, query, nvxHome)
+	provider, verQuery := ResolveRuntimeSelector(query)
+	resolvedVer, err := resolveLocalVersion(provider, verQuery, nvxHome)
 	if err != nil {
 		LogError("Could not find installed version matching '%s': %v", query, err)
 		os.Exit(1)
@@ -427,37 +506,154 @@ func runDefault(query string, nvxHome string) {
 	LogInfo("Make sure '%s' is added to your environment PATH.", GetVersionBinDir(currentLink))
 }
 
+// runtimeLabel returns a human-friendly display name for a runtime.
+func runtimeLabel(name string) string {
+	switch name {
+	case "node":
+		return "Node.js"
+	case "bun":
+		return "Bun"
+	default:
+		if name == "" {
+			return name
+		}
+		return strings.ToUpper(name[:1]) + name[1:]
+	}
+}
+
 func runList(nvxHome string) {
-	provider := Providers["node"]
-	versions, err := provider.ListLocal(nvxHome)
-	if err != nil {
-		LogError("Failed to list installed versions: %v", err)
-		os.Exit(1)
-	}
-
-	if len(versions) == 0 {
-		LogWarn("No Node.js versions are installed. Run 'nvx install <version>' first.")
-		return
-	}
-
 	activeVer := getActiveShellVersion(nvxHome)
 	defaultVer := getGlobalDefaultVersion(nvxHome)
+	any := false
 
-	fmt.Println("\x1b[36mInstalled Node.js versions:\x1b[0m")
-	for _, v := range versions {
-		prefix := "  "
-		suffix := ""
-
-		if v == activeVer {
-			prefix = "\x1b[32m* \x1b[0m"
-			suffix += " \x1b[32m(active in this shell)\x1b[0m"
+	for _, name := range RuntimeNames() {
+		provider := Providers[name]
+		versions, err := provider.ListLocal(nvxHome)
+		if err != nil {
+			LogWarn("Failed to list %s versions: %v", runtimeLabel(name), err)
+			continue
 		}
-		if v == defaultVer {
-			suffix += " \x1b[33m(global default)\x1b[0m"
+		if len(versions) == 0 {
+			continue
 		}
-
-		fmt.Printf("%s%s%s\n", prefix, v, suffix)
+		any = true
+		fmt.Printf("\x1b[36mInstalled %s versions:\x1b[0m\n", runtimeLabel(name))
+		for _, v := range versions {
+			prefix := "  "
+			suffix := ""
+			if v == activeVer {
+				prefix = "\x1b[32m* \x1b[0m"
+				suffix += " \x1b[32m(active in this shell)\x1b[0m"
+			}
+			if v == defaultVer {
+				suffix += " \x1b[33m(global default)\x1b[0m"
+			}
+			fmt.Printf("%s%s%s\n", prefix, v, suffix)
+		}
 	}
+
+	if !any {
+		LogWarn("No runtimes installed. Try 'nvx install 20' (Node.js) or 'nvx install bun'.")
+	}
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
+}
+
+// runWhich prints the real binary nvx would execute for a shimmed command.
+func runWhich(cmd, nvxHome string) int {
+	rt := runtimeForShim(cmd)
+	ver := getActiveShellVersion(nvxHome)
+	if ver == "" {
+		ver = getGlobalDefaultVersion(nvxHome)
+	}
+	if ver == "" {
+		// Nothing active/default: fall back to the latest installed version of
+		// the command's runtime so `which` is useful right after install.
+		if locals, _ := rt.ListLocal(nvxHome); len(locals) > 0 {
+			ver = getLatestLocal(locals)
+		}
+	}
+	if p := resolvePinnedCommandPath(cmd, nvxHome, ver, rt); p != "" {
+		fmt.Println(p) // version-pinned by nvx
+		return 0
+	}
+	if p := resolveProjectBinCommand(cmd); p != "" {
+		fmt.Printf("%s  (project node_modules/.bin)\n", p)
+		return 0
+	}
+	if p, err := lookPathSkippingNvxShims(cmd, nvxHome); err == nil {
+		// Resolved from the ambient PATH — nvx audits/sandboxes it but does NOT
+		// version-pin it (e.g. yarn/pnpm; pin those via Corepack).
+		fmt.Printf("%s  (ambient PATH — not version-pinned by nvx)\n", p)
+		return 0
+	}
+	LogError("No binary found for %q", cmd)
+	return 1
+}
+
+// runCurrent prints the active and default runtime versions.
+func runCurrent(nvxHome string) {
+	fmt.Printf("active (this shell): %s\n", orNone(getActiveShellVersion(nvxHome)))
+	fmt.Printf("global default:      %s\n", orNone(getGlobalDefaultVersion(nvxHome)))
+}
+
+// runDoctor reports the registered runtime and isolation providers, their
+// availability on this host, and the effective policy — a single place for
+// users (and contributors of custom providers) to confirm what is wired in.
+func runDoctor(nvxHome string) {
+	fmt.Printf("nvx %s  (%s/%s)\n\n", nvxVersion(), runtime.GOOS, runtime.GOARCH)
+
+	fmt.Println("\x1b[36mRuntime providers:\x1b[0m")
+	for _, name := range RuntimeNames() {
+		p := Providers[name]
+		locals, _ := p.ListLocal(nvxHome)
+		// Distinguish version-pinned shims from ambient-PATH passthrough (only
+		// determinable when a version is installed to probe ResolveBinary).
+		ver := ""
+		if len(locals) > 0 {
+			ver = getLatestLocal(locals)
+		}
+		var pinned, passthrough []string
+		for _, cmd := range p.ShimCommands() {
+			if ver != "" && p.ResolveBinary(cmd, nvxHome, ver) == "" {
+				passthrough = append(passthrough, cmd)
+			} else {
+				pinned = append(pinned, cmd)
+			}
+		}
+		fmt.Printf("  %-8s installed: %-2d  pinned: %s\n", name, len(locals), strings.Join(pinned, ", "))
+		if len(passthrough) > 0 {
+			fmt.Printf("           passthrough (audited/sandboxed, not version-pinned): %s\n", strings.Join(passthrough, ", "))
+		}
+	}
+
+	fmt.Println("\n\x1b[36mIsolation providers:\x1b[0m")
+	for _, name := range IsolationProviderNames() {
+		p, _ := GetIsolationProvider(name)
+		status := "\x1b[90munavailable\x1b[0m"
+		if p.Available() {
+			status = "\x1b[32mavailable\x1b[0m"
+		}
+		fmt.Printf("  %-14s %-22s %s\n", name, status, p.Description())
+	}
+
+	policy, _ := LoadPolicy(nvxHome)
+	fmt.Println("\n\x1b[36mEffective policy:\x1b[0m")
+	fmt.Printf("  isolation.enabled:      %v\n", policy.Isolation.Enabled)
+	fmt.Printf("  isolation.provider:     %s\n", policy.IsolationProviderName())
+	fmt.Printf("  network.mode:           %s\n", policy.Isolation.Network.Mode)
+	fmt.Printf("  enforce_ignore_scripts: %v\n", policy.EnforceIgnoreScripts)
+	fmt.Printf("  fail_closed:            %v\n", policy.FailClosed)
+	fmt.Printf("  typosquatting.enabled:  %v\n", policy.Typosquatting.Enabled)
+
+	fmt.Println("\n\x1b[36mActive:\x1b[0m")
+	fmt.Printf("  shell version:  %s\n", orNone(getActiveShellVersion(nvxHome)))
+	fmt.Printf("  global default: %s\n", orNone(getGlobalDefaultVersion(nvxHome)))
 }
 
 func runListRemote() {
@@ -658,6 +854,18 @@ func resolveNpmPrefixDir(nvxHome, targetVersionDir string) string {
 	return filepath.Join(targetVersionDir, "npm_global")
 }
 
+// shellSingleQuote renders s as a POSIX-shell single-quoted literal, safe to
+// embed in output that the shell wrapper eval's. This prevents a hostile PATH
+// entry (containing ", `, or $()) from injecting code into the calling shell.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// powershellSingleQuote renders s as a PowerShell single-quoted literal.
+func powershellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
 // emitSessionEnv prints the shell statements that activate a Node version
 // (and its npm prefix) for the current terminal session.
 func emitSessionEnv(shell, nvxHome, targetDir string) {
@@ -667,11 +875,11 @@ func emitSessionEnv(shell, nvxHome, targetDir string) {
 	formattedNpmPrefix := FormatPathForShell(shell, npmPrefixDir)
 
 	if shell == "bash" || shell == "zsh" {
-		fmt.Printf("export PATH=\"%s\"\n", formattedPath)
-		fmt.Printf("export NPM_CONFIG_PREFIX=\"%s\"\n", formattedNpmPrefix)
+		fmt.Printf("export PATH=%s\n", shellSingleQuote(formattedPath))
+		fmt.Printf("export NPM_CONFIG_PREFIX=%s\n", shellSingleQuote(formattedNpmPrefix))
 	} else {
-		fmt.Printf("$env:PATH = \"%s\"\n", formattedPath)
-		fmt.Printf("$env:NPM_CONFIG_PREFIX = \"%s\"\n", formattedNpmPrefix)
+		fmt.Printf("$env:PATH = %s\n", powershellSingleQuote(formattedPath))
+		fmt.Printf("$env:NPM_CONFIG_PREFIX = %s\n", powershellSingleQuote(formattedNpmPrefix))
 	}
 }
 
@@ -757,6 +965,17 @@ func parsePackageQuery(query string) (string, string) {
 	return name, version
 }
 
+// failClosedOrWarn aborts the install when policy.FailClosed is set (so a
+// registry/OSV outage cannot silently disable checks), otherwise it warns and
+// lets the caller continue in a clearly-labeled degraded mode.
+func failClosedOrWarn(policy Policy, format string, a ...interface{}) {
+	if policy.FailClosed {
+		LogError(format+" — aborting (fail_closed policy).", a...)
+		os.Exit(1)
+	}
+	LogWarn(format+" Proceeding in degraded mode (set \"fail_closed\": true to block).", a...)
+}
+
 // runVerifyInstall verifies packages against policy blocklists, typosquatting, and the real-time OSV CVE database.
 func runVerifyInstall(args []string, nvxHome string) {
 	policy, err := LoadPolicy(nvxHome)
@@ -821,7 +1040,7 @@ func runVerifyInstall(args []string, nvxHome string) {
 		LogInfo("Verifying package %q...", pkgName)
 		resolvedVer, pubTime, hasScripts, err := ResolveNpmPackageDetails(pkgName, versionQuery)
 		if err != nil {
-			LogWarn("Could not resolve registry metadata for %s: %v. Bypassing metadata checks.", pkgName, err)
+			failClosedOrWarn(policy, "Could not resolve registry metadata for %s: %v.", pkgName, err)
 			continue
 		}
 
@@ -830,8 +1049,9 @@ func runVerifyInstall(args []string, nvxHome string) {
 			LogWarn("Package %s@%s contains installation scripts (preinstall/postinstall/install).", pkgName, resolvedVer)
 			LogWarn("Malicious packages often execute rogue code during the install phase.")
 			if policy.EnforceIgnoreScripts {
-				LogError("Blocked by security policy: Package scripts are disallowed. Please run with --ignore-scripts.")
-				os.Exit(1)
+				// The shim injects --ignore-scripts into the real invocation
+				// (see runShim), so hooks are actually disabled, not just warned about.
+				LogWarn("enforce_ignore_scripts is set: install scripts will be disabled via --ignore-scripts.")
 			} else {
 				msg := fmt.Sprintf("Package %s@%s contains install scripts. Run these scripts on your host?", pkgName, resolvedVer)
 				if !PromptYesNo(msg) {
@@ -854,6 +1074,14 @@ func runVerifyInstall(args []string, nvxHome string) {
 			}
 		}
 
+		// 5. Registry signature / provenance verification (ECDSA over
+		// name@version:integrity, keys from the registry). Applied to explicitly
+		// named packages, where it is cheap and highest-value.
+		if !verifyPackageProvenance(policy, pkgName, resolvedVer) {
+			LogError("Installation aborted: registry signature verification failed for %s.", pkgName)
+			os.Exit(1)
+		}
+
 		osvQueries = append(osvQueries, OSVQuery{
 			Package: OSVPackage{Name: pkgName, Ecosystem: "npm"},
 			Version: resolvedVer,
@@ -865,7 +1093,7 @@ func runVerifyInstall(args []string, nvxHome string) {
 		LogInfo("Scanning OSV database for known vulnerabilities...")
 		vulns, err := ScanVulnerabilitiesBatch(osvQueries)
 		if err != nil {
-			LogWarn("Vulnerability database scan failed: %v. Bypassing CVE checks.", err)
+			failClosedOrWarn(policy, "Vulnerability database scan failed: %v.", err)
 		} else if len(vulns) > 0 {
 			LogError("Vulnerability Scan Alert: Found active vulnerabilities!")
 			for pkgKey, list := range vulns {

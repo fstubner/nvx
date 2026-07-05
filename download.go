@@ -89,10 +89,14 @@ func ComputeSHA256(filePath string) (string, error) {
 
 // VerifyNodeChecksum downloads the SHASUMS256.txt for the given Node version,
 // finds the expected SHA-256 for the archive filename, and verifies the downloaded file's hash.
+// nodeDistBaseURL is a var (not const) so tests can point Node downloads and
+// checksum fetches at a local server.
+var nodeDistBaseURL = "https://nodejs.org/dist"
+
 func VerifyNodeChecksum(version, archivePath, archiveFilename string) error {
-	// SHASUMS256.txt is at https://nodejs.org/dist/<version>/SHASUMS256.txt
-	shaUrl := fmt.Sprintf("https://nodejs.org/dist/%s/SHASUMS256.txt", version)
-	
+	// SHASUMS256.txt is at <nodeDistBaseURL>/<version>/SHASUMS256.txt
+	shaUrl := fmt.Sprintf("%s/%s/SHASUMS256.txt", nodeDistBaseURL, version)
+
 	// Create a secure temp file for checksums
 	tmpFile, err := os.CreateTemp("", "SHASUMS256-*.txt")
 	if err != nil {
@@ -143,7 +147,6 @@ func VerifyNodeChecksum(version, archivePath, archiveFilename string) error {
 	LogSuccess("Checksum verified successfully.")
 	return nil
 }
-
 
 type progressWriter struct {
 	total      int64
