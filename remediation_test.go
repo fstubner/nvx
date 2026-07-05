@@ -793,8 +793,8 @@ func TestNodeUninstallRefusesGlobalDefaultVersion(t *testing.T) {
 }
 
 func TestAppVersionMatchesCurrentBetaRelease(t *testing.T) {
-	if appVersion != "0.2.0-beta" {
-		t.Fatalf("appVersion = %q, want 0.2.0-beta", appVersion)
+	if appVersion != "0.3.0" {
+		t.Fatalf("appVersion = %q, want 0.3.0", appVersion)
 	}
 }
 
