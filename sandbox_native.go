@@ -55,11 +55,11 @@ func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
 		}
 	}
 
-	nodeVer := getActiveShellVersion(config.NvxHome)
-	if nodeVer == "" {
-		nodeVer = getGlobalDefaultVersion(config.NvxHome)
+	activeVer := getActiveShellVersionFor(config.NvxHome, rt.Name())
+	if activeVer == "" {
+		activeVer = getGlobalDefaultVersionFor(config.NvxHome, rt.Name())
 	}
-	if p := resolvePinnedCommandPath(config.Command, config.NvxHome, nodeVer, rt); p != "" {
+	if p := resolvePinnedCommandPath(config.Command, config.NvxHome, activeVer, rt); p != "" {
 		return preferWindowsRuntimeExe(p)
 	}
 	if p := resolveProjectBinCommand(config.Command); p != "" {

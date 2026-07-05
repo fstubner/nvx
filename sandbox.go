@@ -217,51 +217,30 @@ type NetworkLaunchContext struct {
 // isolation primitives, runs the command, and cleans up afterward.
 // resolvePinnedCommandPath is defined in runtime_exec.go.
 
-// runDockerSandbox runs the execution request inside a Docker container
-func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string, egress *EgressProxy) int {
-	nodeVer := pinnedVer
-	if nodeVer == "" {
-		nodeVer = getActiveShellVersion(nvxHome)
+// runDockerSandbox runs the execution request inside a Docker container. The
+// image comes from the runtime provider (node -> node:<ver>, bun -> oven/bun),
+// and offline/loopback network modes are enforced with `--network none`.
+func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string, egress *EgressProxy, rt RuntimeProvider, netCtx NetworkLaunchContext) int {
+	ver := pinnedVer
+	if ver == "" {
+		ver = getActiveShellVersionFor(nvxHome, rt.Name())
 	}
-	if nodeVer == "" {
-		nodeVer = getGlobalDefaultVersion(nvxHome)
+	if ver == "" {
+		ver = getGlobalDefaultVersionFor(nvxHome, rt.Name())
 	}
 
-	imageTag := "latest"
-	if nodeVer != "" {
-		imageTag = strings.TrimPrefix(nodeVer, "v")
+	imageName := rt.SandboxImage(ver)
+	if imageName == "" {
+		LogError("The %s runtime does not provide a Docker image; use the native provider.", rt.Name())
+		return 1
 	}
-	imageName := "node:" + imageTag
 
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "/"
 	}
 
-	dockerArgs := []string{
-		"run",
-		"--rm",
-		"-i",
-	}
-
-	// Bind mount the current directory to container /app directory
-	dockerArgs = append(dockerArgs, "-v", fmt.Sprintf("%s:/app", cwd))
-	dockerArgs = append(dockerArgs, "-w", "/app")
-
-	// Scrub and carry over safe environment variables
-	cleanEnv := scrubEnvironment("")
-	cleanEnv = applyProxyEnv(cleanEnv, egress)
-	for _, envVar := range cleanEnv {
-		parts := strings.SplitN(envVar, "=", 2)
-		if len(parts) == 2 && parts[0] != "PATH" && parts[0] != "NVX_SANDBOX" {
-			dockerArgs = append(dockerArgs, "-e", envVar)
-		}
-	}
-
-	dockerArgs = append(dockerArgs, imageName)
-	dockerArgs = append(dockerArgs, config.Command)
-	dockerArgs = append(dockerArgs, config.Args...)
-
+	dockerArgs := dockerRunArgs(imageName, cwd, config, egress, netCtx)
 	cmd := exec.Command("docker", dockerArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -277,6 +256,37 @@ func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string, eg
 	}
 
 	return 0
+}
+
+// dockerRunArgs builds the `docker run` argument list. It is a pure function so
+// the hardening flags and network handling can be unit-tested without Docker.
+func dockerRunArgs(imageName, cwd string, config SandboxConfig, egress *EgressProxy, netCtx NetworkLaunchContext) []string {
+	args := []string{
+		"run", "--rm", "-i",
+		"--cap-drop=ALL",
+		"--security-opt=no-new-privileges",
+		"--pids-limit=512",
+		"--tmpfs", "/tmp",
+	}
+
+	switch strings.ToLower(strings.TrimSpace(netCtx.Mode)) {
+	case "offline", "loopback":
+		// No network interfaces at all: genuine enforcement, not cooperative.
+		args = append(args, "--network", "none")
+	}
+
+	args = append(args, "-v", fmt.Sprintf("%s:/app", cwd), "-w", "/app")
+
+	cleanEnv := applyProxyEnv(scrubEnvironment(""), egress)
+	for _, envVar := range cleanEnv {
+		parts := strings.SplitN(envVar, "=", 2)
+		if len(parts) == 2 && parts[0] != "PATH" && parts[0] != "NVX_SANDBOX" {
+			args = append(args, "-e", envVar)
+		}
+	}
+
+	args = append(args, imageName, config.Command)
+	return append(args, config.Args...)
 }
 
 // runSandbox is the main entry point for executing a command inside the nvx sandbox.
@@ -296,12 +306,27 @@ func runSandbox(config SandboxConfig) int {
 		return 1
 	}
 
-	provider := policy.FilesystemProvider()
+	providerName := policy.FilesystemProvider()
 	if config.FilesystemProvider != "" {
-		provider = strings.ToLower(config.FilesystemProvider)
+		providerName = strings.ToLower(config.FilesystemProvider)
 	}
-	if !providerSupportsNetworkMode(provider, policy.Isolation.Network.Mode) {
-		LogError("Filesystem provider %q does not enforce network.mode=%q. Use network.mode=open or the native provider.", provider, policy.Isolation.Network.Mode)
+	fsProvider, ok := lookupFilesystemProvider(providerName)
+	if !ok {
+		LogError("Unknown filesystem provider %q. Supported: native, docker.", providerName)
+		return 1
+	}
+	canonical := fsProvider.Name()
+
+	if fsProvider.Experimental() && !experimentalProvidersEnabled() {
+		LogError("Filesystem provider %q is experimental and unsupported. Set NVX_EXPERIMENTAL=1 to enable it, or use the native or docker provider.", canonical)
+		return 1
+	}
+	if err := fsProvider.Available(); err != nil {
+		LogError("Filesystem provider %q is not available: %v", canonical, err)
+		return 1
+	}
+	if !fsProvider.SupportsNetworkMode(policy.Isolation.Network.Mode) {
+		LogError("Filesystem provider %q does not enforce network.mode=%q. Use network.mode=open or the native provider.", canonical, policy.Isolation.Network.Mode)
 		return 1
 	}
 
@@ -312,7 +337,7 @@ func runSandbox(config SandboxConfig) int {
 	var egress *EgressProxy
 	// Linux native re-execs into a loopback-only network namespace and starts its
 	// own egress proxy inside the child; a parent proxy would be unreachable.
-	skipParentProxy := runtime.GOOS == "linux" && provider == "native" &&
+	skipParentProxy := runtime.GOOS == "linux" && canonical == "native" &&
 		networkModeRequiresNamespace(policy.Isolation.Network.Mode)
 	if !skipParentProxy {
 		var err error
@@ -332,23 +357,14 @@ func runSandbox(config SandboxConfig) int {
 		netCtx.SOCKSProxyHost, netCtx.SOCKSProxyPort = egress.SOCKSListenHostPort()
 	}
 
-	switch provider {
-	case "native":
-		return runNativeSandbox(config, policy, egress, netCtx)
-	case "docker":
-		return runDockerSandbox(config, config.NvxHome, pinnedVer, egress)
-	case "wslc", "wsl-container", "container":
-		return runWslcSandbox(config, config.NvxHome, pinnedVer)
-	case "wsl", "wsl-distro":
-		return runWslSandbox(config)
-	case "sandbox-exec", "seatbelt":
-		return runSeatbeltSandbox(config, netCtx)
-	case "systemd-nspawn", "nspawn":
-		return runNspawnSandbox(config)
-	default:
-		LogError("Unknown filesystem provider %q. Supported: native, docker, wslc, wsl, sandbox-exec, systemd-nspawn.", provider)
-		return 1
-	}
+	return fsProvider.Run(SandboxRequest{
+		Config:  config,
+		Policy:  policy,
+		Runtime: rt,
+		Pinned:  pinnedVer,
+		Egress:  egress,
+		NetCtx:  netCtx,
+	})
 }
 
 func providerSupportsNetworkMode(provider, mode string) bool {
@@ -359,6 +375,11 @@ func providerSupportsNetworkMode(provider, mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "native", "sandbox-exec", "seatbelt":
 		return true
+	case "docker":
+		// Docker enforces offline/loopback with `--network none`. Proxy mode is
+		// cooperative-only under Docker (the allowlist is not truly enforced),
+		// so it stays disallowed and callers must use the native provider.
+		return mode == "offline" || mode == "loopback"
 	default:
 		return false
 	}
@@ -366,11 +387,11 @@ func providerSupportsNetworkMode(provider, mode string) bool {
 
 func execBareCommand(config SandboxConfig) int {
 	rt := runtimeForShim(config.Command)
-	nodeVer := getActiveShellVersion(config.NvxHome)
-	if nodeVer == "" {
-		nodeVer = getGlobalDefaultVersion(config.NvxHome)
+	activeVer := getActiveShellVersionFor(config.NvxHome, rt.Name())
+	if activeVer == "" {
+		activeVer = getGlobalDefaultVersionFor(config.NvxHome, rt.Name())
 	}
-	binaryPath := resolvePinnedCommandPath(config.Command, config.NvxHome, nodeVer, rt)
+	binaryPath := resolvePinnedCommandPath(config.Command, config.NvxHome, activeVer, rt)
 	if binaryPath == "" {
 		var err error
 		binaryPath, err = exec.LookPath(config.Command)

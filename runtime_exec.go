@@ -42,6 +42,10 @@ func (n NodeProvider) ShimCommands() []string {
 	return []string{"node", "npm", "npx", "yarn", "pnpm"}
 }
 
+func (n NodeProvider) SandboxImage(version string) string {
+	return runtimeDockerImage("node", version)
+}
+
 func (n NodeProvider) DefaultNetworkAllow() []string {
 	return []string{
 		"registry.npmjs.org:443",

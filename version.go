@@ -133,6 +133,19 @@ type RuntimeProvider interface {
 	ShimCommands() []string
 	ResolveBinary(cmd string, nvxHome string, pinnedVer string) string
 	DefaultNetworkAllow() []string
+	// SandboxImage returns the Docker image for a version (e.g. "node:20.11.0"),
+	// or "" if the runtime has no container image.
+	SandboxImage(version string) string
+}
+
+// runtimeDockerImage builds "<repo>:<tag>" from a version, defaulting to the
+// latest tag when no version is known.
+func runtimeDockerImage(repo, version string) string {
+	tag := "latest"
+	if v := strings.TrimPrefix(version, "v"); v != "" {
+		tag = v
+	}
+	return repo + ":" + tag
 }
 
 // NodeProvider implements RuntimeProvider for Node.js
