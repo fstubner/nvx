@@ -20,11 +20,20 @@ silently.
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
 | Host filesystem write blocked (outside workdir + guest home) | Yes | Yes | Yes |
+| Host filesystem read restricted | Yes | Yes | No² |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress restricted to policy allowlist | Yes (loopback proxy) | Yes | Yes (loopback proxy) |
 | Non-proxied raw TCP/UDP blocked at OS | Yes (no network capabilities) | Yes (loopback-only netns + seccomp) | Yes (`deny network*` except loopback) |
 | Non-proxied DNS blocked | Partial¹ | Yes (netns) | Partial¹ |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes (needs `/usr/bin/sandbox-exec`) |
+
+² On macOS the Seatbelt profile allows filesystem reads. The dynamic linker must
+read system libraries and the dyld shared cache, whose locations vary by macOS
+version (e.g. the Cryptexes firmlink on Apple Silicon) and cannot be enumerated
+reliably; a strict read allowlist breaks process launch. Write containment and
+egress control remain enforced, and environment secrets are scrubbed with `$HOME`
+redirected to an ephemeral guest profile, so the sensitive material is still
+protected.
 
 ¹ On Windows and macOS, egress is gated by the loopback proxy and OS network
 rules. Linux additionally removes all non-loopback interfaces (network
