@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,11 +29,12 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	args := []string{"-f", profilePath, cmdPath}
 	args = append(args, config.Args...)
 
+	var errBuf bytes.Buffer
 	cmd := exec.Command(sandboxExec, args...)
 	cmd.Env = cleanEnv
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = io.MultiWriter(os.Stderr, &errBuf)
 	if workDir != "" {
 		cmd.Dir = workDir
 	}
@@ -39,6 +42,12 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	LogInfo("macOS Seatbelt isolation active")
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
+			// A non-zero exit with no child output usually means sandbox-exec
+			// itself rejected the launch (bad profile / unresolved command).
+			// Surface the details so failures are diagnosable, not silent.
+			if errBuf.Len() == 0 {
+				LogError("Sandboxed command exited %d with no output (command=%q, profile=%s).", exitErr.ExitCode(), cmdPath, profilePath)
+			}
 			return exitErr.ExitCode()
 		}
 		LogError("Seatbelt execution failed: %v", err)
