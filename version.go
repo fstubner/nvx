@@ -208,7 +208,11 @@ func nodeBinaryPath(versionDir string) string {
 }
 
 func acquireInstallLock(nvxHome, version string) (func(), error) {
-	lockDir := filepath.Join(nvxHome, "versions", "node")
+	return acquireRuntimeInstallLock(nvxHome, "node", version)
+}
+
+func acquireRuntimeInstallLock(nvxHome, runtimeName, version string) (func(), error) {
+	lockDir := filepath.Join(nvxHome, "versions", runtimeName)
 	if err := os.MkdirAll(lockDir, 0700); err != nil {
 		return nil, fmt.Errorf("create install lock directory: %w", err)
 	}
@@ -219,7 +223,7 @@ func acquireInstallLock(nvxHome, version string) (func(), error) {
 	lockPath := filepath.Join(lockDir, lockName)
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
-		return nil, fmt.Errorf("install for Node.js %s is already in progress or lock cannot be created: %w", version, err)
+		return nil, fmt.Errorf("install for %s %s is already in progress or lock cannot be created: %w", runtimeName, version, err)
 	}
 	_, _ = fmt.Fprintf(f, "%d\n", os.Getpid())
 	release := func() {
@@ -366,4 +370,5 @@ func MigrateLegacyNodeVersions(nvxHome string) {
 // Providers maps runtime names to their respective RuntimeProvider implementations
 var Providers = map[string]RuntimeProvider{
 	"node": NodeProvider{},
+	"bun":  BunProvider{},
 }

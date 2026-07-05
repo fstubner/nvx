@@ -92,9 +92,14 @@ func ComputeSHA256(filePath string) (string, error) {
 // VerifyNodeChecksum downloads the SHASUMS256.txt for the given Node version,
 // finds the expected SHA-256 for the archive filename, and verifies the downloaded file's hash.
 func VerifyNodeChecksum(version, archivePath, archiveFilename string) error {
-	// SHASUMS256.txt is at https://nodejs.org/dist/<version>/SHASUMS256.txt
 	shaUrl := fmt.Sprintf("https://nodejs.org/dist/%s/SHASUMS256.txt", version)
+	return VerifyChecksumFromShasums(shaUrl, archivePath, archiveFilename)
+}
 
+// VerifyChecksumFromShasums downloads a SHASUMS256.txt-style manifest (lines of
+// "<sha256>  <filename>"), looks up archiveFilename, and verifies archivePath's
+// hash against it. It is fail-closed: a missing entry or mismatch is an error.
+func VerifyChecksumFromShasums(shaUrl, archivePath, archiveFilename string) error {
 	// Create a secure temp file for checksums
 	tmpFile, err := os.CreateTemp("", "SHASUMS256-*.txt")
 	if err != nil {
