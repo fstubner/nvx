@@ -126,8 +126,23 @@ func parseHostPortSpec(host string, port uint16) hostPort {
 	return hostPort{host: host, port: port}
 }
 
+// isProxyPort reports whether port is one of the proxy's own listener ports.
+func (p *EgressProxy) isProxyPort(port uint16) bool {
+	if port == 0 {
+		return false
+	}
+	_, hp := p.HTTPListenHostPort()
+	_, sp := p.SOCKSListenHostPort()
+	return port == hp || port == sp
+}
+
 func (p *EgressProxy) allowed(hp hostPort) bool {
-	if isLoopback(hp.host) {
+	// Loopback is NOT auto-allowed: a sandboxed process reaching host-local
+	// services (databases, a Docker socket proxy, cloud metadata endpoints) is a
+	// real exfil/pivot channel. Only the proxy's own listener ports are permitted
+	// for loopback; any other host-local destination must be explicitly
+	// allowlisted (e.g. a local registry) or is subject to the mode/prompt below.
+	if isLoopback(hp.host) && p.isProxyPort(hp.port) {
 		return true
 	}
 	key := fmt.Sprintf("%s:%d", hp.host, hp.port)
@@ -138,6 +153,13 @@ func (p *EgressProxy) allowed(hp hostPort) bool {
 	if p.allow[wild] {
 		return true
 	}
+
+	// All access to the mutable session/prompted maps is serialized: they are
+	// read and written from multiple per-connection goroutines, so an unguarded
+	// read here races the write below (fatal "concurrent map read and map write"
+	// under a normal multi-connection install).
+	p.promptMu.Lock()
+	defer p.promptMu.Unlock()
 	if p.session[key] || p.session[wild] {
 		return true
 	}
@@ -153,8 +175,6 @@ func (p *EgressProxy) allowed(hp hostPort) bool {
 		return false
 	}
 
-	p.promptMu.Lock()
-	defer p.promptMu.Unlock()
 	if p.prompted[key] {
 		return p.session[key]
 	}
@@ -326,11 +346,23 @@ func applyProxyEnv(cleanEnv []string, proxy *EgressProxy) []string {
 		}
 		filtered = append(filtered, e)
 	}
+	// In the strict modes, force loopback traffic through the proxy too (empty
+	// NO_PROXY) so host-local destinations are gated/blocked rather than reached
+	// directly. In proxy mode, keep loopback in NO_PROXY for dev ergonomics —
+	// the proxy still gates any loopback that IS routed through it, and on Linux
+	// the network namespace already isolates host loopback.
+	noProxy := "127.0.0.1,localhost,::1"
+	if proxy != nil {
+		switch strings.ToLower(proxy.policy.Isolation.Network.Mode) {
+		case "offline", "loopback":
+			noProxy = ""
+		}
+	}
 	filtered = append(filtered,
 		"HTTP_PROXY="+httpURL,
 		"HTTPS_PROXY="+httpURL,
 		"ALL_PROXY="+socksURL,
-		"NO_PROXY=127.0.0.1,localhost,::1",
+		"NO_PROXY="+noProxy,
 	)
 	return filtered
 }

@@ -27,7 +27,12 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1
 	}
 
-	LogInfo("Windows AppContainer + Low Integrity isolation active")
+	// NOTE: the process is launched with the caller's token (lowILToken=0), not a
+	// Low-IL duplicate: labeling the runtime Low IL previously broke CreateProcess
+	// on AppContainer children. Isolation here is the AppContainer boundary + zero
+	// capabilities, NOT an added Low Integrity Level — the log reflects that
+	// honestly. (Re-introducing a working Low-IL token is tracked as future work.)
+	LogInfo("Windows AppContainer isolation active (zero capabilities)")
 	exitCode, err := launchAppContainerProcess(
 		cmdPath, config.Args, cleanEnv, workDir, sid, 0,
 	)
