@@ -105,6 +105,14 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, writableRoots ...string) 
 	b.WriteString("(allow signal (target self))\n")
 	b.WriteString("(allow sysctl-read)\n")
 	b.WriteString("(allow file-read-metadata)\n")
+	// Process-launch primitives. Modern macOS (especially Apple Silicon) kills a
+	// process during dynamic linking if it cannot reach system Mach services or
+	// map the shared cache, so a default-deny profile must permit these for any
+	// binary to start. They do not weaken the filesystem-write or egress
+	// containment, which are nvx's actual guarantees.
+	b.WriteString("(allow mach-lookup)\n")
+	b.WriteString("(allow ipc-posix-shm*)\n")
+	b.WriteString("(allow iokit-open)\n")
 	b.WriteString("(allow file-read*\n")
 	for _, root := range dedupeStrings(readRoots) {
 		if root == "" {
