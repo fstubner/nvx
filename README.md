@@ -4,7 +4,7 @@
 
 
 
-[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](#) [![Platforms](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)](#) [![Release](https://img.shields.io/badge/Release-0.1.0--beta-orange?style=flat-square)](#) [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](#) [![Platforms](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)](#) [![Release](https://img.shields.io/badge/Release-0.2.0--beta-orange?style=flat-square)](https://github.com/fstubner/nvx/releases) [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 
 
@@ -33,16 +33,17 @@ Along the way, I wanted to tackle a few other common frustrations:
 
 ## Features
 
-- **Multi-Runtime Core**: Built to manage multiple runtimes (currently supports Node.js; extendable via `RuntimeProvider` to Bun, Deno, or other non-JavaScript/non-TS runtimes like Python, Go, and Rust).
+- **Multi-Runtime Core**: Manages multiple runtimes through a provider registry — **Node.js and Bun** ship today (`nvx install bun@1.1`), and new runtimes (Deno, Python, Go, …) plug in via `RegisterRuntimeProvider` without touching the core. Isolation backends are equally pluggable via `RegisterIsolationProvider`. See **[docs/EXTENDING.md](docs/EXTENDING.md)** to add your own. (`node`, `npm`, `npx`, `bun`, `bunx` are version-pinned; `yarn`/`pnpm` are audited and sandboxed but run from your PATH — pin them with [Corepack](https://nodejs.org/api/corepack.html). `nvx doctor` shows which is which.)
 - **Cascading Security Policies**: Resolves global and local directory-level policy blocks from `.nvx-policy.json`.
 - **Registry-Backed Typosquatting Audits**: Cross-checks package names against a synced list of popular packages and queries the npm registry download API dynamically to verify download counts and distinguish typosquats from legitimate packages.
 
-- **OSV Vulnerability Batch Scanning**: Audits dependency packages against the live Open Source Vulnerabilities database during install.
+- **OSV Vulnerability Batch Scanning**: Audits packages against the live Open Source Vulnerabilities database during install. Named packages are scanned individually; a bare `npm install` / `npm ci` scans the **full resolved dependency tree** from `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml`.
+- **Registry signature verification**: verifies the npm registry's ECDSA signature over `name@version:integrity` (keys from the registry) for named installs — an invalid signature blocks the install.
 - **Supply-Chain Verification**: Flags package updates released in the last 24 hours (mitigating compromise propagation windows).
 - **Native Sandbox Engine**: 
-  - Purges credential/secret environment keys before execution.
+  - Purges credential/secret environment keys before execution (allowlist / deny-by-default).
   - Redirects home profile path (`HOME` / `USERPROFILE`) to temporary guest environments.
-  - Uses Windows AppContainer + Low Integrity Level, Linux Landlock + kernel namespaces, and macOS Seatbelt (`sandbox-exec`) for secure sandboxing.
+  - Uses Windows AppContainer (zero-capability), Linux Landlock + seccomp + kernel namespaces, and macOS Seatbelt (`sandbox-exec`) for sandboxing. See the [Verification matrix](#verification-matrix) for what is enforced and validated per platform.
 - **Shell Integrations**: Automatic shell configuration for bash, zsh, and PowerShell.
 
 ---
@@ -75,23 +76,27 @@ curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh
 nvx <command> [arguments]
 
 Commands:
-  install <version>      Download and install a Node.js version (e.g. 20, lts, latest)
-  uninstall <version>    Remove an installed Node.js version
-  use <version>          Switch Node.js version in the current terminal session (downloads automatically if missing)
-  default <version>      Set the global default Node.js version (creates a link)
-  list, ls               List all installed Node.js versions
+  install <ver>          Install a runtime version (e.g. 20, lts, latest, bun@1.1)
+  uninstall <ver>        Remove an installed runtime version
+  use <ver>              Switch runtime version in the current terminal session (downloads if missing)
+  default <ver>          Set the global default version (creates a link)
+  list, ls               List installed versions across all runtimes
   list-remote, ls-remote List available Node.js versions from nodejs.org
+  current                Show the active and default versions
+  which <cmd>            Print the real binary nvx resolves for a command
+  doctor                 Show runtime + isolation providers, availability, and policy
+  upgrade [--check]      Update nvx to the latest release (checksum-verified)
   env [--shell=<type>]   Print shell integration script (powershell, bash, zsh)
-  auto [--shell=<type>]  Auto-switch version based on .nvmrc / .node-version / package.json
+  auto [--shell=<type>]  Auto-switch Node version based on .nvmrc / .node-version / package.json
   verify-install <pkgs>  Verify package safety before installing (called by wrappers)
   init-shims             Generate PATH shims in ~/.nvx/bin
   policy init            Create default policy files (--global, --project, --force)
   cleanup                Remove stale sandbox sessions from previous runs
   version, -v            Print version info
 
-Shim flags (npm, node, npx, yarn, pnpm, bunx via PATH):
+Shim flags (npm, node, npx, yarn, pnpm, bun, bunx via PATH):
   --no-sandbox           Run without sandbox for this invocation
-  --filesystem-provider=<name>  Override isolation.filesystem.provider
+  --isolation-provider=<name>   Override the isolation backend (alias: --filesystem-provider)
   -y, --yes              Auto-approve prompts
 ```
 
@@ -163,9 +168,10 @@ Corporate policies can be defined globally in `~/.nvx/policy.json` and customize
 Policies cascade: the global policy applies everywhere, and local policy files merge over it as you get closer to the working directory (the nearest policy wins on conflicting settings; blocklists and trusted packages are unioned).
 
 ### Policy Reference
-* **`enforce_ignore_scripts`**: When `true`, this forces npm/yarn/pnpm to install packages with `--ignore-scripts`. This blocks execution of hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine.
+* **`enforce_ignore_scripts`**: When `true`, nvx injects `--ignore-scripts` into the underlying `npm`/`yarn`/`pnpm install` invocation, so lifecycle hook scripts (`preinstall`/`postinstall`/`install`) — heavily used in supply-chain attacks — are actually disabled, not merely warned about.
+* **`fail_closed`**: When `true`, supply-chain checks that cannot reach the registry or the OSV database **abort** the install rather than warning and proceeding. Default `false` (degraded-mode warnings) to avoid bricking installs during an outage.
 * **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary).
-  - `native`: AppContainer + Low IL (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Fail-closed.
+  - `native`: AppContainer (Windows), Landlock + seccomp + namespaces (Linux), Seatbelt (macOS). Fail-closed.
   - `docker`, `wslc`, `wsl`, `sandbox-exec`, `systemd-nspawn`: container or alternate providers (see below).
 * **`isolation.network.mode`**: How egress is governed.
   - `proxy` (default): parent-process HTTP CONNECT + SOCKS5 proxy with policy allowlist; injects `HTTP_PROXY` / `HTTPS_PROXY`.
@@ -192,18 +198,27 @@ node app.js
 When running in the sandbox:
 * Environment secrets (e.g. `AWS_*`, `GITHUB_*`, `SSH_*`) are scrubbed.
 * Home and temp paths are virtualized to an ephemeral guest profile.
-* **Filesystem** (`isolation.filesystem`): Windows AppContainer + Low IL; Linux Landlock + namespaces; macOS Seatbelt.
+* **Filesystem** (`isolation.filesystem`): Windows AppContainer; Linux Landlock + namespaces; macOS Seatbelt (writes denied outside the workdir/guest home; reads of credential stores such as `~/.ssh`, `~/.aws` are denied).
 * **Network** (`isolation.network.mode: proxy`): egress via loopback proxy with allowlist; unknown hosts prompt interactively (fail-closed in CI unless `-y`).
 
 ### Verification matrix
 
 | Guarantee | Windows (native) | Linux (native) | macOS (native) |
 |-----------|------------------|----------------|----------------|
-| Host profile write blocked | Yes (AppContainer + Low IL) | Yes (Landlock) | Yes (Seatbelt) |
+| Host profile write blocked | Yes (AppContainer) | Yes (Landlock, ABI-negotiated) | Yes (Seatbelt) |
+| Credential-store reads blocked | Partial (AppContainer boundary) | Yes (Landlock read rules) | Yes (Seatbelt `deny file-read*` on secret paths) |
 | Workdir write allowed | Yes | Yes | Yes |
 | Egress via policy proxy | Yes (AppContainer + loopback proxy) | Yes (loopback netns + in-child proxy) | Yes (Seatbelt + loopback proxy) |
-| Raw TCP/UDP bypass blocked at OS | Yes | Yes (netns + seccomp UDP deny) | Yes (Seatbelt `(deny network*)`) |
+| Raw TCP/UDP bypass blocked at OS | Yes | Yes (netns + seccomp, arch-guarded) | Yes (Seatbelt `(deny network*)`) |
 | Fail-closed if FS/network primitive missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes |
+
+> **Validation status (be honest about what CI proves):** the Linux and macOS
+> native sandboxes are exercised by smoke tests, but the **Windows AppContainer
+> smoke test is skipped on GitHub-hosted runners** (they cannot spawn
+> AppContainer children), so Windows isolation is currently validated only on
+> maintainer machines. Windows runs at the caller's integrity level (a Low-IL
+> token broke process launch and is not currently applied). Treat Windows
+> isolation as **best-effort/experimental** until self-hosted validation lands.
 
 ---
 
