@@ -608,19 +608,25 @@ func TestScrubEnvironmentDropsHostProxyCredentials(t *testing.T) {
 	}
 }
 
-func TestBuildSeatbeltProfileDeniesHostReadsByDefault(t *testing.T) {
+func TestBuildSeatbeltProfileContainsWritesAndEgress(t *testing.T) {
 	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "offline"}, "/guest/home", "/work/dir")
 	if strings.Contains(profile, "(allow default)") {
-		t.Fatal("Seatbelt profile must not allow host reads by default")
+		t.Fatal("Seatbelt profile must be default-deny, not allow-all")
 	}
 	if !strings.Contains(profile, "(deny default)") {
 		t.Fatalf("expected default-deny profile, got:\n%s", profile)
 	}
-	if !strings.Contains(profile, "(allow file-read*") {
-		t.Fatalf("expected explicit file-read allowlist, got:\n%s", profile)
+	// Writes are the enforced containment: restricted to an explicit allowlist
+	// that includes the working directory.
+	if !strings.Contains(profile, "(allow file-write*") {
+		t.Fatalf("expected an explicit file-write allowlist, got:\n%s", profile)
 	}
 	if !strings.Contains(profile, `(subpath "/work/dir")`) {
-		t.Fatalf("expected workdir allowlist entry, got:\n%s", profile)
+		t.Fatalf("expected workdir write allowlist entry, got:\n%s", profile)
+	}
+	// Offline mode must not grant open network access.
+	if strings.Contains(profile, "(allow network*)") {
+		t.Fatalf("offline mode must not allow open network, got:\n%s", profile)
 	}
 }
 

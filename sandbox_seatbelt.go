@@ -85,18 +85,6 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, writableRoots ...string) 
 		"/private/var/tmp",
 		"/private/var/folders",
 	}, writableRoots...)
-	readRoots := append([]string{
-		"/bin",
-		"/sbin",
-		"/usr",
-		"/System",
-		"/Library",
-		"/opt",
-		"/dev",
-		"/private/tmp",
-		"/private/var/tmp",
-		"/private/var/folders",
-	}, writableRoots...)
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n")
@@ -117,14 +105,13 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, writableRoots ...string) 
 	// reading it; under (deny default) the linker can read but not execute its
 	// libraries, so the process is killed during load. Required to run any binary.
 	b.WriteString("(allow file-map-executable)\n")
-	b.WriteString("(allow file-read*\n")
-	for _, root := range dedupeStrings(readRoots) {
-		if root == "" {
-			continue
-		}
-		fmt.Fprintf(&b, "  (subpath %q)\n", root)
-	}
-	b.WriteString(")\n")
+	// Reads are allowed broadly. The dynamic linker must read system libraries
+	// and the dyld shared cache, whose paths vary by macOS version (e.g. the
+	// Cryptexes firmlink on Apple Silicon) and are impractical to enumerate
+	// reliably. nvx's enforced guarantees are filesystem-WRITE containment and
+	// egress control, both kept strict below; environment secrets are separately
+	// scrubbed and $HOME is redirected to an ephemeral guest profile.
+	b.WriteString("(allow file-read*)\n")
 	b.WriteString("(allow file-write*\n")
 	for _, root := range dedupeStrings(writeRoots) {
 		if root == "" {
