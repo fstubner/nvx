@@ -42,12 +42,19 @@ func currentLinkPath(nvxHome string) string {
 	return filepath.Join(nvxHome, "current")
 }
 
-// GetVersionBinDir returns the directory containing the node executable for a given version folder
+// GetVersionBinDir returns the directory containing a runtime's executables for
+// a given version folder. On Unix that is always <versionDir>/bin. On Windows
+// most runtimes place the binary at the version root (node.exe, bun.exe), but
+// some (e.g. Go) keep a bin/ subdir on every platform; prefer it when present.
 func GetVersionBinDir(versionDir string) string {
+	binSub := filepath.Join(versionDir, "bin")
 	if runtime.GOOS == "windows" {
+		if info, err := os.Stat(binSub); err == nil && info.IsDir() {
+			return binSub
+		}
 		return versionDir
 	}
-	return filepath.Join(versionDir, "bin")
+	return binSub
 }
 
 // GetNpmPrefixBinDir returns the executable directory for a given npm prefix

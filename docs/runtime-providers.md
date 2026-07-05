@@ -1,9 +1,11 @@
 # Runtime providers
 
 nvx manages runtimes through the `RuntimeProvider` interface (`version.go`).
-Three providers ship today — **Node.js** (`NodeProvider`), **Bun**
-(`BunProvider`), and **Deno** (`DenoProvider`) — and the interface is designed
-so more can be added without touching the CLI, sandbox, or policy code.
+Four providers ship today — **Node.js** (`NodeProvider`), **Bun**
+(`BunProvider`), **Deno** (`DenoProvider`), and **Go** (`GoProvider`) — and the
+interface is designed so more can be added without touching the CLI, sandbox, or
+policy code. Go is the first non-JavaScript runtime and exercises the parts of
+the interface the JS runtimes never touch (see "Readiness" below).
 
 ## The interface
 
@@ -45,31 +47,41 @@ sidecar checksum in PowerShell `Get-FileHash` format (see `findShasumEntry`), an
 a zip whose binary sits at the archive root, extracted with `ExtractZipFlat`
 instead of the folder-stripping `ExtractZip`.
 
-## Readiness for Python / Go / Rust
+## Non-JavaScript runtimes: Go (shipped), Python / Rust (roadmap)
 
-Walking the interface against these runtimes shows where it holds and where it
-would need a small, additive extension. None of these are implemented yet — this
-is a design note so the contract survives their addition.
+Go was implemented as the first non-JavaScript runtime specifically to test the
+parts of the interface the JS runtimes never touch. It validated the design:
 
-| Method | Python | Go | Rust | Verdict |
-|---|---|---|---|---|
-| Install / Uninstall / List* / ResolveVersion | python-build-standalone archives | go.dev/dl tarballs + JSON index | static toolchain tarballs | Holds |
-| DetectConfig | `.python-version` | `go.mod` `go` directive | `rust-toolchain.toml` | Holds (Rust's is a toolchain descriptor, slightly lossy as a string) |
-| ResolveBinary | `Scripts\` vs `bin/` | `GOROOT/bin` | `bin/` | Holds |
-| DefaultNetworkAllow | pypi.org | proxy.golang.org, sum.golang.org | static.crates.io | Holds |
-| SandboxImage | `python:<v>` | `golang:<v>` | `rust:<v>` | Holds |
-| **SessionEnv** | — | **GOROOT / GOTOOLCHAIN** | **RUSTUP_HOME-style vars** | Needs the `SessionEnv` hook (added) |
-| **ShimCommands** (static) | pip console-scripts appear **after** install | `go install` binaries | rustup components (clippy, fmt) | **Cracks** — needs a future post-install hook |
+- **`SessionEnv` is now used, not hypothetical.** `GoProvider.SessionEnv` returns
+  `GOROOT`, and `nvx use go@1.23` emits it alongside the PATH change. Node/Bun/Deno
+  still return nil.
+- **`bin/` layout on every platform.** Unlike node/bun/deno (binary at the version
+  root on Windows), Go keeps `bin/go` everywhere; `GetVersionBinDir` prefers a
+  `bin/` subdir when present, so no interface change was needed.
+- **Own version scheme.** `go1.23.4` is mapped to nvx-internal `v1.23.4`
+  (`goVersionToInternal`) so the shared version helpers work unchanged.
+- **Inline checksums.** The go.dev JSON index carries per-file SHA-256, so
+  `verifyExpectedSHA256` verifies against a known hash rather than fetching a
+  checksum file.
+- **No package audit.** Go modules are not npm packages, so the `go` shim is
+  sandbox-executed but not routed through the npm-oriented verifier.
 
-**Extension points already added** so the above lands cleanly later:
+Walking the interface against the remaining runtimes:
 
-- `SessionEnv(versionDir)` — activate a runtime with extra environment variables
-  (Go/Rust need this; Node/Bun return nil).
-- `SandboxImage(version)` — container image per runtime for the Docker provider.
+| Method | Python | Rust | Verdict |
+|---|---|---|---|
+| Install / Uninstall / List* / ResolveVersion | python-build-standalone archives | static toolchain tarballs | Holds (as Go proved) |
+| DetectConfig | `.python-version` | `rust-toolchain.toml` | Holds (Rust's is a toolchain descriptor, slightly lossy as a string) |
+| ResolveBinary | `Scripts\` vs `bin/` | `bin/` | Holds |
+| DefaultNetworkAllow | pypi.org | static.crates.io | Holds |
+| SandboxImage / SessionEnv | `python:<v>` | `rust:<v>`, `RUSTUP_HOME`-style | Holds (Go exercised both) |
+| **ShimCommands** (static) | pip console-scripts appear **after** install | rustup components (clippy, fmt) | **Still cracks** — needs a post-install hook |
 
 **Known future need, deliberately not built yet:**
 
 - A `PostInstall(version, nvxHome)` hook (or dynamic shim enumeration) for
   runtimes whose available commands are only known after install
-  (pip-installed console scripts, rustup components). Adding it is non-breaking
-  because all providers live inside this module.
+  (pip-installed console scripts, rustup components). Go does not need it — its
+  commands (`go`, `gofmt`) are fixed — which is why it was the right first
+  non-JS runtime. Adding the hook is non-breaking because all providers live
+  inside this module.

@@ -141,6 +141,25 @@ func VerifyChecksumFromShasums(shaUrl, archivePath, archiveFilename string) erro
 	return nil
 }
 
+// verifyExpectedSHA256 checks archivePath against a known hex SHA-256 (e.g. one
+// carried inline in a release index). Fail-closed on mismatch or empty expected.
+func verifyExpectedSHA256(archivePath, expectedHex string) error {
+	expectedHex = strings.TrimSpace(expectedHex)
+	if expectedHex == "" {
+		return fmt.Errorf("no expected checksum provided for %s", filepath.Base(archivePath))
+	}
+	LogInfo("Verifying checksum for %s...", filepath.Base(archivePath))
+	computed, err := ComputeSHA256(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to compute SHA-256: %w", err)
+	}
+	if !strings.EqualFold(computed, expectedHex) {
+		return fmt.Errorf("checksum verification failed! Expected: %s, Got: %s", expectedHex, computed)
+	}
+	LogSuccess("Checksum verified successfully.")
+	return nil
+}
+
 // findShasumEntry extracts the expected hash for filename from checksum-file
 // content. Accepted forms: sha256sum lines ("<hash>  <filename>", with optional
 // "*" binary marker or "./" prefix); PowerShell Get-FileHash output ("Hash : <hex>",
