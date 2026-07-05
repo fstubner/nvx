@@ -847,11 +847,17 @@ func TestLoadPolicyCascading(t *testing.T) {
 	}
 
 	// Trust the parent policy's current contents (as an accepted prompt would).
-	if hash, ok := hashPolicyFile(parentPath); ok {
+	// Resolve symlinks so the pin key matches the path LoadPolicy discovers from
+	// the resolved cwd (macOS maps /var -> /private/var).
+	resolvedParentPath := parentPath
+	if rp, err := filepath.EvalSymlinks(parentPath); err == nil {
+		resolvedParentPath = rp
+	}
+	if hash, ok := hashPolicyFile(resolvedParentPath); ok {
 		scope := projectScopeDir()
 		g := loadProjectGrants(nvxHome, scope)
 		g.ProjectPath = scope
-		g.PolicyPins[filepath.Clean(parentPath)] = hash
+		g.PolicyPins[filepath.Clean(resolvedParentPath)] = hash
 		if err := saveProjectGrants(nvxHome, g); err != nil {
 			t.Fatal(err)
 		}
