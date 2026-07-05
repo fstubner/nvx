@@ -186,13 +186,13 @@ func main() {
 func commandHelpText(command string) string {
 	switch command {
 	case "install", "i":
-		return "nvx install <version>\n\nDownload and install a Node.js version, such as 20, lts, latest, or 20.11.0.\n"
+		return "nvx install <[runtime@]version>\n\nDownload and install a runtime version. A bare version installs Node.js\n(e.g. 20, lts, latest, 20.11.0); prefix another runtime with '@'\n(e.g. bun@1.2, bun).\n"
 	case "uninstall", "uni":
-		return "nvx uninstall <version>\n\nRemove an installed Node.js version. Refuses to remove the active shell version or global default.\n"
+		return "nvx uninstall <[runtime@]version>\n\nRemove an installed runtime version. Refuses to remove the active shell\nversion or global default.\n"
 	case "use":
-		return "nvx use <version> [--shell=<powershell|bash|zsh>]\n\nEmit shell commands that switch the current terminal session to the requested Node.js version.\n"
+		return "nvx use <[runtime@]version> [--shell=<powershell|bash|zsh>]\n\nEmit shell commands that switch the current terminal session to the\nrequested runtime version (defaults to Node.js for a bare version).\n"
 	case "default":
-		return "nvx default <version>\n\nSet the global default Node.js version link.\n"
+		return "nvx default <[runtime@]version>\n\nSet the global default version link for a runtime.\n"
 	case "env":
 		return "nvx env [--shell=<powershell|bash|zsh>]\n\nPrint shell integration code. Installers normally add this to your shell profile.\n"
 	case "auto":
@@ -422,8 +422,8 @@ func getExtension() string {
 }
 
 func runInstall(query string, nvxHome string) {
-	provider := Providers["node"]
-	err := provider.Install(query, nvxHome)
+	provider, version := parseRuntimeSpec(query)
+	err := provider.Install(version, nvxHome)
 	if err != nil {
 		LogError("Installation failed: %v", err)
 		os.Exit(1)
@@ -431,8 +431,8 @@ func runInstall(query string, nvxHome string) {
 }
 
 func runUninstall(query string, nvxHome string) {
-	provider := Providers["node"]
-	err := provider.Uninstall(query, nvxHome)
+	provider, version := parseRuntimeSpec(query)
+	err := provider.Uninstall(version, nvxHome)
 	if err != nil {
 		LogError("Uninstallation failed: %v", err)
 		os.Exit(1)
@@ -440,19 +440,23 @@ func runUninstall(query string, nvxHome string) {
 }
 
 func runUse(query string, nvxHome string, shell string) {
-	provider := Providers["node"]
-	resolvedVer, err := resolveLocalVersion(provider, query, nvxHome)
+	provider, version := parseRuntimeSpec(query)
+	display := runtimeDisplayName(provider.Name())
+	resolvedVer, err := resolveLocalVersion(provider, version, nvxHome)
 	if err != nil {
-		promptMsg := fmt.Sprintf("Node.js %s is not installed. Would you like to download and install it now?", query)
+		promptMsg := fmt.Sprintf("%s %s is not installed. Would you like to download and install it now?", display, version)
 		if PromptYesNo(promptMsg) {
-			runInstall(query, nvxHome)
-			resolvedVer, err = resolveLocalVersion(provider, query, nvxHome)
+			if instErr := provider.Install(version, nvxHome); instErr != nil {
+				LogError("Installation failed: %v", instErr)
+				os.Exit(1)
+			}
+			resolvedVer, err = resolveLocalVersion(provider, version, nvxHome)
 			if err != nil {
 				LogError("Failed to resolve newly installed version: %v", err)
 				os.Exit(1)
 			}
 		} else {
-			LogError("Could not find installed version matching '%s': %v", query, err)
+			LogError("Could not find installed version matching '%s': %v", version, err)
 			os.Exit(1)
 		}
 	}
@@ -460,24 +464,24 @@ func runUse(query string, nvxHome string, shell string) {
 	targetDir := filepath.Join(nvxHome, "versions", provider.Name(), resolvedVer)
 	emitSessionEnv(shell, nvxHome, targetDir)
 
-	activeVer := getActiveShellVersion(nvxHome)
+	activeVer := getActiveShellVersionFor(nvxHome, provider.Name())
 	if activeVer != "" && activeVer != resolvedVer {
-		LogSuccess("Node.js swapped: %s ➔ %s (active in this shell)", activeVer, resolvedVer)
+		LogSuccess("%s swapped: %s ➔ %s (active in this shell)", display, activeVer, resolvedVer)
 	} else {
-		LogSuccess("Now using Node.js %s in this terminal.", resolvedVer)
+		LogSuccess("Now using %s %s in this terminal.", display, resolvedVer)
 	}
 }
 
 func runDefault(query string, nvxHome string) {
-	provider := Providers["node"]
-	resolvedVer, err := resolveLocalVersion(provider, query, nvxHome)
+	provider, version := parseRuntimeSpec(query)
+	resolvedVer, err := resolveLocalVersion(provider, version, nvxHome)
 	if err != nil {
-		LogError("Could not find installed version matching '%s': %v", query, err)
+		LogError("Could not find installed version matching '%s': %v", version, err)
 		os.Exit(1)
 	}
 
 	targetDir := filepath.Join(nvxHome, "versions", provider.Name(), resolvedVer)
-	currentLink := GetCurrentLinkPath()
+	currentLink := runtimeCurrentLinkPath(nvxHome, provider.Name())
 
 	err = CreateLink(currentLink, targetDir)
 	if err != nil {
@@ -485,40 +489,40 @@ func runDefault(query string, nvxHome string) {
 		os.Exit(1)
 	}
 
-	LogSuccess("Global default version set to %s.", resolvedVer)
+	LogSuccess("Global default %s version set to %s.", runtimeDisplayName(provider.Name()), resolvedVer)
 	LogInfo("Make sure '%s' is added to your environment PATH.", GetVersionBinDir(currentLink))
 }
 
 func runList(nvxHome string) {
-	provider := Providers["node"]
-	versions, err := provider.ListLocal(nvxHome)
-	if err != nil {
-		LogError("Failed to list installed versions: %v", err)
-		os.Exit(1)
+	printedAny := false
+	for _, name := range orderedRuntimeNames() {
+		provider := Providers[name]
+		versions, err := provider.ListLocal(nvxHome)
+		if err != nil || len(versions) == 0 {
+			continue
+		}
+		printedAny = true
+
+		activeVer := getActiveShellVersionFor(nvxHome, name)
+		defaultVer := getGlobalDefaultVersionFor(nvxHome, name)
+
+		fmt.Printf("\x1b[36mInstalled %s versions:\x1b[0m\n", runtimeDisplayName(name))
+		for _, v := range versions {
+			prefix := "  "
+			suffix := ""
+			if v == activeVer {
+				prefix = "\x1b[32m* \x1b[0m"
+				suffix += " \x1b[32m(active in this shell)\x1b[0m"
+			}
+			if v == defaultVer {
+				suffix += " \x1b[33m(global default)\x1b[0m"
+			}
+			fmt.Printf("%s%s%s\n", prefix, v, suffix)
+		}
 	}
 
-	if len(versions) == 0 {
-		LogWarn("No Node.js versions are installed. Run 'nvx install <version>' first.")
-		return
-	}
-
-	activeVer := getActiveShellVersion(nvxHome)
-	defaultVer := getGlobalDefaultVersion(nvxHome)
-
-	fmt.Println("\x1b[36mInstalled Node.js versions:\x1b[0m")
-	for _, v := range versions {
-		prefix := "  "
-		suffix := ""
-
-		if v == activeVer {
-			prefix = "\x1b[32m* \x1b[0m"
-			suffix += " \x1b[32m(active in this shell)\x1b[0m"
-		}
-		if v == defaultVer {
-			suffix += " \x1b[33m(global default)\x1b[0m"
-		}
-
-		fmt.Printf("%s%s%s\n", prefix, v, suffix)
+	if !printedAny {
+		LogWarn("No runtimes are installed. Run 'nvx install <version>' (Node.js) or 'nvx install bun' first.")
 	}
 }
 
@@ -725,13 +729,18 @@ func resolveNpmPrefixDir(nvxHome, targetVersionDir string) string {
 // emitSessionEnv prints the shell statements that activate a Node version
 // (and its npm prefix) for the current terminal session.
 func emitSessionEnv(shell, nvxHome, targetDir string) {
-	npmPrefixDir := resolveNpmPrefixDir(nvxHome, targetDir)
-	newPath := CleanAndBuildPath(os.Getenv("PATH"), nvxHome, targetDir, npmPrefixDir)
-	formattedPath := FormatPathForShell(shell, newPath)
-	formattedNpmPrefix := FormatPathForShell(shell, npmPrefixDir)
+	runtimeName := runtimeFromVersionDir(nvxHome, targetDir)
+	npmPrefixDir := ""
+	if runtimeName == "" || runtimeName == "node" {
+		npmPrefixDir = resolveNpmPrefixDir(nvxHome, targetDir)
+	}
 
-	fmt.Print(shellEnvAssignment(shell, "PATH", formattedPath))
-	fmt.Print(shellEnvAssignment(shell, "NPM_CONFIG_PREFIX", formattedNpmPrefix))
+	newPath := CleanAndBuildPath(os.Getenv("PATH"), nvxHome, targetDir, npmPrefixDir)
+	fmt.Print(shellEnvAssignment(shell, "PATH", FormatPathForShell(shell, newPath)))
+
+	if npmPrefixDir != "" {
+		fmt.Print(shellEnvAssignment(shell, "NPM_CONFIG_PREFIX", FormatPathForShell(shell, npmPrefixDir)))
+	}
 }
 
 // PromptYesNo prints a message to the console TTY and reads a Y/N keypress, bypassing standard redirections.
