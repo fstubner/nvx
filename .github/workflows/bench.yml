@@ -2,6 +2,9 @@ name: Bench (manual)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [audit-remediation]
+    paths: ['.github/workflows/bench.yml']
 
 jobs:
   bench:
