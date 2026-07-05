@@ -306,6 +306,87 @@ func TestFindShasumEntryFormats(t *testing.T) {
 	}
 }
 
+func TestGoProviderSelectionAndShims(t *testing.T) {
+	provider, version := parseRuntimeSpec("go@1.22")
+	if provider.Name() != "go" || version != "1.22" {
+		t.Fatalf("parseRuntimeSpec(go@1.22) = (%s, %q)", provider.Name(), version)
+	}
+	for _, cmd := range []string{"go", "gofmt"} {
+		if got := runtimeForShim(cmd).Name(); got != "go" {
+			t.Errorf("runtimeForShim(%q) = %q, want go", cmd, got)
+		}
+	}
+}
+
+func TestGoVersionMappingAndModParsing(t *testing.T) {
+	if got := goVersionToInternal("go1.23.4"); got != "v1.23.4" {
+		t.Errorf("goVersionToInternal(go1.23.4) = %q, want v1.23.4", got)
+	}
+	if got := goVersionToInternal("1.23.4"); got != "v1.23.4" {
+		t.Errorf("goVersionToInternal(1.23.4) = %q, want v1.23.4", got)
+	}
+	// toolchain directive wins over the go language directive.
+	mod := "module x\n\ngo 1.21\n\ntoolchain go1.23.4\n"
+	if got := goModVersion(mod); got != "1.23.4" {
+		t.Errorf("goModVersion(with toolchain) = %q, want 1.23.4", got)
+	}
+	if got := goModVersion("module x\ngo 1.21\n"); got != "1.21" {
+		t.Errorf("goModVersion(go directive only) = %q, want 1.21", got)
+	}
+}
+
+func TestGoProviderSessionEnvAndImage(t *testing.T) {
+	env := (GoProvider{}).SessionEnv("/nvx/versions/go/v1.22.12")
+	if env["GOROOT"] != "/nvx/versions/go/v1.22.12" {
+		t.Fatalf("Go SessionEnv GOROOT = %q", env["GOROOT"])
+	}
+	if got := (GoProvider{}).SandboxImage("v1.22.12"); got != "golang:1.22.12" {
+		t.Errorf("go image = %q, want golang:1.22.12", got)
+	}
+	// JS runtimes contribute no session env.
+	if (NodeProvider{}).SessionEnv("/x") != nil || (BunProvider{}).SessionEnv("/x") != nil {
+		t.Error("node/bun SessionEnv should be nil")
+	}
+}
+
+func TestGoProviderDetectConfig(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module x\ngo 1.21\ntoolchain go1.23.4\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ver, src, err := (GoProvider{}).DetectConfig(tmp)
+	if err != nil || ver != "1.23.4" || !strings.HasSuffix(src, "go.mod") {
+		t.Fatalf("DetectConfig(go.mod) = (%q, %q, %v), want 1.23.4", ver, src, err)
+	}
+
+	tmp2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp2, ".go-version"), []byte("1.22.5\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ver2, _, _ := (GoProvider{}).DetectConfig(tmp2)
+	if ver2 != "1.22.5" {
+		t.Errorf("DetectConfig(.go-version) = %q, want 1.22.5", ver2)
+	}
+}
+
+func TestVerifyExpectedSHA256(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "f.bin")
+	if err := os.WriteFile(tmp, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// sha256("hello")
+	const want = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	if err := verifyExpectedSHA256(tmp, want); err != nil {
+		t.Fatalf("matching hash should verify: %v", err)
+	}
+	if err := verifyExpectedSHA256(tmp, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("wrong hash must fail closed")
+	}
+	if err := verifyExpectedSHA256(tmp, ""); err == nil {
+		t.Fatal("empty expected hash must fail closed")
+	}
+}
+
 func TestRuntimeFromVersionDirRecognizesKnownRuntimes(t *testing.T) {
 	nvxHome := filepath.Join("some", "home")
 	nodeDir := filepath.Join(nvxHome, "versions", "node", "v20.0.0")
