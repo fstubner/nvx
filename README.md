@@ -9,9 +9,9 @@
 
 
 
-`nvx` is a zero-dependency, ultra-fast, and security-conscious version and package manager. Originally built to address the lack of robust, fast native runtime version managers on Windows, it naturally supports macOS and Linux as a cross-platform tool. 
+`nvx` is a fast, cross-platform runtime version manager that **audits and sandboxes everything `npm`/`bun` installs — including whatever your AI coding agents run**. It manages Node.js and Bun like nvm/fnm, then adds an ambient security layer on top: every wrapped `npm`/`yarn`/`pnpm`/`npx`/`bun`/`bunx` command is checked for typosquatting and known vulnerabilities and executed inside a native OS sandbox.
 
-It wraps package managers (`npm`/`yarn`/`pnpm`) and executors (`npx`/`bunx`) to enforce cascading policy files, check for typosquatting, scan for vulnerabilities, and run untrusted code inside native process-level sandboxes.
+Zero dependencies, one static binary, Windows/macOS/Linux. Originally built to fix the lack of a fast native runtime manager on Windows; the security layer is what makes it worth switching to.
 
 
 ---
@@ -22,9 +22,9 @@ With modern LLMs, it's now practical to just build the exact tools you want. Whi
 
 Along the way, I wanted to tackle a few other common frustrations:
 - **Supply Chain Safety**: Typosquatting and malicious postinstall scripts are a growing issue. `nvx` intercepts installs on the fly to flag or block suspected threats based on policies and registry checks.
-- **Agentic & AI Safety**: If you use AI coding agents (like Gemini, Claude, or Copilot) to build projects, they execute terminal commands in your local workspace. By automatically wrapping typical package manager commands (`npm`, `yarn`, `pnpm`, `npx`), `nvx` ensures that any package installed or run by an AI agent is audited and secured out of the box. You don't have to worry about agents running raw commands in your shell; they are wrapped automatically, significantly reducing the risk of an agent pulling down a compromised package or executing rogue code.
+- **Agentic & AI Safety**: If you use AI coding agents (like Gemini, Claude, or Copilot) to build projects, they execute terminal commands in your local workspace. By automatically wrapping typical package manager commands (`npm`, `yarn`, `pnpm`, `npx`, `bun`, `bunx`), `nvx` ensures that any package an AI agent installs is audited and anything it runs is contained — with no agent configuration required. No tool can promise a package is safe, but even if a compromised package slips past the checks, it runs inside the sandbox: secrets scrubbed, filesystem writes confined to the project, and network limited to an allowlist. So a bad package can't quietly read your `.env` or phone home.
 - **Process Isolation**: I wanted a sandbox to run untrusted stuff (like `npx` packages) with a clean slate, scrubbing env secrets and locking down filesystem writes.
-- **Sub-millisecond Performance**: The tool has to be fast enough that there's no noticeable overhead compared to running raw commands.
+- **Thin wrapper**: A single static Go binary with no runtime dependencies. Each wrapped command runs through one extra short-lived process, so the fixed overhead is roughly one process launch — a few milliseconds on Linux/macOS, more on Windows where process creation is heavier. It's imperceptible for the commands you actually wait on (`npm install`, running a dev server) and only measurable on trivially fast one-liners.
 - **Clean UX**: Polished CLI output and automatic shell integration hooks for PowerShell, bash, and zsh.
 
 
@@ -75,23 +75,27 @@ curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh
 nvx <command> [arguments]
 
 Commands:
-  install <version>      Download and install a Node.js version (e.g. 20, lts, latest)
-  uninstall <version>    Remove an installed Node.js version
-  use <version>          Switch Node.js version in the current terminal session (downloads automatically if missing)
-  default <version>      Set the global default Node.js version (creates a link)
-  list, ls               List all installed Node.js versions
-  list-remote, ls-remote List available Node.js versions from nodejs.org
-  env [--shell=<type>]   Print shell integration script (powershell, bash, zsh)
-  auto [--shell=<type>]  Auto-switch version based on .nvmrc / .node-version / package.json
-  verify-install <pkgs>  Verify package safety before installing (called by wrappers)
-  init-shims             Generate PATH shims in ~/.nvx/bin
-  policy init            Create default policy files (--global, --project, --force)
-  cleanup                Remove stale sandbox sessions from previous runs
-  version, -v            Print version info
+  install <[rt@]version>   Install a runtime version. Bare version = Node.js
+                           (e.g. 20, lts, latest); prefix a runtime with @
+                           (e.g. bun@1.2, bun).
+  uninstall <[rt@]version> Remove an installed runtime version
+  use <[rt@]version>       Switch the current terminal session (installs if missing)
+  default <[rt@]version>   Set the global default for a runtime (creates a link)
+  list, ls                 List installed runtimes and versions
+  list-remote, ls-remote   List available Node.js versions from nodejs.org
+  env [--shell=<type>]     Print shell integration script (powershell, bash, zsh)
+  auto [--shell=<type>]    Auto-switch based on .nvmrc / .node-version /
+                           .bun-version / package.json engines
+  verify-install <pkgs>    Verify package safety before installing (called by wrappers)
+  init-shims               Generate PATH shims in ~/.nvx/bin
+  policy init              Create default policy files (--global, --project, --force)
+  cleanup                  Remove stale sandbox sessions from previous runs
+  version, -v              Print version info
 
-Shim flags (npm, node, npx, yarn, pnpm, bunx via PATH):
-  --no-sandbox           Run without sandbox for this invocation
+Shim flags (node, npm, npx, yarn, pnpm, bun, bunx via PATH):
+  --no-sandbox             Run without sandbox for this invocation
   --filesystem-provider=<name>  Override isolation.filesystem.provider
+                           (native | docker; experimental: wsl, wslc, systemd-nspawn)
 ```
 
 ### Zero-config sandbox
