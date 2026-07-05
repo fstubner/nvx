@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Testing
+- **Sandbox escape-assertion integration tests** (`sandbox_escape_test.go`, `-tags integration`) + a per-OS CI workflow (`sandbox-escape.yml`): a process run inside the sandbox must fail to read a host secret, write outside its workdir, or open a raw TCP connection, while the workdir write must succeed. `NVX_ESCAPE_STRICT=1` turns "primitive unavailable" skips into failures.
+
+### Security (containment hardening)
+- **Loopback egress is no longer auto-allowed.** A sandboxed process can no longer freely reach host-local services (DBs, Docker socket proxies, cloud metadata) — the pivot/exfil channel. Only the proxy's own ports are permitted; other host-local destinations need an explicit allowlist entry (e.g. a local registry). In `offline`/`loopback` modes, loopback is forced through the proxy and blocked.
+- **macOS Seatbelt now denies reads of the user's home by default** (with carve-outs for the guest home, workdir, and `~/.npmrc`), plus the system keychain and host SSH keys — replacing the prior credential-dir blocklist. Reads of `~/.ssh`, cloud creds, tokens, and other repos are denied rather than allowed. (Validate on macOS before relying on it.)
+
+### Security (round-2 multi-persona audit remediation)
+- **Signature downgrade closed**: a package with no signature is now treated as tampering when the registry publishes signing keys (was: silent warning). Signing-key cache no longer fails open on a transient error; keys are P-256-pinned and expiry-checked.
+- **Supply-chain gate now covers `npx`, `bun`, `bunx`** (was: npm/yarn/pnpm only) — `npx <pkg>` / `bun add` / `bunx <pkg>` / `bun x` are verified before running/installing.
+- **Proxy seccomp filter fixed**: it was inverted (allowed UDP, denied TCP); it now denies IPv4/IPv6 UDP and allows TCP, with socket-type flag masking. Covered by a BPF-interpreter regression test.
+- **Isolation downgrade closed**: an untrusted project `.nvx-policy.json` can no longer weaken the isolation provider, `network.mode`, `filesystem.mode`, or `enabled` below the trusted (global/default) baseline — only tighten them.
+- **Egress-proxy data race fixed** (session/prompted maps now mutex-guarded).
+- **Lockfile scan bypasses fixed**: pnpm v5 slash-format and yarn `npm:` aliases are now parsed; `findNearestLockfile` is package-manager-aware; a recognized lockfile that parses to zero packages now warns instead of silently skipping.
+- **OSV batches are chunked** (≤1000) so large trees aren't dropped; yarn-berry `enforce_ignore_scripts` uses `YARN_ENABLE_SCRIPTS`.
+
+### Added
+- **Multi-runtime support** via an open provider registry (`RegisterRuntimeProvider`). Node.js and **Bun** ship in-box; select with `nvx install bun@1.1`.
+- **Pluggable isolation backends** via `RegisterIsolationProvider` — the sandbox dispatcher is now an open registry instead of a closed switch. Configure with `isolation.provider` (legacy `isolation.filesystem.provider` still honored) or `--isolation-provider`.
+- **Real semver engine**: correct comparison (incl. prerelease precedence) and range resolution (`^`, `~`, `>=`, `<`, x-ranges, `||`) for `install`/`use`/`auto` and `package.json` engines.
+- **npm package signature verification**: ECDSA verification of the registry signature over `name@version:integrity` using the registry's published keys — real provenance where there was previously none. An invalid signature blocks the install.
+- **Supply-chain tree scanning** now covers `package-lock.json`, `yarn.lock`, and `pnpm-lock.yaml` on bare `npm install` / `npm ci`; plus `fail_closed` policy option and real `--ignore-scripts` enforcement.
+- `nvx upgrade [--check]` self-update (checksum-verified, fail-closed) with a cached once-a-day update notification.
+- `nvx doctor` (lists runtime + isolation providers, availability, and effective policy), `nvx which <cmd>`, and `nvx current`.
+- `docs/EXTENDING.md`: guide + worked examples for adding custom runtime and isolation providers.
+- Build-time version injection (`-ldflags -X main.version`) with VCS fallback; `SECURITY.md` with disclosure process and threat model; `uninstall.sh` / `uninstall.ps1`.
+- Release automation workflow (`.github/workflows/release.yml`) building the cross-platform matrix with checksums and cosign signing.
+
+### Fixed
+- Linux Landlock now actually engages: correct `create_ruleset`/`add_rule` syscall arguments, ABI-version negotiation with access-bit masking, and corrected arm64 syscall numbers.
+- seccomp network filter now validates `seccomp_data.arch` (blocks i386/x32 ABI bypass).
+- macOS Seatbelt denies reads of credential stores (`~/.ssh`, `~/.aws`, …).
+- `nvx env` output is shell-escaped (prevents PATH-based injection into the eval'd script).
+- Honest logging/README: Windows no longer claims "Low Integrity" it does not apply; verification matrix documents CI-validation limits.
+
 ## [0.2.0-beta] - 2026-07-02
 
 ### Added

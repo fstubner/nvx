@@ -10,6 +10,15 @@ $goTempDir = Join-Path $scratchDir "go_temp"
 $goExe = Join-Path $goTempDir "go\bin\go.exe"
 $distDir = Join-Path $PSScriptRoot "dist"
 
+# Resolve the release version from the current git tag/commit so the binary's
+# `nvx version` output matches what was actually shipped.
+try {
+    $nvxVersion = (& git -C $PSScriptRoot describe --tags --always --dirty).Trim()
+} catch {
+    $nvxVersion = "dev"
+}
+Write-Host "Building nvx version: $nvxVersion" -ForegroundColor Green
+
 # 1. Download and extract Go 1.23.1 if not present
 if (-not (Test-Path $goExe)) {
     Write-Host "Go 1.23.1 compiler not found. Downloading..." -ForegroundColor Cyan
@@ -54,7 +63,7 @@ foreach ($target in $matrix) {
     $env:GOOS = $target.os
     $env:GOARCH = $target.arch
     
-    & $goExe build -ldflags="-s -w" -o $outPath .
+    & $goExe build -ldflags="-s -w -X main.version=$nvxVersion" -o $outPath .
     
     # Reset env variables
     $env:GOOS = $null
