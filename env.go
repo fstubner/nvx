@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -34,7 +35,11 @@ func GetDownloadsDir() string {
 
 // GetCurrentLinkPath returns the path of the global default link
 func GetCurrentLinkPath() string {
-	return filepath.Join(GetHomeDir(), "current")
+	return currentLinkPath(GetHomeDir())
+}
+
+func currentLinkPath(nvxHome string) string {
+	return filepath.Join(nvxHome, "current")
 }
 
 // GetVersionBinDir returns the directory containing the node executable for a given version folder
@@ -69,7 +74,7 @@ func CreateLink(link, target string) error {
 		}
 	}
 
-	if err := os.MkdirAll(filepath.Dir(link), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
@@ -117,8 +122,8 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 			continue
 		}
 		// Also clean the .nvx\current path and default npm_global paths if we are setting a terminal version
-		if strings.ToLower(normPart) == strings.ToLower(normCurrentLink) || 
-			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkBin) || 
+		if strings.ToLower(normPart) == strings.ToLower(normCurrentLink) ||
+			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkBin) ||
 			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkNpm) {
 			continue
 		}
@@ -180,8 +185,14 @@ func lookPathSkippingNvxShims(cmdName, nvxHome string) (string, error) {
 		filtered = append(filtered, part)
 	}
 	restore := pathEnv
-	os.Setenv("PATH", strings.Join(filtered, string(filepath.ListSeparator)))
-	defer os.Setenv("PATH", restore)
+	if err := os.Setenv("PATH", strings.Join(filtered, string(filepath.ListSeparator))); err != nil {
+		return "", fmt.Errorf("temporarily update PATH: %w", err)
+	}
+	defer func() {
+		if err := os.Setenv("PATH", restore); err != nil {
+			LogWarn("Failed to restore PATH after runtime lookup: %v", err)
+		}
+	}()
 	return exec.LookPath(cmdName)
 }
 
@@ -197,32 +208,50 @@ func preferWindowsRuntimeExe(cmdPath string) string {
 	return cmdPath
 }
 
-func generateShims(nvxHome string) {
+func generateShims(nvxHome string) error {
 	shimDir := filepath.Join(nvxHome, "bin")
-	os.MkdirAll(shimDir, 0755)
+	if err := os.MkdirAll(shimDir, 0700); err != nil {
+		return fmt.Errorf("create shim directory: %w", err)
+	}
 
 	exePath, err := os.Executable()
 	if err != nil {
 		exePath = "nvx"
 	}
-	exeCmd := fmt.Sprintf("\"%s\"", exePath)
-	if runtime.GOOS != "windows" {
-		exeCmd = fmt.Sprintf("'%s'", exePath)
-	}
-
 	for _, cmd := range allShimCommands() {
 		if runtime.GOOS == "windows" {
-			content := fmt.Sprintf("@echo off\r\n%s shim %s %%*\r\n", exeCmd, cmd)
-			os.WriteFile(filepath.Join(shimDir, cmd+".cmd"), []byte(content), 0755)
+			exeCmd := quoteWindowsBatchArg(exePath)
+			content := fmt.Sprintf("@echo off\r\n%s shim %s %%*\r\n", exeCmd, quoteWindowsBatchArg(cmd))
+			if err := writeExecutableFile(filepath.Join(shimDir, cmd+".cmd"), []byte(content)); err != nil {
+				return fmt.Errorf("write cmd shim for %s: %w", cmd, err)
+			}
 
-			contentPs1 := fmt.Sprintf("& %s shim %s @args\r\n", exeCmd, cmd)
-			os.WriteFile(filepath.Join(shimDir, cmd+".ps1"), []byte(contentPs1), 0755)
+			contentPs1 := fmt.Sprintf("& %s shim %s @args\r\n", quotePowerShell(exePath), quotePowerShell(cmd))
+			if err := writeExecutableFile(filepath.Join(shimDir, cmd+".ps1"), []byte(contentPs1)); err != nil {
+				return fmt.Errorf("write PowerShell shim for %s: %w", cmd, err)
+			}
 		} else {
-			content := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", exeCmd, cmd)
+			content := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", quotePOSIXShell(exePath), quotePOSIXShell(cmd))
 			shimPath := filepath.Join(shimDir, cmd)
-			os.WriteFile(shimPath, []byte(content), 0755)
+			if err := writeExecutableFile(shimPath, []byte(content)); err != nil {
+				return fmt.Errorf("write shim for %s: %w", cmd, err)
+			}
 		}
 	}
+	return nil
+}
+
+func quoteWindowsBatchArg(s string) string {
+	escaped := strings.ReplaceAll(s, `%`, `%%`)
+	escaped = strings.ReplaceAll(escaped, `"`, `""`)
+	return `"` + escaped + `"`
+}
+
+func writeExecutableFile(path string, data []byte) error {
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0700) // #nosec G302 -- generated shim wrappers must be executable by the owner.
 }
 
 // installAliases covers the install/add spellings accepted by npm, yarn, and
@@ -259,16 +288,202 @@ func detectInstallPackages(args []string) []string {
 	return pkgs
 }
 
+func detectShimPackagesForVerification(cmdName string, args []string) []string {
+	switch strings.ToLower(cmdName) {
+	case "npm", "yarn", "pnpm":
+		if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
+			return pkgs
+		}
+		sub := firstNonFlagArg(args)
+		if sub == "ci" || installAliases[sub] {
+			if pkgs := packagesFromPackageLock(); len(pkgs) > 0 {
+				return pkgs
+			}
+			return packagesFromPackageJSON()
+		}
+	case "npx", "bunx":
+		return detectExecutorPackages(args)
+	}
+	return nil
+}
+
+func firstNonFlagArg(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !strings.HasPrefix(arg, "-") {
+			return arg
+		}
+		if flagTakesValue(arg) && !strings.Contains(arg, "=") && i+1 < len(args) {
+			i++
+		}
+	}
+	return ""
+}
+
+func detectExecutorPackages(args []string) []string {
+	var pkgs []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-p" || arg == "--package":
+			if i+1 < len(args) {
+				pkgs = append(pkgs, args[i+1])
+				i++
+			}
+		case strings.HasPrefix(arg, "--package="):
+			if v := strings.TrimPrefix(arg, "--package="); v != "" {
+				pkgs = append(pkgs, v)
+			}
+		case strings.HasPrefix(arg, "-"):
+			if flagTakesValue(arg) && !strings.Contains(arg, "=") && i+1 < len(args) {
+				i++
+			}
+		default:
+			if len(pkgs) > 0 {
+				return dedupeStrings(pkgs)
+			}
+			return []string{arg}
+		}
+	}
+	return dedupeStrings(pkgs)
+}
+
+func flagTakesValue(arg string) bool {
+	switch arg {
+	case "-p", "--package", "--prefix", "--registry", "--cache", "-c", "--call", "--shell":
+		return true
+	}
+	return false
+}
+
+type packageLockFile struct {
+	Packages     map[string]packageLockPackage `json:"packages"`
+	Dependencies map[string]packageLockPackage `json:"dependencies"`
+}
+
+type packageLockPackage struct {
+	Version      string                        `json:"version"`
+	Dependencies map[string]packageLockPackage `json:"dependencies"`
+}
+
+func packagesFromPackageLock() []string {
+	data, err := os.ReadFile("package-lock.json")
+	if err != nil {
+		return nil
+	}
+	var lock packageLockFile
+	if err := json.Unmarshal(data, &lock); err != nil {
+		LogWarn("Failed to parse package-lock.json for verification: %v", err)
+		return nil
+	}
+	seen := map[string]bool{}
+	var pkgs []string
+	for path, pkg := range lock.Packages {
+		name := packageNameFromLockPath(path)
+		if name == "" || pkg.Version == "" {
+			continue
+		}
+		query := name + "@" + pkg.Version
+		if !seen[query] {
+			seen[query] = true
+			pkgs = append(pkgs, query)
+		}
+	}
+	addLockDependencies(lock.Dependencies, seen, &pkgs)
+	sort.Strings(pkgs)
+	return pkgs
+}
+
+func addLockDependencies(deps map[string]packageLockPackage, seen map[string]bool, out *[]string) {
+	for name, dep := range deps {
+		if dep.Version != "" {
+			query := name + "@" + dep.Version
+			if !seen[query] {
+				seen[query] = true
+				*out = append(*out, query)
+			}
+		}
+		addLockDependencies(dep.Dependencies, seen, out)
+	}
+}
+
+func packageNameFromLockPath(path string) string {
+	const marker = "node_modules/"
+	idx := strings.LastIndex(path, marker)
+	if idx == -1 {
+		return ""
+	}
+	return path[idx+len(marker):]
+}
+
+func packagesFromPackageJSON() []string {
+	data, err := os.ReadFile("package.json")
+	if err != nil {
+		return nil
+	}
+	var pkg struct {
+		Dependencies         map[string]string `json:"dependencies"`
+		DevDependencies      map[string]string `json:"devDependencies"`
+		OptionalDependencies map[string]string `json:"optionalDependencies"`
+		PeerDependencies     map[string]string `json:"peerDependencies"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		LogWarn("Failed to parse package.json for verification: %v", err)
+		return nil
+	}
+	seen := map[string]bool{}
+	var pkgs []string
+	for _, deps := range []map[string]string{
+		pkg.Dependencies,
+		pkg.DevDependencies,
+		pkg.OptionalDependencies,
+		pkg.PeerDependencies,
+	} {
+		for name := range deps {
+			if !seen[name] {
+				seen[name] = true
+				pkgs = append(pkgs, name)
+			}
+		}
+	}
+	sort.Strings(pkgs)
+	return pkgs
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
 func runShim(cmdName string, args []string, nvxHome string) int {
 	opts := parseShimOptions(args)
 	args = opts.args
 
-	policy, _ := LoadPolicy(nvxHome)
+	if err := ensureProjectPolicyTrust(nvxHome); err != nil {
+		LogError("Failed to load security policy: %v", err)
+		return 1
+	}
+	policy, err := LoadPolicy(nvxHome)
+	if err != nil {
+		LogError("Failed to load security policy: %v", err)
+		return 1
+	}
 
-	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" {
-		if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
+	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" || cmdName == "npx" || cmdName == "bunx" {
+		if pkgs := detectShimPackagesForVerification(cmdName, args); len(pkgs) > 0 {
 			runVerifyInstall(pkgs, nvxHome)
 		}
+	}
+	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" {
 		if cwd, err := os.Getwd(); err == nil {
 			if root := findProjectRoot(cwd); root != "" {
 				if err := generateProjectBinShims(root, nvxHome); err != nil {
@@ -350,6 +565,21 @@ func FormatPathForShell(shell, rawPath string) string {
 		return strings.ReplaceAll(rawPath, ";", ":")
 	}
 	return rawPath
+}
+
+func shellEnvAssignment(shell, key, value string) string {
+	if shell == "bash" || shell == "zsh" {
+		return "export " + key + "=" + quotePOSIXShell(value) + "\n"
+	}
+	return "$env:" + key + " = " + quotePowerShell(value) + "\n"
+}
+
+func quotePOSIXShell(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func quotePowerShell(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 // PackageJSON is the minimal structure needed to extract the node version engines

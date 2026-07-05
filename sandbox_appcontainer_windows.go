@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	appContainerName = "nvx.sandbox"
+	appContainerNamePrefix = "nvx.sandbox"
 )
 
 var (
@@ -24,11 +24,13 @@ var (
 
 	procCreateAppContainerProfile                 = modUserenv.NewProc("CreateAppContainerProfile")
 	procDeriveAppContainerSidFromAppContainerName = modUserenv.NewProc("DeriveAppContainerSidFromAppContainerName")
+	procDeleteAppContainerProfile                 = modUserenv.NewProc("DeleteAppContainerProfile")
 )
 
 // prepareAppContainerFilesystem grants the AppContainer SID write access to
-// guestHome and workDir. Only guestHome gets a Low integrity label — workDir
-// stays default integrity so a medium-IL AppContainer child can use it as cwd.
+// guestHome and workDir. guestHome gets a low mandatory integrity label for
+// compatibility with legacy constrained launches; workDir stays default
+// integrity so a normal AppContainer child can use it as cwd.
 func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) error {
 	for _, dir := range []string{guestHome, workDir} {
 		if dir == "" {
@@ -46,8 +48,8 @@ func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) error
 	return nil
 }
 
-func ensureAppContainerSID() (uintptr, error) {
-	name, err := syscall.UTF16PtrFromString(appContainerName)
+func ensureAppContainerSID(profileName string) (uintptr, error) {
+	name, err := syscall.UTF16PtrFromString(profileName)
 	if err != nil {
 		return 0, err
 	}
@@ -87,6 +89,14 @@ func ensureAppContainerSID() (uintptr, error) {
 	}
 
 	return 0, fmt.Errorf("DeriveAppContainerSid failed (hr=0x%X): %v", hr, callErr)
+}
+
+func deleteAppContainerProfile(profileName string) {
+	name, err := syscall.UTF16PtrFromString(profileName)
+	if err != nil {
+		return
+	}
+	_, _, _ = procDeleteAppContainerProfile.Call(uintptr(unsafe.Pointer(name)))
 }
 
 func grantAppContainerPath(sid uintptr, path string) error {
@@ -159,7 +169,7 @@ func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {
 	if _, err := os.Stat(destExe); err == nil {
 		return destExe, nil
 	}
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0700); err != nil {
 		return "", err
 	}
 	if err := copyDirTree(srcDir, destDir); err != nil {
@@ -179,9 +189,9 @@ func copyDirTree(src, dst string) error {
 		}
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode().Perm())
+			return os.MkdirAll(target, info.Mode().Perm()&0750)
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
 			return err
 		}
 		return copyFile(path, target, info.Mode())
@@ -195,13 +205,13 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode.Perm())
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode.Perm()&0750)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
 		return err
 	}
 	return out.Close()

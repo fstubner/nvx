@@ -506,7 +506,7 @@ func TestCleanupStaleSandboxes(t *testing.T) {
 
 	sandboxDir := getSandboxHomeDir(tmpDir)
 	fakeSandboxPath := filepath.Join(sandboxDir, "stale-session-123")
-	
+
 	err := os.MkdirAll(fakeSandboxPath, 0755)
 	if err != nil {
 		t.Fatalf("failed to create fake stale sandbox path: %v", err)
@@ -736,9 +736,9 @@ func TestBuildSeatbeltProfile(t *testing.T) {
 	profile := buildSeatbeltProfile(netCtx, "/guest/home", "/work/dir")
 	for _, expected := range []string{
 		"(version 1)",
-		"(allow default)",
-		"(deny file-write*)",
-		"(deny network*)",
+		"(deny default)",
+		"(allow file-read*",
+		"(allow file-write*",
 		`(subpath "/guest/home")`,
 		`(subpath "/work/dir")`,
 		`(subpath "/private/tmp")`,
@@ -832,27 +832,29 @@ func TestLoadPolicyCascading(t *testing.T) {
 	gData, _ := json.Marshal(globalPolicy)
 	_ = os.WriteFile(filepath.Join(nvxHome, "policy.json"), gData, 0644)
 
-	// Write parent policy: block "parent-blocked" and add trusted package "trusted-parent"
-	parentPolicy := Policy{
-		BlockedPackages: []string{"parent-blocked"},
-		Typosquatting: TyposquattingPolicy{
-			TrustedPackages: []string{"trusted-parent"},
-		},
-	}
-	pData, _ := json.Marshal(parentPolicy)
-	_ = os.WriteFile(filepath.Join(parentDir, ".nvx-policy.json"), pData, 0644)
+	// Write parent policy: block "parent-blocked" and add trusted package "trusted-parent".
+	// Adding a trusted package loosens protection, so this file must be trusted below.
+	parentPath := filepath.Join(parentDir, ".nvx-policy.json")
+	_ = os.WriteFile(parentPath, []byte(`{"blocked_packages":["parent-blocked"],"typosquatting":{"trusted_packages":["trusted-parent"]}}`), 0644)
 
-	// Write child policy: block "child-blocked"
-	childPolicy := Policy{
-		BlockedPackages: []string{"child-blocked"},
-	}
-	cData, _ := json.Marshal(childPolicy)
-	_ = os.WriteFile(filepath.Join(childDir, "policy.json"), cData, 0644)
+	// Write child policy: block "child-blocked" (tightening only, no trust needed)
+	_ = os.WriteFile(filepath.Join(childDir, "policy.json"), []byte(`{"blocked_packages":["child-blocked"]}`), 0644)
 
 	// Change working directory to childDir
 	err = os.Chdir(childDir)
 	if err != nil {
 		t.Fatalf("failed to change wd to childDir: %v", err)
+	}
+
+	// Trust the parent policy's current contents (as an accepted prompt would).
+	if hash, ok := hashPolicyFile(parentPath); ok {
+		scope := projectScopeDir()
+		g := loadProjectGrants(nvxHome, scope)
+		g.ProjectPath = scope
+		g.PolicyPins[filepath.Clean(parentPath)] = hash
+		if err := saveProjectGrants(nvxHome, g); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// Load policy using nvxHome
@@ -888,4 +890,3 @@ func TestLoadPolicyCascading(t *testing.T) {
 		t.Error("expected trusted-parent to be in trusted packages list")
 	}
 }
-

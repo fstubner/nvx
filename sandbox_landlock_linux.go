@@ -14,26 +14,27 @@ import (
 
 // Landlock ABI constants (linux/landlock.h).
 const (
-	landlockAccessFSExecute   = 1 << 0
-	landlockAccessFSWriteFile = 1 << 1
-	landlockAccessFSReadFile  = 1 << 2
-	landlockAccessFSWriteDir  = 1 << 3
-	landlockAccessFSReadDir   = 1 << 4
+	landlockAccessFSExecute    = 1 << 0
+	landlockAccessFSWriteFile  = 1 << 1
+	landlockAccessFSReadFile   = 1 << 2
+	landlockAccessFSWriteDir   = 1 << 3
+	landlockAccessFSReadDir    = 1 << 4
 	landlockAccessFSRemoveFile = 1 << 5
 	landlockAccessFSRemoveDir  = 1 << 6
-	landlockAccessFSMakeChar  = 1 << 7
-	landlockAccessFSMakeDir   = 1 << 8
-	landlockAccessFSMakeReg   = 1 << 9
-	landlockAccessFSMakeSock  = 1 << 10
-	landlockAccessFSMakeFifo  = 1 << 11
-	landlockAccessFSMakeBlock = 1 << 12
-	landlockAccessFSMakeSym   = 1 << 13
-	landlockAccessFSRefer     = 1 << 14
-	landlockAccessFSTruncate  = 1 << 15
+	landlockAccessFSMakeChar   = 1 << 7
+	landlockAccessFSMakeDir    = 1 << 8
+	landlockAccessFSMakeReg    = 1 << 9
+	landlockAccessFSMakeSock   = 1 << 10
+	landlockAccessFSMakeFifo   = 1 << 11
+	landlockAccessFSMakeBlock  = 1 << 12
+	landlockAccessFSMakeSym    = 1 << 13
+	landlockAccessFSRefer      = 1 << 14
+	landlockAccessFSTruncate   = 1 << 15
 
-	landlockScopeFile = 1
+	landlockRulePathBeneath = 1
 
 	prSetNoNewPrivs = 38
+	openPathFlag    = 0x200000
 )
 
 var (
@@ -71,7 +72,7 @@ func landlockCreateRuleset(handledAccess uint64) (int, error) {
 		landlockSyscallCreateRuleset(),
 		uintptr(unsafe.Pointer(&attr)),
 		unsafe.Sizeof(attr),
-		uintptr(landlockScopeFile),
+		0,
 		0, 0, 0,
 	)
 	if errno != 0 {
@@ -81,19 +82,20 @@ func landlockCreateRuleset(handledAccess uint64) (int, error) {
 }
 
 func landlockAddRule(rulesetFD int, access uint64, path string) error {
-	attr := landlockPathBeneathAttr{allowedAccess: access, parentFd: -1}
-	pathC, err := syscall.BytePtrFromString(path)
+	parentFD, err := syscall.Open(path, openPathFlag|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return err
 	}
+	defer syscall.Close(parentFD)
+
+	attr := landlockPathBeneathAttr{allowedAccess: access, parentFd: int32(parentFD)}
 	_, errno := landlockCall(
 		landlockSyscallAddRule(),
 		uintptr(rulesetFD),
-		uintptr(landlockScopeFile),
+		uintptr(landlockRulePathBeneath),
 		uintptr(unsafe.Pointer(&attr)),
-		unsafe.Sizeof(attr),
-		uintptr(unsafe.Pointer(pathC)),
 		0,
+		0, 0,
 	)
 	if errno != 0 {
 		return errno
@@ -180,11 +182,11 @@ func runLandlockExecChild(guestHome, workDir, nvxHome, networkMode, shimCommand 
 	if strings.ToLower(networkMode) != "open" {
 		policy, err := LoadPolicy(nvxHome)
 		if err != nil {
-			LogWarn("Failed to load policy: %v", err)
-			policy = DefaultPolicy()
+			LogError("Failed to load policy: %v", err)
+			return 1
 		}
 		rt := runtimeForShim(shimCommand)
-		egress, err = startEgressProxy(context.Background(), policy, rt)
+		egress, err = startEgressProxy(context.Background(), policy, rt, nvxHome)
 		if err != nil {
 			LogError("Egress proxy failed: %v", err)
 			return 1

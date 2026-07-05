@@ -20,6 +20,7 @@ func TestQuoteWindowsArg(t *testing.T) {
 		{"", `""`},
 		{"has space", `"has space"`},
 		{`say "hi"`, `"say \"hi\""`},
+		{`C:\Program Files\foo\`, `"C:\Program Files\foo\\"`},
 	}
 	for _, tc := range cases {
 		if got := quoteWindowsArg(tc.in); got != tc.want {

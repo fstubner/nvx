@@ -18,8 +18,8 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	}
 
 	profilePath := filepath.Join(guestHome, "nvx.sb")
-	profile := buildSeatbeltProfile(netCtx, guestHome, workDir)
-	if err := os.WriteFile(profilePath, []byte(profile), 0644); err != nil {
+	profile := buildSeatbeltProfile(netCtx, guestHome, workDir, config.NvxHome, filepath.Dir(cmdPath))
+	if err := os.WriteFile(profilePath, []byte(profile), 0600); err != nil {
 		LogError("Failed to write Seatbelt profile: %v", err)
 		return 1
 	}

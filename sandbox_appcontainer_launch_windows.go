@@ -31,8 +31,8 @@ type processInformation struct {
 }
 
 // launchAppContainerProcess starts cmdPath with AppContainer isolation via
-// CreateProcessAsUserW + PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES. When
-// lowILToken is non-zero, Low IL is stacked on the AppContainer boundary.
+// CreateProcessAsUserW + PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES. The
+// lowILToken path is retained for legacy callers, but native launch passes 0.
 func launchAppContainerProcess(
 	cmdPath string,
 	args []string,
@@ -182,8 +182,12 @@ func launchAppContainerProcessOnce(
 	if createOK == 0 {
 		return 1, fmt.Errorf("CreateProcess(AppContainer) exe=%q cwd=%q: %v", cmdPath, workDir, createErr)
 	}
-	defer syscall.CloseHandle(pi.hProcess)
-	defer syscall.CloseHandle(pi.hThread)
+	defer func() {
+		_ = syscall.CloseHandle(pi.hProcess)
+	}()
+	defer func() {
+		_ = syscall.CloseHandle(pi.hThread)
+	}()
 
 	waitRet, _, waitErr := procWaitForSingleObject.Call(uintptr(pi.hProcess), INFINITE)
 	if waitRet == 0xFFFFFFFF {
@@ -239,7 +243,7 @@ func updateProcThreadAttribute(list uintptr, attr uintptr, value unsafe.Pointer,
 
 func deleteProcThreadAttributeList(list uintptr) {
 	if list != 0 {
-		procDeleteProcThreadAttributeList.Call(list)
+		_, _, _ = procDeleteProcThreadAttributeList.Call(list)
 	}
 }
 
@@ -293,7 +297,7 @@ func quoteWindowsArg(s string) string {
 		}
 	}
 	for ; slashes > 0; slashes-- {
-		b.WriteByte('\\')
+		b.WriteString(`\\`)
 	}
 	b.WriteByte('"')
 	return b.String()

@@ -41,17 +41,17 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 		cwd, _ = os.Getwd()
 	}
 
-	profilePath := filepath.Join(guestHome, "nvx.sb")
-	profile := buildSeatbeltProfile(netCtx, guestHome, cwd)
-	if err := os.WriteFile(profilePath, []byte(profile), 0644); err != nil {
-		LogError("Failed to write Seatbelt profile: %v", err)
-		return 1
-	}
-
 	cmdPath, err := exec.LookPath(config.Command)
 	if err != nil {
 		LogError("Command not found: %s", config.Command)
 		return 127
+	}
+
+	profilePath := filepath.Join(guestHome, "nvx.sb")
+	profile := buildSeatbeltProfile(netCtx, guestHome, cwd, config.NvxHome, filepath.Dir(cmdPath))
+	if err := os.WriteFile(profilePath, []byte(profile), 0600); err != nil {
+		LogError("Failed to write Seatbelt profile: %v", err)
+		return 1
 	}
 
 	args := []string{"-f", profilePath, cmdPath}
@@ -79,7 +79,19 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 
 // buildSeatbeltProfile generates a Seatbelt policy with filesystem and optional network rules.
 func buildSeatbeltProfile(netCtx NetworkLaunchContext, writableRoots ...string) string {
-	roots := append([]string{
+	writeRoots := append([]string{
+		"/dev",
+		"/private/tmp",
+		"/private/var/tmp",
+		"/private/var/folders",
+	}, writableRoots...)
+	readRoots := append([]string{
+		"/bin",
+		"/sbin",
+		"/usr",
+		"/System",
+		"/Library",
+		"/opt",
 		"/dev",
 		"/private/tmp",
 		"/private/var/tmp",
@@ -88,10 +100,21 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, writableRoots ...string) 
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n")
-	b.WriteString("(allow default)\n")
-	b.WriteString("(deny file-write*)\n")
+	b.WriteString("(deny default)\n")
+	b.WriteString("(allow process*)\n")
+	b.WriteString("(allow signal (target self))\n")
+	b.WriteString("(allow sysctl-read)\n")
+	b.WriteString("(allow file-read-metadata)\n")
+	b.WriteString("(allow file-read*\n")
+	for _, root := range dedupeStrings(readRoots) {
+		if root == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "  (subpath %q)\n", root)
+	}
+	b.WriteString(")\n")
 	b.WriteString("(allow file-write*\n")
-	for _, root := range roots {
+	for _, root := range dedupeStrings(writeRoots) {
 		if root == "" {
 			continue
 		}
@@ -100,8 +123,10 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, writableRoots ...string) 
 	b.WriteString(")\n")
 
 	mode := strings.ToLower(netCtx.Mode)
+	if mode == "open" || mode == "" {
+		b.WriteString("(allow network*)\n")
+	}
 	if mode == "proxy" || mode == "offline" || mode == "loopback" {
-		b.WriteString("(deny network*)\n")
 		b.WriteString("(allow network-outbound (remote tcp \"localhost:*\"))\n")
 		b.WriteString("(allow network-outbound (remote udp \"localhost:*\"))\n")
 		b.WriteString("(allow network-bind (local tcp \"localhost:*\"))\n")

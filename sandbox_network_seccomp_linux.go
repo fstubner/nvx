@@ -24,9 +24,9 @@ const (
 	seccompRetAllow = 0x7fff0000
 	seccompRetErrno = 0x00050000 + 1 // EPERM
 
-	afInet     = 2
-	afInet6    = 10
-	sockDgram  = 2
+	afInet        = 2
+	afInet6       = 10
+	sockDgram     = 2
 	sdOffsetNr    = 0
 	sdOffsetArgs0 = 16
 	sdOffsetArgs1 = 24
@@ -65,8 +65,8 @@ func installSeccompFilter(filter []syscall.SockFilter) error {
 	_, _, errno := syscall.RawSyscall6(
 		trap,
 		seccompSetModeFilter,
-		uintptr(unsafe.Pointer(&prog)),
 		seccompFilterFlagTSync,
+		uintptr(unsafe.Pointer(&prog)),
 		0, 0, 0,
 	)
 	if errno != 0 {

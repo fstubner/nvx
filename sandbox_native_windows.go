@@ -3,19 +3,22 @@
 package main
 
 import (
+	"path/filepath"
 	"syscall"
 )
 
-// platformLaunchNative applies AppContainer + Low IL isolation on Windows.
+// platformLaunchNative applies AppContainer isolation on Windows.
 // Isolation setup is fail-closed: if AppContainer cannot be applied, the command
 // is not executed.
 func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath string, cleanEnv []string, netCtx NetworkLaunchContext) int {
-	sid, err := ensureAppContainerSID()
+	profileName := appContainerNamePrefix + "." + filepath.Base(guestHome)
+	sid, err := ensureAppContainerSID(profileName)
 	if err != nil {
 		LogError("AppContainer profile unavailable: %v", err)
 		return 1
 	}
 	defer syscall.LocalFree(syscall.Handle(sid))
+	defer deleteAppContainerProfile(profileName)
 
 	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
 		LogError("AppContainer filesystem setup failed: %v", err)
@@ -27,7 +30,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1
 	}
 
-	LogInfo("Windows AppContainer + Low Integrity isolation active")
+	LogInfo("Windows AppContainer isolation active")
 	exitCode, err := launchAppContainerProcess(
 		cmdPath, config.Args, cleanEnv, workDir, sid, 0,
 	)

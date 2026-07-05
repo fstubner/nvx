@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestParseLandlockExecArgs(t *testing.T) {
 	guest, work, nvx, mode, shimCmd, port, cmd, args, ok := parseLandlockExecArgs([]string{
@@ -45,6 +48,59 @@ func TestShouldSandbox(t *testing.T) {
 	policy.Isolation.Enabled = false
 	if shouldSandbox("npm", policy, shimOptions{}) {
 		t.Fatal("expected disabled isolation to skip")
+	}
+}
+
+func TestReleaseAgePolicyDefaults(t *testing.T) {
+	p := DefaultPolicy()
+	if !p.ReleaseAgeEnabled() {
+		t.Fatal("expected release age enabled by default")
+	}
+	if p.ReleaseAgeMinHours() != 24 {
+		t.Fatalf("expected 24h default, got %d", p.ReleaseAgeMinHours())
+	}
+
+	var legacy Policy
+	normalizePolicy(&legacy)
+	if !legacy.ReleaseAgeEnabled() {
+		t.Fatal("expected legacy policy to enable release age")
+	}
+	if legacy.ReleaseAgeMinHours() != 24 {
+		t.Fatalf("expected legacy 24h default, got %d", legacy.ReleaseAgeMinHours())
+	}
+
+	disabled := false
+	p2 := Policy{ReleaseAge: ReleaseAgePolicy{Enabled: &disabled}}
+	normalizePolicy(&p2)
+	if p2.ReleaseAgeEnabled() {
+		t.Fatal("expected explicit disable")
+	}
+}
+
+func TestIsTrustedPackage(t *testing.T) {
+	p := Policy{Typosquatting: TyposquattingPolicy{TrustedPackages: []string{"Lodash", "@types/node"}}}
+	if !p.IsTrustedPackage("lodash") {
+		t.Fatal("expected lodash trusted")
+	}
+	if !p.IsTrustedPackage("@types/node") {
+		t.Fatal("expected scoped package trusted")
+	}
+	if p.IsTrustedPackage("react") {
+		t.Fatal("react should not be trusted")
+	}
+}
+
+func TestPublishAgeShouldWarn(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	pub := now.Add(-2 * time.Hour)
+	if !publishAgeShouldWarn(pub, 24, now) {
+		t.Fatal("expected warn for 2h old publish within 24h window")
+	}
+	if publishAgeShouldWarn(pub, 1, now) {
+		t.Fatal("expected no warn outside 1h window")
+	}
+	if publishAgeShouldWarn(time.Time{}, 24, now) {
+		t.Fatal("expected no warn for zero publish time")
 	}
 }
 

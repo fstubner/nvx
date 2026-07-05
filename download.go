@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const maxExtractedArchiveBytes int64 = 2 << 30
+
 // GetArch returns the Node.js architecture suffix for downloads (x64, x86, arm64)
 func GetArch() string {
 	switch runtime.GOARCH {
@@ -33,7 +35,7 @@ func GetArch() string {
 // DownloadFile downloads a URL to a local filepath, displaying a progress bar to stderr
 func DownloadFile(url, destPath string) error {
 	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0700); err != nil {
 		return fmt.Errorf("failed to create directory for download: %w", err)
 	}
 
@@ -50,7 +52,7 @@ func DownloadFile(url, destPath string) error {
 		return fmt.Errorf("download failed: HTTP %s", resp.Status)
 	}
 
-	out, err := os.Create(destPath)
+	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create local file: %w", err)
 	}
@@ -92,14 +94,16 @@ func ComputeSHA256(filePath string) (string, error) {
 func VerifyNodeChecksum(version, archivePath, archiveFilename string) error {
 	// SHASUMS256.txt is at https://nodejs.org/dist/<version>/SHASUMS256.txt
 	shaUrl := fmt.Sprintf("https://nodejs.org/dist/%s/SHASUMS256.txt", version)
-	
+
 	// Create a secure temp file for checksums
 	tmpFile, err := os.CreateTemp("", "SHASUMS256-*.txt")
 	if err != nil {
 		return fmt.Errorf("failed to create secure temp file: %w", err)
 	}
 	shaTemp := tmpFile.Name()
-	tmpFile.Close() // Close immediately since DownloadFile will open/overwrite it
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close checksum temp file: %w", err)
+	}
 	defer os.Remove(shaTemp)
 
 	LogInfo("Verifying checksum for %s...", archiveFilename)
@@ -143,7 +147,6 @@ func VerifyNodeChecksum(version, archivePath, archiveFilename string) error {
 	LogSuccess("Checksum verified successfully.")
 	return nil
 }
-
 
 type progressWriter struct {
 	total      int64
@@ -202,35 +205,31 @@ func ExtractZip(zipPath, destDir string) error {
 	}
 	defer r.Close()
 
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0700); err != nil {
 		return fmt.Errorf("failed to create destination folder: %w", err)
 	}
 
 	fmt.Fprint(os.Stderr, "🚚 Extracting files... ")
 	startTime := time.Now()
+	remaining := maxExtractedArchiveBytes
 
 	for _, f := range r.File {
-		parts := strings.Split(f.Name, "/")
-		if len(parts) <= 1 {
-			continue
+		fpath, skip, err := safeArchiveTarget(destDir, f.Name)
+		if err != nil {
+			return fmt.Errorf("illegal file path in zip: %w", err)
 		}
-		strippedPath := filepath.Join(parts[1:]...)
-		if strippedPath == "" {
+		if skip {
 			continue
-		}
-
-		fpath := filepath.Join(destDir, strippedPath)
-
-		if !strings.HasPrefix(fpath, filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path in zip: %s", fpath)
 		}
 
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(fpath, f.Mode())
+			if err := os.MkdirAll(fpath, f.Mode()&0770); err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", fpath, err)
+			}
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fpath), 0700); err != nil {
 			return fmt.Errorf("failed to create subdirectory: %w", err)
 		}
 
@@ -239,17 +238,23 @@ func ExtractZip(zipPath, destDir string) error {
 			return fmt.Errorf("failed to open zip member %s: %w", f.Name, err)
 		}
 
-		dst, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		dst, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode()&0770)
 		if err != nil {
-			src.Close()
+			_ = src.Close()
 			return fmt.Errorf("failed to create file %s: %w", fpath, err)
 		}
 
-		_, err = io.Copy(dst, src)
-		src.Close()
-		dst.Close()
-		if err != nil {
-			return fmt.Errorf("failed to extract file contents for %s: %w", fpath, err)
+		copyErr := copyArchiveFile(dst, src, &remaining, f.Name)
+		srcErr := src.Close()
+		dstErr := dst.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if srcErr != nil {
+			return fmt.Errorf("failed to close zip member %s: %w", f.Name, srcErr)
+		}
+		if dstErr != nil {
+			return fmt.Errorf("failed to close destination file %s: %w", fpath, dstErr)
 		}
 	}
 
@@ -273,12 +278,13 @@ func ExtractTarGz(tarPath, destDir string) error {
 
 	tarReader := tar.NewReader(gzipReader)
 
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0700); err != nil {
 		return fmt.Errorf("failed to create destination folder: %w", err)
 	}
 
 	fmt.Fprint(os.Stderr, "🚚 Extracting files... ")
 	startTime := time.Now()
+	remaining := maxExtractedArchiveBytes
 
 	for {
 		header, err := tarReader.Next()
@@ -289,48 +295,52 @@ func ExtractTarGz(tarPath, destDir string) error {
 			return fmt.Errorf("failed to read tar archive: %w", err)
 		}
 
-		parts := strings.Split(header.Name, "/")
-		if len(parts) <= 1 {
-			continue // skip root folder itself
+		fpath, skip, err := safeArchiveTarget(destDir, header.Name)
+		if err != nil {
+			return fmt.Errorf("illegal file path in tar archive: %w", err)
 		}
-		strippedPath := filepath.Join(parts[1:]...)
-		if strippedPath == "" {
+		if skip {
 			continue
-		}
-
-		fpath := filepath.Join(destDir, strippedPath)
-
-		if !strings.HasPrefix(fpath, filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path in tar archive: %s", fpath)
 		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(fpath, os.FileMode(header.Mode)); err != nil {
+			if err := os.MkdirAll(fpath, os.FileMode(header.Mode)&0770); err != nil {
 				return fmt.Errorf("failed to create directory: %w", err)
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(fpath), 0700); err != nil {
 				return fmt.Errorf("failed to create subdirectory: %w", err)
 			}
-			outFile, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+			outFile, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode)&0770)
 			if err != nil {
 				return fmt.Errorf("failed to open destination file %s: %w", fpath, err)
 			}
-			if _, err := io.Copy(outFile, tarReader); err != nil {
-				outFile.Close()
-				return fmt.Errorf("failed to extract file contents for %s: %w", fpath, err)
+			copyErr := copyArchiveFile(outFile, tarReader, &remaining, header.Name)
+			closeErr := outFile.Close()
+			if copyErr != nil {
+				return copyErr
 			}
-			outFile.Close()
+			if closeErr != nil {
+				return fmt.Errorf("failed to close destination file %s: %w", fpath, closeErr)
+			}
 		case tar.TypeSymlink:
 			// Verify that the symlink target is safe and does not escape destDir
 			linkTarget := header.Linkname
-			if filepath.IsAbs(linkTarget) {
+			if filepath.IsAbs(linkTarget) || strings.Contains(linkTarget, ":") {
 				return fmt.Errorf("illegal absolute symlink target in tar archive: %s -> %s", fpath, linkTarget)
 			}
-			resolvedTarget := filepath.Join(filepath.Dir(fpath), linkTarget)
-			cleanDest := filepath.Clean(destDir)
-			cleanTarget := filepath.Clean(resolvedTarget)
+			resolvedTarget := filepath.Join(filepath.Dir(fpath), linkTarget) // #nosec G305 -- linkTarget is relative, colon-free, and resolved below against destDir.
+			cleanDest, err := filepath.Abs(destDir)
+			if err != nil {
+				return fmt.Errorf("failed to resolve destination directory: %w", err)
+			}
+			cleanDest = filepath.Clean(cleanDest)
+			cleanTarget, err := filepath.Abs(resolvedTarget)
+			if err != nil {
+				return fmt.Errorf("failed to resolve symlink target: %w", err)
+			}
+			cleanTarget = filepath.Clean(cleanTarget)
 			if cleanTarget != cleanDest && !strings.HasPrefix(cleanTarget, cleanDest+string(os.PathSeparator)) {
 				return fmt.Errorf("illegal symlink target outside destination: %s -> %s (resolved: %s)", fpath, linkTarget, cleanTarget)
 			}
@@ -347,5 +357,60 @@ func ExtractTarGz(tarPath, destDir string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "done in %s\n", time.Since(startTime).Round(time.Millisecond))
+	return nil
+}
+
+func safeArchiveTarget(destDir, archiveName string) (string, bool, error) {
+	normalized := strings.ReplaceAll(archiveName, "\\", "/")
+	parts := strings.Split(normalized, "/")
+	if len(parts) <= 1 {
+		return "", true, nil
+	}
+
+	strippedParts := parts[1:]
+	for _, part := range strippedParts {
+		if part == "" || part == "." {
+			continue
+		}
+		if part == ".." {
+			return "", false, fmt.Errorf("%s", archiveName)
+		}
+		if strings.Contains(part, ":") {
+			return "", false, fmt.Errorf("%s", archiveName)
+		}
+	}
+
+	strippedPath := filepath.Join(strippedParts...)
+	if strippedPath == "" || strippedPath == "." || filepath.IsAbs(strippedPath) {
+		return "", true, nil
+	}
+
+	cleanDest, err := filepath.Abs(destDir)
+	if err != nil {
+		return "", false, fmt.Errorf("resolve destination: %w", err)
+	}
+	cleanDest = filepath.Clean(cleanDest)
+	cleanTarget := filepath.Clean(filepath.Join(cleanDest, strippedPath))
+	if cleanTarget != cleanDest && !strings.HasPrefix(cleanTarget, cleanDest+string(os.PathSeparator)) {
+		return "", false, fmt.Errorf("%s", archiveName)
+	}
+	return cleanTarget, false, nil
+}
+
+func copyArchiveFile(dst io.Writer, src io.Reader, remaining *int64, name string) error {
+	if *remaining <= 0 {
+		return fmt.Errorf("archive extraction limit exceeded before %s", name)
+	}
+	before := *remaining
+	limited := &io.LimitedReader{R: src, N: before + 1}
+	n, err := io.Copy(dst, limited)
+	if n > before {
+		*remaining = 0
+		return fmt.Errorf("archive extraction limit exceeded while extracting %s", name)
+	}
+	*remaining -= n
+	if err != nil {
+		return fmt.Errorf("failed to extract file contents for %s: %w", name, err)
+	}
 	return nil
 }
