@@ -76,7 +76,7 @@ func LevenshteinDistance(s, t string) int {
 // LoadPopularPackages returns the typosquatting checklist, syncing from a remote source if outdated
 func LoadPopularPackages(nvxHome string) []string {
 	cachePath := filepath.Join(nvxHome, "popular_packages.json")
-	
+
 	// Check if local cache is fresh (less than 7 days old)
 	if info, err := os.Stat(cachePath); err == nil && time.Since(info.ModTime()) < 7*24*time.Hour {
 		data, err := os.ReadFile(cachePath)
@@ -145,10 +145,15 @@ func syncPopularPackages(cachePath string) ([]string, error) {
 	}
 
 	// Write cache file
-	os.MkdirAll(filepath.Dir(cachePath), 0755)
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0700); err != nil {
+		return list, fmt.Errorf("create popular-package cache directory: %w", err)
+	}
 	data, err := json.Marshal(list)
-	if err == nil {
-		_ = os.WriteFile(cachePath, data, 0644)
+	if err != nil {
+		return list, fmt.Errorf("encode popular-package cache: %w", err)
+	}
+	if err := os.WriteFile(cachePath, data, 0600); err != nil {
+		return list, fmt.Errorf("write popular-package cache: %w", err)
 	}
 	return list, nil
 }
@@ -217,7 +222,7 @@ func CheckTyposquattingAuthority(pkgName string, popularList []string, maxDist i
 			if errPkg == nil && errSus == nil {
 				// Authority threshold: if the target is high-popularity (>50k/week)
 				// AND it has more than 100x the weekly downloads of the installed package, it's a typosquat
-				if suspectDownloads > 50000 && suspectDownloads > 100 * pkgDownloads {
+				if suspectDownloads > 50000 && suspectDownloads > 100*pkgDownloads {
 					return popular
 				}
 			} else {
@@ -352,6 +357,9 @@ type NpmVersionDetails struct {
 	Scripts map[string]string `json:"scripts"`
 }
 
+var resolveNpmPackageDetailsForVerify = ResolveNpmPackageDetails
+var scanVulnerabilitiesBatchForVerify = ScanVulnerabilitiesBatch
+
 // ResolveNpmPackageDetails queries npm registry for latest version, publish age, and installation script status
 func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, publishTime time.Time, hasScripts bool, err error) {
 	client := &http.Client{Timeout: 8 * time.Second}
@@ -360,7 +368,6 @@ func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, pub
 		return "", time.Time{}, false, err
 	}
 	defer resp.Body.Close()
-
 
 	if resp.StatusCode != http.StatusOK {
 		return "", time.Time{}, false, fmt.Errorf("registry returned HTTP %s", resp.Status)
@@ -406,10 +413,17 @@ func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, pub
 	return resolvedVer, pubTime, hasInstallScripts, nil
 }
 
+// publishAgeShouldWarn reports whether pubTime is younger than the configured window.
+func publishAgeShouldWarn(pubTime time.Time, minAgeHours int, now time.Time) bool {
+	if pubTime.IsZero() || minAgeHours <= 0 {
+		return false
+	}
+	return now.Sub(pubTime) < time.Duration(minAgeHours)*time.Hour
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
 }
-

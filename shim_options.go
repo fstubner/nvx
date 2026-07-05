@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"os"
+	"strings"
+)
 
 var noSandboxFlag bool
 
@@ -36,6 +39,9 @@ func shouldSandbox(cmdName string, policy Policy, opts shimOptions) bool {
 		return false
 	}
 	if inSandboxSession() {
+		return false
+	}
+	if os.Getenv("NVX_SANDBOX") == "1" || os.Getenv("NVX_SANDBOX") == "true" {
 		return false
 	}
 	if !policy.Isolation.Enabled {

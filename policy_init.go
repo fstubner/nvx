@@ -61,10 +61,10 @@ func writePolicyFile(path string, data []byte, force bool) error {
 	if _, err := os.Stat(path); err == nil && !force {
 		return fmt.Errorf("policy file already exists at %s (use --force to overwrite)", path)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create policy directory: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("write policy: %w", err)
 	}
 	return nil

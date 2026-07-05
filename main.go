@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -12,19 +13,32 @@ import (
 var yesFlag = false
 
 func init() {
-	for i := 1; i < len(os.Args); i++ {
-		if os.Args[i] == "-y" || os.Args[i] == "--yes" {
-			yesFlag = true
-			os.Args = append(os.Args[:i], os.Args[i+1:]...)
-			i--
-			continue
-		}
-		if os.Args[i] == "--no-sandbox" {
-			noSandboxFlag = true
-			os.Args = append(os.Args[:i], os.Args[i+1:]...)
-			i--
+	var yes, noSandbox bool
+	os.Args, yes, noSandbox = parseStartupFlags(os.Args)
+	yesFlag = yes
+	noSandboxFlag = noSandbox
+}
+
+func parseStartupFlags(args []string) ([]string, bool, bool) {
+	if len(args) <= 1 {
+		return args, false, false
+	}
+	filtered := []string{args[0]}
+	yes := false
+	noSandbox := false
+	i := 1
+	for ; i < len(args); i++ {
+		switch args[i] {
+		case "-y", "--yes":
+			yes = true
+		case "--no-sandbox":
+			noSandbox = true
+		default:
+			filtered = append(filtered, args[i:]...)
+			return filtered, yes, noSandbox
 		}
 	}
+	return filtered, yes, noSandbox
 }
 
 func main() {
@@ -36,11 +50,23 @@ func main() {
 	command := strings.ToLower(os.Args[1])
 	nvxHome := GetHomeDir()
 
+	if command == "help" && len(os.Args) >= 3 {
+		if text := commandHelpText(strings.ToLower(os.Args[2])); text != "" {
+			fmt.Print(text)
+			return
+		}
+	}
+	if len(os.Args) >= 3 && (os.Args[2] == "--help" || os.Args[2] == "-h") {
+		if text := commandHelpText(command); text != "" {
+			fmt.Print(text)
+			return
+		}
+	}
+
 	switch command {
 	case "version", "-v", "--version":
-		fmt.Println("nvx version 0.1.0")
+		fmt.Println("nvx version " + appVersion)
 		return
-
 
 	case "install", "i":
 
@@ -92,12 +118,16 @@ func main() {
 
 	case "verify-install":
 		if len(os.Args) < 3 {
-			os.Exit(0)
+			LogError("Usage: nvx verify-install <package> [package...]")
+			os.Exit(1)
 		}
 		runVerifyInstall(os.Args[2:], nvxHome)
 
 	case "init-shims":
-		generateShims(nvxHome)
+		if err := generateShims(nvxHome); err != nil {
+			LogError("Failed to generate PATH shims: %v", err)
+			os.Exit(1)
+		}
 		if cwd, err := os.Getwd(); err == nil {
 			if root := findProjectRoot(cwd); root != "" {
 				if err := generateProjectBinShims(root, nvxHome); err != nil {
@@ -151,6 +181,34 @@ func main() {
 		printHelp()
 		os.Exit(1)
 	}
+}
+
+func commandHelpText(command string) string {
+	switch command {
+	case "install", "i":
+		return "nvx install <version>\n\nDownload and install a Node.js version, such as 20, lts, latest, or 20.11.0.\n"
+	case "uninstall", "uni":
+		return "nvx uninstall <version>\n\nRemove an installed Node.js version. Refuses to remove the active shell version or global default.\n"
+	case "use":
+		return "nvx use <version> [--shell=<powershell|bash|zsh>]\n\nEmit shell commands that switch the current terminal session to the requested Node.js version.\n"
+	case "default":
+		return "nvx default <version>\n\nSet the global default Node.js version link.\n"
+	case "env":
+		return "nvx env [--shell=<powershell|bash|zsh>]\n\nPrint shell integration code. Installers normally add this to your shell profile.\n"
+	case "auto":
+		return "nvx auto [--shell=<powershell|bash|zsh>]\n\nDetect .nvmrc, .node-version, package.json engines, or Volta config and switch the current shell when needed.\n"
+	case "verify-install":
+		return "nvx verify-install <package> [package...]\n\nInternal security verifier used by shims. Checks policy blocklists, typosquatting, install scripts, release age, and OSV vulnerabilities.\n"
+	case "policy":
+		return "nvx policy init [--global] [--project] [--force]\n\nCreate a global or project .nvx policy file.\n"
+	case "init-shims":
+		return "nvx init-shims\n\nGenerate PATH shims in ~/.nvx/bin and project-bin shims for node_modules/.bin when run in a Node project.\n"
+	case "shim":
+		return "nvx shim <cmd> [args...]\n\nInternal shim router used by generated command wrappers.\n"
+	case "cleanup":
+		return "nvx cleanup\n\nRemove stale sandbox guest profiles from previous interrupted runs.\n"
+	}
+	return ""
 }
 
 // defaultShell returns the shell whose syntax is emitted when none is specified.
@@ -243,10 +301,14 @@ func CompareVersions(v1, v2 string) int {
 	for i := 0; i < 3; i++ {
 		var p1, p2 int
 		if i < len(parts1) {
-			fmt.Sscanf(parts1[i], "%d", &p1)
+			if n, err := strconv.Atoi(parts1[i]); err == nil {
+				p1 = n
+			}
 		}
 		if i < len(parts2) {
-			fmt.Sscanf(parts2[i], "%d", &p2)
+			if n, err := strconv.Atoi(parts2[i]); err == nil {
+				p2 = n
+			}
 		}
 		if p1 > p2 {
 			return 1
@@ -337,7 +399,7 @@ func getActiveShellVersion(nvxHome string) string {
 }
 
 func getGlobalDefaultVersion(nvxHome string) string {
-	currentLink := GetCurrentLinkPath()
+	currentLink := currentLinkPath(nvxHome)
 	target, err := os.Readlink(currentLink)
 	if err != nil {
 		return ""
@@ -501,7 +563,9 @@ func runListRemote() {
 }
 
 func runEnv(shell string, nvxHome string) {
-	generateShims(nvxHome)
+	if err := generateShims(nvxHome); err != nil {
+		LogWarn("Failed to generate PATH shims: %v", err)
+	}
 
 	exePath, err := os.Executable()
 	if err != nil {
@@ -650,7 +714,7 @@ func resolveNpmPrefixDir(nvxHome, targetVersionDir string) string {
 	policy, err := LoadPolicy(nvxHome)
 	if err == nil && policy.Environment.IsolatedTools && policy.ProjectDir != "" {
 		prefixDir := filepath.Join(policy.ProjectDir, ".nvx", "npm_global")
-		if mkErr := os.MkdirAll(prefixDir, 0755); mkErr == nil {
+		if mkErr := os.MkdirAll(prefixDir, 0700); mkErr == nil {
 			return prefixDir
 		}
 		LogWarn("Failed to create project tools directory %s; falling back to version-level npm prefix.", prefixDir)
@@ -666,13 +730,8 @@ func emitSessionEnv(shell, nvxHome, targetDir string) {
 	formattedPath := FormatPathForShell(shell, newPath)
 	formattedNpmPrefix := FormatPathForShell(shell, npmPrefixDir)
 
-	if shell == "bash" || shell == "zsh" {
-		fmt.Printf("export PATH=\"%s\"\n", formattedPath)
-		fmt.Printf("export NPM_CONFIG_PREFIX=\"%s\"\n", formattedNpmPrefix)
-	} else {
-		fmt.Printf("$env:PATH = \"%s\"\n", formattedPath)
-		fmt.Printf("$env:NPM_CONFIG_PREFIX = \"%s\"\n", formattedNpmPrefix)
-	}
+	fmt.Print(shellEnvAssignment(shell, "PATH", formattedPath))
+	fmt.Print(shellEnvAssignment(shell, "NPM_CONFIG_PREFIX", formattedNpmPrefix))
 }
 
 // PromptYesNo prints a message to the console TTY and reads a Y/N keypress, bypassing standard redirections.
@@ -682,6 +741,10 @@ func PromptYesNo(message string) bool {
 	}
 	if os.Getenv("NVX_YES") == "true" || os.Getenv("NVX_YES") == "1" {
 		return true
+	}
+	if os.Getenv("NVX_NONINTERACTIVE") == "true" || os.Getenv("NVX_NONINTERACTIVE") == "1" {
+		LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
+		return false
 	}
 
 	var ttyIn, ttyOut *os.File
@@ -761,7 +824,8 @@ func parsePackageQuery(query string) (string, string) {
 func runVerifyInstall(args []string, nvxHome string) {
 	policy, err := LoadPolicy(nvxHome)
 	if err != nil {
-		LogWarn("Failed to load security policy: %v. Bypassing blocklist.", err)
+		LogError("Failed to load security policy: %v", err)
+		os.Exit(1)
 	}
 
 	popularList := LoadPopularPackages(nvxHome)
@@ -780,48 +844,43 @@ func runVerifyInstall(args []string, nvxHome string) {
 		}
 
 		// 2. Typosquatting Check
-		if policy.Typosquatting.Enabled {
-			isTrusted := false
-			for _, t := range policy.Typosquatting.TrustedPackages {
-				if strings.ToLower(pkgName) == strings.ToLower(t) {
-					isTrusted = true
-					break
-				}
+		if policy.Typosquatting.Enabled && !policy.IsTrustedPackage(pkgName) {
+			maxDist := policy.Typosquatting.MaxDistance
+			if maxDist <= 0 {
+				maxDist = 2
 			}
+			if suspect := CheckTyposquattingAuthority(pkgName, popularList, maxDist); suspect != "" {
+				pkgDownloads, _ := GetWeeklyDownloads(pkgName)
+				suspectDownloads, _ := GetWeeklyDownloads(suspect)
 
-			if !isTrusted {
-				maxDist := policy.Typosquatting.MaxDistance
-				if maxDist <= 0 {
-					maxDist = 2
+				var msg string
+				if suspectDownloads > 0 {
+					msg = fmt.Sprintf("Package %q is suspiciously close to popular package %q (edit distance <= %d).\n"+
+						"    - %s: %d weekly downloads\n"+
+						"    - %s: %d weekly downloads\n"+
+						"  This is a high-probability typosquatting threat. Proceed anyway?",
+						pkgName, suspect, maxDist, pkgName, pkgDownloads, suspect, suspectDownloads)
+				} else {
+					msg = fmt.Sprintf("Package %q is suspiciously close to popular package %q (edit distance <= %d). Typo threat? Proceed anyway?",
+						pkgName, suspect, maxDist)
 				}
-				if suspect := CheckTyposquattingAuthority(pkgName, popularList, maxDist); suspect != "" {
-					pkgDownloads, _ := GetWeeklyDownloads(pkgName)
-					suspectDownloads, _ := GetWeeklyDownloads(suspect)
 
-					var msg string
-					if suspectDownloads > 0 {
-						msg = fmt.Sprintf("Package %q is suspiciously close to popular package %q (edit distance <= %d).\n"+
-							"    - %s: %d weekly downloads\n"+
-							"    - %s: %d weekly downloads\n"+
-							"  This is a high-probability typosquatting threat. Proceed anyway?",
-							pkgName, suspect, maxDist, pkgName, pkgDownloads, suspect, suspectDownloads)
-					} else {
-						msg = fmt.Sprintf("Package %q is suspiciously close to popular package %q (edit distance <= %d). Typo threat? Proceed anyway?",
-							pkgName, suspect, maxDist)
-					}
-
-					if !PromptYesNo(msg) {
-						LogError("Installation aborted by user due to typosquatting risk.")
-						os.Exit(1)
-					}
+				if !PromptYesNo(msg) {
+					LogError("Installation aborted by user due to typosquatting risk.")
+					os.Exit(1)
 				}
 			}
 		}
 
 		LogInfo("Verifying package %q...", pkgName)
-		resolvedVer, pubTime, hasScripts, err := ResolveNpmPackageDetails(pkgName, versionQuery)
+		resolvedVer, pubTime, hasScripts, err := resolveNpmPackageDetailsForVerify(pkgName, versionQuery)
 		if err != nil {
-			LogWarn("Could not resolve registry metadata for %s: %v. Bypassing metadata checks.", pkgName, err)
+			msg := fmt.Sprintf("Could not verify registry metadata for %s: %v. Proceed without metadata checks?", pkgName, err)
+			if !PromptYesNo(msg) {
+				LogError("Installation aborted because registry metadata could not be verified.")
+				os.Exit(1)
+			}
+			LogWarn("Proceeding without registry metadata checks for %s.", pkgName)
 			continue
 		}
 
@@ -841,16 +900,15 @@ func runVerifyInstall(args []string, nvxHome string) {
 			}
 		}
 
-		// 4. Release Age Check (24-hour supply chain window)
-		if !pubTime.IsZero() {
+		// 4. Release Age Check (supply chain cooling-off window)
+		if policy.ReleaseAgeEnabled() && !policy.IsTrustedPackage(pkgName) && publishAgeShouldWarn(pubTime, policy.ReleaseAgeMinHours(), time.Now()) {
 			age := time.Since(pubTime)
-			if age < 24*time.Hour {
-				msg := fmt.Sprintf("Package %s@%s was published only %.1f hours ago (on %s). Supply chain compromises are often caught within 24 hours. Proceed?",
-					pkgName, resolvedVer, age.Hours(), pubTime.Format("2006-01-02 15:04:05"))
-				if !PromptYesNo(msg) {
-					LogError("Installation aborted by user due to release age warning.")
-					os.Exit(1)
-				}
+			windowHours := policy.ReleaseAgeMinHours()
+			msg := fmt.Sprintf("Package %s@%s was published only %.1f hours ago (on %s). Supply chain compromises are often caught within %d hours. Proceed?",
+				pkgName, resolvedVer, age.Hours(), pubTime.Format("2006-01-02 15:04:05"), windowHours)
+			if !PromptYesNo(msg) {
+				LogError("Installation aborted by user due to release age warning.")
+				os.Exit(1)
 			}
 		}
 
@@ -863,9 +921,14 @@ func runVerifyInstall(args []string, nvxHome string) {
 	// 5. Batch Vulnerability Scan (CVEs / OSV database)
 	if len(osvQueries) > 0 {
 		LogInfo("Scanning OSV database for known vulnerabilities...")
-		vulns, err := ScanVulnerabilitiesBatch(osvQueries)
+		vulns, err := scanVulnerabilitiesBatchForVerify(osvQueries)
 		if err != nil {
-			LogWarn("Vulnerability database scan failed: %v. Bypassing CVE checks.", err)
+			msg := fmt.Sprintf("Vulnerability database scan failed: %v. Proceed without CVE checks?", err)
+			if !PromptYesNo(msg) {
+				LogError("Installation aborted because vulnerability checks could not be completed.")
+				os.Exit(1)
+			}
+			LogWarn("Proceeding without vulnerability database results.")
 		} else if len(vulns) > 0 {
 			LogError("Vulnerability Scan Alert: Found active vulnerabilities!")
 			for pkgKey, list := range vulns {

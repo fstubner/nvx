@@ -55,21 +55,17 @@ var sensitiveEnvPrefixes = []string{
 // windowsAllowedEnvKeys are the only environment variables allowed through on Windows
 // when running in sandbox mode.
 var windowsAllowedEnvKeys = map[string]bool{
-	"PATH":              true,
-	"PATHEXT":           true,
-	"SYSTEMROOT":        true,
-	"SYSTEMDRIVE":       true,
-	"COMSPEC":           true,
-	"TEMP":              true,
-	"TMP":               true,
-	"WINDIR":            true,
-	"HTTP_PROXY":        true,
-	"HTTPS_PROXY":       true,
-	"ALL_PROXY":         true,
-	"NO_PROXY":          true,
+	"PATH":                   true,
+	"PATHEXT":                true,
+	"SYSTEMROOT":             true,
+	"SYSTEMDRIVE":            true,
+	"COMSPEC":                true,
+	"TEMP":                   true,
+	"TMP":                    true,
+	"WINDIR":                 true,
 	"PROCESSOR_ARCHITECTURE": true,
 	"NUMBER_OF_PROCESSORS":   true,
-	"OS":                true,
+	"OS":                     true,
 }
 
 // unixAllowedEnvKeys are the only environment variables allowed through on Unix
@@ -82,10 +78,6 @@ var unixAllowedEnvKeys = map[string]bool{
 	"LANG":   true,
 	"LC_ALL": true,
 	"USER":   true,
-	"HTTP_PROXY":  true,
-	"HTTPS_PROXY": true,
-	"ALL_PROXY":   true,
-	"NO_PROXY":    true,
 }
 
 // generateSandboxID creates a short random identifier for an ephemeral sandbox session.
@@ -106,13 +98,21 @@ func getSandboxHomeDir(nvxHome string) string {
 // Returns the path to the guest home and any error encountered.
 func createGuestProfile(nvxHome string, sandboxID string) (string, error) {
 	guestHome := filepath.Join(getSandboxHomeDir(nvxHome), sandboxID)
-	if err := os.MkdirAll(guestHome, 0755); err != nil {
+	if err := os.MkdirAll(guestHome, 0700); err != nil {
 		return "", fmt.Errorf("failed to create guest profile directory: %w", err)
 	}
 
 	// Create minimal directory structure inside the guest home
-	for _, subdir := range []string{"tmp", ".config", ".cache"} {
-		_ = os.MkdirAll(filepath.Join(guestHome, subdir), 0755)
+	subdirs := []string{"tmp", ".config", ".cache"}
+	if runtime.GOOS == "windows" {
+		subdirs = append(subdirs, filepath.Join("AppData", "Roaming"), filepath.Join("AppData", "Local"))
+	} else {
+		subdirs = append(subdirs, filepath.Join(".local", "share"))
+	}
+	for _, subdir := range subdirs {
+		if err := os.MkdirAll(filepath.Join(guestHome, subdir), 0700); err != nil {
+			return "", fmt.Errorf("failed to create guest profile subdirectory %s: %w", subdir, err)
+		}
 	}
 
 	return guestHome, nil
@@ -186,9 +186,6 @@ func scrubEnvironment(guestHome string) []string {
 				fmt.Sprintf("TEMP=%s", guestTmp),
 				fmt.Sprintf("TMP=%s", guestTmp),
 			)
-			// Create the AppData directories
-			_ = os.MkdirAll(filepath.Join(guestHome, "AppData", "Roaming"), 0755)
-			_ = os.MkdirAll(filepath.Join(guestHome, "AppData", "Local"), 0755)
 		} else {
 			cleanEnv = append(cleanEnv,
 				fmt.Sprintf("HOME=%s", guestHome),
@@ -197,7 +194,6 @@ func scrubEnvironment(guestHome string) []string {
 				fmt.Sprintf("XDG_DATA_HOME=%s", filepath.Join(guestHome, ".local", "share")),
 				fmt.Sprintf("TMPDIR=%s", guestTmp),
 			)
-			_ = os.MkdirAll(filepath.Join(guestHome, ".local", "share"), 0755)
 		}
 	}
 
@@ -296,12 +292,17 @@ func runSandbox(config SandboxConfig) int {
 
 	policy, err := LoadPolicy(config.NvxHome)
 	if err != nil {
-		LogWarn("Failed to load policy: %v", err)
+		LogError("Failed to load policy: %v", err)
+		return 1
 	}
 
 	provider := policy.FilesystemProvider()
 	if config.FilesystemProvider != "" {
 		provider = strings.ToLower(config.FilesystemProvider)
+	}
+	if !providerSupportsNetworkMode(provider, policy.Isolation.Network.Mode) {
+		LogError("Filesystem provider %q does not enforce network.mode=%q. Use network.mode=open or the native provider.", provider, policy.Isolation.Network.Mode)
+		return 1
 	}
 
 	rt := runtimeForShim(config.Command)
@@ -315,7 +316,7 @@ func runSandbox(config SandboxConfig) int {
 		networkModeRequiresNamespace(policy.Isolation.Network.Mode)
 	if !skipParentProxy {
 		var err error
-		egress, err = startEgressProxy(ctx, policy, rt)
+		egress, err = startEgressProxy(ctx, policy, rt, config.NvxHome)
 		if err != nil {
 			LogError("Egress proxy failed: %v", err)
 			return 1
@@ -350,6 +351,19 @@ func runSandbox(config SandboxConfig) int {
 	}
 }
 
+func providerSupportsNetworkMode(provider, mode string) bool {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" || mode == "open" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "native", "sandbox-exec", "seatbelt":
+		return true
+	default:
+		return false
+	}
+}
+
 func execBareCommand(config SandboxConfig) int {
 	rt := runtimeForShim(config.Command)
 	nodeVer := getActiveShellVersion(config.NvxHome)
@@ -380,7 +394,6 @@ func execBareCommand(config SandboxConfig) int {
 	}
 	return 0
 }
-
 
 // cleanupStaleSandboxes removes any leftover sandbox home directories from
 // previous sessions that failed to clean up (e.g., due to crashes).

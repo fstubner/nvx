@@ -48,7 +48,7 @@ func generateProjectBinShims(projectRoot, nvxHome string) error {
 	}
 
 	shimDir := projectBinDir(projectRoot)
-	if err := os.MkdirAll(shimDir, 0755); err != nil {
+	if err := os.MkdirAll(shimDir, 0700); err != nil {
 		return err
 	}
 
@@ -77,11 +77,11 @@ func generateProjectBinShims(projectRoot, nvxHome string) error {
 
 func writeProjectBinShim(shimDir, exePath, cmd string) error {
 	if runtime.GOOS == "windows" {
-		content := fmt.Sprintf("@echo off\r\n\"%s\" shim %s %%*\r\n", exePath, cmd)
-		return os.WriteFile(filepath.Join(shimDir, cmd+".cmd"), []byte(content), 0755)
+		content := fmt.Sprintf("@echo off\r\n%s shim %s %%*\r\n", quoteWindowsBatchArg(exePath), quoteWindowsBatchArg(cmd))
+		return writeExecutableFile(filepath.Join(shimDir, cmd+".cmd"), []byte(content))
 	}
-	content := fmt.Sprintf("#!/bin/sh\nexec '%s' shim %s \"$@\"\n", exePath, cmd)
-	return os.WriteFile(filepath.Join(shimDir, cmd), []byte(content), 0755)
+	content := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", quotePOSIXShell(exePath), quotePOSIXShell(cmd))
+	return writeExecutableFile(filepath.Join(shimDir, cmd), []byte(content))
 }
 
 func isProjectBinCommand(cmdName string) bool {

@@ -1,15 +1,15 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 // runNativeSandbox is the hardened default sandbox: platform-specific OS
-// primitives (AppContainer + Low IL on Windows, Landlock on Linux, Seatbelt
-// on macOS) layered on env scrubbing and an ephemeral guest profile.
+// primitives (AppContainer on Windows, Landlock on Linux, Seatbelt on macOS)
+// layered on env scrubbing and an ephemeral guest profile.
 func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, netCtx NetworkLaunchContext) int {
 	sandboxID, err := generateSandboxID()
 	if err != nil {
@@ -90,7 +90,9 @@ func parseLandlockExecArgs(argv []string) (guestHome, workDir, nvxHome, networkM
 		case strings.HasPrefix(arg, "--command="):
 			shimCommand = strings.TrimPrefix(arg, "--command=")
 		case strings.HasPrefix(arg, "--proxy-port="):
-			fmt.Sscanf(strings.TrimPrefix(arg, "--proxy-port="), "%d", &proxyPort)
+			if parsed, err := strconv.Atoi(strings.TrimPrefix(arg, "--proxy-port=")); err == nil {
+				proxyPort = parsed
+			}
 		case arg == "--":
 			if i+1 < len(argv) {
 				cmdPath = argv[i+1]

@@ -1,0 +1,647 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestParseStartupFlagsDoesNotConsumeShimPayloadFlags(t *testing.T) {
+	args, yes, noSandbox := parseStartupFlags([]string{"nvx", "shim", "npx", "-y", "create-vite", "--no-sandbox"})
+
+	if yes {
+		t.Fatal("shim payload -y must not enable nvx --yes")
+	}
+	if noSandbox {
+		t.Fatal("shim payload --no-sandbox must not disable nvx sandboxing")
+	}
+	want := []string{"nvx", "shim", "npx", "-y", "create-vite", "--no-sandbox"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args changed unexpectedly: got %v want %v", args, want)
+	}
+}
+
+func TestParseStartupFlagsOnlyConsumesLeadingGlobalFlags(t *testing.T) {
+	args, yes, noSandbox := parseStartupFlags([]string{"nvx", "--yes", "--no-sandbox", "shim", "node", "-e", "1"})
+
+	if !yes {
+		t.Fatal("leading --yes should enable nvx yes mode")
+	}
+	if !noSandbox {
+		t.Fatal("leading --no-sandbox should enable nvx no-sandbox mode")
+	}
+	want := []string{"nvx", "shim", "node", "-e", "1"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args mismatch: got %v want %v", args, want)
+	}
+}
+
+func TestShellEnvAssignmentEscapesBashValues(t *testing.T) {
+	got := shellEnvAssignment("bash", "PATH", `/tmp/nvx$(touch pwned)'/bin`)
+	want := "export PATH='/tmp/nvx$(touch pwned)'\"'\"'/bin'\n"
+	if got != want {
+		t.Fatalf("unexpected bash assignment:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+func TestShellEnvAssignmentEscapesPowerShellValues(t *testing.T) {
+	got := shellEnvAssignment("powershell", "PATH", `C:\nvx'; Write-Error pwned; #'`)
+	want := "$env:PATH = 'C:\\nvx''; Write-Error pwned; #'''\n"
+	if got != want {
+		t.Fatalf("unexpected PowerShell assignment:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+func TestPersistNetworkAllowHostDoesNotDisableDefaultProtections(t *testing.T) {
+	tmp := t.TempDir()
+	projectDir := filepath.Join(tmp, "project")
+	nvxHome := filepath.Join(tmp, ".nvx")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nvxHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+
+	persistNetworkAllowHost(nvxHome, "example.com:443")
+
+	// The grant must be stored under nvxHome, never written into the project tree.
+	if _, err := os.Stat(filepath.Join(projectDir, ".nvx-policy.json")); err == nil {
+		t.Fatal("persisted allow host must not create a policy file inside the project")
+	}
+	entries, err := os.ReadDir(filepath.Join(nvxHome, "grants"))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("expected a grant file under nvxHome/grants, err=%v entries=%v", err, entries)
+	}
+
+	loaded, err := LoadPolicy(nvxHome)
+	if err != nil {
+		t.Fatalf("LoadPolicy returned error: %v", err)
+	}
+	if !loaded.Typosquatting.Enabled {
+		t.Fatal("persisted allow host must not disable typosquatting")
+	}
+	if !loaded.Isolation.Enabled {
+		t.Fatal("persisted allow host must not disable isolation")
+	}
+	found := false
+	for _, host := range loaded.Isolation.Network.AllowHosts {
+		if host == "example.com:443" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected persisted allow host, got %v", loaded.Isolation.Network.AllowHosts)
+	}
+}
+
+func TestLoadPolicyIgnoresUntrustedLooseningProjectPolicy(t *testing.T) {
+	tmp := t.TempDir()
+	projectDir := filepath.Join(tmp, "project")
+	nvxHome := filepath.Join(tmp, ".nvx")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nvxHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// A project policy that weakens several protections at once.
+	body := `{
+  "isolation": {"network": {"mode": "open", "allow_hosts": ["untrusted.example:443"]}},
+  "typosquatting": {"enabled": false}
+}`
+	if err := os.WriteFile(filepath.Join(projectDir, ".nvx-policy.json"), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadPolicy(nvxHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.EqualFold(loaded.Isolation.Network.Mode, "open") {
+		t.Fatal("untrusted project policy must not switch network mode to open")
+	}
+	if !loaded.Typosquatting.Enabled {
+		t.Fatal("untrusted project policy must not disable typosquatting")
+	}
+	for _, host := range loaded.Isolation.Network.AllowHosts {
+		if host == "untrusted.example:443" {
+			t.Fatal("untrusted project policy must not add egress hosts")
+		}
+	}
+}
+
+func TestLoadPolicyHonorsTrustedLooseningProjectPolicy(t *testing.T) {
+	tmp := t.TempDir()
+	projectDir := filepath.Join(tmp, "project")
+	nvxHome := filepath.Join(tmp, ".nvx")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nvxHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	policyPath := filepath.Join(projectDir, ".nvx-policy.json")
+	body := `{"isolation": {"network": {"allow_hosts": ["trusted.example:443"]}}}`
+	if err := os.WriteFile(policyPath, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-record trust for the exact file contents (as an accepted prompt would).
+	hash, ok := hashPolicyFile(policyPath)
+	if !ok {
+		t.Fatal("failed to hash policy file")
+	}
+	scope := projectScopeDir()
+	g := loadProjectGrants(nvxHome, scope)
+	g.ProjectPath = scope
+	g.PolicyPins[filepath.Clean(policyPath)] = hash
+	if err := saveProjectGrants(nvxHome, g); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadPolicy(nvxHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, host := range loaded.Isolation.Network.AllowHosts {
+		if host == "trusted.example:443" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("trusted project policy should be applied, got %v", loaded.Isolation.Network.AllowHosts)
+	}
+}
+
+func TestLoadPolicyReturnsErrorForMalformedPolicy(t *testing.T) {
+	tmp := t.TempDir()
+	nvxHome := filepath.Join(tmp, ".nvx")
+	if err := os.MkdirAll(nvxHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvxHome, "policy.json"), []byte(`{"typosquatting":`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadPolicy(nvxHome); err == nil {
+		t.Fatal("expected malformed global policy to return an error")
+	}
+}
+
+func TestDetectShimPackagesForVerificationUsesPackageLockForPlainInstall(t *testing.T) {
+	tmp := t.TempDir()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+
+	lock := `{
+  "packages": {
+    "": {"name": "app", "version": "1.0.0"},
+    "node_modules/left-pad": {"version": "1.3.0"},
+    "node_modules/@types/node": {"version": "20.0.0"}
+  }
+}`
+	if err := os.WriteFile(filepath.Join(tmp, "package-lock.json"), []byte(lock), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := detectShimPackagesForVerification("npm", []string{"ci"})
+	sort.Strings(got)
+	want := []string{"@types/node@20.0.0", "left-pad@1.3.0"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("packages mismatch: got %v want %v", got, want)
+	}
+}
+
+func TestDetectShimPackagesForVerificationFallsBackToPackageJSON(t *testing.T) {
+	tmp := t.TempDir()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+
+	pkg := `{
+  "dependencies": {"left-pad": "^1.3.0"},
+  "devDependencies": {"typescript": "~5.0.0"},
+  "optionalDependencies": {"fsevents": "2.3.3"}
+}`
+	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(pkg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := detectShimPackagesForVerification("npm", []string{"install"})
+	sort.Strings(got)
+	want := []string{"fsevents", "left-pad", "typescript"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("packages mismatch: got %v want %v", got, want)
+	}
+}
+
+func TestDetectShimPackagesForVerificationHandlesNpxAndBunx(t *testing.T) {
+	tests := []struct {
+		cmd  string
+		args []string
+		want []string
+	}{
+		{"npx", []string{"-y", "create-vite@latest", "app"}, []string{"create-vite@latest"}},
+		{"npx", []string{"--package", "cowsay@1.5.0", "cowsay", "hello"}, []string{"cowsay@1.5.0"}},
+		{"bunx", []string{"tsx@4.0.0", "script.ts"}, []string{"tsx@4.0.0"}},
+	}
+
+	for _, tc := range tests {
+		got := detectShimPackagesForVerification(tc.cmd, tc.args)
+		if strings.Join(got, "\x00") != strings.Join(tc.want, "\x00") {
+			t.Fatalf("%s %v: got %v want %v", tc.cmd, tc.args, got, tc.want)
+		}
+	}
+}
+
+func TestRunVerifyInstallFailsClosedOnMetadataFailure(t *testing.T) {
+	if os.Getenv("NVX_TEST_VERIFY_METADATA_FAILURE") == "1" {
+		resolveNpmPackageDetailsForVerify = func(pkgName, versionQuery string) (string, time.Time, bool, error) {
+			return "", time.Time{}, false, fmt.Errorf("metadata unavailable")
+		}
+		runVerifyInstall([]string{"not-a-typo-risk"}, testNvxHomeWithTyposquattingDisabled(t))
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunVerifyInstallFailsClosedOnMetadataFailure")
+	cmd.Env = append(os.Environ(), "NVX_TEST_VERIFY_METADATA_FAILURE=1", "NVX_NONINTERACTIVE=1")
+	if err := cmd.Run(); err == nil {
+		t.Fatal("expected metadata failure to deny installation")
+	}
+}
+
+func TestRunVerifyInstallFailsClosedOnOSVFailure(t *testing.T) {
+	if os.Getenv("NVX_TEST_VERIFY_OSV_FAILURE") == "1" {
+		resolveNpmPackageDetailsForVerify = func(pkgName, versionQuery string) (string, time.Time, bool, error) {
+			return "1.0.0", time.Time{}, false, nil
+		}
+		scanVulnerabilitiesBatchForVerify = func(packages []OSVQuery) (map[string][]OSVVuln, error) {
+			return nil, fmt.Errorf("osv unavailable")
+		}
+		runVerifyInstall([]string{"not-a-typo-risk"}, testNvxHomeWithTyposquattingDisabled(t))
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunVerifyInstallFailsClosedOnOSVFailure")
+	cmd.Env = append(os.Environ(), "NVX_TEST_VERIFY_OSV_FAILURE=1", "NVX_NONINTERACTIVE=1")
+	if err := cmd.Run(); err == nil {
+		t.Fatal("expected OSV failure to deny installation")
+	}
+}
+
+func testNvxHomeWithTyposquattingDisabled(t *testing.T) string {
+	t.Helper()
+	nvxHome := t.TempDir()
+	policy := `{"typosquatting":{"enabled":false}}`
+	if err := os.WriteFile(filepath.Join(nvxHome, "policy.json"), []byte(policy), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return nvxHome
+}
+
+func TestShouldSandboxHonorsSandboxEnvironment(t *testing.T) {
+	t.Setenv("NVX_SANDBOX", "1")
+	if shouldSandbox("node", DefaultPolicy(), shimOptions{}) {
+		t.Fatal("nested shim invocation inside an existing sandbox must not start another sandbox")
+	}
+}
+
+func TestScrubEnvironmentDropsHostProxyCredentials(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://user:pass@proxy.internal:8080")
+	t.Setenv("HTTPS_PROXY", "http://user:pass@proxy.internal:8080")
+	t.Setenv("ALL_PROXY", "socks5://user:pass@proxy.internal:1080")
+
+	env := scrubEnvironment("")
+	for _, entry := range env {
+		key := strings.ToUpper(strings.SplitN(entry, "=", 2)[0])
+		switch key {
+		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY":
+			t.Fatalf("host proxy credential env leaked into sandbox: %s", entry)
+		}
+	}
+}
+
+func TestBuildSeatbeltProfileDeniesHostReadsByDefault(t *testing.T) {
+	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "offline"}, "/guest/home", "/work/dir")
+	if strings.Contains(profile, "(allow default)") {
+		t.Fatal("Seatbelt profile must not allow host reads by default")
+	}
+	if !strings.Contains(profile, "(deny default)") {
+		t.Fatalf("expected default-deny profile, got:\n%s", profile)
+	}
+	if !strings.Contains(profile, "(allow file-read*") {
+		t.Fatalf("expected explicit file-read allowlist, got:\n%s", profile)
+	}
+	if !strings.Contains(profile, `(subpath "/work/dir")`) {
+		t.Fatalf("expected workdir allowlist entry, got:\n%s", profile)
+	}
+}
+
+func TestProviderSupportsNetworkModeFailsClosedForUnenforcedProviders(t *testing.T) {
+	blocked := []struct {
+		provider string
+		mode     string
+	}{
+		{"docker", "proxy"},
+		{"wsl", "offline"},
+		{"wslc", "loopback"},
+		{"systemd-nspawn", "proxy"},
+	}
+	for _, tc := range blocked {
+		if providerSupportsNetworkMode(tc.provider, tc.mode) {
+			t.Fatalf("%s must not claim support for restricted network mode %s", tc.provider, tc.mode)
+		}
+	}
+	if !providerSupportsNetworkMode("native", "proxy") {
+		t.Fatal("native provider should support proxy mode")
+	}
+	if !providerSupportsNetworkMode("docker", "open") {
+		t.Fatal("non-native providers may run with open network mode")
+	}
+}
+
+func TestPolicyExplicitEmptyDefaultAllowRemovesProviderDefaults(t *testing.T) {
+	tmp := t.TempDir()
+	projectDir := filepath.Join(tmp, "project")
+	nvxHome := filepath.Join(tmp, ".nvx")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nvxHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, ".nvx-policy.json"), []byte(`{
+  "isolation": {"network": {"default_allow": []}}
+}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+
+	policy, err := LoadPolicy(nvxHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow := policy.NetworkAllowlist(Providers["node"])
+	for _, host := range allow {
+		if host == "registry.npmjs.org:443" || host == "api.osv.dev:443" {
+			t.Fatalf("explicit empty default_allow should remove provider defaults, got %v", allow)
+		}
+	}
+}
+
+func TestPolicyExplicitFalseCanOverridePromptUnknown(t *testing.T) {
+	tmp := t.TempDir()
+	projectDir := filepath.Join(tmp, "project")
+	nvxHome := filepath.Join(tmp, ".nvx")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nvxHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, ".nvx-policy.json"), []byte(`{
+  "isolation": {"network": {"prompt_unknown": false}}
+}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+
+	policy, err := LoadPolicy(nvxHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Isolation.Network.PromptUnknown {
+		t.Fatal("explicit prompt_unknown:false should override the default true value")
+	}
+}
+
+func TestIsNodeVersionInstalledRequiresRuntimeBinary(t *testing.T) {
+	nvxHome := t.TempDir()
+	version := "v20.0.0"
+	versionDir := filepath.Join(nvxHome, "versions", "node", version)
+	if err := os.MkdirAll(versionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if isNodeVersionInstalled(nvxHome, version) {
+		t.Fatal("directory without runtime binary must not be treated as an installed Node version")
+	}
+
+	binaryName := "node"
+	if runtime.GOOS == "windows" {
+		binaryName = "node.exe"
+	} else {
+		versionDir = filepath.Join(versionDir, "bin")
+		if err := os.MkdirAll(versionDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(versionDir, binaryName), []byte(""), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if !isNodeVersionInstalled(nvxHome, version) {
+		t.Fatal("version with runtime binary should be treated as installed")
+	}
+}
+
+func TestAcquireInstallLockPreventsConcurrentInstall(t *testing.T) {
+	nvxHome := t.TempDir()
+	release, err := acquireInstallLock(nvxHome, "v20.0.0")
+	if err != nil {
+		t.Fatalf("first lock failed: %v", err)
+	}
+	if _, err := acquireInstallLock(nvxHome, "v20.0.0"); err == nil {
+		t.Fatal("second lock should fail while first lock is held")
+	}
+	release()
+	releaseAgain, err := acquireInstallLock(nvxHome, "v20.0.0")
+	if err != nil {
+		t.Fatalf("lock should be reusable after release: %v", err)
+	}
+	releaseAgain()
+}
+
+func TestAcquireInstallLockRejectsUnsafeVersionName(t *testing.T) {
+	if _, err := acquireInstallLock(t.TempDir(), `..\outside`); err == nil {
+		t.Fatal("install lock should reject path-like version names")
+	}
+}
+
+func TestGetGlobalDefaultVersionUsesProvidedHome(t *testing.T) {
+	nvxHome := t.TempDir()
+	target := filepath.Join(nvxHome, "versions", "node", "v20.0.0")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateLink(filepath.Join(nvxHome, "current"), target); err != nil {
+		t.Fatal(err)
+	}
+	if got := getGlobalDefaultVersion(nvxHome); got != "v20.0.0" {
+		t.Fatalf("getGlobalDefaultVersion(%q) = %q, want v20.0.0", nvxHome, got)
+	}
+}
+
+func TestNodeUninstallRefusesGlobalDefaultVersion(t *testing.T) {
+	nvxHome := t.TempDir()
+	target := filepath.Join(nvxHome, "versions", "node", "v20.0.0")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateLink(filepath.Join(nvxHome, "current"), target); err != nil {
+		t.Fatal(err)
+	}
+
+	err := (NodeProvider{}).Uninstall("20", nvxHome)
+	if err == nil {
+		t.Fatal("expected uninstall of global default to be refused")
+	}
+	if _, statErr := os.Stat(target); statErr != nil {
+		t.Fatalf("default version directory should remain after refused uninstall: %v", statErr)
+	}
+}
+
+func TestAppVersionMatchesCurrentBetaRelease(t *testing.T) {
+	if appVersion != "0.2.0-beta" {
+		t.Fatalf("appVersion = %q, want 0.2.0-beta", appVersion)
+	}
+}
+
+func TestEgressProxyCloseClosesListeners(t *testing.T) {
+	proxy, err := startEgressProxy(context.Background(), DefaultPolicy(), Providers["node"], t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := proxy.httpAddr
+	proxy.Close()
+
+	conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+	if err == nil {
+		_ = conn.Close()
+		t.Fatalf("expected listener %s to be closed", addr)
+	}
+}
+
+func TestCommandHelpTextExistsForPrimaryCommands(t *testing.T) {
+	for _, command := range []string{"use", "policy", "verify-install"} {
+		if text := commandHelpText(command); !strings.Contains(text, command) {
+			t.Fatalf("expected help text for %s, got %q", command, text)
+		}
+	}
+	if text := commandHelpText("does-not-exist"); text != "" {
+		t.Fatalf("unknown command help should be empty, got %q", text)
+	}
+}
+
+func TestSafeArchiveTargetRejectsEscapes(t *testing.T) {
+	dest := t.TempDir()
+	for _, name := range []string{
+		"node-v20/../evil.txt",
+		`node-v20/..\evil.txt`,
+		"node-v20/C:/evil.txt",
+	} {
+		if _, _, err := safeArchiveTarget(dest, name); err == nil {
+			t.Fatalf("safeArchiveTarget(%q) should reject escaping path", name)
+		}
+	}
+
+	target, skip, err := safeArchiveTarget(dest, "node-v20/bin/node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skip {
+		t.Fatal("valid archive member should not be skipped")
+	}
+	if !strings.HasPrefix(target, filepath.Clean(dest)+string(os.PathSeparator)) {
+		t.Fatalf("target %q should stay below %q", target, dest)
+	}
+}
+
+func TestProjectBinShimQuotesCommandNames(t *testing.T) {
+	shimDir := t.TempDir()
+	cmdName := "bad %PATH% & name"
+	if runtime.GOOS != "windows" {
+		cmdName = "bad name'; touch nope; #"
+	}
+
+	if err := writeProjectBinShim(shimDir, "/tmp/nvx test", cmdName); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(shimDir, cmdName)
+	if runtime.GOOS == "windows" {
+		path += ".cmd"
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(content)
+	if runtime.GOOS == "windows" {
+		if strings.Contains(text, `"bad %PATH% & name"`) || !strings.Contains(text, `"bad %%PATH%% & name"`) {
+			t.Fatalf("Windows shim did not escape batch expansion safely:\n%s", text)
+		}
+	} else if !strings.Contains(text, quotePOSIXShell(cmdName)) {
+		t.Fatalf("POSIX shim did not quote command name safely:\n%s", text)
+	}
+}

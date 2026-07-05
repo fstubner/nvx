@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ type Policy struct {
 	BlockedPackages      []string            `json:"blocked_packages"`
 	EnforceIgnoreScripts bool                `json:"enforce_ignore_scripts"`
 	Typosquatting        TyposquattingPolicy `json:"typosquatting"`
+	ReleaseAge           ReleaseAgePolicy    `json:"release_age"`
 	Runtime              RuntimeConfig       `json:"runtime"`
 	Isolation            IsolationPolicy     `json:"isolation"`
 	Prompts              PromptsPolicy       `json:"prompts"`
@@ -30,6 +32,13 @@ type TyposquattingPolicy struct {
 	TrustedPackages []string `json:"trusted_packages"`
 }
 
+// ReleaseAgePolicy warns when installing npm package versions published within
+// min_age_hours. Trusted packages (typosquatting.trusted_packages) are exempt.
+type ReleaseAgePolicy struct {
+	Enabled     *bool `json:"enabled,omitempty"`
+	MinAgeHours int   `json:"min_age_hours,omitempty"`
+}
+
 type RuntimeConfig struct {
 	Default  string            `json:"default"`
 	Versions map[string]string `json:"versions"`
@@ -45,6 +54,8 @@ type IsolationPolicy struct {
 	// Legacy top-level provider from older policy files.
 	Provider string        `json:"provider,omitempty"`
 	Runtime  RuntimePolicy `json:"runtime,omitempty"`
+
+	EnabledSet bool `json:"-"`
 }
 
 type FilesystemPolicy struct {
@@ -54,10 +65,13 @@ type FilesystemPolicy struct {
 }
 
 type NetworkPolicy struct {
-	Mode         string   `json:"mode"`
-	DefaultAllow []string `json:"default_allow"`
-	AllowHosts   []string `json:"allow_hosts"`
-	PromptUnknown bool    `json:"prompt_unknown"`
+	Mode          string   `json:"mode"`
+	DefaultAllow  []string `json:"default_allow"`
+	AllowHosts    []string `json:"allow_hosts"`
+	PromptUnknown bool     `json:"prompt_unknown"`
+
+	DefaultAllowSet  bool `json:"-"`
+	PromptUnknownSet bool `json:"-"`
 }
 
 type RuntimePolicy struct {
@@ -66,9 +80,9 @@ type RuntimePolicy struct {
 }
 
 type PromptsPolicy struct {
-	Interactive     string `json:"interactive"`
-	NonInteractive  string `json:"non_interactive"`
-	NetworkUnknown  string `json:"network_unknown"`
+	Interactive    string `json:"interactive"`
+	NonInteractive string `json:"non_interactive"`
+	NetworkUnknown string `json:"network_unknown"`
 }
 
 func DefaultPolicy() Policy {
@@ -79,6 +93,10 @@ func DefaultPolicy() Policy {
 			Enabled:         true,
 			MaxDistance:     2,
 			TrustedPackages: []string{},
+		},
+		ReleaseAge: ReleaseAgePolicy{
+			Enabled:     boolPtr(true),
+			MinAgeHours: 24,
 		},
 		Runtime: RuntimeConfig{
 			Default:  "node",
@@ -140,7 +158,7 @@ func normalizePolicy(p *Policy) {
 	if p.Isolation.Network.Mode == "" {
 		p.Isolation.Network.Mode = "proxy"
 	}
-	if len(p.Isolation.Network.DefaultAllow) == 0 {
+	if len(p.Isolation.Network.DefaultAllow) == 0 && !p.Isolation.Network.DefaultAllowSet {
 		p.Isolation.Network.DefaultAllow = DefaultPolicy().Isolation.Network.DefaultAllow
 	}
 	if p.Prompts.Interactive == "" {
@@ -152,6 +170,51 @@ func normalizePolicy(p *Policy) {
 	if p.Prompts.NetworkUnknown == "" {
 		p.Prompts.NetworkUnknown = "ask"
 	}
+	normalizeReleaseAgePolicy(&p.ReleaseAge)
+}
+
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+func normalizeReleaseAgePolicy(r *ReleaseAgePolicy) {
+	if r.Enabled == nil {
+		r.Enabled = boolPtr(true)
+	}
+	if *r.Enabled && r.MinAgeHours <= 0 {
+		r.MinAgeHours = 24
+	}
+}
+
+// ReleaseAgeEnabled reports whether the release-age install warning is active.
+func (p Policy) ReleaseAgeEnabled() bool {
+	if p.ReleaseAge.Enabled == nil {
+		return true
+	}
+	return *p.ReleaseAge.Enabled
+}
+
+// ReleaseAgeMinHours returns the minimum publish age (in hours) before a version
+// is accepted without warning. Defaults to 24 when enabled.
+func (p Policy) ReleaseAgeMinHours() int {
+	if p.ReleaseAge.MinAgeHours > 0 {
+		return p.ReleaseAge.MinAgeHours
+	}
+	if p.ReleaseAgeEnabled() {
+		return 24
+	}
+	return 0
+}
+
+// IsTrustedPackage returns true when pkgName is listed in typosquatting.trusted_packages.
+func (p Policy) IsTrustedPackage(pkgName string) bool {
+	lower := strings.ToLower(pkgName)
+	for _, t := range p.Typosquatting.TrustedPackages {
+		if strings.ToLower(t) == lower {
+			return true
+		}
+	}
+	return false
 }
 
 func (p Policy) PinnedRuntimeVersion(runtimeName string) string {
@@ -192,67 +255,262 @@ func (p Policy) NetworkAllowlist(provider RuntimeProvider) []string {
 		add(h)
 	}
 	if provider != nil {
-		for _, h := range provider.DefaultNetworkAllow() {
-			add(h)
+		if !p.Isolation.Network.DefaultAllowSet {
+			for _, h := range provider.DefaultNetworkAllow() {
+				add(h)
+			}
 		}
 	}
 	return out
 }
 
-func LoadPolicy(nvxHome string) (Policy, error) {
-	policy := DefaultPolicy()
+func markPolicyFieldPresence(data []byte, p *Policy) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return
+	}
+	isolationRaw, ok := root["isolation"]
+	if !ok {
+		return
+	}
+	var isolation map[string]json.RawMessage
+	if err := json.Unmarshal(isolationRaw, &isolation); err != nil {
+		return
+	}
+	if _, ok := isolation["enabled"]; ok {
+		p.Isolation.EnabledSet = true
+	}
+	networkRaw, ok := isolation["network"]
+	if !ok {
+		return
+	}
+	var network map[string]json.RawMessage
+	if err := json.Unmarshal(networkRaw, &network); err != nil {
+		return
+	}
+	if _, ok := network["default_allow"]; ok {
+		p.Isolation.Network.DefaultAllowSet = true
+	}
+	if _, ok := network["prompt_unknown"]; ok {
+		p.Isolation.Network.PromptUnknownSet = true
+	}
+}
 
+// loadGlobalPolicy returns DefaultPolicy merged with ~/.nvx/policy.json.
+func loadGlobalPolicy(nvxHome string) (Policy, error) {
+	policy := DefaultPolicy()
 	globalPolicyPath := filepath.Join(nvxHome, "policy.json")
-	if _, err := os.Stat(globalPolicyPath); err == nil {
-		data, err := os.ReadFile(globalPolicyPath)
-		if err == nil {
-			_ = json.Unmarshal(data, &policy)
+	data, err := os.ReadFile(globalPolicyPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return policy, nil
 		}
+		return policy, fmt.Errorf("read global policy %s: %w", globalPolicyPath, err)
+	}
+	if err := json.Unmarshal(data, &policy); err != nil {
+		return policy, fmt.Errorf("parse global policy %s: %w", globalPolicyPath, err)
+	}
+	markPolicyFieldPresence(data, &policy)
+	return policy, nil
+}
+
+// collectProjectPolicyPaths walks upward from cwd collecting project policy
+// files (nearest last is applied last, so nearest wins).
+func collectProjectPolicyPaths(cwd, nvxHome string) []string {
+	var localPaths []string
+	dir := cwd
+	for {
+		localPolicy1 := filepath.Join(dir, ".nvx-policy.json")
+		localPolicy2 := filepath.Join(dir, "policy.json")
+
+		if _, err := os.Stat(localPolicy1); err == nil {
+			localPaths = append(localPaths, localPolicy1)
+		} else if _, err := os.Stat(localPolicy2); err == nil {
+			if filepath.Clean(filepath.Dir(localPolicy2)) != filepath.Clean(nvxHome) {
+				localPaths = append(localPaths, localPolicy2)
+			}
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return localPaths
+}
+
+func readProjectPolicyFile(path string) (Policy, []byte, error) {
+	var lp Policy
+	lp.Typosquatting.Enabled = true
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return lp, nil, fmt.Errorf("read local policy %s: %w", path, err)
+	}
+	if err := json.Unmarshal(data, &lp); err != nil {
+		return lp, nil, fmt.Errorf("parse local policy %s: %w", path, err)
+	}
+	markPolicyFieldPresence(data, &lp)
+	return lp, data, nil
+}
+
+// LoadPolicy builds the effective policy from the global policy, the project
+// policy files, and the project's grant file. A project policy file that would
+// loosen the accumulated settings is applied only when its current contents
+// have been trusted for this project (see ensureProjectPolicyTrust); otherwise
+// it is ignored so that untrusted, in-tree settings cannot weaken protection.
+func LoadPolicy(nvxHome string) (Policy, error) {
+	policy, err := loadGlobalPolicy(nvxHome)
+	if err != nil {
+		return policy, err
 	}
 
-	cwd, err := os.Getwd()
-	if err == nil {
-		var localPaths []string
-		dir := cwd
-		for {
-			localPolicy1 := filepath.Join(dir, ".nvx-policy.json")
-			localPolicy2 := filepath.Join(dir, "policy.json")
-
-			if _, err := os.Stat(localPolicy1); err == nil {
-				localPaths = append(localPaths, localPolicy1)
-			} else if _, err := os.Stat(localPolicy2); err == nil {
-				if filepath.Clean(filepath.Dir(localPolicy2)) != filepath.Clean(nvxHome) {
-					localPaths = append(localPaths, localPolicy2)
-				}
-			}
-
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
-		}
+	cwd, cwdErr := os.Getwd()
+	if cwdErr == nil {
+		localPaths := collectProjectPolicyPaths(cwd, nvxHome)
+		grants := loadProjectGrants(nvxHome, projectScopeDir())
 
 		for i := len(localPaths) - 1; i >= 0; i-- {
 			localPath := localPaths[i]
-			var localPolicy Policy
-			localPolicy.Typosquatting.Enabled = true
-			data, err := os.ReadFile(localPath)
+			localPolicy, _, err := readProjectPolicyFile(localPath)
 			if err != nil {
-				continue
+				return policy, err
 			}
-			if err := json.Unmarshal(data, &localPolicy); err != nil {
-				continue
+			candidate := MergePolicies(policy, localPolicy)
+			if policyLoosens(policy, candidate) {
+				hash, ok := hashPolicyFile(localPath)
+				if !ok || grants.PolicyPins[filepath.Clean(localPath)] != hash {
+					LogWarn("Ignoring project policy %s: it loosens nvx security settings and has not been trusted for this project.", localPath)
+					continue
+				}
 			}
-			policy = MergePolicies(policy, localPolicy)
+			policy = candidate
 			if localPolicy.Environment.IsolatedTools {
 				policy.ProjectDir = filepath.Dir(localPath)
 			}
+		}
+
+		for _, h := range grants.AllowHosts {
+			policy.Isolation.Network.AllowHosts = append(policy.Isolation.Network.AllowHosts, h)
 		}
 	}
 
 	normalizePolicy(&policy)
 	return policy, nil
+}
+
+// ensureProjectPolicyTrust prompts once for any project policy file that would
+// loosen security and has not been trusted. Accepting records a pin (keyed by
+// file contents) under ~/.nvx; declining, or a non-interactive environment,
+// leaves the file untrusted so LoadPolicy will ignore it. This runs on the
+// execution path before a sandboxed command starts.
+func ensureProjectPolicyTrust(nvxHome string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	localPaths := collectProjectPolicyPaths(cwd, nvxHome)
+	if len(localPaths) == 0 {
+		return nil
+	}
+
+	baseline, err := loadGlobalPolicy(nvxHome)
+	if err != nil {
+		return err
+	}
+	scope := projectScopeDir()
+	grants := loadProjectGrants(nvxHome, scope)
+	changed := false
+
+	for i := len(localPaths) - 1; i >= 0; i-- {
+		localPath := localPaths[i]
+		localPolicy, _, err := readProjectPolicyFile(localPath)
+		if err != nil {
+			return err
+		}
+		candidate := MergePolicies(baseline, localPolicy)
+		if policyLoosens(baseline, candidate) {
+			hash, _ := hashPolicyFile(localPath)
+			cleanPath := filepath.Clean(localPath)
+			if grants.PolicyPins[cleanPath] != hash {
+				if !PromptYesNo("Project policy " + localPath + " loosens nvx security settings. Trust it for this project?") {
+					auditLog(nvxHome, "policy_pin_changed_denied", map[string]string{"path": cleanPath})
+					continue
+				}
+				grants.PolicyPins[cleanPath] = hash
+				changed = true
+				auditLog(nvxHome, "policy_pin_accepted", map[string]string{"path": cleanPath})
+			}
+		}
+		baseline = candidate
+	}
+
+	if changed {
+		grants.ProjectPath = scope
+		if err := saveProjectGrants(nvxHome, grants); err != nil {
+			LogWarn("Failed to record project policy trust: %v", err)
+		}
+	}
+	return nil
+}
+
+func networkModeRank(mode string) int {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "open":
+		return 3
+	case "offline", "loopback":
+		return 1
+	default: // proxy and unknown
+		return 2
+	}
+}
+
+func hostsAdded(before, after []string) bool {
+	seen := map[string]bool{}
+	for _, h := range before {
+		seen[strings.ToLower(strings.TrimSpace(h))] = true
+	}
+	for _, h := range after {
+		if !seen[strings.ToLower(strings.TrimSpace(h))] {
+			return true
+		}
+	}
+	return false
+}
+
+// policyLoosens reports whether the after policy is more permissive than before.
+func policyLoosens(before, after Policy) bool {
+	if before.Isolation.Enabled && !after.Isolation.Enabled {
+		return true
+	}
+	if networkModeRank(after.Isolation.Network.Mode) > networkModeRank(before.Isolation.Network.Mode) {
+		return true
+	}
+	if before.Typosquatting.Enabled && !after.Typosquatting.Enabled {
+		return true
+	}
+	if before.ReleaseAgeEnabled() && !after.ReleaseAgeEnabled() {
+		return true
+	}
+	if !before.Isolation.Network.PromptUnknown && after.Isolation.Network.PromptUnknown {
+		return true
+	}
+	if len(after.Typosquatting.TrustedPackages) > len(before.Typosquatting.TrustedPackages) {
+		return true
+	}
+	if hostsAdded(before.Isolation.Network.DefaultAllow, after.Isolation.Network.DefaultAllow) {
+		return true
+	}
+	if hostsAdded(before.Isolation.Network.AllowHosts, after.Isolation.Network.AllowHosts) {
+		return true
+	}
+	if !strings.EqualFold(before.Isolation.Filesystem.Provider, after.Isolation.Filesystem.Provider) {
+		return true
+	}
+	if before.EnforceIgnoreScripts && !after.EnforceIgnoreScripts {
+		return true
+	}
+	return false
 }
 
 func MergePolicies(global, local Policy) Policy {
@@ -292,7 +550,16 @@ func MergePolicies(global, local Policy) Policy {
 		}
 	}
 
-	if local.Isolation.Enabled {
+	if local.ReleaseAge.Enabled != nil {
+		merged.ReleaseAge.Enabled = local.ReleaseAge.Enabled
+	}
+	if local.ReleaseAge.MinAgeHours > 0 {
+		merged.ReleaseAge.MinAgeHours = local.ReleaseAge.MinAgeHours
+	}
+
+	if local.Isolation.EnabledSet {
+		merged.Isolation.Enabled = local.Isolation.Enabled
+	} else if local.Isolation.Enabled {
 		merged.Isolation.Enabled = true
 	}
 	if local.Isolation.Filesystem.Provider != "" {
@@ -307,13 +574,19 @@ func MergePolicies(global, local Policy) Policy {
 	if local.Isolation.Network.Mode != "" {
 		merged.Isolation.Network.Mode = local.Isolation.Network.Mode
 	}
-	if len(local.Isolation.Network.DefaultAllow) > 0 {
+	if local.Isolation.Network.DefaultAllowSet {
+		merged.Isolation.Network.DefaultAllow = local.Isolation.Network.DefaultAllow
+		merged.Isolation.Network.DefaultAllowSet = true
+	} else if len(local.Isolation.Network.DefaultAllow) > 0 {
 		merged.Isolation.Network.DefaultAllow = local.Isolation.Network.DefaultAllow
 	}
 	if len(local.Isolation.Network.AllowHosts) > 0 {
 		merged.Isolation.Network.AllowHosts = append(merged.Isolation.Network.AllowHosts, local.Isolation.Network.AllowHosts...)
 	}
-	if local.Isolation.Network.PromptUnknown {
+	if local.Isolation.Network.PromptUnknownSet {
+		merged.Isolation.Network.PromptUnknown = local.Isolation.Network.PromptUnknown
+		merged.Isolation.Network.PromptUnknownSet = true
+	} else if local.Isolation.Network.PromptUnknown {
 		merged.Isolation.Network.PromptUnknown = true
 	}
 	// Legacy isolation.provider

@@ -20,15 +20,18 @@ type hostPort struct {
 type EgressProxy struct {
 	httpAddr  string
 	socksAddr string
+	httpLn    net.Listener
+	socksLn   net.Listener
 	allow     map[string]bool
 	session   map[string]bool
 	policy    Policy
+	nvxHome   string
 	promptMu  sync.Mutex
 	prompted  map[string]bool
 	cancel    context.CancelFunc
 }
 
-func startEgressProxy(ctx context.Context, policy Policy, provider RuntimeProvider) (*EgressProxy, error) {
+func startEgressProxy(ctx context.Context, policy Policy, provider RuntimeProvider, nvxHome string) (*EgressProxy, error) {
 	mode := strings.ToLower(policy.Isolation.Network.Mode)
 	if mode == "open" {
 		return nil, nil
@@ -43,6 +46,7 @@ func startEgressProxy(ctx context.Context, policy Policy, provider RuntimeProvid
 		allow:    allow,
 		session:  map[string]bool{},
 		policy:   policy,
+		nvxHome:  nvxHome,
 		prompted: map[string]bool{},
 	}
 
@@ -55,14 +59,16 @@ func startEgressProxy(ctx context.Context, policy Policy, provider RuntimeProvid
 		return nil, fmt.Errorf("egress HTTP listen: %w", err)
 	}
 	p.httpAddr = httpLn.Addr().String()
+	p.httpLn = httpLn
 
 	socksLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		httpLn.Close()
+		_ = httpLn.Close()
 		cancel()
 		return nil, fmt.Errorf("egress SOCKS listen: %w", err)
 	}
 	p.socksAddr = socksLn.Addr().String()
+	p.socksLn = socksLn
 
 	go p.serveHTTP(proxyCtx, httpLn)
 	go p.serveSOCKS(proxyCtx, socksLn)
@@ -74,6 +80,12 @@ func (p *EgressProxy) Close() {
 		return
 	}
 	p.cancel()
+	if p.httpLn != nil {
+		_ = p.httpLn.Close()
+	}
+	if p.socksLn != nil {
+		_ = p.socksLn.Close()
+	}
 }
 
 func (p *EgressProxy) HTTProxyURL() string {
@@ -145,11 +157,13 @@ func (p *EgressProxy) allowed(hp hostPort) bool {
 	mode := strings.ToLower(p.policy.Isolation.Network.Mode)
 	if mode == "offline" || mode == "loopback" {
 		LogWarn("Blocked egress (network.mode=%s): %s", mode, key)
+		auditLog(p.nvxHome, "egress_block_mode", map[string]string{"host": key, "mode": mode})
 		return false
 	}
 
 	if !p.policy.Isolation.Network.PromptUnknown {
 		LogWarn("Blocked egress: %s", key)
+		auditLog(p.nvxHome, "egress_deny", map[string]string{"host": key})
 		return false
 	}
 
@@ -163,10 +177,12 @@ func (p *EgressProxy) allowed(hp hostPort) bool {
 	msg := fmt.Sprintf("Allow outbound connection to %s?", key)
 	if !PromptYesNo(msg) {
 		LogWarn("Blocked egress: %s", key)
+		auditLog(p.nvxHome, "egress_deny", map[string]string{"host": key})
 		return false
 	}
 	p.session[key] = true
-	persistNetworkAllowHost(key)
+	persistNetworkAllowHost(p.nvxHome, key)
+	auditLog(p.nvxHome, "egress_allow_prompted", map[string]string{"host": key})
 	return true
 }
 
@@ -217,22 +233,24 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 		port, _ := strconv.ParseUint(portStr, 10, 16)
 		hp := parseHostPortSpec(host, uint16(port))
 		if !p.allowed(hp) {
-			fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
+			_, _ = fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
 			return
 		}
 		remote, err := net.Dial("tcp", target)
 		if err != nil {
-			fmt.Fprintf(client, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
+			_, _ = fmt.Fprintf(client, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
 			return
 		}
 		defer remote.Close()
-		fmt.Fprintf(client, "HTTP/1.1 200 Connection Established\r\n\r\n")
-		go io.Copy(remote, br)
-		io.Copy(client, remote)
+		_, _ = fmt.Fprintf(client, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		go func() {
+			_, _ = io.Copy(remote, br)
+		}()
+		_, _ = io.Copy(client, remote)
 		return
 	}
 
-	fmt.Fprintf(client, "HTTP/1.1 405 Method Not Allowed\r\n\r\n")
+	_, _ = fmt.Fprintf(client, "HTTP/1.1 405 Method Not Allowed\r\n\r\n")
 }
 
 func (p *EgressProxy) serveSOCKS(ctx context.Context, ln net.Listener) {
@@ -261,7 +279,7 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 	if _, err := io.ReadFull(conn, buf[:nMethods]); err != nil {
 		return
 	}
-	conn.Write([]byte{0x05, 0x00})
+	_, _ = conn.Write([]byte{0x05, 0x00})
 
 	if _, err := io.ReadFull(conn, buf[:4]); err != nil {
 		return
@@ -295,20 +313,22 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 
 	hp := parseHostPortSpec(host, port)
 	if !p.allowed(hp) {
-		conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}
 
 	target := net.JoinHostPort(host, strconv.Itoa(int(port)))
 	remote, err := net.Dial("tcp", target)
 	if err != nil {
-		conn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		_, _ = conn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}
 	defer remote.Close()
-	conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
-	go io.Copy(remote, conn)
-	io.Copy(conn, remote)
+	_, _ = conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+	go func() {
+		_, _ = io.Copy(remote, conn)
+	}()
+	_, _ = io.Copy(conn, remote)
 }
 
 func applyProxyEnv(cleanEnv []string, proxy *EgressProxy) []string {
