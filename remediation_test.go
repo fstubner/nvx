@@ -39,6 +39,93 @@ func TestParseRuntimeSpecDefaultsBareVersionsToNode(t *testing.T) {
 	}
 }
 
+func TestParseRuntimeSpecSelectsBun(t *testing.T) {
+	cases := []struct {
+		arg         string
+		wantRuntime string
+		wantVersion string
+	}{
+		{"bun", "bun", "latest"},
+		{"bun@1.2", "bun", "1.2"},
+		{"bun@1.2.19", "bun", "1.2.19"},
+		{"bun@latest", "bun", "latest"},
+	}
+	for _, tc := range cases {
+		provider, version := parseRuntimeSpec(tc.arg)
+		if provider.Name() != tc.wantRuntime || version != tc.wantVersion {
+			t.Errorf("parseRuntimeSpec(%q) = (%s, %q), want (%s, %q)", tc.arg, provider.Name(), version, tc.wantRuntime, tc.wantVersion)
+		}
+	}
+}
+
+func TestBunxRoutesToBunProviderAndNotNode(t *testing.T) {
+	if got := runtimeForShim("bunx").Name(); got != "bun" {
+		t.Fatalf("runtimeForShim(bunx) = %q, want bun", got)
+	}
+	if got := runtimeForShim("bun").Name(); got != "bun" {
+		t.Fatalf("runtimeForShim(bun) = %q, want bun", got)
+	}
+	for _, cmd := range (NodeProvider{}).ShimCommands() {
+		if cmd == "bunx" || cmd == "bun" {
+			t.Fatalf("NodeProvider must not own %q shim after Bun provider added", cmd)
+		}
+	}
+}
+
+func TestBunTagToVersion(t *testing.T) {
+	cases := map[string]string{
+		"bun-v1.2.19": "v1.2.19",
+		"v1.2.19":     "v1.2.19",
+		"1.2.19":      "v1.2.19",
+		"bun-canary":  "",
+		"":            "",
+	}
+	for in, want := range cases {
+		if got := bunTagToVersion(in); got != want {
+			t.Errorf("bunTagToVersion(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestIsFullBunVersionAndMatch(t *testing.T) {
+	if !isFullBunVersion("v1.2.19") || !isFullBunVersion("1.0.0") {
+		t.Fatal("expected 3-part versions to be full")
+	}
+	if isFullBunVersion("v1.2") || isFullBunVersion("v1") || isFullBunVersion("v1.2.x") {
+		t.Fatal("partial or non-numeric versions must not be full")
+	}
+	versions := []string{"v1.2.19", "v1.2.5", "v1.1.40", "v0.8.1"}
+	if got := matchBunVersion("v1.2", versions); got != "v1.2.19" {
+		t.Errorf("matchBunVersion(v1.2) = %q, want v1.2.19 (newest match)", got)
+	}
+	if got := matchBunVersion("v1", versions); got != "v1.2.19" {
+		t.Errorf("matchBunVersion(v1) = %q, want v1.2.19", got)
+	}
+	if got := matchBunVersion("v1.2.5", versions); got != "v1.2.5" {
+		t.Errorf("matchBunVersion(v1.2.5) = %q, want exact", got)
+	}
+}
+
+func TestBunProviderDetectConfig(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, ".bun-version"), []byte("1.2.19\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ver, src, err := (BunProvider{}).DetectConfig(tmp)
+	if err != nil || ver != "1.2.19" {
+		t.Fatalf("DetectConfig(.bun-version) = (%q, %q, %v), want 1.2.19", ver, src, err)
+	}
+
+	tmp2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp2, "package.json"), []byte(`{"engines":{"bun":">=1.1.0"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ver2, _, err := (BunProvider{}).DetectConfig(tmp2)
+	if err != nil || ver2 != "1.1.0" {
+		t.Fatalf("DetectConfig(engines.bun) = %q, want 1.1.0", ver2)
+	}
+}
+
 func TestRuntimeFromVersionDirRecognizesKnownRuntimes(t *testing.T) {
 	nvxHome := filepath.Join("some", "home")
 	nodeDir := filepath.Join(nvxHome, "versions", "node", "v20.0.0")

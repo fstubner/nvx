@@ -39,7 +39,7 @@ func resolvePinnedCommandPath(command string, nvxHome string, pinnedVer string, 
 }
 
 func (n NodeProvider) ShimCommands() []string {
-	return []string{"node", "npm", "npx", "yarn", "pnpm", "bunx"}
+	return []string{"node", "npm", "npx", "yarn", "pnpm"}
 }
 
 func (n NodeProvider) DefaultNetworkAllow() []string {

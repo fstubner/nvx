@@ -314,10 +314,38 @@ func detectShimPackagesForVerification(cmdName string, args []string) []string {
 			}
 			return packagesFromPackageJSON()
 		}
+	case "bun":
+		// bun add/install/i/a [pkg...]; "a" is Bun's short alias for add.
+		sub := firstNonFlagArg(args)
+		if sub == "add" || sub == "a" || installAliases[sub] {
+			if pkgs := packagesAfterSubcommand(args); len(pkgs) > 0 {
+				return pkgs
+			}
+			return packagesFromPackageJSON()
+		}
 	case "npx", "bunx":
 		return detectExecutorPackages(args)
 	}
 	return nil
+}
+
+// packagesAfterSubcommand returns the non-flag arguments following the first
+// non-flag token (the subcommand), i.e. the explicitly named packages.
+func packagesAfterSubcommand(args []string) []string {
+	var pkgs []string
+	seenSub := false
+	for _, arg := range args {
+		if !seenSub {
+			if !strings.HasPrefix(arg, "-") {
+				seenSub = true
+			}
+			continue
+		}
+		if !strings.HasPrefix(arg, "-") {
+			pkgs = append(pkgs, arg)
+		}
+	}
+	return pkgs
 }
 
 func firstNonFlagArg(args []string) string {
@@ -491,7 +519,7 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 		return 1
 	}
 
-	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" || cmdName == "npx" || cmdName == "bunx" {
+	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" || cmdName == "npx" || cmdName == "bunx" || cmdName == "bun" {
 		if pkgs := detectShimPackagesForVerification(cmdName, args); len(pkgs) > 0 {
 			runVerifyInstall(pkgs, nvxHome)
 		}
@@ -516,12 +544,12 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 	}
 
 	rt := runtimeForShim(cmdName)
-	nodeVer := getActiveShellVersion(nvxHome)
-	if nodeVer == "" {
-		nodeVer = getGlobalDefaultVersion(nvxHome)
+	activeVer := getActiveShellVersionFor(nvxHome, rt.Name())
+	if activeVer == "" {
+		activeVer = getGlobalDefaultVersionFor(nvxHome, rt.Name())
 	}
 
-	binaryPath := resolvePinnedCommandPath(cmdName, nvxHome, nodeVer, rt)
+	binaryPath := resolvePinnedCommandPath(cmdName, nvxHome, activeVer, rt)
 	if binaryPath == "" {
 		if p := resolveProjectBinCommand(cmdName); p != "" {
 			binaryPath = p
@@ -599,6 +627,7 @@ func quotePowerShell(value string) string {
 type PackageJSON struct {
 	Engines struct {
 		Node string `json:"node"`
+		Bun  string `json:"bun"`
 	} `json:"engines"`
 	Volta struct {
 		Node string `json:"node"`
