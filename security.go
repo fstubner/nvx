@@ -76,7 +76,7 @@ func LevenshteinDistance(s, t string) int {
 // LoadPopularPackages returns the typosquatting checklist, syncing from a remote source if outdated
 func LoadPopularPackages(nvxHome string) []string {
 	cachePath := filepath.Join(nvxHome, "popular_packages.json")
-	
+
 	// Check if local cache is fresh (less than 7 days old)
 	if info, err := os.Stat(cachePath); err == nil && time.Since(info.ModTime()) < 7*24*time.Hour {
 		data, err := os.ReadFile(cachePath)
@@ -217,7 +217,7 @@ func CheckTyposquattingAuthority(pkgName string, popularList []string, maxDist i
 			if errPkg == nil && errSus == nil {
 				// Authority threshold: if the target is high-popularity (>50k/week)
 				// AND it has more than 100x the weekly downloads of the installed package, it's a typosquat
-				if suspectDownloads > 50000 && suspectDownloads > 100 * pkgDownloads {
+				if suspectDownloads > 50000 && suspectDownloads > 100*pkgDownloads {
 					return popular
 				}
 			} else {
@@ -299,35 +299,57 @@ type OSVVuln struct {
 }
 
 // ScanVulnerabilitiesBatch queries the OSV API for multiple packages in a single batch request
+// osvMaxBatch is OSV's documented per-request cap for /v1/querybatch.
+const osvMaxBatch = 1000
+
+// osvBatchURL is a var (not a const) so tests can point it at a local server.
+var osvBatchURL = "https://api.osv.dev/v1/querybatch"
+
+// ScanVulnerabilitiesBatch scans packages against OSV, chunking into requests of
+// at most osvMaxBatch so large dependency trees (monorepos) don't exceed the API
+// limit and silently drop the whole scan. Any chunk error fails the whole scan
+// (so the caller can apply fail_closed) rather than returning partial coverage.
 func ScanVulnerabilitiesBatch(packages []OSVQuery) (map[string][]OSVVuln, error) {
 	if len(packages) == 0 {
 		return nil, nil
 	}
+	results := make(map[string][]OSVVuln)
+	for start := 0; start < len(packages); start += osvMaxBatch {
+		end := start + osvMaxBatch
+		if end > len(packages) {
+			end = len(packages)
+		}
+		if err := scanOSVChunk(packages[start:end], results); err != nil {
+			return nil, err
+		}
+	}
+	return results, nil
+}
 
-	payload := OSVQueryBatch{Queries: packages}
+func scanOSVChunk(chunk []OSVQuery, results map[string][]OSVVuln) error {
+	payload := OSVQueryBatch{Queries: chunk}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post("https://api.osv.dev/v1/querybatch", "application/json", bytes.NewBuffer(data))
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Post(osvBatchURL, "application/json", bytes.NewBuffer(data))
 	if err != nil {
-		return nil, fmt.Errorf("OSV API connection failed: %w", err)
+		return fmt.Errorf("OSV API connection failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OSV API returned HTTP %s", resp.Status)
+		return fmt.Errorf("OSV API returned HTTP %s", resp.Status)
 	}
 
 	var batchResp OSVResponseBatch
 	if err := json.NewDecoder(resp.Body).Decode(&batchResp); err != nil {
-		return nil, err
+		return err
 	}
 
-	results := make(map[string][]OSVVuln)
-	for i, query := range payload.Queries {
+	for i, query := range chunk {
 		if i < len(batchResp.Results) {
 			vulns := batchResp.Results[i].Vulns
 			if len(vulns) > 0 {
@@ -336,7 +358,7 @@ func ScanVulnerabilitiesBatch(packages []OSVQuery) (map[string][]OSVVuln, error)
 			}
 		}
 	}
-	return results, nil
+	return nil
 }
 
 // NpmRegistryMetadata represents minimal package info from registry
@@ -350,6 +372,21 @@ type NpmRegistryMetadata struct {
 
 type NpmVersionDetails struct {
 	Scripts map[string]string `json:"scripts"`
+	Dist    NpmDist           `json:"dist"`
+}
+
+// NpmDist holds the registry's distribution metadata, including the ECDSA
+// signatures the npm registry produces over "name@version:integrity".
+type NpmDist struct {
+	Tarball    string         `json:"tarball"`
+	Integrity  string         `json:"integrity"`
+	Shasum     string         `json:"shasum"`
+	Signatures []NpmSignature `json:"signatures"`
+}
+
+type NpmSignature struct {
+	KeyID string `json:"keyid"`
+	Sig   string `json:"sig"`
 }
 
 // ResolveNpmPackageDetails queries npm registry for latest version, publish age, and installation script status
@@ -360,7 +397,6 @@ func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, pub
 		return "", time.Time{}, false, err
 	}
 	defer resp.Body.Close()
-
 
 	if resp.StatusCode != http.StatusOK {
 		return "", time.Time{}, false, fmt.Errorf("registry returned HTTP %s", resp.Status)
@@ -412,4 +448,3 @@ func min(a, b int) int {
 	}
 	return b
 }
-
