@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -84,6 +85,23 @@ func ResolveVersion(query string, releases []Release) (Release, error) {
 			}
 		}
 		return Release{}, fmt.Errorf("no LTS release found")
+	}
+
+	// Range expressions (^18, ~18.16, >=18 <21, 18.x, 18 || 20) resolve to the
+	// highest release satisfying the range.
+	if isRangeExpr(query) {
+		versions := make([]string, 0, len(releases))
+		for _, r := range releases {
+			versions = append(versions, r.Version)
+		}
+		if best := maxSatisfyingVersion(versions, query); best != "" {
+			for _, r := range releases {
+				if r.Version == best {
+					return r, nil
+				}
+			}
+		}
+		return Release{}, fmt.Errorf("no release satisfies range: %s", query)
 	}
 
 	// Normalize query prefix
@@ -238,7 +256,6 @@ func (n NodeProvider) Install(version string, nvxHome string) error {
 	LogSuccess("Node.js %s installed successfully to: %s", resolvedVer, destDir)
 	return nil
 
-
 }
 
 func (n NodeProvider) Uninstall(version string, nvxHome string) error {
@@ -278,8 +295,65 @@ func MigrateLegacyNodeVersions(nvxHome string) {
 	}
 }
 
-// Providers maps runtime names to their respective RuntimeProvider implementations
-var Providers = map[string]RuntimeProvider{
-	"node": NodeProvider{},
+// Providers maps runtime names to their registered RuntimeProvider
+// implementations. Populate it via RegisterRuntimeProvider (see EXTENDING.md),
+// not by mutating this map directly.
+var Providers = map[string]RuntimeProvider{}
+
+// defaultRuntime is used when a version query carries no runtime selector
+// (e.g. `nvx install 20` resolves against this runtime).
+const defaultRuntime = "node"
+
+// RegisterRuntimeProvider adds a runtime to the registry. Call it from an
+// init() in the provider's own file so third parties can add a runtime by
+// dropping in one file:
+//
+//	func init() { RegisterRuntimeProvider(MyRuntime{}) }
+func RegisterRuntimeProvider(p RuntimeProvider) {
+	if p == nil {
+		return
+	}
+	Providers[strings.ToLower(p.Name())] = p
+	// Reset the shim lookup so a newly registered runtime's ShimCommands are
+	// picked up (guarded — runtimeForShim may read this concurrently).
+	shimRuntimeMu.Lock()
+	shimToRuntime = map[string]string{}
+	shimRuntimeMu.Unlock()
 }
 
+func init() { RegisterRuntimeProvider(NodeProvider{}) }
+
+// RuntimeNames returns the registered runtime names in stable, sorted order.
+func RuntimeNames() []string {
+	names := make([]string, 0, len(Providers))
+	for name := range Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// ResolveRuntimeSelector splits a CLI query into (provider, versionQuery).
+// Supported forms:
+//
+//	20            -> (node, "20")          // bare version uses the default runtime
+//	node@20       -> (node, "20")
+//	bun@1.1       -> (bun, "1.1")
+//	bun           -> (bun, "latest")       // a lone runtime name means "latest"
+//
+// A token before '@' is treated as a runtime only if it is registered;
+// otherwise the whole query is a version for the default runtime.
+func ResolveRuntimeSelector(query string) (RuntimeProvider, string) {
+	q := strings.TrimSpace(query)
+	if name, ver, ok := strings.Cut(q, "@"); ok {
+		if p, found := Providers[strings.ToLower(name)]; found {
+			return p, ver
+		}
+		return Providers[defaultRuntime], q
+	}
+	// No '@': a bare registered runtime name means "latest" of that runtime.
+	if p, found := Providers[strings.ToLower(q)]; found {
+		return p, "latest"
+	}
+	return Providers[defaultRuntime], q
+}
