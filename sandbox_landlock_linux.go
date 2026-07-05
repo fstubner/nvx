@@ -14,24 +14,29 @@ import (
 
 // Landlock ABI constants (linux/landlock.h).
 const (
-	landlockAccessFSExecute   = 1 << 0
-	landlockAccessFSWriteFile = 1 << 1
-	landlockAccessFSReadFile  = 1 << 2
-	landlockAccessFSWriteDir  = 1 << 3
-	landlockAccessFSReadDir   = 1 << 4
+	landlockAccessFSExecute    = 1 << 0
+	landlockAccessFSWriteFile  = 1 << 1
+	landlockAccessFSReadFile   = 1 << 2
+	landlockAccessFSWriteDir   = 1 << 3
+	landlockAccessFSReadDir    = 1 << 4
 	landlockAccessFSRemoveFile = 1 << 5
 	landlockAccessFSRemoveDir  = 1 << 6
-	landlockAccessFSMakeChar  = 1 << 7
-	landlockAccessFSMakeDir   = 1 << 8
-	landlockAccessFSMakeReg   = 1 << 9
-	landlockAccessFSMakeSock  = 1 << 10
-	landlockAccessFSMakeFifo  = 1 << 11
-	landlockAccessFSMakeBlock = 1 << 12
-	landlockAccessFSMakeSym   = 1 << 13
-	landlockAccessFSRefer     = 1 << 14
-	landlockAccessFSTruncate  = 1 << 15
+	landlockAccessFSMakeChar   = 1 << 7
+	landlockAccessFSMakeDir    = 1 << 8
+	landlockAccessFSMakeReg    = 1 << 9
+	landlockAccessFSMakeSock   = 1 << 10
+	landlockAccessFSMakeFifo   = 1 << 11
+	landlockAccessFSMakeBlock  = 1 << 12
+	landlockAccessFSMakeSym    = 1 << 13
+	landlockAccessFSRefer      = 1 << 14
+	landlockAccessFSTruncate   = 1 << 15
 
-	landlockScopeFile = 1
+	// landlock_add_rule rule_type (linux/landlock.h).
+	landlockRulePathBeneath = 1
+	// flags value for landlock_create_ruleset that requests the ABI version.
+	landlockCreateRulesetVersion = 1 << 0
+	// O_PATH is stable at 0x200000 on the arches nvx targets (amd64/arm64).
+	landlockOPath = 0x200000
 
 	prSetNoNewPrivs = 38
 )
@@ -65,13 +70,43 @@ func landlockCall(trap uintptr, a1, a2, a3, a4, a5, a6 uintptr) (uintptr, syscal
 	return r, errno
 }
 
+// landlockABIVersion returns the kernel's Landlock ABI version, or -1 when
+// Landlock is unavailable. Per the UAPI, the version query passes a NULL attr,
+// size 0, and flags=LANDLOCK_CREATE_RULESET_VERSION.
+func landlockABIVersion() int {
+	r, errno := landlockCall(
+		landlockSyscallCreateRuleset(),
+		0, 0,
+		uintptr(landlockCreateRulesetVersion),
+		0, 0, 0,
+	)
+	if errno != 0 {
+		return -1
+	}
+	return int(r)
+}
+
+// landlockSupportedAccess masks requested access bits down to what the running
+// kernel's ABI supports: REFER arrived in ABI v2, TRUNCATE in ABI v3.
+// Requesting unsupported bits makes landlock_create_ruleset fail with EINVAL.
+func landlockSupportedAccess(requested uint64, abi int) uint64 {
+	access := requested
+	if abi < 2 {
+		access &^= landlockAccessFSRefer
+	}
+	if abi < 3 {
+		access &^= landlockAccessFSTruncate
+	}
+	return access
+}
+
 func landlockCreateRuleset(handledAccess uint64) (int, error) {
 	attr := landlockRulesetAttr{handledAccessFs: handledAccess}
 	fd, errno := landlockCall(
 		landlockSyscallCreateRuleset(),
 		uintptr(unsafe.Pointer(&attr)),
 		unsafe.Sizeof(attr),
-		uintptr(landlockScopeFile),
+		0, // flags MUST be 0 to create a ruleset (nonzero is only for the ABI-version query)
 		0, 0, 0,
 	)
 	if errno != 0 {
@@ -81,19 +116,22 @@ func landlockCreateRuleset(handledAccess uint64) (int, error) {
 }
 
 func landlockAddRule(rulesetFD int, access uint64, path string) error {
-	attr := landlockPathBeneathAttr{allowedAccess: access, parentFd: -1}
-	pathC, err := syscall.BytePtrFromString(path)
+	// PATH_BENEATH rules identify the directory by an open O_PATH descriptor
+	// carried inside the attr struct — not by a path string syscall argument.
+	parentFd, err := syscall.Open(path, landlockOPath|syscall.O_CLOEXEC, 0)
 	if err != nil {
-		return err
+		return fmt.Errorf("open %q: %w", path, err)
 	}
+	defer syscall.Close(parentFd)
+
+	attr := landlockPathBeneathAttr{allowedAccess: access, parentFd: int32(parentFd)}
 	_, errno := landlockCall(
 		landlockSyscallAddRule(),
 		uintptr(rulesetFD),
-		uintptr(landlockScopeFile),
+		uintptr(landlockRulePathBeneath),
 		uintptr(unsafe.Pointer(&attr)),
-		unsafe.Sizeof(attr),
-		uintptr(unsafe.Pointer(pathC)),
-		0,
+		0, // flags MUST be 0
+		0, 0,
 	)
 	if errno != 0 {
 		return errno
@@ -130,9 +168,17 @@ func applyLandlockSandbox(guestHome, workDir, nvxHome string) error {
 		return fmt.Errorf("prctl(NO_NEW_PRIVS): %w", err)
 	}
 
-	fd, err := landlockCreateRuleset(landlockAccessFull)
+	abi := landlockABIVersion()
+	if abi < 1 {
+		return fmt.Errorf("landlock not supported (kernel 5.13+ required)")
+	}
+
+	writeAccess := landlockSupportedAccess(landlockAccessFull, abi)
+	readAccess := landlockSupportedAccess(landlockAccessReadExec, abi)
+
+	fd, err := landlockCreateRuleset(writeAccess)
 	if err != nil {
-		return fmt.Errorf("landlock not supported (kernel 5.13+ required): %w", err)
+		return fmt.Errorf("landlock_create_ruleset (ABI v%d): %w", abi, err)
 	}
 	defer syscall.Close(fd)
 
@@ -140,7 +186,7 @@ func applyLandlockSandbox(guestHome, workDir, nvxHome string) error {
 		if p == "" {
 			continue
 		}
-		if err := landlockAddRule(fd, landlockAccessFull, p); err != nil {
+		if err := landlockAddRule(fd, writeAccess, p); err != nil {
 			return fmt.Errorf("landlock rule for %q: %w", p, err)
 		}
 	}
@@ -156,7 +202,7 @@ func applyLandlockSandbox(guestHome, workDir, nvxHome string) error {
 		if _, err := os.Stat(root); err != nil {
 			continue
 		}
-		if err := landlockAddRule(fd, landlockAccessReadExec, root); err != nil {
+		if err := landlockAddRule(fd, readAccess, root); err != nil {
 			return fmt.Errorf("landlock read rule for %q: %w", root, err)
 		}
 	}

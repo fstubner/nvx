@@ -9,13 +9,16 @@ import (
 
 // Policy defines corporate rules for package manager operations and sandboxing.
 type Policy struct {
-	BlockedPackages      []string            `json:"blocked_packages"`
-	EnforceIgnoreScripts bool                `json:"enforce_ignore_scripts"`
-	Typosquatting        TyposquattingPolicy `json:"typosquatting"`
-	Runtime              RuntimeConfig       `json:"runtime"`
-	Isolation            IsolationPolicy     `json:"isolation"`
-	Prompts              PromptsPolicy       `json:"prompts"`
-	Environment          EnvironmentPolicy   `json:"environment"`
+	BlockedPackages      []string `json:"blocked_packages"`
+	EnforceIgnoreScripts bool     `json:"enforce_ignore_scripts"`
+	// FailClosed makes supply-chain checks abort the install when the registry
+	// or OSV database cannot be reached, instead of warning and proceeding.
+	FailClosed    bool                `json:"fail_closed"`
+	Typosquatting TyposquattingPolicy `json:"typosquatting"`
+	Runtime       RuntimeConfig       `json:"runtime"`
+	Isolation     IsolationPolicy     `json:"isolation"`
+	Prompts       PromptsPolicy       `json:"prompts"`
+	Environment   EnvironmentPolicy   `json:"environment"`
 
 	ProjectDir string `json:"-"`
 }
@@ -42,7 +45,9 @@ type IsolationPolicy struct {
 	Enabled    bool             `json:"enabled"`
 	Filesystem FilesystemPolicy `json:"filesystem"`
 	Network    NetworkPolicy    `json:"network"`
-	// Legacy top-level provider from older policy files.
+	// Provider is the preferred, clearer way to select the isolation backend
+	// (isolation.provider). The nested isolation.filesystem.provider is still
+	// honored as a legacy alias — see IsolationProviderName for resolution order.
 	Provider string        `json:"provider,omitempty"`
 	Runtime  RuntimePolicy `json:"runtime,omitempty"`
 }
@@ -54,10 +59,10 @@ type FilesystemPolicy struct {
 }
 
 type NetworkPolicy struct {
-	Mode         string   `json:"mode"`
-	DefaultAllow []string `json:"default_allow"`
-	AllowHosts   []string `json:"allow_hosts"`
-	PromptUnknown bool    `json:"prompt_unknown"`
+	Mode          string   `json:"mode"`
+	DefaultAllow  []string `json:"default_allow"`
+	AllowHosts    []string `json:"allow_hosts"`
+	PromptUnknown bool     `json:"prompt_unknown"`
 }
 
 type RuntimePolicy struct {
@@ -66,9 +71,9 @@ type RuntimePolicy struct {
 }
 
 type PromptsPolicy struct {
-	Interactive     string `json:"interactive"`
-	NonInteractive  string `json:"non_interactive"`
-	NetworkUnknown  string `json:"network_unknown"`
+	Interactive    string `json:"interactive"`
+	NonInteractive string `json:"non_interactive"`
+	NetworkUnknown string `json:"network_unknown"`
 }
 
 func DefaultPolicy() Policy {
@@ -167,7 +172,14 @@ func (p Policy) PinnedRuntimeVersion(runtimeName string) string {
 	return ""
 }
 
-func (p Policy) FilesystemProvider() string {
+// IsolationProviderName resolves the configured isolation backend name.
+// Preference order: the clearer `isolation.provider`, then the legacy
+// `isolation.filesystem.provider` (kept for backward compatibility), then
+// the default "native".
+func (p Policy) IsolationProviderName() string {
+	if p.Isolation.Provider != "" {
+		return strings.ToLower(p.Isolation.Provider)
+	}
 	if p.Isolation.Filesystem.Provider != "" {
 		return strings.ToLower(p.Isolation.Filesystem.Provider)
 	}
@@ -206,9 +218,19 @@ func LoadPolicy(nvxHome string) (Policy, error) {
 	if _, err := os.Stat(globalPolicyPath); err == nil {
 		data, err := os.ReadFile(globalPolicyPath)
 		if err == nil {
-			_ = json.Unmarshal(data, &policy)
+			if uerr := json.Unmarshal(data, &policy); uerr != nil {
+				// Surface (don't silently swallow) a malformed global policy — a
+				// broken file meant to TIGHTEN security must not quietly revert
+				// to permissive defaults.
+				LogWarn("Ignoring malformed global policy %s: %v", globalPolicyPath, uerr)
+			}
 		}
 	}
+
+	// Snapshot the TRUSTED baseline (built-in defaults + the user's global
+	// policy). Project-local policy files that follow are UNTRUSTED and may only
+	// tighten security-critical fields, never weaken them (see clampToTrusted).
+	trusted := policy
 
 	cwd, err := os.Getwd()
 	if err == nil {
@@ -242,6 +264,7 @@ func LoadPolicy(nvxHome string) (Policy, error) {
 				continue
 			}
 			if err := json.Unmarshal(data, &localPolicy); err != nil {
+				LogWarn("Ignoring malformed policy %s: %v", localPath, err)
 				continue
 			}
 			policy = MergePolicies(policy, localPolicy)
@@ -251,8 +274,67 @@ func LoadPolicy(nvxHome string) (Policy, error) {
 		}
 	}
 
+	// Enforce the tighten-only floor: undo any weakening of isolation that an
+	// untrusted project policy attempted.
+	clampToTrusted(&policy, trusted)
+
+	// Warn about blocklist patterns that will silently never match — only a
+	// trailing '*' wildcard is supported (see IsBlocked).
+	for _, pat := range policy.BlockedPackages {
+		if i := strings.IndexByte(pat, '*'); i >= 0 && i != len(pat)-1 {
+			LogWarn("Blocklist pattern %q: only a trailing '*' wildcard is supported; this pattern will not match as written.", pat)
+		}
+	}
+
 	normalizePolicy(&policy)
 	return policy, nil
+}
+
+// netModeRank ranks network modes by strictness (higher = stricter).
+func netModeRank(mode string) int {
+	switch strings.ToLower(mode) {
+	case "offline":
+		return 3
+	case "loopback":
+		return 2
+	case "proxy":
+		return 1
+	default: // "open" or unknown
+		return 0
+	}
+}
+
+// fsModeRank ranks filesystem modes by strictness (higher = stricter).
+func fsModeRank(mode string) int {
+	if strings.EqualFold(mode, "strict") {
+		return 1
+	}
+	return 0
+}
+
+// clampToTrusted prevents untrusted project-local policy from WEAKENING
+// security-critical fields below the trusted (defaults + global) baseline. It is
+// the fix for the "a repo's .nvx-policy.json disables isolation" downgrade: the
+// isolation backend cannot be changed by a project file, and network/filesystem
+// modes and the enabled flag can only be made stricter, never weaker. Legitimate
+// weakening must live in the user's global policy or a trusted CLI flag.
+func clampToTrusted(p *Policy, trusted Policy) {
+	if tp := trusted.IsolationProviderName(); p.IsolationProviderName() != tp {
+		LogWarn("Ignoring project-policy isolation provider override (untrusted); using %q from global/default policy.", tp)
+		p.Isolation.Provider = trusted.Isolation.Provider
+		p.Isolation.Filesystem.Provider = trusted.Isolation.Filesystem.Provider
+	}
+	if netModeRank(p.Isolation.Network.Mode) < netModeRank(trusted.Isolation.Network.Mode) {
+		LogWarn("Ignoring project-policy network.mode downgrade %q (untrusted); using %q.", p.Isolation.Network.Mode, trusted.Isolation.Network.Mode)
+		p.Isolation.Network.Mode = trusted.Isolation.Network.Mode
+	}
+	if fsModeRank(p.Isolation.Filesystem.Mode) < fsModeRank(trusted.Isolation.Filesystem.Mode) {
+		LogWarn("Ignoring project-policy filesystem.mode downgrade (untrusted); using %q.", trusted.Isolation.Filesystem.Mode)
+		p.Isolation.Filesystem.Mode = trusted.Isolation.Filesystem.Mode
+	}
+	if trusted.Isolation.Enabled {
+		p.Isolation.Enabled = true
+	}
 }
 
 func MergePolicies(global, local Policy) Policy {
@@ -272,6 +354,10 @@ func MergePolicies(global, local Policy) Policy {
 
 	if local.EnforceIgnoreScripts {
 		merged.EnforceIgnoreScripts = true
+	}
+
+	if local.FailClosed {
+		merged.FailClosed = true
 	}
 
 	if !local.Typosquatting.Enabled {

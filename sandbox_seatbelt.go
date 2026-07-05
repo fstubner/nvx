@@ -99,6 +99,35 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, writableRoots ...string) 
 	}
 	b.WriteString(")\n")
 
+	// Read confinement: deny reading the real user's HOME (where ~/.ssh, cloud
+	// creds, tokens, browser data, and other repos live), then re-allow only the
+	// safe, needed spots. System paths (/usr, /System, /Library, /private) remain
+	// readable under (allow default) so the runtime can load. This makes the
+	// sensitive area deny-by-default for reads instead of relying on a blocklist.
+	// Seatbelt is last-match-wins, so the re-allows below override the home deny.
+	// NOTE: validate on macOS before relying on it; carve-outs are conservative.
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		fmt.Fprintf(&b, "(deny file-read* (subpath %q))\n", home)
+		b.WriteString("(allow file-read*\n")
+		// The redirected guest HOME and the working directory (passed as writable
+		// roots) must stay readable even when they live under the real home.
+		for _, root := range writableRoots {
+			if root == "" {
+				continue
+			}
+			fmt.Fprintf(&b, "  (subpath %q)\n", root)
+		}
+		// Registry config that installs legitimately need.
+		fmt.Fprintf(&b, "  (literal %q)\n", filepath.Join(home, ".npmrc"))
+		b.WriteString(")\n")
+	}
+	// Also deny credential stores that live OUTSIDE the user home (system keychain,
+	// host SSH keys) — these aren't covered by the home deny above.
+	b.WriteString("(deny file-read*\n")
+	b.WriteString("  (subpath \"/Library/Keychains\")\n")
+	b.WriteString("  (subpath \"/private/etc/ssh\")\n")
+	b.WriteString(")\n")
+
 	mode := strings.ToLower(netCtx.Mode)
 	if mode == "proxy" || mode == "offline" || mode == "loopback" {
 		b.WriteString("(deny network*)\n")
