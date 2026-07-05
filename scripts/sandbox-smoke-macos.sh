@@ -37,6 +37,18 @@ baseline_rc=$?
 set -e
 echo "baseline (allow default) sandbox-exec node rc=$baseline_rc"
 
+# Trace exactly which Seatbelt operations node needs (logged under allow-default),
+# so the strict profile can be completed instead of guessed at.
+TRACE_PROF="$PROJ/trace.sb"
+TRACE_OUT="$PROJ/trace.out"
+printf '(version 1)\n(allow default)\n(trace "%s")\n' "$TRACE_OUT" > "$TRACE_PROF"
+set +e
+/usr/bin/sandbox-exec -f "$TRACE_PROF" "$(command -v node)" -e "require('fs').writeFileSync('trace-probe.txt','ok')" >/dev/null 2>&1
+set -e
+echo "=== operation types node needs (from trace) ==="
+grep -oE '\(allow [a-z0-9*-]+' "$TRACE_OUT" 2>/dev/null | sort | uniq -c || echo "(no trace output)"
+echo "=== end trace ==="
+
 echo "Testing sandboxed node via shim..."
 PROBE="$PROJ/probe.txt"
 set +e
