@@ -741,6 +741,18 @@ func emitSessionEnv(shell, nvxHome, targetDir string) {
 	if npmPrefixDir != "" {
 		fmt.Print(shellEnvAssignment(shell, "NPM_CONFIG_PREFIX", FormatPathForShell(shell, npmPrefixDir)))
 	}
+
+	// Runtime-specific session variables (none for node/bun today; the hook lets
+	// future runtimes like Go/Rust set GOROOT/RUSTUP_HOME without new plumbing).
+	lookupName := runtimeName
+	if lookupName == "" {
+		lookupName = "node"
+	}
+	if provider, ok := Providers[lookupName]; ok {
+		for key, value := range provider.SessionEnv(targetDir) {
+			fmt.Print(shellEnvAssignment(shell, key, value))
+		}
+	}
 }
 
 // PromptYesNo prints a message to the console TTY and reads a Y/N keypress, bypassing standard redirections.

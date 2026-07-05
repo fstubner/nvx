@@ -136,6 +136,11 @@ type RuntimeProvider interface {
 	// SandboxImage returns the Docker image for a version (e.g. "node:20.11.0"),
 	// or "" if the runtime has no container image.
 	SandboxImage(version string) string
+	// SessionEnv returns extra environment variables to set when this runtime is
+	// activated for a shell session (e.g. GOROOT for Go, RUSTUP_HOME for Rust).
+	// Node and Bun need none and return nil. This is the extension point that
+	// lets future runtimes activate without changing the session-env plumbing.
+	SessionEnv(versionDir string) map[string]string
 }
 
 // runtimeDockerImage builds "<repo>:<tag>" from a version, defaulting to the
