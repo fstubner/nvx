@@ -117,8 +117,8 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 			continue
 		}
 		// Also clean the .nvx\current path and default npm_global paths if we are setting a terminal version
-		if strings.ToLower(normPart) == strings.ToLower(normCurrentLink) || 
-			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkBin) || 
+		if strings.ToLower(normPart) == strings.ToLower(normCurrentLink) ||
+			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkBin) ||
 			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkNpm) {
 			continue
 		}
@@ -231,7 +231,10 @@ func generateShims(nvxHome string) {
 var installAliases = map[string]bool{
 	"install": true, "i": true, "in": true, "ins": true, "inst": true,
 	"insta": true, "instal": true, "isnt": true, "isnta": true,
-	"isntall": true, "add": true,
+	"isntall": true, "add": true, "a": true,
+	// `npm ci` / `pnpm install --frozen-lockfile` restore the whole tree from
+	// the lockfile with no CLI packages — route them to the resolved-tree scan.
+	"ci": true,
 }
 
 // detectInstallPackages scans package manager arguments for an install-style
@@ -265,9 +268,27 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 
 	policy, _ := LoadPolicy(nvxHome)
 
-	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" {
-		if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
-			runVerifyInstall(pkgs, nvxHome)
+	if isInstallManager(cmdName) {
+		// `bun x` / `bun dlx` download-and-run a package like npx/bunx.
+		if cmdName == "bun" {
+			if idx := firstNonFlagIndex(args); idx >= 0 && (args[idx] == "x" || args[idx] == "dlx") {
+				if pkg := detectExecutePackage(args[idx+1:]); pkg != "" {
+					runVerifyInstall([]string{pkg}, nvxHome)
+				}
+			}
+		}
+		if installSubcommandIndex(args) >= 0 {
+			if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
+				// Explicit packages named on the CLI: full per-package checks.
+				runVerifyInstall(pkgs, nvxHome)
+			} else {
+				// Bare install (e.g. `npm install` / `npm ci`) restores the whole
+				// tree from the lockfile — scan the full resolved dependency set.
+				verifyResolvedTree(nvxHome, cmdName)
+			}
+			if policy.EnforceIgnoreScripts {
+				args = applyIgnoreScripts(cmdName, args)
+			}
 		}
 		if cwd, err := os.Getwd(); err == nil {
 			if root := findProjectRoot(cwd); root != "" {
@@ -276,14 +297,19 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 				}
 			}
 		}
+	} else if isExecuteRunner(cmdName) {
+		// npx / bunx fetch and execute a package — verify it before running.
+		if pkg := detectExecutePackage(args); pkg != "" {
+			runVerifyInstall([]string{pkg}, nvxHome)
+		}
 	}
 
 	if shouldSandbox(cmdName, policy, opts) {
 		return runSandbox(SandboxConfig{
-			NvxHome:            nvxHome,
-			Command:            cmdName,
-			Args:               args,
-			FilesystemProvider: opts.filesystemProvider,
+			NvxHome:           nvxHome,
+			Command:           cmdName,
+			Args:              args,
+			IsolationProvider: opts.isolationProvider,
 		})
 	}
 
