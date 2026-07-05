@@ -335,6 +335,19 @@ func detectShimPackagesForVerification(cmdName string, args []string) []string {
 			}
 			return packagesFromPackageJSON()
 		}
+	case "deno":
+		// deno add/install npm:<pkg>. Only npm: specifiers resolve against the
+		// npm registry (and OSV's npm ecosystem); jsr: uses a separate registry.
+		sub := firstNonFlagArg(args)
+		if sub == "add" || sub == "install" || sub == "i" {
+			var pkgs []string
+			for _, spec := range packagesAfterSubcommand(args) {
+				if strings.HasPrefix(spec, "npm:") {
+					pkgs = append(pkgs, strings.TrimPrefix(spec, "npm:"))
+				}
+			}
+			return pkgs
+		}
 	case "npx", "bunx":
 		return detectExecutorPackages(args)
 	}
@@ -531,7 +544,8 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 		return 1
 	}
 
-	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" || cmdName == "npx" || cmdName == "bunx" || cmdName == "bun" {
+	switch cmdName {
+	case "npm", "yarn", "pnpm", "npx", "bun", "bunx", "deno":
 		if pkgs := detectShimPackagesForVerification(cmdName, args); len(pkgs) > 0 {
 			runVerifyInstall(pkgs, nvxHome)
 		}

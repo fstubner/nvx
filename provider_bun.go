@@ -38,7 +38,7 @@ func (b BunProvider) DefaultNetworkAllow() []string {
 
 // --- version discovery -------------------------------------------------------
 
-type bunReleaseCache struct {
+type githubReleaseCache struct {
 	FetchedAt time.Time `json:"fetched_at"`
 	Versions  []string  `json:"versions"` // newest first, e.g. ["v1.2.19", ...]
 }
@@ -67,7 +67,7 @@ func bunTagToVersion(tag string) string {
 func fetchBunReleases(nvxHome string) ([]string, error) {
 	cachePath := bunCachePath(nvxHome)
 	if data, err := os.ReadFile(cachePath); err == nil {
-		var c bunReleaseCache
+		var c githubReleaseCache
 		if json.Unmarshal(data, &c) == nil && len(c.Versions) > 0 && time.Since(c.FetchedAt) < 6*time.Hour {
 			return c.Versions, nil
 		}
@@ -76,7 +76,7 @@ func fetchBunReleases(nvxHome string) ([]string, error) {
 	versions, err := fetchBunReleasesFromGitHub()
 	if err != nil {
 		if data, rerr := os.ReadFile(cachePath); rerr == nil {
-			var c bunReleaseCache
+			var c githubReleaseCache
 			if json.Unmarshal(data, &c) == nil && len(c.Versions) > 0 {
 				LogWarn("Using cached Bun release list (network fetch failed: %v)", err)
 				return c.Versions, nil
@@ -86,7 +86,7 @@ func fetchBunReleases(nvxHome string) ([]string, error) {
 	}
 
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0700); err == nil {
-		if data, mErr := json.MarshalIndent(bunReleaseCache{FetchedAt: time.Now(), Versions: versions}, "", "  "); mErr == nil {
+		if data, mErr := json.MarshalIndent(githubReleaseCache{FetchedAt: time.Now(), Versions: versions}, "", "  "); mErr == nil {
 			_ = os.WriteFile(cachePath, data, 0600)
 		}
 	}
@@ -132,7 +132,7 @@ func fetchBunReleasesFromGitHub() ([]string, error) {
 	return versions, nil
 }
 
-func isFullBunVersion(v string) bool {
+func isExactSemver(v string) bool {
 	parts := strings.Split(strings.TrimPrefix(v, "v"), ".")
 	if len(parts) != 3 {
 		return false
@@ -150,7 +150,7 @@ func isFullBunVersion(v string) bool {
 	return true
 }
 
-func matchBunVersion(query string, versions []string) string {
+func matchVersionPrefix(query string, versions []string) string {
 	for _, v := range versions {
 		if strings.EqualFold(v, query) {
 			return v
@@ -184,7 +184,7 @@ func (b BunProvider) resolveInstallVersion(query, nvxHome string) (string, error
 	if !strings.HasPrefix(norm, "v") {
 		norm = "v" + norm
 	}
-	if isFullBunVersion(norm) {
+	if isExactSemver(norm) {
 		return norm, nil
 	}
 
@@ -192,7 +192,7 @@ func (b BunProvider) resolveInstallVersion(query, nvxHome string) (string, error
 	if err != nil {
 		return "", err
 	}
-	if m := matchBunVersion(norm, versions); m != "" {
+	if m := matchVersionPrefix(norm, versions); m != "" {
 		return m, nil
 	}
 	return "", fmt.Errorf("no Bun release matches query %q", query)

@@ -389,4 +389,5 @@ func MigrateLegacyNodeVersions(nvxHome string) {
 var Providers = map[string]RuntimeProvider{
 	"node": NodeProvider{},
 	"bun":  BunProvider{},
+	"deno": DenoProvider{},
 }

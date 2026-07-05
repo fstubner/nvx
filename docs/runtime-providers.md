@@ -1,9 +1,9 @@
 # Runtime providers
 
 nvx manages runtimes through the `RuntimeProvider` interface (`version.go`).
-Two providers ship today — **Node.js** (`NodeProvider`) and **Bun**
-(`BunProvider`) — and the interface is designed so more can be added without
-touching the CLI, sandbox, or policy code.
+Three providers ship today — **Node.js** (`NodeProvider`), **Bun**
+(`BunProvider`), and **Deno** (`DenoProvider`) — and the interface is designed
+so more can be added without touching the CLI, sandbox, or policy code.
 
 ## The interface
 
@@ -39,7 +39,11 @@ selection, and default-network allowlist all pick it up automatically.
 
 `BunProvider` is the reference example: single-binary archive with a per-release
 `SHASUMS256.txt`, a cached release list to stay under GitHub's rate limit, and
-`bin/<exe>` layout with an alias (`bunx`).
+`bin/<exe>` layout with an alias (`bunx`). `DenoProvider` is nearly identical but
+shows two small variations the shared pipeline already handles: a per-asset
+sidecar checksum in PowerShell `Get-FileHash` format (see `findShasumEntry`), and
+a zip whose binary sits at the archive root, extracted with `ExtractZipFlat`
+instead of the folder-stripping `ExtractZip`.
 
 ## Readiness for Python / Go / Rust
 
