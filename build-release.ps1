@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.2.0-beta",
+    [string]$Version = "0.3.0",
     [string]$GoVersion = "1.26.4"
 )
 
