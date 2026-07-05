@@ -4,7 +4,7 @@
 
 
 
-[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](#) [![Platforms](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)](#) [![Release](https://img.shields.io/badge/Release-0.1.0--beta-orange?style=flat-square)](#) [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+[![Go Version](https://img.shields.io/badge/Go-1.23%2B-00ADD8?style=flat-square&logo=go)](#) [![Platforms](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)](#) [![Release](https://img.shields.io/badge/Release-0.2.0--beta-orange?style=flat-square)](#) [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 
 
@@ -37,12 +37,12 @@ Along the way, I wanted to tackle a few other common frustrations:
 - **Cascading Security Policies**: Resolves global and local directory-level policy blocks from `.nvx-policy.json`.
 - **Registry-Backed Typosquatting Audits**: Cross-checks package names against a synced list of popular packages and queries the npm registry download API dynamically to verify download counts and distinguish typosquats from legitimate packages.
 
-- **OSV Vulnerability Batch Scanning**: Audits dependency packages against the live Open Source Vulnerabilities database during install.
-- **Supply-Chain Verification**: Flags package updates released in the last 24 hours (mitigating compromise propagation windows).
+- **OSV Vulnerability Batch Scanning**: Audits direct install packages, executor packages, and packages resolved from `package-lock.json` against the live Open Source Vulnerabilities database during install. If no lockfile is present, `package.json` package names are checked as a best-effort fallback.
+- **Supply-Chain Verification**: Flags package versions published within a configurable window (default 24 hours); trusted packages are exempt.
 - **Native Sandbox Engine**: 
   - Purges credential/secret environment keys before execution.
   - Redirects home profile path (`HOME` / `USERPROFILE`) to temporary guest environments.
-  - Uses Windows AppContainer + Low Integrity Level, Linux Landlock + kernel namespaces, and macOS Seatbelt (`sandbox-exec`) for secure sandboxing.
+  - Uses Windows AppContainer, Linux Landlock + kernel namespaces, and macOS Seatbelt (`sandbox-exec`) for secure sandboxing.
 - **Shell Integrations**: Automatic shell configuration for bash, zsh, and PowerShell.
 
 ---
@@ -92,7 +92,6 @@ Commands:
 Shim flags (npm, node, npx, yarn, pnpm, bunx via PATH):
   --no-sandbox           Run without sandbox for this invocation
   --filesystem-provider=<name>  Override isolation.filesystem.provider
-  -y, --yes              Auto-approve prompts
 ```
 
 ### Zero-config sandbox
@@ -111,7 +110,7 @@ After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh
 
 ### Non-Interactive Use (CI)
 
-Security prompts (vulnerability warnings, install script confirmations, typosquatting alerts) **fail closed** when no interactive terminal is available: the operation is denied rather than silently approved. In CI pipelines, pass `-y` / `--yes` or set `NVX_YES=true` to approve prompts explicitly.
+Security prompts (vulnerability warnings, install script confirmations, typosquatting alerts) **fail closed** when no interactive terminal is available: the operation is denied rather than silently approved. In CI pipelines, set `NVX_YES=true` to approve prompts explicitly. For direct `nvx` commands, leading `-y` / `--yes` is also supported; package-manager flags after a shim command are forwarded to the package manager.
 
 ### Auto-Swapping
 
@@ -131,6 +130,10 @@ Corporate policies can be defined globally in `~/.nvx/policy.json` and customize
     "enabled": true,
     "max_distance": 2,
     "trusted_packages": ["my-internal-helper"]
+  },
+  "release_age": {
+    "enabled": true,
+    "min_age_hours": 24
   },
   "runtime": {
     "default": "node",
@@ -165,7 +168,7 @@ Policies cascade: the global policy applies everywhere, and local policy files m
 ### Policy Reference
 * **`enforce_ignore_scripts`**: When `true`, this forces npm/yarn/pnpm to install packages with `--ignore-scripts`. This blocks execution of hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine.
 * **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary).
-  - `native`: AppContainer + Low IL (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Fail-closed.
+  - `native`: AppContainer (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Fail-closed.
   - `docker`, `wslc`, `wsl`, `sandbox-exec`, `systemd-nspawn`: container or alternate providers (see below).
 * **`isolation.network.mode`**: How egress is governed.
   - `proxy` (default): parent-process HTTP CONNECT + SOCKS5 proxy with policy allowlist; injects `HTTP_PROXY` / `HTTPS_PROXY`.
@@ -192,16 +195,16 @@ node app.js
 When running in the sandbox:
 * Environment secrets (e.g. `AWS_*`, `GITHUB_*`, `SSH_*`) are scrubbed.
 * Home and temp paths are virtualized to an ephemeral guest profile.
-* **Filesystem** (`isolation.filesystem`): Windows AppContainer + Low IL; Linux Landlock + namespaces; macOS Seatbelt.
-* **Network** (`isolation.network.mode: proxy`): egress via loopback proxy with allowlist; unknown hosts prompt interactively (fail-closed in CI unless `-y`).
+* **Filesystem** (`isolation.filesystem`): Windows AppContainer; Linux Landlock + namespaces; macOS Seatbelt.
+* **Network** (`isolation.network.mode: proxy`): egress via loopback proxy with allowlist; unknown hosts prompt interactively (fail-closed in CI unless `NVX_YES=true`).
 
 ### Verification matrix
 
 | Guarantee | Windows (native) | Linux (native) | macOS (native) |
 |-----------|------------------|----------------|----------------|
-| Host profile write blocked | Yes (AppContainer + Low IL) | Yes (Landlock) | Yes (Seatbelt) |
+| Host profile write blocked | Yes (AppContainer) | Yes (Landlock) | Yes (Seatbelt) |
 | Workdir write allowed | Yes | Yes | Yes |
-| Egress via policy proxy | Yes (AppContainer + loopback proxy) | Yes (loopback netns + in-child proxy) | Yes (Seatbelt + loopback proxy) |
+| Egress via policy proxy | Yes (AppContainer + loopback proxy) | Restricted/fail-closed in native netns; external brokered allowlist pending | Yes (Seatbelt + loopback proxy) |
 | Raw TCP/UDP bypass blocked at OS | Yes | Yes (netns + seccomp UDP deny) | Yes (Seatbelt `(deny network*)`) |
 | Fail-closed if FS/network primitive missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes |
 
