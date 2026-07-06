@@ -537,9 +537,29 @@ func dedupeStrings(values []string) []string {
 	return out
 }
 
+// canonicalShimName resolves nvx command aliases to the real command that runs.
+// pyx -> uvx (a sandboxed run of uv's ephemeral tool runner).
+func canonicalShimName(cmdName string) string {
+	if strings.EqualFold(cmdName, "pyx") {
+		return "uvx"
+	}
+	return cmdName
+}
+
 func runShim(cmdName string, args []string, nvxHome string) int {
 	opts := parseShimOptions(args)
 	args = opts.args
+
+	// pyx is an nvx alias for a sandboxed uvx (uv's ephemeral PyPI tool runner).
+	cmdName = canonicalShimName(cmdName)
+	// uv/uvx are shimmed but not installed by nvx; give an actionable error when
+	// uv is not on PATH rather than a generic "not found".
+	if strings.EqualFold(cmdName, "uv") || strings.EqualFold(cmdName, "uvx") {
+		if _, err := lookPathSkippingNvxShims(cmdName, nvxHome); err != nil {
+			LogError("nvx wraps uv/uvx but uv is not installed. Install uv (https://docs.astral.sh/uv/) or your package manager, then retry.")
+			return 1
+		}
+	}
 
 	if err := ensureProjectPolicyTrust(nvxHome); err != nil {
 		LogError("Failed to load security policy: %v", err)

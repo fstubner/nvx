@@ -92,7 +92,7 @@ Commands:
   cleanup                  Remove stale sandbox sessions from previous runs
   version, -v              Print version info
 
-Shim flags (node, npm, npx, yarn, pnpm, bun, bunx, deno, go, python via PATH):
+Shim flags (node, npm, npx, yarn, pnpm, bun, bunx, deno, go, python, uv, uvx via PATH):
   --no-sandbox             Run without sandbox for this invocation
   --filesystem-provider=<name>  Override isolation.filesystem.provider
                            (native | docker; experimental: wsl, wslc, systemd-nspawn)
@@ -100,7 +100,7 @@ Shim flags (node, npm, npx, yarn, pnpm, bun, bunx, deno, go, python via PATH):
 
 ### Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun`, `bunx`, `deno`, `go`, and `python` are sandboxed by default** when `isolation.enabled` is true. No separate sandbox subcommand — just run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun`, `bunx`, `deno`, `go`, `python`, and `uv`/`uvx` are sandboxed by default** when `isolation.enabled` is true. No separate sandbox subcommand — just run commands normally:
 
 ```bash
 npm install
@@ -109,6 +109,8 @@ node server.js
 ```
 
 Use `--no-sandbox` on a shim invocation to bypass isolation for one command.
+
+**Running PyPI tools safely:** if you have [uv](https://docs.astral.sh/uv/), nvx wraps `uv` and `uvx` so ephemeral tool runs are sandboxed and egress-limited. `pyx <tool>` is a convenience alias for a sandboxed `uvx <tool>` — the same idea as auditing `npx`, for Python.
 
 After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh **project bin shims** in `.nvx/project-bin/`. These wrap `node_modules/.bin` tools so local CLIs (e.g. `vite`, `eslint`) are sandboxed too.
 

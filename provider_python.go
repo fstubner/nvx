@@ -28,8 +28,12 @@ type PythonProvider struct{}
 
 func (p PythonProvider) Name() string { return "python" }
 
+// ShimCommands covers the interpreter plus uv's CLIs. uv/uvx are shimmed when
+// present on PATH (nvx does not install uv); pyx is an nvx alias for a sandboxed
+// uvx (see runShim). This audits/contains the increasingly common case of
+// running arbitrary PyPI tools via `uvx <tool>`.
 func (p PythonProvider) ShimCommands() []string {
-	return []string{"python", "python3"}
+	return []string{"python", "python3", "uv", "uvx", "pyx"}
 }
 
 func (p PythonProvider) SandboxImage(version string) string {
@@ -42,6 +46,9 @@ func (p PythonProvider) DefaultNetworkAllow() []string {
 	return []string{
 		"pypi.org:443",
 		"files.pythonhosted.org:443",
+		// uv fetches tools from PyPI and standalone Pythons from GitHub.
+		"github.com:443",
+		"objects.githubusercontent.com:443",
 		"api.osv.dev:443",
 	}
 }
