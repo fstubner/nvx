@@ -49,25 +49,23 @@ Along the way, I wanted to tackle a few other common frustrations:
 
 ## How nvx compares
 
-Version managers give you fast, per-project runtime switching. `nvx` does that too — and adds a security layer none of them have. Package tools like `uv` are excellent at resolving dependencies; `nvx` composes with them rather than replacing them, adding containment on top.
-
 | | **nvx** | nvm | fnm | volta | asdf / mise | uv |
 |---|---|---|---|---|---|---|
 | Windows / macOS / Linux | ✅ / ✅ / ✅ | ➖ / ✅ / ✅ | ✅ / ✅ / ✅ | ✅ / ✅ / ✅ | ➖\* / ✅ / ✅ | ✅ / ✅ / ✅ |
-| Single static binary, zero deps | ✅ (Go) | shell script | ✅ (Rust) | ✅ (Rust) | ✅ (mise) | ✅ (Rust) |
+| Single static binary | ✅ (Go) | shell script | ✅ (Rust) | ✅ (Rust) | ✅ (mise) | ✅ (Rust) |
 | Runtimes managed | Node, Bun, Deno, Go, Python | Node | Node | Node | many (plugins) | Python |
-| Auto-switch on `cd` | ✅ | shell hook | ✅ | ✅ | ✅ | ✅ (project pin) |
+| Auto-switch on `cd` | ✅ | shell hook | ✅ | ✅ | ✅ | project pin |
 | Session-scoped switching (no global mutation) | ✅ | ✅ | ✅ | shims | shims | n/a |
 | Checksum-verified downloads | ✅ | ✅ | ✅ | ✅ | varies | ✅ |
-| Package resolution / lockfiles | ➖ (not a package manager) | ➖ | ➖ | ➖ | ➖ | ✅ (best-in-class) |
-| **Typosquat / OSV / release-age gate** | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
-| **OS sandbox for install/run** | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
-| **Egress allowlist for scripts** | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
-| **Env-secret scrubbing in sandbox** | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
+| Package resolution / lockfiles | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ |
+| Typosquat / OSV / release-age checks | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
+| OS sandbox for install/run | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
+| Egress allowlist for scripts | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
+| Env-secret scrubbing in sandbox | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
 
-<sub>\* asdf is Unix-only; mise (asdf-compatible) has Windows support. Rows reflect defaults; some tools can approximate others with extra setup. Comparisons are best-effort and current as of writing.</sub>
+<sub>\* asdf is Unix-only; mise adds Windows support. Rows reflect out-of-the-box defaults at time of writing.</sub>
 
-**The honest read:** as a *version manager*, nvx is in the same class as fnm and mise (fast, static, cross-platform, session-scoped). The bottom four rows — supply-chain gating and OS-level sandboxing — are empty for everyone else. That's the point of nvx: **a runtime manager that also contains what it installs and runs.** For Python dependency resolution specifically, use `uv`; nvx wraps `uv`/`uvx` so those runs are sandboxed rather than competing with them.
+nvx is not a package manager and does not resolve dependencies or manage lockfiles. For Python, install `uv` and nvx will wrap `uv`/`uvx` so tool runs are sandboxed (`pyx` is shorthand for a sandboxed `uvx`).
 
 ---
 
