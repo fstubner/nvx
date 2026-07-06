@@ -53,20 +53,17 @@ func ensureAppContainerSID(profileName string) (uintptr, error) {
 	if err != nil {
 		return 0, err
 	}
-
-	var sid uintptr
-	hr, _, _ := procDeriveAppContainerSidFromAppContainerName.Call(
-		uintptr(unsafe.Pointer(name)),
-		uintptr(unsafe.Pointer(&sid)),
-	)
-	if hr == 0 && sid != 0 {
-		return sid, nil
-	}
-
 	display, _ := syscall.UTF16PtrFromString("nvx sandbox")
 	desc, _ := syscall.UTF16PtrFromString("Ephemeral nvx execution sandbox")
+
+	// Register the profile FIRST. DeriveAppContainerSidFromAppContainerName
+	// succeeds for any valid name whether or not a profile is registered, so
+	// deriving first would skip CreateAppContainerProfile and leave the SID
+	// unbacked — CreateProcess then fails with "cannot find the file specified".
+	// Creating first is idempotent: an existing profile returns ALREADY_EXISTS,
+	// after which we derive the SID for the registered profile.
 	var newSid uintptr
-	hr, _, callErr := procCreateAppContainerProfile.Call(
+	hr, _, createErr := procCreateAppContainerProfile.Call(
 		uintptr(unsafe.Pointer(name)),
 		uintptr(unsafe.Pointer(display)),
 		uintptr(unsafe.Pointer(desc)),
@@ -77,18 +74,17 @@ func ensureAppContainerSID(profileName string) (uintptr, error) {
 		return newSid, nil
 	}
 
-	// 0x80073D10 = HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)
-	if hr == 0x80073D10 {
-		hr, _, callErr = procDeriveAppContainerSidFromAppContainerName.Call(
-			uintptr(unsafe.Pointer(name)),
-			uintptr(unsafe.Pointer(&sid)),
-		)
-		if hr == 0 && sid != 0 {
-			return sid, nil
-		}
+	// Profile already exists (or create failed) — derive the SID for it.
+	var sid uintptr
+	dhr, _, deriveErr := procDeriveAppContainerSidFromAppContainerName.Call(
+		uintptr(unsafe.Pointer(name)),
+		uintptr(unsafe.Pointer(&sid)),
+	)
+	if dhr == 0 && sid != 0 {
+		return sid, nil
 	}
 
-	return 0, fmt.Errorf("DeriveAppContainerSid failed (hr=0x%X): %v", hr, callErr)
+	return 0, fmt.Errorf("AppContainer profile unavailable (create hr=0x%X: %v; derive hr=0x%X: %v)", hr, createErr, dhr, deriveErr)
 }
 
 func deleteAppContainerProfile(profileName string) {
