@@ -80,6 +80,10 @@ python-build-standalone distribution:
 - **`python -m pip`, not a pip launcher.** The interpreter (`python`, `python3`)
   is shimmed; pip is a module invocation, so a standalone pip launcher is left to
   the post-install hook (below) rather than faked.
+- **uv / uvx / pyx.** The Python provider also shims `uv` and `uvx` when they are
+  on PATH (nvx does not install uv), so ephemeral PyPI tool runs are sandboxed
+  and egress-limited. `pyx` is an nvx alias resolved to a sandboxed `uvx` in
+  `runShim` — the `npx`-auditing idea, for Python.
 
 Walking the interface against the remaining runtime:
 

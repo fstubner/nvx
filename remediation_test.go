@@ -405,6 +405,39 @@ func TestPythonProviderSelectionAndShims(t *testing.T) {
 	}
 }
 
+func TestUvUvxPyxWrapping(t *testing.T) {
+	// uv/uvx/pyx route through the Python provider so they are sandboxed.
+	for _, cmd := range []string{"uv", "uvx", "pyx"} {
+		if got := runtimeForShim(cmd).Name(); got != "python" {
+			t.Errorf("runtimeForShim(%q) = %q, want python", cmd, got)
+		}
+	}
+	// pyx is an alias for a sandboxed uvx.
+	if got := canonicalShimName("pyx"); got != "uvx" {
+		t.Errorf("canonicalShimName(pyx) = %q, want uvx", got)
+	}
+	if got := canonicalShimName("uvx"); got != "uvx" {
+		t.Errorf("canonicalShimName(uvx) = %q, want uvx", got)
+	}
+	if got := canonicalShimName("npm"); got != "npm" {
+		t.Errorf("canonicalShimName(npm) = %q, want unchanged", got)
+	}
+	// uv/uvx are shimmed but not npm-audited (PyPI, not npm).
+	if pkgs := detectShimPackagesForVerification("uvx", []string{"ruff", "check"}); len(pkgs) != 0 {
+		t.Errorf("uvx must not be npm-audited, got %v", pkgs)
+	}
+	// pyx is a generated shim so `nvx env` puts it on PATH.
+	found := false
+	for _, c := range allShimCommands() {
+		if c == "pyx" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("pyx should be among generated shim commands")
+	}
+}
+
 func TestCompareInternalVersions(t *testing.T) {
 	if compareInternalVersions("v3.13.2", "v3.12.13") <= 0 {
 		t.Error("3.13.2 should sort above 3.12.13")
