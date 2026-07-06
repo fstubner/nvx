@@ -246,8 +246,8 @@ func printHelp() {
 Usage:
   nvx <command> [arguments]
 
-Runtimes: Node.js, Bun, Deno, Go, Python. A bare version is Node.js (nvm-compatible);
-prefix another runtime with '@' (e.g. bun@1.2, go@1.23, python@3.12).
+Runtimes: Node.js and Bun. A bare version is Node.js (nvm-compatible);
+prefix Bun with '@' (e.g. bun@1.2).
 
 Commands:
   install <[rt@]version>   Download and install a runtime version (e.g. 20, lts, bun@1.2)
@@ -258,8 +258,7 @@ Commands:
   list-remote, ls-remote   List available Node.js versions from nodejs.org
   env [--shell=<type>]     Print shell integration script (powershell, bash, zsh)
   auto [--shell=<type>]    Auto-switch runtimes from .nvmrc / .node-version /
-                           .bun-version / .deno-version / .go-version /
-                           .python-version / package.json
+                           .bun-version / package.json
   verify-install <pkgs>    Verify package safety before installing (called by wrappers)
   init-shims               Generate PATH shims in ~/.nvx/bin (and project bin shims in a project)
   policy init              Scaffold ~/.nvx/policy.json and/or .nvx-policy.json
@@ -276,7 +275,7 @@ Examples:
   nvx install lts
   nvx install bun@1.2
   nvx use 20.11.0
-  nvx use python@3.12`)
+  nvx use bun@1.2`)
 }
 
 // UI Logging helpers (stderr)
@@ -682,9 +681,8 @@ func runAuto(nvxHome string, shell string) {
 		return
 	}
 
-	// Detect and switch every runtime the directory declares (a polyglot repo may
-	// have both .nvmrc and .python-version), building one combined PATH so the
-	// runtimes coexist instead of overwriting each other.
+	// Detect and switch every runtime the directory declares (e.g. .nvmrc and
+	// .bun-version), building one combined PATH so Node and Bun coexist.
 	pathAcc := os.Getenv("PATH")
 	npmPrefix := ""
 	var sessionEnv [][2]string
