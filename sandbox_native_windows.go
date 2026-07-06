@@ -81,13 +81,50 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1
 	}
 
+	// Network: AppContainers cannot reach the loopback egress proxy, so by
+	// default we grant internetClient and run direct (network works, egress not
+	// OS-allowlisted). The admin loopback-allowlist opt-in flips this to a
+	// proxied, allowlisted path. offline/loopback modes grant nothing.
+	capabilitySIDs, useProxy := windowsSandboxNetwork(config.NvxHome, netCtx.Mode)
+	if !useProxy {
+		cleanEnv = stripProxyEnv(cleanEnv)
+	}
+
 	LogInfo("Windows AppContainer isolation active")
 	exitCode, err := launchAppContainerProcess(
-		cmdPath, launchArgs, cleanEnv, workDir, sid, 0,
+		cmdPath, launchArgs, cleanEnv, workDir, sid, 0, capabilitySIDs,
 	)
 	if err != nil {
 		LogError("AppContainer launch failed: %v", err)
 		return 1
 	}
 	return exitCode
+}
+
+// windowsSandboxNetwork decides AppContainer network capabilities and whether to
+// route through the loopback egress proxy, based on network.mode and whether the
+// admin loopback allowlist is enabled.
+func windowsSandboxNetwork(nvxHome, mode string) (capabilitySIDs []string, useProxy bool) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "offline", "loopback":
+		return nil, false // no capabilities: sandbox has no network
+	}
+	if windowsLoopbackAllowlistEnabled(nvxHome) {
+		// Stable, loopback-exempted SID can reach the proxy; egress is allowlisted.
+		return nil, true
+	}
+	// Default: internetClient so network works; direct (egress not allowlisted).
+	return []string{capabilityInternetClientSID}, false
+}
+
+func stripProxyEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		switch strings.ToUpper(strings.SplitN(e, "=", 2)[0]) {
+		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY":
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }

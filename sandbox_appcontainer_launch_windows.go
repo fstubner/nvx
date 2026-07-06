@@ -30,9 +30,48 @@ type processInformation struct {
 	dwThreadID  uint32
 }
 
+// Well-known capability SIDs (see winnt.h / app-capability docs).
+const (
+	capabilityInternetClientSID             = "S-1-15-3-1"
+	capabilityPrivateNetworkClientServerSID = "S-1-15-3-3"
+	seGroupEnabled                          = 0x00000004
+)
+
+// buildCapabilitySIDAttrs converts capability SID strings into an enabled
+// SID_AND_ATTRIBUTES array for a securityCapabilities struct. The returned free
+// func releases the allocated SIDs and must be called after CreateProcess.
+func buildCapabilitySIDAttrs(sidStrings []string) ([]SID_AND_ATTRIBUTES, func(), error) {
+	var attrs []SID_AND_ATTRIBUTES
+	var sids []*syscall.SID
+	free := func() {
+		for _, s := range sids {
+			procLocalFree.Call(uintptr(unsafe.Pointer(s)))
+		}
+	}
+	for _, str := range sidStrings {
+		p, err := syscall.UTF16PtrFromString(str)
+		if err != nil {
+			free()
+			return nil, nil, err
+		}
+		var sid *syscall.SID
+		if err := convertStringSidToSid(p, &sid); err != nil {
+			free()
+			return nil, nil, fmt.Errorf("convert capability SID %s: %w", str, err)
+		}
+		sids = append(sids, sid)
+		attrs = append(attrs, SID_AND_ATTRIBUTES{
+			Sid:        uintptr(unsafe.Pointer(sid)),
+			Attributes: seGroupEnabled,
+		})
+	}
+	return attrs, free, nil
+}
+
 // launchAppContainerProcess starts cmdPath with AppContainer isolation via
 // CreateProcessAsUserW + PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES. The
 // lowILToken path is retained for legacy callers, but native launch passes 0.
+// capabilitySIDs grants AppContainer capabilities (e.g. internetClient).
 func launchAppContainerProcess(
 	cmdPath string,
 	args []string,
@@ -40,8 +79,9 @@ func launchAppContainerProcess(
 	workDir string,
 	appContainerSID uintptr,
 	lowILToken syscall.Token,
+	capabilitySIDs []string,
 ) (exitCode int, err error) {
-	exitCode, err = launchAppContainerProcessOnce(cmdPath, args, env, workDir, appContainerSID, lowILToken)
+	exitCode, err = launchAppContainerProcessOnce(cmdPath, args, env, workDir, appContainerSID, lowILToken, capabilitySIDs)
 	if err == nil || !isCreateProcessMissingFile(err) {
 		return exitCode, err
 	}
@@ -55,7 +95,7 @@ func launchAppContainerProcess(
 		return exitCode, err
 	}
 	wrapped := append([]string{"/c", cmdPath}, args...)
-	return launchAppContainerProcessOnce(cmdExe, wrapped, env, workDir, appContainerSID, lowILToken)
+	return launchAppContainerProcessOnce(cmdExe, wrapped, env, workDir, appContainerSID, lowILToken, capabilitySIDs)
 }
 
 func isCreateProcessMissingFile(err error) bool {
@@ -73,6 +113,7 @@ func launchAppContainerProcessOnce(
 	workDir string,
 	appContainerSID uintptr,
 	lowILToken syscall.Token,
+	capabilitySIDs []string,
 ) (exitCode int, err error) {
 	attrBuf, attrList, err := initProcThreadAttributeList(1)
 	if err != nil {
@@ -80,9 +121,18 @@ func launchAppContainerProcessOnce(
 	}
 	defer deleteProcThreadAttributeList(attrList)
 
+	capAttrs, freeCaps, err := buildCapabilitySIDAttrs(capabilitySIDs)
+	if err != nil {
+		return 1, err
+	}
+	defer freeCaps()
+
 	secCaps := securityCapabilities{
 		appContainerSid: appContainerSID,
-		capabilityCount: 0,
+	}
+	if len(capAttrs) > 0 {
+		secCaps.capabilities = uintptr(unsafe.Pointer(&capAttrs[0]))
+		secCaps.capabilityCount = uint32(len(capAttrs))
 	}
 	if err := updateProcThreadAttribute(
 		attrList,
@@ -176,8 +226,9 @@ func launchAppContainerProcessOnce(
 		)
 	}
 
-	// Keep attribute buffer alive through CreateProcess.
+	// Keep the attribute buffer and capability SID array alive through CreateProcess.
 	_ = attrBuf
+	_ = capAttrs
 
 	if createOK == 0 {
 		return 1, fmt.Errorf("CreateProcess(AppContainer) exe=%q cwd=%q: %v", cmdPath, workDir, createErr)
