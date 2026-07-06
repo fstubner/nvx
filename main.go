@@ -246,20 +246,25 @@ func printHelp() {
 Usage:
   nvx <command> [arguments]
 
+Runtimes: Node.js, Bun, Deno, Go, Python. A bare version is Node.js (nvm-compatible);
+prefix another runtime with '@' (e.g. bun@1.2, go@1.23, python@3.12).
+
 Commands:
-  install <version>      Download and install a Node.js version (e.g. 20, lts, latest)
-  uninstall <version>    Remove an installed Node.js version
-  use <version>          Switch Node.js version in the current terminal session
-  default <version>      Set the global default Node.js version (creates a link)
-  list, ls               List all installed Node.js versions
-  list-remote, ls-remote List available Node.js versions from nodejs.org
-  env [--shell=<type>]   Print shell integration script (powershell, bash, zsh)
-  auto [--shell=<type>]  Auto-switch version based on .nvmrc / .node-version / package.json
-  verify-install <pkgs>  Verify package safety before installing (called by wrappers)
-  init-shims             Generate PATH shims in ~/.nvx/bin (and project bin shims when in a Node project)
-  policy init            Scaffold ~/.nvx/policy.json and/or .nvx-policy.json
-  shim <cmd> [args]      Internal shim router for package managers
-  cleanup                Remove stale sandbox sessions from previous runs
+  install <[rt@]version>   Download and install a runtime version (e.g. 20, lts, bun@1.2)
+  uninstall <[rt@]version> Remove an installed runtime version
+  use <[rt@]version>       Switch the current terminal session to a runtime version
+  default <[rt@]version>   Set the global default for a runtime (creates a link)
+  list, ls                 List installed runtimes and versions
+  list-remote, ls-remote   List available Node.js versions from nodejs.org
+  env [--shell=<type>]     Print shell integration script (powershell, bash, zsh)
+  auto [--shell=<type>]    Auto-switch runtimes from .nvmrc / .node-version /
+                           .bun-version / .deno-version / .go-version /
+                           .python-version / package.json
+  verify-install <pkgs>    Verify package safety before installing (called by wrappers)
+  init-shims               Generate PATH shims in ~/.nvx/bin (and project bin shims in a project)
+  policy init              Scaffold ~/.nvx/policy.json and/or .nvx-policy.json
+  shim <cmd> [args]        Internal shim router for package managers
+  cleanup                  Remove stale sandbox sessions from previous runs
 
 Options:
   --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
@@ -269,9 +274,9 @@ Options:
 
 Examples:
   nvx install lts
+  nvx install bun@1.2
   nvx use 20.11.0
-  npm run dev
-  nvx default 18.16.0`)
+  nvx use python@3.12`)
 }
 
 // UI Logging helpers (stderr)
@@ -677,38 +682,68 @@ func runAuto(nvxHome string, shell string) {
 		return
 	}
 
-	query, sourceFile, err := DetectVersionConfig(cwd)
-	if err != nil || query == "" {
-		return
-	}
+	// Detect and switch every runtime the directory declares (a polyglot repo may
+	// have both .nvmrc and .python-version), building one combined PATH so the
+	// runtimes coexist instead of overwriting each other.
+	pathAcc := os.Getenv("PATH")
+	npmPrefix := ""
+	var sessionEnv [][2]string
+	changed := false
 
-	provider := Providers["node"]
-	resolvedVer, err := resolveLocalVersion(provider, query, nvxHome)
-	if err != nil {
-		promptMsg := fmt.Sprintf("Directory requires Node.js %s (from %s), but it is not installed. Install it now?", query, filepath.Base(sourceFile))
-		if PromptYesNo(promptMsg) {
-			runInstall(query, nvxHome)
-			resolvedVer, err = resolveLocalVersion(provider, query, nvxHome)
-			if err != nil {
-				LogError("[nvx] Failed to resolve newly installed version: %v", err)
-				return
-			}
-		} else {
-			LogWarn("[nvx] Directory requires Node.js %s (from %s) but it is not installed.", query, filepath.Base(sourceFile))
-			LogWarn("[nvx] Run 'nvx install %s' to install it.", query)
-			return
+	for _, name := range orderedRuntimeNames() {
+		provider := Providers[name]
+		query, sourceFile, derr := provider.DetectConfig(cwd)
+		if derr != nil || query == "" {
+			continue
 		}
+		display := runtimeDisplayName(name)
+
+		resolvedVer, rerr := resolveLocalVersion(provider, query, nvxHome)
+		if rerr != nil {
+			promptMsg := fmt.Sprintf("Directory requires %s %s (from %s), but it is not installed. Install it now?", display, query, filepath.Base(sourceFile))
+			if PromptYesNo(promptMsg) {
+				if ierr := provider.Install(query, nvxHome); ierr != nil {
+					LogError("[nvx] Failed to install %s: %v", display, ierr)
+					continue
+				}
+				resolvedVer, rerr = resolveLocalVersion(provider, query, nvxHome)
+				if rerr != nil {
+					continue
+				}
+			} else {
+				LogWarn("[nvx] Directory requires %s %s (from %s) but it is not installed. Run 'nvx install %s@%s'.", display, query, filepath.Base(sourceFile), name, query)
+				continue
+			}
+		}
+
+		if getActiveShellVersionFor(nvxHome, name) == resolvedVer {
+			continue
+		}
+
+		targetDir := filepath.Join(nvxHome, "versions", name, resolvedVer)
+		prefix := ""
+		if name == "node" {
+			prefix = resolveNpmPrefixDir(nvxHome, targetDir)
+			npmPrefix = prefix
+		}
+		pathAcc = CleanAndBuildPath(pathAcc, nvxHome, targetDir, prefix)
+		for k, v := range provider.SessionEnv(targetDir) {
+			sessionEnv = append(sessionEnv, [2]string{k, v})
+		}
+		changed = true
+		LogInfo("[nvx] Found %s: switching to %s %s", filepath.Base(sourceFile), display, resolvedVer)
 	}
 
-	activeVer := getActiveShellVersion(nvxHome)
-	if activeVer == resolvedVer {
+	if !changed {
 		return
 	}
-
-	LogInfo("[nvx] Found %s: switching to Node.js %s", filepath.Base(sourceFile), resolvedVer)
-
-	targetDir := filepath.Join(nvxHome, "versions", provider.Name(), resolvedVer)
-	emitSessionEnv(shell, nvxHome, targetDir)
+	fmt.Print(shellEnvAssignment(shell, "PATH", FormatPathForShell(shell, pathAcc)))
+	if npmPrefix != "" {
+		fmt.Print(shellEnvAssignment(shell, "NPM_CONFIG_PREFIX", FormatPathForShell(shell, npmPrefix)))
+	}
+	for _, kv := range sessionEnv {
+		fmt.Print(shellEnvAssignment(shell, kv[0], kv[1]))
+	}
 }
 
 // resolveNpmPrefixDir returns the npm global prefix for the session: the
