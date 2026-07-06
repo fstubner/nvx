@@ -9,31 +9,45 @@ import (
 	"syscall"
 )
 
-// rewriteWindowsNodeCliCommand turns npm.cmd / npx.cmd into a direct
-// "node.exe <cli>.js" invocation. Two AppContainer-specific reasons:
-//   - Batch files can't be CreateProcess'd, so nvx would otherwise fall back to
-//     cmd.exe, which is denied inside the container; node.exe runs directly.
-//   - Node's module loader realpath's the entry and its requires, which lstats
-//     every ancestor up to the drive root (C:\) — the AppContainer cannot stat
-//     C:\, giving EPERM. --preserve-symlinks[-main] skips that realpath walk.
-func rewriteWindowsNodeCliCommand(cmdPath string, args []string) (string, []string) {
-	var cli string
+// nodeSandboxPreserveFlags let node run inside an AppContainer. Node's module
+// loader realpath's the entry and every require, which lstats each path up to
+// the drive root (C:\). An AppContainer cannot stat C:\ (that grant needs
+// elevation), so without these flags any file/require fails with EPERM. The
+// flags skip the realpath walk. Bypass with --no-sandbox if a project relies on
+// symlink-resolved module identity (e.g. some pnpm layouts).
+var nodeSandboxPreserveFlags = []string{"--preserve-symlinks-main", "--preserve-symlinks"}
+
+// rewriteWindowsNodeCommand adapts a resolved command for AppContainer launch:
+//   - npm.cmd / npx.cmd become a direct "node.exe <cli>.js" call, because batch
+//     files can't be CreateProcess'd and the cmd.exe fallback is denied inside
+//     the container.
+//   - any node.exe invocation gains the preserve-symlinks flags (see above).
+func rewriteWindowsNodeCommand(cmdPath string, args []string) (string, []string) {
 	switch strings.ToLower(filepath.Base(cmdPath)) {
-	case "npm.cmd":
-		cli = "npm-cli.js"
-	case "npx.cmd":
-		cli = "npx-cli.js"
+	case "npm.cmd", "npx.cmd":
+		cli := "npm-cli.js"
+		if strings.EqualFold(filepath.Base(cmdPath), "npx.cmd") {
+			cli = "npx-cli.js"
+		}
+		dir := filepath.Dir(cmdPath)
+		nodeExe := filepath.Join(dir, "node.exe")
+		cliPath := filepath.Join(dir, "node_modules", "npm", "bin", cli)
+		if !regularFileExists(nodeExe) || !regularFileExists(cliPath) {
+			return cmdPath, args
+		}
+		rewritten := make([]string, 0, len(nodeSandboxPreserveFlags)+1+len(args))
+		rewritten = append(rewritten, nodeSandboxPreserveFlags...)
+		rewritten = append(rewritten, cliPath)
+		rewritten = append(rewritten, args...)
+		return nodeExe, rewritten
+	case "node.exe":
+		rewritten := make([]string, 0, len(nodeSandboxPreserveFlags)+len(args))
+		rewritten = append(rewritten, nodeSandboxPreserveFlags...)
+		rewritten = append(rewritten, args...)
+		return cmdPath, rewritten
 	default:
 		return cmdPath, args
 	}
-	dir := filepath.Dir(cmdPath)
-	nodeExe := filepath.Join(dir, "node.exe")
-	cliPath := filepath.Join(dir, "node_modules", "npm", "bin", cli)
-	if !regularFileExists(nodeExe) || !regularFileExists(cliPath) {
-		return cmdPath, args
-	}
-	rewritten := append([]string{"--preserve-symlinks-main", "--preserve-symlinks", cliPath}, args...)
-	return nodeExe, rewritten
 }
 
 func regularFileExists(path string) bool {
@@ -58,9 +72,8 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		LogError("AppContainer filesystem setup failed: %v", err)
 		return 1
 	}
-	// Prefer a direct node.exe invocation for npm/npx so the container never
-	// needs cmd.exe to interpret a .cmd wrapper.
-	cmdPath, launchArgs := rewriteWindowsNodeCliCommand(cmdPath, config.Args)
+	// Adapt node/npm/npx for AppContainer launch (direct node.exe, realpath-safe).
+	cmdPath, launchArgs := rewriteWindowsNodeCommand(cmdPath, config.Args)
 
 	cmdPath, err = ensureAppContainerCommand(sid, config.NvxHome, cmdPath)
 	if err != nil {
