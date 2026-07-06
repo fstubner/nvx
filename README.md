@@ -9,7 +9,7 @@
 
 
 
-`nvx` is a fast, cross-platform runtime version manager that **audits and sandboxes everything your package managers install — including whatever your AI coding agents run**. It manages Node.js, Bun, Deno, Go, and Python like nvm/fnm/asdf, then adds an ambient security layer on top: every wrapped `npm`/`yarn`/`pnpm`/`npx`/`bun`/`bunx`/`uvx` command is checked for typosquatting and known vulnerabilities and executed inside a native OS sandbox.
+`nvx` is a fast, cross-platform **JavaScript runtime version manager** that **audits and sandboxes npm-family toolchain commands — including whatever your AI coding agents run**. It manages **Node.js and Bun** like nvm/fnm, then adds an ambient security layer: every wrapped `npm`/`yarn`/`pnpm`/`npx`/`bun`/`bunx` command is checked for typosquatting and known vulnerabilities and executed inside a native OS sandbox.
 
 Zero dependencies, one static binary, Windows/macOS/Linux. Originally built to fix the lack of a fast native runtime manager on Windows; the security layer is what makes it worth switching to.
 
@@ -33,7 +33,7 @@ Along the way, I wanted to tackle a few other common frustrations:
 
 ## Features
 
-- **Multi-Runtime Core**: Manages **Node.js, Bun, Deno, Go, and Python** today through a `RuntimeProvider` interface designed to extend to further runtimes (Rust) — see [docs/runtime-providers.md](docs/runtime-providers.md). Select a runtime with `runtime@version` (e.g. `nvx install bun@1.2`, `nvx install deno@2.1`, `nvx install go@1.23`, `nvx install python@3.12`); a bare version stays Node.js for nvm compatibility.
+- **Multi-Runtime Core**: Manages **Node.js and Bun** through a `RuntimeProvider` interface — see [docs/runtime-providers.md](docs/runtime-providers.md). Select Bun with `runtime@version` (e.g. `nvx install bun@1.2`); a bare version stays Node.js for nvm compatibility.
 - **Cascading Security Policies**: Resolves global and local directory-level policy blocks from `.nvx-policy.json`.
 - **Registry-Backed Typosquatting Audits**: Cross-checks package names against a synced list of popular packages and queries the npm registry download API dynamically to verify download counts and distinguish typosquats from legitimate packages.
 
@@ -53,7 +53,7 @@ Along the way, I wanted to tackle a few other common frustrations:
 |---|---|---|---|---|---|---|
 | Windows / macOS / Linux | ✅ / ✅ / ✅ | ➖ / ✅ / ✅ | ✅ / ✅ / ✅ | ✅ / ✅ / ✅ | ➖\* / ✅ / ✅ | ✅ / ✅ / ✅ |
 | Single static binary | ✅ (Go) | shell script | ✅ (Rust) | ✅ (Rust) | ✅ (mise) | ✅ (Rust) |
-| Runtimes managed | Node, Bun, Deno, Go, Python | Node | Node | Node | many (plugins) | Python |
+| Runtimes managed | Node.js, Bun | Node | Node | Node | many (plugins) | Python |
 | Auto-switch on `cd` | ✅ | shell hook | ✅ | ✅ | ✅ | project pin |
 | Session-scoped switching (no global mutation) | ✅ | ✅ | ✅ | shims | shims | n/a |
 | Checksum-verified downloads | ✅ | ✅ | ✅ | ✅ | varies | ✅ |
@@ -65,7 +65,7 @@ Along the way, I wanted to tackle a few other common frustrations:
 
 <sub>\* asdf is Unix-only; mise adds Windows support. Rows reflect out-of-the-box defaults at time of writing.</sub>
 
-nvx is not a package manager and does not resolve dependencies or manage lockfiles. For Python, install `uv` and nvx will wrap `uv`/`uvx` so tool runs are sandboxed (`pyx` is shorthand for a sandboxed `uvx`).
+nvx is not a package manager and does not resolve dependencies or manage lockfiles.
 
 ---
 
@@ -114,7 +114,7 @@ Commands:
   cleanup                  Remove stale sandbox sessions from previous runs
   version, -v              Print version info
 
-Shim flags (node, npm, npx, yarn, pnpm, bun, bunx, deno, go, python, uv, uvx via PATH):
+Shim flags (node, npm, npx, yarn, pnpm, bun, bunx):
   --no-sandbox             Run without sandbox for this invocation
   --filesystem-provider=<name>  Override isolation.filesystem.provider
                            (native | docker; experimental: wsl, wslc, systemd-nspawn)
@@ -122,7 +122,7 @@ Shim flags (node, npm, npx, yarn, pnpm, bun, bunx, deno, go, python, uv, uvx via
 
 ### Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun`, `bunx`, `deno`, `go`, `python`, and `uv`/`uvx` are sandboxed by default** when `isolation.enabled` is true. No separate sandbox subcommand — just run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun`, and `bunx` are sandboxed by default** when `isolation.enabled` is true. No separate sandbox subcommand — just run commands normally:
 
 ```bash
 npm install
@@ -131,8 +131,6 @@ node server.js
 ```
 
 Use `--no-sandbox` on a shim invocation to bypass isolation for one command.
-
-**Running PyPI tools safely:** if you have [uv](https://docs.astral.sh/uv/), nvx wraps `uv` and `uvx` so ephemeral tool runs are sandboxed and egress-limited. `pyx <tool>` is a convenience alias for a sandboxed `uvx <tool>` — the same idea as auditing `npx`, for Python.
 
 After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh **project bin shims** in `.nvx/project-bin/`. These wrap `node_modules/.bin` tools so local CLIs (e.g. `vite`, `eslint`) are sandboxed too.
 
@@ -249,9 +247,9 @@ Web development requires running local dev servers (e.g. listening on port `3000
 * **Native Sandbox**: Loopback bind/connect works for dev servers. With `network.mode: proxy`, outbound TCP goes through the nvx allowlist proxy (HTTP_PROXY / SOCKS5). Host services on `localhost` remain reachable via `allow_hosts`.
 * **Docker Sandbox**: With `network.mode: open`, the container can reach host services via the standard Docker host gateway. With `offline`/`loopback` the container runs with `--network none` (no network at all). Allowlisted `proxy` mode is not supported under Docker — use the native provider when you need per-host egress control.
 
-### What if a project needs multiple runtimes (e.g., Node and Bun)?
-`nvx` manages Node.js and Bun directly — `nvx use node@20` and `nvx use bun@1.2` activate independently in the same shell without evicting each other from `PATH`.
-* **Native Sandbox**: Other toolchains already installed on your host (Python, Go, etc.) remain visible and run alongside the nvx-managed runtime.
+### What if a project needs both Node and Bun?
+`nvx use node@20` and `nvx use bun@1.2` activate independently in the same shell without evicting each other from `PATH`.
+* **Native Sandbox**: Other toolchains already installed on your host remain visible and run alongside nvx-managed runtimes (not sandboxed unless shimmed).
 * **Docker Sandbox**: The image is chosen from the active runtime (`node:<v>` or `oven/bun:<v>`). For a multi-language stack, supply your own image via a Dockerfile or `docker-compose`.
 
 ### Does nvx handle TypeScript and bundler commands?
