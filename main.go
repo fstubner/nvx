@@ -273,6 +273,8 @@ Commands:
   policy init              Scaffold ~/.nvx/policy.json and/or .nvx-policy.json
   shim <cmd> [args]        Internal shim router for package managers
   cleanup                  Remove stale sandbox sessions from previous runs
+  setup                    (Windows) One-time elevated setup that lets the
+                           sandbox run package managers; 'setup --undo' reverses
 
 Options:
   --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
