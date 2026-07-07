@@ -14,14 +14,16 @@ import (
 	"unsafe"
 )
 
-// runPrivilegedCmd runs a setup command with a timeout so a stuck external tool
-// surfaces as an error instead of hanging the whole setup.
-func runPrivilegedCmd(name string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// runWinCmd runs an external command with a timeout so a stuck tool surfaces as
+// an error instead of hanging. (icacls can hang indefinitely when a filter
+// driver intercepts writes to certain paths, e.g. the OneDrive/Defender-guarded
+// profile root — so every privileged call is time-boxed.)
+func runWinCmd(timeout time.Duration, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
-		return out, fmt.Errorf("%s timed out after 30s", name)
+		return out, fmt.Errorf("%s timed out after %s", name, timeout)
 	}
 	return out, err
 }
@@ -73,18 +75,21 @@ func windowsAncestorGrantPaths() []string {
 	}
 	add(sysDrive + `\`)
 	add(filepath.Join(sysDrive+`\`, "Users"))
+	// The profile root (C:\Users\<user>) already grants ALL APPLICATION PACKAGES,
+	// so it needs no grant and is deliberately excluded (its ACL write hangs
+	// behind the OneDrive/Defender filter driver). Cover another volume's roots
+	// only if the profile lives off the system drive.
 	if up := os.Getenv("USERPROFILE"); up != "" {
-		if vol := filepath.VolumeName(up); vol != "" {
+		if vol := filepath.VolumeName(up); vol != "" && !strings.EqualFold(vol, sysDrive) {
 			add(vol + `\`)
 			add(filepath.Join(vol+`\`, "Users"))
 		}
-		add(up)
 	}
 	return paths
 }
 
 func grantSidReadExecThisFolder(sidStr, path string) error {
-	out, err := runPrivilegedCmd("icacls", path, "/grant", fmt.Sprintf("*%s:(RX)", sidStr), "/c", "/q")
+	out, err := runWinCmd(30*time.Second, "icacls", path, "/grant", fmt.Sprintf("*%s:(RX)", sidStr), "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls grant %s: %v (%s)", path, err, strings.TrimSpace(string(out)))
 	}
@@ -92,7 +97,7 @@ func grantSidReadExecThisFolder(sidStr, path string) error {
 }
 
 func revokeSidGrant(sidStr, path string) error {
-	out, err := runPrivilegedCmd("icacls", path, "/remove:g", "*"+sidStr, "/c", "/q")
+	out, err := runWinCmd(30*time.Second, "icacls", path, "/remove:g", "*"+sidStr, "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls remove %s: %v (%s)", path, err, strings.TrimSpace(string(out)))
 	}
@@ -104,7 +109,7 @@ func setLoopbackExempt(add bool, sidStr string) error {
 	if !add {
 		flag = "-d"
 	}
-	out, err := runPrivilegedCmd("CheckNetIsolation", "LoopbackExempt", flag, "-p="+sidStr)
+	out, err := runWinCmd(30*time.Second, "CheckNetIsolation", "LoopbackExempt", flag, "-p="+sidStr)
 	if err != nil {
 		return fmt.Errorf("CheckNetIsolation LoopbackExempt %s: %v (%s)", flag, err, strings.TrimSpace(string(out)))
 	}

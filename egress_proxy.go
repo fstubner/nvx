@@ -236,6 +236,19 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 			_, _ = fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
 			return
 		}
+		// Drain the remaining CONNECT request headers up to the blank line.
+		// Otherwise the buffered bytes (Host:, etc.) would be forwarded to the
+		// remote ahead of the client's TLS ClientHello, corrupting the handshake
+		// (ERR_SSL_PACKET_LENGTH_TOO_LONG).
+		for {
+			line, lerr := br.ReadString('\n')
+			if lerr != nil {
+				return
+			}
+			if line == "\r\n" || line == "\n" {
+				break
+			}
+		}
 		remote, err := net.Dial("tcp", target)
 		if err != nil {
 			_, _ = fmt.Fprintf(client, "HTTP/1.1 502 Bad Gateway\r\n\r\n")

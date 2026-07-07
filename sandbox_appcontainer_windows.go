@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -32,32 +32,52 @@ var (
 // compatibility with legacy constrained launches; workDir stays default
 // integrity so a normal AppContainer child can use it as cwd.
 func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) error {
-	for _, dir := range []string{guestHome, workDir} {
-		if dir == "" {
-			continue
-		}
-		if err := grantAppContainerPath(sid, dir); err != nil {
+	// The guest home must be writable; it is nvx-owned and safe to grant.
+	if guestHome != "" {
+		if err := grantAppContainerPath(sid, guestHome); err != nil {
 			return err
 		}
-	}
-	if guestHome != "" {
 		if err := labelLowIntegrity(guestHome); err != nil {
 			return fmt.Errorf("integrity label for %q: %w", guestHome, err)
 		}
 	}
+
+	// The working-directory grant is best-effort. Many commands (e.g. npx) never
+	// write the cwd, and the profile root both cannot be granted (its ACL write
+	// hangs behind the OneDrive/Defender filter driver) and already grants ALL
+	// APPLICATION PACKAGES for stat/traverse. Sandbox writes go to the guest home
+	// regardless, so a failed workdir grant should not abort the run.
+	if workDir != "" && !isProfileRoot(workDir) {
+		if err := grantAppContainerPath(sid, workDir); err != nil {
+			LogWarn("Could not grant the sandbox write access to %q: %v", workDir, err)
+			LogInfo("Commands that write the current folder may fail here; run from a project subfolder, or use --no-sandbox.")
+		}
+	}
+	// Tools stat the ancestors of both the working directory and the guest home
+	// (which is HOME inside the sandbox), so grant traverse on both chains.
 	grantWorkdirAncestors(sid, workDir)
+	grantWorkdirAncestors(sid, guestHome)
 	return nil
 }
 
+func isProfileRoot(dir string) bool {
+	up := os.Getenv("USERPROFILE")
+	return up != "" && strings.EqualFold(filepath.Clean(dir), filepath.Clean(up))
+}
+
 // grantWorkdirAncestors grants the AppContainer this-folder RX on each ancestor
-// directory of workDir, so tools that stat ancestors (npm walking up to find a
-// project root) succeed. This-folder-only ACEs let the container stat/traverse
-// each directory without reading sibling contents. User-owned ancestors are
-// granted here at runtime (no admin); system-owned ones (C:\, C:\Users) are
-// expected to fail and are handled once by `nvx setup`, so failures are ignored.
+// directory of workDir that sits strictly below the user profile root, so tools
+// that stat ancestors (npm walking up to find a project root) succeed. It stops
+// at the profile root: that root already grants ALL APPLICATION PACKAGES (and
+// writing its ACL hangs behind the OneDrive/Defender filter driver), and C:\ /
+// C:\Users are handled once by `nvx setup`. Best-effort and time-boxed.
 func grantWorkdirAncestors(sid uintptr, workDir string) {
 	if workDir == "" {
 		return
+	}
+	profile := ""
+	if up := os.Getenv("USERPROFILE"); up != "" {
+		profile = filepath.Clean(up)
 	}
 	dir := filepath.Dir(filepath.Clean(workDir))
 	for i := 0; i < 40; i++ {
@@ -65,9 +85,21 @@ func grantWorkdirAncestors(sid uintptr, workDir string) {
 		if parent == dir {
 			break // reached the drive root
 		}
+		if profile == "" || !isPathStrictlyUnder(dir, profile) {
+			break
+		}
 		_ = grantAppContainerPathReadExec(sid, dir)
 		dir = parent
 	}
+}
+
+// isPathStrictlyUnder reports whether path is a proper descendant of base.
+func isPathStrictlyUnder(path, base string) bool {
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return false
+	}
+	return rel != "." && !strings.HasPrefix(rel, "..")
 }
 
 func ensureAppContainerSID(profileName string) (uintptr, error) {
@@ -123,7 +155,7 @@ func grantAppContainerPath(sid uintptr, path string) error {
 		return err
 	}
 	grantArg := fmt.Sprintf("*%s:(OI)(CI)(M)", sidStr)
-	out, err := exec.Command("icacls", path, "/grant", grantArg, "/t", "/c", "/q").CombinedOutput()
+	out, err := runWinCmd(20*time.Second, "icacls", path, "/grant", grantArg, "/t", "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -241,7 +273,7 @@ func grantAppContainerPathReadExecTree(sid uintptr, path string) error {
 		return err
 	}
 	grantArg := fmt.Sprintf("*%s:(OI)(CI)(RX)", sidStr)
-	out, err := exec.Command("icacls", path, "/grant", grantArg, "/t", "/q").CombinedOutput()
+	out, err := runWinCmd(20*time.Second, "icacls", path, "/grant", grantArg, "/t", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls RX tree grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -254,7 +286,7 @@ func grantAppContainerPathReadExec(sid uintptr, path string) error {
 		return err
 	}
 	grantArg := fmt.Sprintf("*%s:(RX)", sidStr)
-	out, err := exec.Command("icacls", path, "/grant", grantArg, "/c", "/q").CombinedOutput()
+	out, err := runWinCmd(15*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls RX grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
