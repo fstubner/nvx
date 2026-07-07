@@ -9,6 +9,25 @@ import (
 	"testing"
 )
 
+func TestEnvScriptFrontsShimDir(t *testing.T) {
+	bash := envScript("bash", "/opt/nvx", "/home/u/.nvx/bin")
+	if !strings.Contains(bash, "export PATH=") || !strings.Contains(bash, "/home/u/.nvx/bin") {
+		t.Fatalf("bash env script must front the shim dir:\n%s", bash)
+	}
+	// The nvx shell function must still be emitted.
+	if !strings.Contains(bash, "nvx() {") {
+		t.Fatalf("bash env script must still define the nvx function")
+	}
+
+	ps := envScript("powershell", `C:\opt\nvx.exe`, `C:\Users\u\.nvx\bin`)
+	if !strings.Contains(ps, "$env:PATH") || !strings.Contains(ps, `.nvx\bin`) {
+		t.Fatalf("powershell env script must front the shim dir:\n%s", ps)
+	}
+	if !strings.Contains(ps, "function nvx {") {
+		t.Fatalf("powershell env script must still define the nvx function")
+	}
+}
+
 func TestIsLTS(t *testing.T) {
 	tests := []struct {
 		lts      interface{}
