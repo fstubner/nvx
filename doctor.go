@@ -137,3 +137,26 @@ func diagnosePath(pathEnv, nvxHome string, shimCmds []string) doctorReport {
 	}
 	return rep
 }
+
+// shimPathPrependSnippet returns shell code that removes any existing shim-dir
+// entry from PATH and prepends it, guaranteeing the shim dir wins command
+// resolution in every new shell — independent of `nvx use`/`auto`. shimDir is
+// the OS-native path; POSIX shells receive a Git-Bash-style path on Windows.
+func shimPathPrependSnippet(shell, shimDir string) string {
+	if shell == "bash" || shell == "zsh" {
+		dir := shimDir
+		if runtime.GOOS == "windows" {
+			dir = ToBashPath(shimDir)
+		}
+		// ${PATH//:x:/:} works in both bash and zsh; the wrapping colons let it
+		// match the first/last entry too.
+		return "__nvx_bin=" + quotePOSIXShell(dir) + "\n" +
+			`PATH=":$PATH:"; PATH="${PATH//:$__nvx_bin:/:}"; PATH="${PATH#:}"; PATH="${PATH%:}"` + "\n" +
+			`export PATH="$__nvx_bin:$PATH"` + "\n"
+	}
+	// PowerShell default.
+	dir := quotePowerShell(shimDir)
+	return "$__nvx_bin = " + dir + "\n" +
+		`$env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and ($_.TrimEnd('\') -ne $__nvx_bin.TrimEnd('\')) }) -join ';'` + "\n" +
+		`$env:PATH = "$__nvx_bin;$env:PATH"` + "\n"
+}
