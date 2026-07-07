@@ -77,7 +77,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		LogError("%s can't run under the Windows sandbox until one-time setup is done.", config.Command)
 		LogInfo("Choose one:")
 		LogInfo("  * Run 'nvx setup' from an Administrator terminal to enable the sandbox (recommended).")
-		LogInfo("  * Re-run this command with --no-sandbox to run it without OS isolation")
+		LogInfo("  * Run it without OS isolation:  nvx --no-sandbox %s ...", config.Command)
 		LogInfo("    (typosquat / vulnerability / install-script checks still apply).")
 		return 1
 	}
