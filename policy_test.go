@@ -39,12 +39,22 @@ func TestNormalizeAllowEntry(t *testing.T) {
 
 func TestShouldSandbox(t *testing.T) {
 	policy := DefaultPolicy()
+	defer func() { noSandboxFlag = false }()
+
 	if !shouldSandbox("node", policy, shimOptions{}) {
 		t.Fatal("expected node to sandbox by default")
 	}
-	if shouldSandbox("node", policy, shimOptions{noSandbox: true}) {
-		t.Fatal("expected --no-sandbox to skip")
+	// A --no-sandbox smuggled through the wrapped command must NOT bypass.
+	if !shouldSandbox("node", policy, shimOptions{payloadNoSandbox: true}) {
+		t.Fatal("payload --no-sandbox must not disable the sandbox")
 	}
+	// Only a leading `nvx --no-sandbox` (noSandboxFlag) bypasses.
+	noSandboxFlag = true
+	if shouldSandbox("node", policy, shimOptions{}) {
+		t.Fatal("expected leading nvx --no-sandbox to skip")
+	}
+	noSandboxFlag = false
+
 	policy.Isolation.Enabled = false
 	if shouldSandbox("npm", policy, shimOptions{}) {
 		t.Fatal("expected disabled isolation to skip")

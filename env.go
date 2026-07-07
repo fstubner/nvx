@@ -555,6 +555,9 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 	}
 
 	if shouldSandbox(cmdName, policy, opts) {
+		if opts.payloadNoSandbox {
+			LogInfo("--no-sandbox is ignored when passed to a wrapped command. To run without isolation, use: nvx --no-sandbox %s ...", cmdName)
+		}
 		return runSandbox(SandboxConfig{
 			NvxHome:            nvxHome,
 			Command:            cmdName,

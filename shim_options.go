@@ -8,9 +8,13 @@ import (
 var noSandboxFlag bool
 
 type shimOptions struct {
-	noSandbox          bool
 	filesystemProvider string
-	args               []string
+	// payloadNoSandbox records a --no-sandbox smuggled through the wrapped
+	// command (e.g. `npx --no-sandbox`). It is stripped but NOT honored: only an
+	// explicit `nvx --no-sandbox <cmd>` disables isolation, so nothing can bypass
+	// the sandbox by tacking a flag onto a package manager.
+	payloadNoSandbox bool
+	args             []string
 }
 
 func parseShimOptions(args []string) shimOptions {
@@ -20,7 +24,7 @@ func parseShimOptions(args []string) shimOptions {
 		arg := args[i]
 		switch {
 		case arg == "--no-sandbox":
-			opts.noSandbox = true
+			opts.payloadNoSandbox = true
 		case strings.HasPrefix(arg, "--filesystem-provider="):
 			opts.filesystemProvider = strings.TrimPrefix(arg, "--filesystem-provider=")
 		case arg == "--filesystem-provider" && i+1 < len(args):
@@ -35,7 +39,9 @@ func parseShimOptions(args []string) shimOptions {
 }
 
 func shouldSandbox(cmdName string, policy Policy, opts shimOptions) bool {
-	if opts.noSandbox || noSandboxFlag {
+	// Only a leading `nvx --no-sandbox ...` (noSandboxFlag) disables isolation;
+	// a --no-sandbox smuggled into the wrapped command's args does not.
+	if noSandboxFlag {
 		return false
 	}
 	if inSandboxSession() {
