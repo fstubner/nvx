@@ -59,14 +59,24 @@ func regularFileExists(path string) bool {
 // Isolation setup is fail-closed: if AppContainer cannot be applied, the command
 // is not executed.
 func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath string, cleanEnv []string, netCtx NetworkLaunchContext) int {
-	profileName := appContainerNamePrefix + "." + filepath.Base(guestHome)
-	sid, err := ensureAppContainerSID(profileName)
+	// Use the stable profile so its SID is a durable target for `nvx setup`
+	// grants (ancestor stat + loopback exemption). It is intentionally not
+	// deleted after the run; isolation comes from the ephemeral guest home,
+	// capability restrictions, and filesystem ACLs, not SID uniqueness.
+	sid, err := ensureAppContainerSID(stableSandboxProfile)
 	if err != nil {
 		LogError("AppContainer profile unavailable: %v", err)
 		return 1
 	}
 	defer syscall.LocalFree(syscall.Handle(sid))
-	defer deleteAppContainerProfile(profileName)
+
+	// Real package-manager workflows stat ancestor directories (up to C:\),
+	// which an AppContainer cannot do until `nvx setup` grants it. Surface that
+	// clearly instead of letting the command fail with a cryptic EPERM.
+	if isPackageManagerCommand(config.Command) && !windowsLoopbackAllowlistEnabled(config.NvxHome) {
+		LogWarn("This command needs the one-time Windows sandbox setup to run under isolation.")
+		LogInfo("Run 'nvx setup' from an Administrator terminal, or add --no-sandbox to run it unsandboxed.")
+	}
 
 	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
 		LogError("AppContainer filesystem setup failed: %v", err)

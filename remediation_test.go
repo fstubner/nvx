@@ -257,6 +257,47 @@ func TestFindShasumEntryFormats(t *testing.T) {
 	}
 }
 
+func TestWindowsSetupStateRoundTrip(t *testing.T) {
+	nvxHome := t.TempDir()
+	if _, ok := readWindowsSetupState(nvxHome); ok {
+		t.Fatal("no marker should exist initially")
+	}
+	want := windowsSetupState{
+		AppContainerSID: "S-1-15-2-1-2-3",
+		GrantedPaths:    []string{`C:\`, `C:\Users`},
+		LoopbackExempt:  true,
+	}
+	if err := writeWindowsSetupState(nvxHome, want); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := readWindowsSetupState(nvxHome)
+	if !ok || got.AppContainerSID != want.AppContainerSID || !got.LoopbackExempt || len(got.GrantedPaths) != 2 {
+		t.Fatalf("round-trip mismatch: %+v", got)
+	}
+	if got.SetupAt == "" {
+		t.Error("SetupAt should be stamped on write")
+	}
+	if err := clearWindowsSetupState(nvxHome); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readWindowsSetupState(nvxHome); ok {
+		t.Fatal("marker should be gone after clear")
+	}
+}
+
+func TestIsPackageManagerCommand(t *testing.T) {
+	for _, cmd := range []string{"npm", "npx", "yarn", "pnpm", "npm.cmd", "NPX.CMD", `C:\x\npm.cmd`} {
+		if !isPackageManagerCommand(cmd) {
+			t.Errorf("expected %q to be a package manager", cmd)
+		}
+	}
+	for _, cmd := range []string{"node", "bun", "deno", "go", "python", "cowsay"} {
+		if isPackageManagerCommand(cmd) {
+			t.Errorf("%q should not be a package manager", cmd)
+		}
+	}
+}
+
 func TestRuntimeFromVersionDirRecognizesKnownRuntimes(t *testing.T) {
 	nvxHome := filepath.Join("some", "home")
 	nodeDir := filepath.Join(nvxHome, "versions", "node", "v20.0.0")
