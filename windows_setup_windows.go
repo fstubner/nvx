@@ -3,14 +3,28 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
+
+// runPrivilegedCmd runs a setup command with a timeout so a stuck external tool
+// surfaces as an error instead of hanging the whole setup.
+func runPrivilegedCmd(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("%s timed out after 30s", name)
+	}
+	return out, err
+}
 
 var procGetTokenInformation = modAdvapi32.NewProc("GetTokenInformation")
 
@@ -70,7 +84,7 @@ func windowsAncestorGrantPaths() []string {
 }
 
 func grantSidReadExecThisFolder(sidStr, path string) error {
-	out, err := exec.Command("icacls", path, "/grant", fmt.Sprintf("*%s:(RX)", sidStr), "/c", "/q").CombinedOutput()
+	out, err := runPrivilegedCmd("icacls", path, "/grant", fmt.Sprintf("*%s:(RX)", sidStr), "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls grant %s: %v (%s)", path, err, strings.TrimSpace(string(out)))
 	}
@@ -78,7 +92,7 @@ func grantSidReadExecThisFolder(sidStr, path string) error {
 }
 
 func revokeSidGrant(sidStr, path string) error {
-	out, err := exec.Command("icacls", path, "/remove:g", "*"+sidStr, "/c", "/q").CombinedOutput()
+	out, err := runPrivilegedCmd("icacls", path, "/remove:g", "*"+sidStr, "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls remove %s: %v (%s)", path, err, strings.TrimSpace(string(out)))
 	}
@@ -90,7 +104,7 @@ func setLoopbackExempt(add bool, sidStr string) error {
 	if !add {
 		flag = "-d"
 	}
-	out, err := exec.Command("CheckNetIsolation", "LoopbackExempt", flag, "-p="+sidStr).CombinedOutput()
+	out, err := runPrivilegedCmd("CheckNetIsolation", "LoopbackExempt", flag, "-p="+sidStr)
 	if err != nil {
 		return fmt.Errorf("CheckNetIsolation LoopbackExempt %s: %v (%s)", flag, err, strings.TrimSpace(string(out)))
 	}
@@ -107,6 +121,7 @@ func runWindowsSetup(nvxHome string, undo bool) int {
 		return 1
 	}
 
+	LogInfo("Preparing the nvx sandbox profile ...")
 	sid, err := ensureAppContainerSID(stableSandboxProfile)
 	if err != nil {
 		LogError("Could not create the nvx AppContainer profile: %v", err)
@@ -137,11 +152,13 @@ func runWindowsSetup(nvxHome string, undo bool) int {
 
 	paths := windowsAncestorGrantPaths()
 	for _, p := range paths {
+		LogInfo("Granting sandbox stat access on %s ...", p)
 		if err := grantSidReadExecThisFolder(sidStr, p); err != nil {
 			LogError("Failed to grant sandbox stat access on %s: %v", p, err)
 			return 1
 		}
 	}
+	LogInfo("Registering the loopback exemption ...")
 	if err := setLoopbackExempt(true, sidStr); err != nil {
 		LogError("Failed to register the loopback exemption: %v", err)
 		return 1

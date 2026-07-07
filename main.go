@@ -186,10 +186,28 @@ func main() {
 		printHelp()
 
 	default:
+		// Direct nvx invocation of a wrapped command, e.g.
+		// `nvx --no-sandbox npx wrangler login`. This is the explicit way to
+		// disable isolation (a --no-sandbox smuggled through the PATH shim is
+		// ignored). It also lets users run a wrapped command through nvx directly.
+		if isShimCommand(command) {
+			os.Exit(runShim(command, os.Args[2:], nvxHome))
+		}
 		LogError("Unknown command: %s", command)
 		printHelp()
 		os.Exit(1)
 	}
+}
+
+// isShimCommand reports whether name is a package manager / runtime command that
+// nvx wraps (npm, npx, node, bun, ...).
+func isShimCommand(name string) bool {
+	for _, c := range allShimCommands() {
+		if strings.EqualFold(c, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func commandHelpText(command string) string {
