@@ -95,6 +95,12 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1
 	}
 
+	// Put the resolved runtime's directory on PATH so tools spawned inside the
+	// sandbox (e.g. an npx-installed CLI whose launcher calls `node`) can find it.
+	// The host's own node dir is on PATH but is not accessible to the container;
+	// this directory is granted RX above.
+	cleanEnv = prependPath(cleanEnv, filepath.Dir(cmdPath))
+
 	// Network: AppContainers cannot reach the loopback egress proxy, so by
 	// default we grant internetClient and run direct (network works, egress not
 	// OS-allowlisted). The admin loopback-allowlist opt-in flips this to a
@@ -129,6 +135,22 @@ func windowsSandboxNetwork(nvxHome, mode string) (capabilitySIDs []string, usePr
 	}
 	// Default: internetClient so network works; direct (egress not allowlisted).
 	return []string{capabilityInternetClientSID}, false
+}
+
+// prependPath puts dir at the front of the PATH entry in env (case-insensitive
+// key match), adding a PATH entry if none exists.
+func prependPath(env []string, dir string) []string {
+	if dir == "" {
+		return env
+	}
+	for i, e := range env {
+		kv := strings.SplitN(e, "=", 2)
+		if len(kv) == 2 && strings.EqualFold(kv[0], "PATH") {
+			env[i] = "PATH=" + dir + string(os.PathListSeparator) + kv[1]
+			return env
+		}
+	}
+	return append(env, "PATH="+dir)
 }
 
 func stripProxyEnv(env []string) []string {
