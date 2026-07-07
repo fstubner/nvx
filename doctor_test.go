@@ -16,8 +16,6 @@ func TestResolveCommandOnPath(t *testing.T) {
 	shimName := "npm"
 	if runtime.GOOS == "windows" {
 		shimName = "npm.cmd"
-	} else {
-		shimName = "npm"
 	}
 	writeExec(t, filepath.Join(dirA, shimName))
 	writeExec(t, filepath.Join(dirB, shimName))
@@ -31,6 +29,17 @@ func TestResolveCommandOnPath(t *testing.T) {
 
 	if resolveCommandOnPath("does-not-exist", pathEnv) != "" {
 		t.Fatalf("expected empty for missing command")
+	}
+
+	// Unix: a non-executable file (0644) must not resolve as a command.
+	if runtime.GOOS != "windows" {
+		dirC := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dirC, "tool"), []byte("data\n"), 0644); err != nil { // #nosec G306 -- test fixture
+			t.Fatal(err)
+		}
+		if resolveCommandOnPath("tool", dirC) != "" {
+			t.Fatalf("expected empty for non-executable file")
+		}
 	}
 }
 
@@ -69,6 +78,49 @@ func TestDiagnosePath(t *testing.T) {
 	rep = diagnosePath(current, nvxHome, nil)
 	if rep.shimDirOnPath {
 		t.Fatalf("absent: shimDirOnPath should be false")
+	}
+}
+
+func TestDiagnosePathCommands(t *testing.T) {
+	nvxHome := t.TempDir()
+	shimDir := filepath.Join(nvxHome, "bin")
+	current := filepath.Join(nvxHome, "current")
+	if err := os.MkdirAll(shimDir, 0755); err != nil { // #nosec G301 -- test fixture
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(current, 0755); err != nil { // #nosec G301 -- test fixture
+		t.Fatal(err)
+	}
+
+	// Shim in bin/ and a shadowing copy in current/.
+	shimName := "npm"
+	if runtime.GOOS == "windows" {
+		shimName = "npm.cmd"
+	}
+	writeExec(t, filepath.Join(shimDir, shimName))
+	writeExec(t, filepath.Join(current, shimName))
+
+	// Shim dir first -> command resolves via the shim.
+	front := shimDir + string(os.PathListSeparator) + current
+	rep := diagnosePath(front, nvxHome, []string{"npm"})
+	if len(rep.commands) != 1 {
+		t.Fatalf("want 1 command resolution, got %d", len(rep.commands))
+	}
+	if !rep.commands[0].viaShim {
+		t.Fatalf("shim-first: viaShim=false, want true (resolved %q)", rep.commands[0].resolved)
+	}
+	if !dirWithin(rep.commands[0].resolved, shimDir) {
+		t.Fatalf("shim-first: resolved %q not under shim dir %q", rep.commands[0].resolved, shimDir)
+	}
+
+	// current/ first -> command resolves outside the shim dir.
+	back := current + string(os.PathListSeparator) + shimDir
+	rep = diagnosePath(back, nvxHome, []string{"npm"})
+	if rep.commands[0].viaShim {
+		t.Fatalf("current-first: viaShim=true, want false (resolved %q)", rep.commands[0].resolved)
+	}
+	if !dirWithin(rep.commands[0].resolved, current) {
+		t.Fatalf("current-first: resolved %q not under current dir %q", rep.commands[0].resolved, current)
 	}
 }
 
