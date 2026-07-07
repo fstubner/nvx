@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -68,6 +69,26 @@ func TestDiagnosePath(t *testing.T) {
 	rep = diagnosePath(current, nvxHome, nil)
 	if rep.shimDirOnPath {
 		t.Fatalf("absent: shimDirOnPath should be false")
+	}
+}
+
+func TestShimPathPrependSnippet(t *testing.T) {
+	// POSIX: must reference the bash-form dir and export PATH with it in front.
+	bash := shimPathPrependSnippet("bash", "/home/u/.nvx/bin")
+	if !strings.Contains(bash, "/home/u/.nvx/bin") {
+		t.Fatalf("bash snippet missing shim dir: %s", bash)
+	}
+	if !strings.Contains(bash, "export PATH=") {
+		t.Fatalf("bash snippet must export PATH: %s", bash)
+	}
+
+	// PowerShell: must filter the existing entry and reassign $env:PATH.
+	ps := shimPathPrependSnippet("powershell", `C:\Users\u\.nvx\bin`)
+	if !strings.Contains(ps, `.nvx\bin`) {
+		t.Fatalf("powershell snippet missing shim dir: %s", ps)
+	}
+	if !strings.Contains(ps, "$env:PATH") {
+		t.Fatalf("powershell snippet must set $env:PATH: %s", ps)
 	}
 }
 
