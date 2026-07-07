@@ -7,6 +7,5 @@ package main
 // reach the loopback egress proxy and egress is allowlisted; when false, the
 // default internetClient-direct path is used.
 func windowsLoopbackAllowlistEnabled(nvxHome string) bool {
-	s, ok := readWindowsSetupState(nvxHome)
-	return ok && s.LoopbackExempt
+	return windowsSandboxSetupDone(nvxHome)
 }

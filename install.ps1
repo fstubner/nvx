@@ -140,4 +140,35 @@ if (($UseLocalBinary -or $env:NVX_USE_LOCAL_BINARY -eq "1") -and (Test-Path $loc
 
 Write-Host ""
 Write-Host "nvx has been successfully installed!"
+
+# 4. Offer the one-time sandbox setup.
+# Package managers (npm/npx/yarn/pnpm) can only run under the Windows sandbox
+# after a one-time elevated grant. Offer it here (default: skip). It is entirely
+# optional and re-runnable later with 'nvx setup'.
+$nvxExe = Join-Path $binDir "nvx.exe"
+$interactive = ([Environment]::UserInteractive) -and (-not $env:CI) -and (-not $env:NVX_NONINTERACTIVE) -and ($Host.Name -ne 'Default Host')
+if ($interactive -and (Test-Path $nvxExe)) {
+    Write-Host ""
+    Write-Host "Optional: enable the Windows sandbox for package managers (npm/npx/yarn/pnpm)."
+    Write-Host "This needs a single Administrator approval (UAC). You can also do it later with 'nvx setup'."
+    $answer = Read-Host "Enable the sandbox now? [y/N]"
+    if ($answer -match '^(y|yes)$') {
+        Write-Host "Requesting Administrator approval to run 'nvx setup'..."
+        try {
+            $p = Start-Process -FilePath $nvxExe -ArgumentList 'setup' -Verb RunAs -Wait -PassThru
+            if ($p.ExitCode -eq 0) {
+                Write-Host "Sandbox setup complete."
+            } else {
+                Write-Warning "Sandbox setup did not complete. Run 'nvx setup' from an Administrator terminal to try again."
+            }
+        } catch {
+            Write-Warning "Elevation was declined or failed. Run 'nvx setup' from an Administrator terminal later."
+        }
+    } else {
+        Write-Host "Skipped. Package-manager commands will run without OS isolation until you run 'nvx setup'."
+        Write-Host "(Supply-chain checks still apply, and you can bypass per command with --no-sandbox.)"
+    }
+}
+
+Write-Host ""
 Write-Host "Please open a new PowerShell window to start using nvx."

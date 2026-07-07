@@ -70,12 +70,16 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	}
 	defer syscall.LocalFree(syscall.Handle(sid))
 
-	// Real package-manager workflows stat ancestor directories (up to C:\),
-	// which an AppContainer cannot do until `nvx setup` grants it. Surface that
-	// clearly instead of letting the command fail with a cryptic EPERM.
-	if isPackageManagerCommand(config.Command) && !windowsLoopbackAllowlistEnabled(config.NvxHome) {
-		LogWarn("This command needs the one-time Windows sandbox setup to run under isolation.")
-		LogInfo("Run 'nvx setup' from an Administrator terminal, or add --no-sandbox to run it unsandboxed.")
+	// Real package-manager workflows stat ancestor directories (up to C:\), which
+	// an AppContainer cannot do until `nvx setup` grants it. Rather than launch a
+	// run we know will fail with a cryptic EPERM, refuse with a clear choice.
+	if isPackageManagerCommand(config.Command) && !windowsSandboxSetupDone(config.NvxHome) {
+		LogError("%s can't run under the Windows sandbox until one-time setup is done.", config.Command)
+		LogInfo("Choose one:")
+		LogInfo("  * Run 'nvx setup' from an Administrator terminal to enable the sandbox (recommended).")
+		LogInfo("  * Re-run this command with --no-sandbox to run it without OS isolation")
+		LogInfo("    (typosquat / vulnerability / install-script checks still apply).")
+		return 1
 	}
 
 	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {

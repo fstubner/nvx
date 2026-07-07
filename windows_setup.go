@@ -39,6 +39,13 @@ func windowsSetupMarkerPath(nvxHome string) string {
 	return filepath.Join(nvxHome, "windows-setup.json")
 }
 
+// windowsSandboxSetupDone reports whether `nvx setup` has completed (the
+// AppContainer has ancestor-stat grants and the loopback exemption).
+func windowsSandboxSetupDone(nvxHome string) bool {
+	s, ok := readWindowsSetupState(nvxHome)
+	return ok && s.LoopbackExempt
+}
+
 func readWindowsSetupState(nvxHome string) (windowsSetupState, bool) {
 	data, err := os.ReadFile(windowsSetupMarkerPath(nvxHome))
 	if err != nil {
