@@ -608,10 +608,19 @@ func runEnv(shell string, nvxHome string) {
 	if err != nil {
 		exePath = "nvx"
 	}
-	exePath = strings.ReplaceAll(exePath, "\\", "/")
+	fmt.Print(envScript(shell, exePath, filepath.Join(nvxHome, "bin")))
+}
+
+// envScript builds the shell integration script printed by `nvx env`. It fronts
+// the shim dir on PATH (so nvx intercepts commands in every new shell) and then
+// defines the `nvx` function plus directory-change auto-switch hooks. exePath is
+// the nvx binary; shimDir is ~/.nvx/bin.
+func envScript(shell, exePath, shimDir string) string {
+	exe := strings.ReplaceAll(exePath, "\\", "/")
+	prepend := shimPathPrependSnippet(shell, shimDir)
 
 	if shell == "bash" || shell == "zsh" {
-		fmt.Printf(`__nvx_shell_type() {
+		return prepend + fmt.Sprintf(`__nvx_shell_type() {
     if [ -n "$ZSH_VERSION" ]; then
         echo "zsh"
     else
@@ -661,10 +670,11 @@ elif [[ -n "$BASH_VERSION" ]]; then
         PROMPT_COMMAND="nvx_prompt_hook; $PROMPT_COMMAND"
     fi
 fi
-`, exePath, exePath, exePath, exePath)
-	} else {
-		// PowerShell default
-		fmt.Printf(`$global:__nvx_last_pwd = ""
+`, exe, exe, exe, exe)
+	}
+
+	// PowerShell default
+	return prepend + fmt.Sprintf(`$global:__nvx_last_pwd = ""
 
 function nvx {
     $cmd = $args[0]
@@ -700,8 +710,7 @@ if (Test-Path Function:\prompt) {
         "PS $pwd> "
     }
 }
-`, exePath, exePath, exePath)
-	}
+`, exe, exe, exe)
 }
 
 func runAuto(nvxHome string, shell string) {
