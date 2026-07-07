@@ -33,6 +33,44 @@ func TestResolveCommandOnPath(t *testing.T) {
 	}
 }
 
+func TestDiagnosePath(t *testing.T) {
+	nvxHome := t.TempDir()
+	shimDir := filepath.Join(nvxHome, "bin")
+	current := filepath.Join(nvxHome, "current")
+	if err := os.MkdirAll(shimDir, 0755); err != nil { // #nosec G301 -- test fixture
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(current, 0755); err != nil { // #nosec G301 -- test fixture
+		t.Fatal(err)
+	}
+
+	// Healthy: shim dir first, current after.
+	healthy := shimDir + string(os.PathListSeparator) + current
+	rep := diagnosePath(healthy, nvxHome, nil)
+	if !rep.shimDirOnPath || rep.shimDirIndex != 0 {
+		t.Fatalf("healthy: shimDirOnPath=%v index=%d, want true/0", rep.shimDirOnPath, rep.shimDirIndex)
+	}
+	if len(rep.shadowedBy) != 0 {
+		t.Fatalf("healthy: want no shadowing, got %+v", rep.shadowedBy)
+	}
+
+	// Broken: current before shim dir -> shadowing reported.
+	broken := current + string(os.PathListSeparator) + shimDir
+	rep = diagnosePath(broken, nvxHome, nil)
+	if !rep.shimDirOnPath || rep.shimDirIndex != 1 {
+		t.Fatalf("broken: index=%d, want 1", rep.shimDirIndex)
+	}
+	if len(rep.shadowedBy) != 1 || rep.shadowedBy[0].index != 0 {
+		t.Fatalf("broken: want current shadowing at index 0, got %+v", rep.shadowedBy)
+	}
+
+	// Absent: shim dir not on PATH at all.
+	rep = diagnosePath(current, nvxHome, nil)
+	if rep.shimDirOnPath {
+		t.Fatalf("absent: shimDirOnPath should be false")
+	}
+}
+
 // writeExec creates an executable file (0755) so Unix resolution accepts it.
 func writeExec(t *testing.T, path string) {
 	t.Helper()
