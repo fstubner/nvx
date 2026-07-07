@@ -45,7 +45,29 @@ func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) error
 			return fmt.Errorf("integrity label for %q: %w", guestHome, err)
 		}
 	}
+	grantWorkdirAncestors(sid, workDir)
 	return nil
+}
+
+// grantWorkdirAncestors grants the AppContainer this-folder RX on each ancestor
+// directory of workDir, so tools that stat ancestors (npm walking up to find a
+// project root) succeed. This-folder-only ACEs let the container stat/traverse
+// each directory without reading sibling contents. User-owned ancestors are
+// granted here at runtime (no admin); system-owned ones (C:\, C:\Users) are
+// expected to fail and are handled once by `nvx setup`, so failures are ignored.
+func grantWorkdirAncestors(sid uintptr, workDir string) {
+	if workDir == "" {
+		return
+	}
+	dir := filepath.Dir(filepath.Clean(workDir))
+	for i := 0; i < 40; i++ {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached the drive root
+		}
+		_ = grantAppContainerPathReadExec(sid, dir)
+		dir = parent
+	}
 }
 
 func ensureAppContainerSID(profileName string) (uintptr, error) {

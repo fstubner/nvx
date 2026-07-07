@@ -165,6 +165,15 @@ func main() {
 		cleanupStaleSandboxes(nvxHome)
 		LogSuccess("Sandbox cleanup complete.")
 
+	case "setup":
+		undo := false
+		for _, a := range os.Args[2:] {
+			if a == "--undo" || a == "-u" {
+				undo = true
+			}
+		}
+		os.Exit(runWindowsSetup(nvxHome, undo))
+
 	case "__landlock-exec":
 		guestHome, workDir, nvxHome, networkMode, shimCommand, proxyPort, cmdPath, cmdArgs, ok := parseLandlockExecArgs(os.Args[2:])
 		if !ok {
