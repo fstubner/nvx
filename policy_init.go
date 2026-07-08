@@ -26,6 +26,9 @@ func runPolicyInit(args []string, nvxHome string) int {
 	}
 
 	policy := DefaultPolicy()
+	// Document isolation.level explicitly in the scaffolded file so it's
+	// discoverable, even though it's the same as the (omitted) zero value.
+	policy.Isolation.Level = "standard"
 	data, err := json.MarshalIndent(policy, "", "  ")
 	if err != nil {
 		LogError("Failed to encode policy: %v", err)
