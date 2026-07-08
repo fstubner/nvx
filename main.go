@@ -165,6 +165,9 @@ func main() {
 		cleanupStaleSandboxes(nvxHome)
 		LogSuccess("Sandbox cleanup complete.")
 
+	case "doctor":
+		os.Exit(runDoctor(nvxHome))
+
 	case "setup":
 		undo := false
 		for _, a := range os.Args[2:] {
@@ -234,6 +237,8 @@ func commandHelpText(command string) string {
 		return "nvx shim <cmd> [args...]\n\nInternal shim router used by generated command wrappers.\n"
 	case "cleanup":
 		return "nvx cleanup\n\nRemove stale sandbox guest profiles from previous interrupted runs.\n"
+	case "doctor":
+		return "nvx doctor\n\nCheck that ~/.nvx/bin is first on PATH so nvx intercepts node/npm/npx/bun.\nRegenerates shims and, on Windows, repairs a shadowed persistent PATH.\n"
 	}
 	return ""
 }
@@ -293,6 +298,7 @@ Commands:
   cleanup                  Remove stale sandbox sessions from previous runs
   setup                    (Windows) One-time elevated setup that lets the
                            sandbox run package managers; 'setup --undo' reverses
+  doctor                   Check and repair that nvx intercepts node/npm/npx on PATH
 
 Options:
   --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
