@@ -94,6 +94,18 @@ func getSandboxHomeDir(nvxHome string) string {
 	return filepath.Join(nvxHome, "sandbox_home")
 }
 
+// realHomeSwapSupported reports whether this platform can safely swap a
+// trusted tool's sandbox HOME for the user's real home directory. Windows is
+// excluded: granting an AppContainer write access to a real home directory
+// would require the same recursive icacls write on the profile root that is
+// already known to hang behind the OneDrive/Defender filter driver (see
+// windows_setup_windows.go's profile-root exclusion). Linux (Landlock) and
+// macOS (Seatbelt) grant filesystem access via an in-process rule/profile
+// list, not a filesystem ACL mutation, so neither has this risk.
+func realHomeSwapSupported() bool {
+	return runtime.GOOS != "windows"
+}
+
 // createGuestProfile creates an ephemeral guest home directory for the sandbox session.
 // Returns the path to the guest home and any error encountered.
 func createGuestProfile(nvxHome string, sandboxID string) (string, error) {
