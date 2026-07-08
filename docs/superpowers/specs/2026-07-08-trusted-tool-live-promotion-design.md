@@ -75,11 +75,24 @@ These are empirical, not assumed — each was tested live and reverted:
   Trivially bypassable (static binary, raw syscalls, a re-exec'd child that
   drops the injection) — would be cooperative-only, a real regression from
   the kernel-enforced boundaries nvx already has everywhere.
-- Live observation of a running process's in-memory environment variable
-  mutations. Not available on any of the three platforms without
-  process-tracing (ptrace/ETW-class mechanisms) — see Part 4.
+- Live observation of a running process's *in-memory* environment variable
+  mutations (a tool calling `setenv()` in its own address space). Not
+  available on any of the three platforms without process-tracing
+  (ptrace/ETW-class mechanisms), and pointless to chase: that memory dies
+  with the process, so no tool persists state that way. Part 4 captures the
+  env vars that *matter* (the ones a tool means to hand back to your shell)
+  through channels that don't require this.
+- True mid-syscall interception (pause the exact file/registry/network
+  operation, hold it, resume after approval). Would need `seccomp USER_NOTIF`
+  (Linux — buildable, no signing), EndpointSecurity (macOS — Apple-issued
+  entitlement + notarized system extension, external approval), or a
+  minifilter driver (Windows — WHQL driver signing, kernel code). A
+  multi-month, per-platform-certified undertaking where two platforms depend
+  on third-party approval. Explicitly out of scope; live promotion (Part 2)
+  gives most of the same UX without any of it. Revisit as its own initiative
+  if the pause-the-exact-operation UX is ever worth that cost.
 - Windows registry-based persistent env var writes succeeding under the
-  sandbox. Explicitly deferred — see Part 4's conclusion.
+  sandbox. Explicitly deferred — see Part 4.
 
 ## Part 1 — Tiered guest-home lifecycle
 
@@ -149,41 +162,60 @@ This is the same decision `ensureTrustedToolGrant`/`hasTrustedTool` already
 make today for the name-based grant; it's being made content-addressed and
 per-file instead of per-tool-name.
 
-## Part 4 — Env vars: what's covered, what's an explicit, honest gap
+## Part 4 — Env vars: capture the ones that matter, via channels nvx controls
 
-- **Unix persistent env vars are already file-based** — `.bashrc`/`.zshrc`/
-  `.profile` get sourced by each new shell. A sandboxed tool trying to
-  "persist an env var" for future sessions is, mechanically, just writing a
-  file — already fully covered by Part 2, no special-casing needed.
-- **Windows persistent env vars are registry-based**
-  (`HKCU\Environment`, read fresh into each new process's environment block
-  at `CreateProcess` time). Finding 5 above means this **cannot** use the
-  same "redirect to an ephemeral location, watch, promote" trick that makes
-  the file case safe, because there is no ephemeral-HKCU-redirection
-  mechanism available to an ordinary process — `HKCU` resolution is
-  token-based, not env-var-based.
-  - The only way to let such a write succeed under the sandbox would be to
-    grant real registry access to `HKCU\Environment` **before** knowing what
-    will be written — which breaks the review-before-persist property that
-    makes the file mechanism trustworthy. That would be a "trust in advance"
-    tradeoff, not a "review after the fact" one.
-  - **Decision for this design: registry-based persistence attempts stay
-    fail-closed** (`ACCESS DENIED`, exactly like today, unchanged) for v1.
-    This is a narrow, explicit, documented gap — not a "we haven't gotten to
-    it yet" gap. In practice it's low-impact: the trusted-tool examples this
-    whole feature is built around (`wrangler`, `gh`, `aws`) all persist via
-    config files, not the Windows registry, precisely because file-based
-    config is the portable convention most CLI tools use for exactly this
-    reason.
-  - A future, explicitly-opt-in escape hatch (a single upfront "allow this
-    run to persist environment variables" toggle, granted before launch,
-    Tier-3-equivalent trust) is a plausible follow-up if a real tool that
-    needs this shows up — not part of this design.
-- **Env vars a tool needs *at launch* that get stripped by `scrubEnvironment`**
-  is a different, already-identified problem (a static input-side allowlist
-  gap, not an output-capture gap). Stays solved by an explicit, user-driven
-  per-tool passthrough list — added to the same profile-hash bundle from
-  Part 3 — not by any form of observation, live or otherwise.
+The goal is to make "a tool set up my environment, persist it" work. There
+are three distinct sub-cases; two are capturable without any syscall
+interception, and the third is genuinely impossible-and-pointless.
+
+**4a — The env-diff wrapper (the general mechanism, all 3 platforms).**
+nvx controls what it launches inside the sandbox. Instead of
+`exec(tool ...)`, it launches a tiny helper as the sandbox entry point —
+`nvx envwrap -- tool ...` (a new internal subcommand, same style as the
+existing `__landlock-exec`). `envwrap` runs the tool as its child and, after
+the child exits, writes its own resulting environment to a snapshot file in
+the guest home (e.g. `.nvx-envsnapshot`). That snapshot is then just another
+file the live-promotion path (Part 2) sees, reviews, and — on approval —
+diffs against the launch environment and promotes the *new/changed* vars to
+the real persistent store (`.bashrc`-style file on Unix via a managed nvx
+block; `HKCU\Environment` on Windows via the scoped registry write, which
+Finding 3 confirmed is fast and does not hang). The write to the real store
+happens from the **unsandboxed parent**, exactly like file promotion — the
+sandbox never gets real registry/rc-file access.
+  - What this captures: anything a wrapper script, the tool's own shell
+    integration, or a sourced setup step leaves in the environment `envwrap`
+    inherits. This is the real "tool configured my environment" case.
+  - What it can't capture: a var the tool `setenv()`s purely in its *own*
+    address space and never exports to a child or a file (sub-case 4c) —
+    that memory is gone at exit, on every OS, and nothing persists it, so
+    there is nothing to capture and no tool depends on it.
+
+**4b — stdout export-line capture (cooperating tools).** Tools in the
+`rustup`/`nvm`/`nvx use` family print `export FOO=bar` / `set FOO=bar` lines
+to stdout meant to be `eval`'d. nvx already has the sandboxed process's
+stdout; scan it for assignment-shaped lines and offer them through the same
+review/preview/approve flow. Complements 4a (catches intent a tool signals
+explicitly rather than leaves in its environment).
+
+**4c — in-memory `setenv()` with no export:** impossible to observe, useless
+to persist. Explicitly not covered — see non-goals. No real tool relies on
+it because it cannot work by construction.
+
+**Windows registry note:** unlike the filesystem case, `HKCU` cannot be
+redirected to an ephemeral hive for an ordinary sandboxed process
+(Finding 5 — HKCU resolution is token-based, not env-var-based). So the
+Windows env-var path does *not* work by "sandbox writes to a redirected
+HKCU, nvx watches it." It works by 4a: the sandbox writes a plain snapshot
+*file* (which it can, into its guest home), and nvx's unsandboxed parent
+does the real `HKCU\Environment` write after review. This keeps the
+review-before-persist property intact — nvx never grants the sandbox real
+registry access, and Finding 3 confirmed the parent's scoped registry write
+is fast.
+
+**4d — env vars a tool needs *at launch*** (stripped by `scrubEnvironment`)
+is a separate, input-side problem, not output capture. Stays solved by an
+explicit, user-driven per-tool passthrough list, added to the same
+profile-hash bundle from Part 3.
 
 ## Components & boundaries
 
@@ -194,7 +226,18 @@ per-file instead of per-tool-name.
   each exposing the same small interface (watch a directory, emit new/changed
   file events) so the promotion logic above them is platform-agnostic.
 - `promote.go` — the review/preview prompt, the copy-to-real-home step, and
-  the profile-hash compute/compare (Part 2 + Part 3).
+  the profile-hash compute/compare (Part 2 + Part 3). Also owns the
+  env-snapshot diff + promotion to the real store (Part 4a) and stdout
+  export-line scanning (Part 4b).
+- `envwrap` — new internal subcommand (`nvx envwrap -- <tool> ...`, sibling
+  of `__landlock-exec`) launched as the sandbox entry point; runs the tool
+  and writes its resulting environment to a snapshot file in the guest home
+  on exit. Cross-platform (plain Go, no per-OS code). The env-var
+  destination write (rc-file block on Unix, scoped `HKCU\Environment` on
+  Windows) lives in the unsandboxed parent, reusing the same
+  parent-does-the-write pattern as file promotion — the Windows registry
+  write is the one place `windows_setup_windows.go`'s scoped-grant style is
+  reused, not the profile-root path.
 - Extends existing `projectGrants` (policy_persist.go) with per-file/profile
   hash state, building on the `TrustedTools` field Part 5 already added.
 - `nvx grants` (grants_cmd.go, already shipped) gains visibility into which
@@ -224,21 +267,32 @@ per-file instead of per-tool-name.
   re-invocation) → approve → Tier 2 profile has the file → re-run without
   re-prompting (hash match) → explicit Tier-3 promote → file appears in real
   home.
-- Windows-specific: confirm a registry-persistence attempt still fails
-  closed with a clear message (not a silent no-op) — this is a regression
-  test for Part 4's documented boundary, not new behavior to build.
+- Env vars (Part 4): `envwrap` writes a correct snapshot of its resulting
+  environment (unit-testable directly — run it wrapping a command that sets a
+  var, assert the snapshot contains it); the launch-vs-snapshot diff yields
+  only new/changed vars (table test); stdout export-line scanning parses
+  `export`/`set` forms and ignores non-assignments (table test); the real
+  store write lands in an rc-file managed block (Unix) / scoped
+  `HKCU\Environment` (Windows) from the parent, and the sub-case-4c
+  in-memory-only mutation is confirmed *not* captured (documents the
+  boundary). Windows registry-write timing is not hang-prone (Finding 3) but
+  the write path should still be time-boxed like other privileged Windows
+  calls (`runWinCmd`).
 
 ## Rollout / ordering
 
 This is larger than a single implementation plan (three platform-specific
 watchers, a guest-home lifecycle change, promotion/hashing logic, prompt/
-preview UX) — realistically 2–3 plans, split roughly along:
+preview UX, and the env-var capture layer) — realistically 3–4 plans, split
+roughly along:
 
 1. Guest-home tiering (Part 1) — foundational, no user-visible behavior
    change yet beyond "trusted tools stay in a stable dir now."
 2. Live watching + promote + hash-pinning (Parts 2–3) — the core new
    capability, replacing Part 5's real-home-swap code.
-3. Grants CLI visibility + the Part 4 fail-closed regression test + docs.
+3. Env-var capture (Part 4): the `envwrap` entry point, snapshot diff +
+   promotion to the real store, and stdout export-line scanning.
+4. Grants CLI visibility + docs.
 
 Each part should build and test green independently, same discipline as the
 containment-v2 plans already executed this session.
