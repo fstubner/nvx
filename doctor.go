@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -159,4 +160,39 @@ func shimPathPrependSnippet(shell, shimDir string) string {
 	return "$__nvx_bin = " + dir + "\n" +
 		`$env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and ($_.TrimEnd('\') -ne $__nvx_bin.TrimEnd('\')) }) -join ';'` + "\n" +
 		`$env:PATH = "$__nvx_bin;$env:PATH"` + "\n"
+}
+
+// formatDoctorReport renders a doctorReport as a human-readable, plain-text
+// summary (no ANSI, so it is stable to assert on and pipe-friendly).
+func formatDoctorReport(rep doctorReport) string {
+	var b strings.Builder
+	b.WriteString("nvx doctor — shim interception\n")
+	fmt.Fprintf(&b, "  shim dir: %s\n", rep.shimDir)
+
+	switch {
+	case !rep.shimDirOnPath:
+		b.WriteString("  [FAIL] shim dir is not on PATH\n")
+	case len(rep.shadowedBy) > 0:
+		b.WriteString("  [FAIL] shim dir is shadowed by raw-runtime dirs ahead of it:\n")
+		for _, s := range rep.shadowedBy {
+			fmt.Fprintf(&b, "         - %s (PATH position %d)\n", s.dir, s.index)
+		}
+	default:
+		fmt.Fprintf(&b, "  [OK]   shim dir is first on PATH (position %d)\n", rep.shimDirIndex)
+	}
+
+	if len(rep.commands) > 0 {
+		b.WriteString("  commands:\n")
+		for _, c := range rep.commands {
+			switch {
+			case c.resolved == "":
+				fmt.Fprintf(&b, "    [--]  %s: not found on PATH\n", c.name)
+			case c.viaShim:
+				fmt.Fprintf(&b, "    [OK]  %s -> %s\n", c.name, c.resolved)
+			default:
+				fmt.Fprintf(&b, "    [FAIL] %s -> %s (bypasses nvx)\n", c.name, c.resolved)
+			}
+		}
+	}
+	return b.String()
 }
