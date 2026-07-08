@@ -162,6 +162,40 @@ func shimPathPrependSnippet(shell, shimDir string) string {
 		`$env:PATH = "$__nvx_bin;$env:PATH"` + "\n"
 }
 
+// shimDirPath returns the nvx shim directory (~/.nvx/bin).
+func shimDirPath(nvxHome string) string {
+	return filepath.Join(nvxHome, "bin")
+}
+
+// rebuildUserPath returns a PATH with every dropDir entry removed and shimDir
+// moved to the front (deduplicated). Used to repair a persistent PATH where a
+// raw-runtime dir shadows the shim dir. Comparison is case-insensitive on
+// Windows via dirsEqual. Separator is the OS list separator.
+func rebuildUserPath(existing, shimDir string, dropDirs []string) string {
+	sep := string(os.PathListSeparator)
+	var kept []string
+	for _, e := range strings.Split(existing, sep) {
+		if strings.TrimSpace(e) == "" {
+			continue
+		}
+		if dirsEqual(e, shimDir) {
+			continue // will be re-added at the front
+		}
+		drop := false
+		for _, d := range dropDirs {
+			if dirsEqual(e, d) || dirWithin(filepath.Clean(e), filepath.Clean(d)) {
+				drop = true
+				break
+			}
+		}
+		if drop {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	return strings.Join(append([]string{shimDir}, kept...), sep)
+}
+
 // formatDoctorReport renders a doctorReport as a human-readable, plain-text
 // summary (no ANSI, so it is stable to assert on and pipe-friendly).
 func formatDoctorReport(rep doctorReport) string {
