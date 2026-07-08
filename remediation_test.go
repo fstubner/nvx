@@ -317,13 +317,16 @@ func TestRuntimeFromVersionDirRecognizesKnownRuntimes(t *testing.T) {
 }
 
 func TestParseStartupFlagsDoesNotConsumeShimPayloadFlags(t *testing.T) {
-	args, yes, noSandbox := parseStartupFlags([]string{"nvx", "shim", "npx", "-y", "create-vite", "--no-sandbox"})
+	args, yes, noSandbox, strict, standard := parseStartupFlags([]string{"nvx", "shim", "npx", "-y", "create-vite", "--no-sandbox"})
 
 	if yes {
 		t.Fatal("shim payload -y must not enable nvx --yes")
 	}
 	if noSandbox {
 		t.Fatal("shim payload --no-sandbox must not disable nvx sandboxing")
+	}
+	if strict || standard {
+		t.Fatal("shim payload --strict/--standard must not set the leading nvx flags")
 	}
 	want := []string{"nvx", "shim", "npx", "-y", "create-vite", "--no-sandbox"}
 	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
@@ -332,13 +335,19 @@ func TestParseStartupFlagsDoesNotConsumeShimPayloadFlags(t *testing.T) {
 }
 
 func TestParseStartupFlagsOnlyConsumesLeadingGlobalFlags(t *testing.T) {
-	args, yes, noSandbox := parseStartupFlags([]string{"nvx", "--yes", "--no-sandbox", "shim", "node", "-e", "1"})
+	args, yes, noSandbox, strict, standard := parseStartupFlags([]string{"nvx", "--yes", "--no-sandbox", "--strict", "shim", "node", "-e", "1"})
 
 	if !yes {
 		t.Fatal("leading --yes should enable nvx yes mode")
 	}
 	if !noSandbox {
 		t.Fatal("leading --no-sandbox should enable nvx no-sandbox mode")
+	}
+	if !strict {
+		t.Fatal("leading --strict should enable nvx strict mode")
+	}
+	if standard {
+		t.Fatal("standard should not be set when only --strict was passed")
 	}
 	want := []string{"nvx", "shim", "node", "-e", "1"}
 	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
@@ -659,7 +668,7 @@ func testNvxHomeWithTyposquattingDisabled(t *testing.T) string {
 
 func TestShouldSandboxHonorsSandboxEnvironment(t *testing.T) {
 	t.Setenv("NVX_SANDBOX", "1")
-	if shouldSandbox("node", DefaultPolicy(), shimOptions{}) {
+	if shouldSandbox("node", nil, DefaultPolicy(), shimOptions{}) {
 		t.Fatal("nested shim invocation inside an existing sandbox must not start another sandbox")
 	}
 }

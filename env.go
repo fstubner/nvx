@@ -527,6 +527,8 @@ func dedupeStrings(values []string) []string {
 func runShim(cmdName string, args []string, nvxHome string) int {
 	opts := parseShimOptions(args)
 	args = opts.args
+	opts.strictFlag = strictFlag
+	opts.standardFlag = standardFlag
 
 	hintIfShadowed(nvxHome)
 
@@ -556,7 +558,7 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 		}
 	}
 
-	if shouldSandbox(cmdName, policy, opts) {
+	if shouldSandbox(cmdName, args, policy, opts) {
 		if opts.payloadNoSandbox {
 			LogInfo("--no-sandbox is ignored when passed to a wrapped command. To run without isolation, use: nvx --no-sandbox %s ...", cmdName)
 		}
