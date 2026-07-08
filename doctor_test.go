@@ -204,6 +204,13 @@ func TestPathIsShadowed(t *testing.T) {
 	if !pathIsShadowed(current+sep+shimDir, nvxHome) {
 		t.Fatalf("current ahead of shim dir should be shadowed")
 	}
+
+	// Shim dir absent entirely: not "shadowed" in the precedence sense, even
+	// though a raw runtime dir is present — this is a distinct failure mode
+	// (nvx doctor reports it separately as "shim dir is not on PATH").
+	if pathIsShadowed(current, nvxHome) {
+		t.Fatalf("shim dir absent from PATH should not report as shadowed")
+	}
 }
 
 // writeExec creates an executable file (0755) so Unix resolution accepts it.
