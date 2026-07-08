@@ -19,6 +19,15 @@ func repairPersistentPath(nvxHome string) (bool, error) {
 		return false, err
 	}
 	existing := parseRegPath(string(out))
+	if strings.TrimSpace(existing) == "" {
+		// A genuinely empty User PATH is indistinguishable here from a parse
+		// failure (unexpected `reg query` output shape, localized Windows,
+		// etc.). Treating either as "safe to overwrite" would let us replace
+		// the user's entire persistent PATH with just the shim dir, silently
+		// destroying every other PATH entry they have. Refuse and let the
+		// caller fall back to the per-shell fix hint instead.
+		return false, fmt.Errorf("could not read the current User PATH (empty or unrecognized `reg query` output); leaving it unchanged")
+	}
 	fixed := rebuildUserPath(existing, shimDir, nvxRuntimeDirs(nvxHome))
 	if existing == fixed {
 		return false, nil
