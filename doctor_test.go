@@ -144,6 +144,32 @@ func TestShimPathPrependSnippet(t *testing.T) {
 	}
 }
 
+func TestFormatDoctorReport(t *testing.T) {
+	shimDir := filepath.FromSlash("/home/u/.nvx/bin")
+	healthy := doctorReport{
+		shimDir: shimDir, shimDirOnPath: true, shimDirIndex: 0,
+		commands: []commandResolution{
+			{name: "npm", resolved: filepath.Join(shimDir, "npm"), viaShim: true},
+		},
+	}
+	out := formatDoctorReport(healthy)
+	if !strings.Contains(out, "npm") || !strings.Contains(strings.ToLower(out), "ok") {
+		t.Fatalf("healthy report should mark npm OK:\n%s", out)
+	}
+
+	broken := doctorReport{
+		shimDir: shimDir, shimDirOnPath: true, shimDirIndex: 2,
+		shadowedBy: []pathShadow{{dir: filepath.FromSlash("/home/u/.nvx/current"), index: 0}},
+		commands: []commandResolution{
+			{name: "npm", resolved: filepath.FromSlash("/home/u/.nvx/current/npm"), viaShim: false},
+		},
+	}
+	out = formatDoctorReport(broken)
+	if !strings.Contains(out, "current") {
+		t.Fatalf("broken report should name the shadowing dir:\n%s", out)
+	}
+}
+
 // writeExec creates an executable file (0755) so Unix resolution accepts it.
 func writeExec(t *testing.T, path string) {
 	t.Helper()
