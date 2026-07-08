@@ -114,6 +114,41 @@ func TestPublishAgeShouldWarn(t *testing.T) {
 	}
 }
 
+func TestIsolationLevelDefaultsToStandard(t *testing.T) {
+	p := DefaultPolicy()
+	if p.IsolationLevel() != levelStandard {
+		t.Errorf("DefaultPolicy().IsolationLevel() = %v, want standard", p.IsolationLevel())
+	}
+}
+
+func TestIsolationLevelFromJSON(t *testing.T) {
+	p := DefaultPolicy()
+	local := Policy{Isolation: IsolationPolicy{Level: "strict"}}
+	merged := MergePolicies(p, local)
+	if merged.IsolationLevel() != levelStrict {
+		t.Errorf("merged.IsolationLevel() = %v, want strict", merged.IsolationLevel())
+	}
+}
+
+func TestPolicyLoosensOnStrictToStandard(t *testing.T) {
+	before := DefaultPolicy()
+	before.Isolation.Level = "strict"
+	after := before
+	after.Isolation.Level = "standard"
+	if !policyLoosens(before, after) {
+		t.Error("dropping isolation.level from strict to standard should count as loosening")
+	}
+}
+
+func TestPolicyTightensOnStandardToStrict(t *testing.T) {
+	before := DefaultPolicy() // level defaults to standard
+	after := before
+	after.Isolation.Level = "strict"
+	if policyLoosens(before, after) {
+		t.Error("raising isolation.level from standard to strict should not count as loosening")
+	}
+}
+
 func TestNetworkAllowlist(t *testing.T) {
 	p := DefaultPolicy()
 	p.Isolation.Network.AllowHosts = []string{"localhost:5432"}
