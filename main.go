@@ -13,19 +13,24 @@ import (
 var yesFlag = false
 
 func init() {
-	var yes, noSandbox bool
-	os.Args, yes, noSandbox = parseStartupFlags(os.Args)
+	var yes, noSandbox, strict, standard bool
+	os.Args, yes, noSandbox, strict, standard = parseStartupFlags(os.Args)
 	yesFlag = yes
 	noSandboxFlag = noSandbox
+	// If both are passed, fail toward more containment, not less.
+	strictFlag = strict
+	standardFlag = standard && !strict
 }
 
-func parseStartupFlags(args []string) ([]string, bool, bool) {
+func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
 	if len(args) <= 1 {
-		return args, false, false
+		return args, false, false, false, false
 	}
 	filtered := []string{args[0]}
 	yes := false
 	noSandbox := false
+	strict := false
+	standard := false
 	i := 1
 	for ; i < len(args); i++ {
 		switch args[i] {
@@ -33,12 +38,16 @@ func parseStartupFlags(args []string) ([]string, bool, bool) {
 			yes = true
 		case "--no-sandbox":
 			noSandbox = true
+		case "--strict":
+			strict = true
+		case "--standard":
+			standard = true
 		default:
 			filtered = append(filtered, args[i:]...)
-			return filtered, yes, noSandbox
+			return filtered, yes, noSandbox, strict, standard
 		}
 	}
-	return filtered, yes, noSandbox
+	return filtered, yes, noSandbox, strict, standard
 }
 
 func main() {
@@ -304,6 +313,8 @@ Options:
   --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
   --filesystem-provider=<name>  Override isolation.filesystem.provider
   --no-sandbox           Disable sandbox for this shim invocation
+  --strict               Contain your own code too for this invocation (not just installs/ad-hoc tools)
+  --standard             Force standard containment for this invocation, overriding a project's strict policy
   -y, --yes              Auto-approve all prompts
 
 Examples:

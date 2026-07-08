@@ -6,6 +6,8 @@ import (
 )
 
 var noSandboxFlag bool
+var strictFlag bool
+var standardFlag bool
 
 type shimOptions struct {
 	filesystemProvider string
@@ -14,13 +16,18 @@ type shimOptions struct {
 	// explicit `nvx --no-sandbox <cmd>` disables isolation, so nothing can bypass
 	// the sandbox by tacking a flag onto a package manager.
 	payloadNoSandbox bool
-	args             []string
-
+	// payloadStrict / payloadStandard record --strict/--standard smuggled
+	// through the wrapped command's own args. Stripped but NOT honored, for the
+	// same anti-bypass reason as payloadNoSandbox: only a leading
+	// `nvx --strict`/`nvx --standard` (strictFlag/standardFlag) changes the
+	// containment level.
+	payloadStrict   bool
+	payloadStandard bool
 	// strictFlag / standardFlag record a leading `nvx --strict`/`nvx --standard`
-	// override for this invocation. Populated by a later task; declared here so
-	// shouldContain has a stable signature from its first commit.
+	// override for this invocation.
 	strictFlag   bool
 	standardFlag bool
+	args         []string
 }
 
 func parseShimOptions(args []string) shimOptions {
@@ -31,6 +38,10 @@ func parseShimOptions(args []string) shimOptions {
 		switch {
 		case arg == "--no-sandbox":
 			opts.payloadNoSandbox = true
+		case arg == "--strict":
+			opts.payloadStrict = true
+		case arg == "--standard":
+			opts.payloadStandard = true
 		case strings.HasPrefix(arg, "--filesystem-provider="):
 			opts.filesystemProvider = strings.TrimPrefix(arg, "--filesystem-provider=")
 		case arg == "--filesystem-provider" && i+1 < len(args):
@@ -44,7 +55,7 @@ func parseShimOptions(args []string) shimOptions {
 	return opts
 }
 
-func shouldSandbox(cmdName string, policy Policy, opts shimOptions) bool {
+func shouldSandbox(cmdName string, args []string, policy Policy, opts shimOptions) bool {
 	// Only a leading `nvx --no-sandbox ...` (noSandboxFlag) disables isolation;
 	// a --no-sandbox smuggled into the wrapped command's args does not.
 	if noSandboxFlag {
@@ -60,12 +71,20 @@ func shouldSandbox(cmdName string, policy Policy, opts shimOptions) bool {
 		return false
 	}
 	provider := runtimeForShim(cmdName)
+	isWrapped := isProjectBinCommand(cmdName)
 	for _, c := range provider.ShimCommands() {
 		if strings.EqualFold(c, cmdName) {
-			return true
+			isWrapped = true
+			break
 		}
 	}
-	return isProjectBinCommand(cmdName)
+	if !isWrapped {
+		return false
+	}
+
+	class := classifyInvocation(cmdName, args)
+	level := policy.IsolationLevel()
+	return shouldContain(class, level, opts)
 }
 
 func allShimCommands() []string {
