@@ -263,7 +263,7 @@ func TestShouldContain(t *testing.T) {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `go test ./... -run 'TestParseIsolationLevel|TestShouldContain'`
-Expected: FAIL — undefined symbols (`isolationLevel` etc.); also `shimOptions{strictFlag: ...}` will fail to compile until Task 3 adds those fields — for now, comment out or skip the two `--strict`/`--standard` override subtests (`t.Skip("added in Task 3")`) so this task's test compiles and the level×class matrix is verified first. Re-enable them in Task 3's step.
+Expected: FAIL — undefined symbols (`isolationLevel` etc.); also `shimOptions{strictFlag: ...}` will fail to compile until Task 4 adds those fields — for now, comment out or skip the two `--strict`/`--standard` override subtests (`t.Skip("added in Task 4")`) so this task's test compiles and the level×class matrix is verified first. Re-enable them in Task 4's step.
 
 Adjust the test file to skip the two flag-override cases for this task:
 
@@ -272,12 +272,12 @@ Adjust the test file to skip the two flag-override cases for this task:
 ```
 → becomes, for this task only, guarded:
 ```go
-	// Flag-override cases are added by Task 3 once shimOptions grows
+	// Flag-override cases are added by Task 4 once shimOptions grows
 	// strictFlag/standardFlag; classify_test.go's TestShouldContain in the
-	// final file includes them directly (see Task 3, Step 1).
+	// final file includes them directly (see Task 4, Step 1).
 ```
 
-To keep this step self-contained, write `containment_test.go` in Task 2 WITHOUT the two flag-override subtests (just the six level×class cases), and Task 3 will extend it with the flag-override subtests once `shimOptions` has the new fields. This avoids a compile error mid-task.
+To keep this step self-contained, write `containment_test.go` in Task 2 WITHOUT the two flag-override subtests (just the six level×class cases), and Task 4 will extend it with the flag-override subtests once `shimOptions` has the new fields. This avoids a compile error mid-task.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -339,11 +339,11 @@ func shouldContain(class invocationClass, level isolationLevel, opts shimOptions
 }
 ```
 
-Note: `containment.go` references `shimOptions.strictFlag`/`standardFlag`, which don't exist until Task 3. To keep Task 2 compiling standalone, temporarily use only the six level×class test cases (as instructed in Step 2) and have `shouldContain`'s signature take `opts shimOptions` from the start — Task 3 adds the two fields to `shimOptions` (in shim_options.go) so this file does not need to change again. Confirm `go build ./...` succeeds after Task 2 only if Task 3's `shimOptions` fields are added in the same pass; **if doing these as strictly separate commits, add the two `shimOptions` fields as part of Task 2** (a one-line struct change) even though `parseShimOptions` doesn't populate them until Task 3. This keeps every commit buildable. Add to `shimOptions` in shim_options.go now:
+Note: `containment.go` references `shimOptions.strictFlag`/`standardFlag`, which don't exist until Task 4. To keep Task 2 compiling standalone, temporarily use only the six level×class test cases (as instructed in Step 2) and have `shouldContain`'s signature take `opts shimOptions` from the start — Task 4 adds the two fields to `shimOptions` (in shim_options.go) so this file does not need to change again. Confirm `go build ./...` succeeds after Task 2 only if Task 4's `shimOptions` fields are added in the same pass; **if doing these as strictly separate commits, add the two `shimOptions` fields as part of Task 2** (a one-line struct change) even though `parseShimOptions` doesn't populate them until Task 4. This keeps every commit buildable. Add to `shimOptions` in shim_options.go now:
 
 ```go
 	// strictFlag / standardFlag record a leading `nvx --strict`/`nvx --standard`
-	// override for this invocation. Populated in Task 3; declared here so
+	// override for this invocation. Populated in Task 4; declared here so
 	// shouldContain has a stable signature from its first commit.
 	strictFlag   bool
 	standardFlag bool
@@ -363,292 +363,9 @@ git commit -m "containment: isolation levels and the pure contain/don't-contain 
 
 ---
 
-### Task 3: Leading `--strict`/`--standard` flags with anti-smuggling, wired into `shouldSandbox`
+### Task 3: `isolation.level` policy field with loosen/tighten trust coverage
 
-**Files:**
-- Modify: `shim_options.go`
-- Modify: `main.go`
-- Modify: `containment_test.go` (re-enable the two flag-override subtests)
-- Modify: `remediation_test.go` (update `parseStartupFlags` call sites to the new 5-value return form)
-
-- [ ] **Step 1: Extend `containment_test.go`**
-
-Add the two previously-skipped subtests back into `TestShouldContain`'s table (they already appear in Task 2's Step 1 listing above — uncomment/add them now):
-
-```go
-		{"per-command --strict overrides standard level", classYourCode, levelStandard, shimOptions{strictFlag: true}, true},
-		// --standard downgrades the effective level from strict to standard for
-		// this call, but standard still contains installs — it must never act
-		// as a blanket bypass for code you did not write.
-		{"per-command --standard downgrades level but still contains installs", classInstall, levelStrict, shimOptions{standardFlag: true}, true},
-		{"per-command --standard leaves your own code uncontained", classYourCode, levelStrict, shimOptions{standardFlag: true}, false},
-```
-
-Run: `go test ./... -run TestShouldContain -v`
-Expected: PASS (the struct fields already exist from Task 2; this is just exercising them).
-
-- [ ] **Step 2: Add payload-smuggling detection to `parseShimOptions`**
-
-Read the current `shim_options.go` (already shown above) before editing. Add a `payloadStrict`/`payloadStandard` pair mirroring `payloadNoSandbox`, and parse `--strict`/`--standard` out of the wrapped command's own args (so `npm --strict install` doesn't silently do anything unexpected — it must be stripped and flagged, exactly like `--no-sandbox`):
-
-```go
-type shimOptions struct {
-	filesystemProvider string
-	// payloadNoSandbox records a --no-sandbox smuggled through the wrapped
-	// command (e.g. `npx --no-sandbox`). It is stripped but NOT honored: only an
-	// explicit `nvx --no-sandbox <cmd>` disables isolation, so nothing can bypass
-	// the sandbox by tacking a flag onto a package manager.
-	payloadNoSandbox bool
-	// payloadStrict / payloadStandard record --strict/--standard smuggled
-	// through the wrapped command's own args. Stripped but NOT honored, for the
-	// same anti-bypass reason as payloadNoSandbox: only a leading
-	// `nvx --strict`/`nvx --standard` (strictFlag/standardFlag) changes the
-	// containment level.
-	payloadStrict   bool
-	payloadStandard bool
-	// strictFlag / standardFlag record a leading `nvx --strict`/`nvx --standard`
-	// override for this invocation.
-	strictFlag   bool
-	standardFlag bool
-	args         []string
-}
-
-func parseShimOptions(args []string) shimOptions {
-	opts := shimOptions{args: args}
-	var filtered []string
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--no-sandbox":
-			opts.payloadNoSandbox = true
-		case arg == "--strict":
-			opts.payloadStrict = true
-		case arg == "--standard":
-			opts.payloadStandard = true
-		case strings.HasPrefix(arg, "--filesystem-provider="):
-			opts.filesystemProvider = strings.TrimPrefix(arg, "--filesystem-provider=")
-		case arg == "--filesystem-provider" && i+1 < len(args):
-			opts.filesystemProvider = args[i+1]
-			i++
-		default:
-			filtered = append(filtered, arg)
-		}
-	}
-	opts.args = filtered
-	return opts
-}
-```
-
-Note `strictFlag`/`standardFlag` (the ones `shouldContain` reads) are set by the caller (`runShim` in env.go, from the leading `nvx --strict` global, added in Step 4 below) — `parseShimOptions` only ever populates the `payload*` pair, never `strictFlag`/`standardFlag` directly, so a smuggled flag can never take effect. This mirrors exactly how `noSandboxFlag` (a package-level global set by `main.go`'s argument parsing) is distinct from `payloadNoSandbox`.
-
-- [ ] **Step 3: Rewrite `shouldSandbox` to use classification**
-
-Replace `shouldSandbox` in shim_options.go:
-
-```go
-func shouldSandbox(cmdName string, args []string, policy Policy, opts shimOptions) bool {
-	// Only a leading `nvx --no-sandbox ...` (noSandboxFlag) disables isolation;
-	// a --no-sandbox smuggled into the wrapped command's args does not.
-	if noSandboxFlag {
-		return false
-	}
-	if inSandboxSession() {
-		return false
-	}
-	if os.Getenv("NVX_SANDBOX") == "1" || os.Getenv("NVX_SANDBOX") == "true" {
-		return false
-	}
-	if !policy.Isolation.Enabled {
-		return false
-	}
-	provider := runtimeForShim(cmdName)
-	isWrapped := isProjectBinCommand(cmdName)
-	for _, c := range provider.ShimCommands() {
-		if strings.EqualFold(c, cmdName) {
-			isWrapped = true
-			break
-		}
-	}
-	if !isWrapped {
-		return false
-	}
-
-	class := classifyInvocation(cmdName, args)
-	level := policy.IsolationLevel()
-	return shouldContain(class, level, opts)
-}
-```
-
-This changes `shouldSandbox`'s signature (adds `args []string`) — find its one call site in env.go's `runShim` (`if shouldSandbox(cmdName, policy, opts) {`) and update it to `if shouldSandbox(cmdName, args, policy, opts) {`. `args` is already in scope there (it's `opts.args`, reassigned to the local `args` variable at env.go:529).
-
-- [ ] **Step 4: Add the leading `nvx --strict`/`nvx --standard` flags in main.go**
-
-main.go:13-42 is the exact mechanism to extend:
-
-```go
-var yesFlag = false
-
-func init() {
-	var yes, noSandbox bool
-	os.Args, yes, noSandbox = parseStartupFlags(os.Args)
-	yesFlag = yes
-	noSandboxFlag = noSandbox
-}
-
-func parseStartupFlags(args []string) ([]string, bool, bool) {
-	if len(args) <= 1 {
-		return args, false, false
-	}
-	filtered := []string{args[0]}
-	yes := false
-	noSandbox := false
-	i := 1
-	for ; i < len(args); i++ {
-		switch args[i] {
-		case "-y", "--yes":
-			yes = true
-		case "--no-sandbox":
-			noSandbox = true
-		default:
-			filtered = append(filtered, args[i:]...)
-			return filtered, yes, noSandbox
-		}
-	}
-	return filtered, yes, noSandbox
-}
-```
-
-`parseStartupFlags` only recognizes flags *before* the first non-flag token (the command name itself, e.g. `npx` in `nvx --no-sandbox npx wrangler login`) — anything after that is passed through untouched via `filtered = append(filtered, args[i:]...)`. This is exactly the leading-flag boundary the spec requires, and it's why a `--strict` smuggled into the wrapped command's own args (handled separately by `parseShimOptions` in Task 3 Step 2) can never reach this function.
-
-Replace main.go:13-42 with:
-
-```go
-var yesFlag = false
-
-func init() {
-	var yes, noSandbox, strict, standard bool
-	os.Args, yes, noSandbox, strict, standard = parseStartupFlags(os.Args)
-	yesFlag = yes
-	noSandboxFlag = noSandbox
-	// If both are passed, fail toward more containment, not less.
-	strictFlag = strict
-	standardFlag = standard && !strict
-}
-
-func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
-	if len(args) <= 1 {
-		return args, false, false, false, false
-	}
-	filtered := []string{args[0]}
-	yes := false
-	noSandbox := false
-	strict := false
-	standard := false
-	i := 1
-	for ; i < len(args); i++ {
-		switch args[i] {
-		case "-y", "--yes":
-			yes = true
-		case "--no-sandbox":
-			noSandbox = true
-		case "--strict":
-			strict = true
-		case "--standard":
-			standard = true
-		default:
-			filtered = append(filtered, args[i:]...)
-			return filtered, yes, noSandbox, strict, standard
-		}
-	}
-	return filtered, yes, noSandbox, strict, standard
-}
-```
-
-`parseStartupFlags` is also called directly by two existing tests in `remediation_test.go` (lines 319-347) using the old 3-return-value form — these must be updated to the new 5-value form or the package will fail to compile. Replace both:
-
-```go
-func TestParseStartupFlagsDoesNotConsumeShimPayloadFlags(t *testing.T) {
-	args, yes, noSandbox, strict, standard := parseStartupFlags([]string{"nvx", "shim", "npx", "-y", "create-vite", "--no-sandbox"})
-
-	if yes {
-		t.Fatal("shim payload -y must not enable nvx --yes")
-	}
-	if noSandbox {
-		t.Fatal("shim payload --no-sandbox must not disable nvx sandboxing")
-	}
-	if strict || standard {
-		t.Fatal("shim payload --strict/--standard must not set the leading nvx flags")
-	}
-	want := []string{"nvx", "shim", "npx", "-y", "create-vite", "--no-sandbox"}
-	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("args changed unexpectedly: got %v want %v", args, want)
-	}
-}
-
-func TestParseStartupFlagsOnlyConsumesLeadingGlobalFlags(t *testing.T) {
-	args, yes, noSandbox, strict, standard := parseStartupFlags([]string{"nvx", "--yes", "--no-sandbox", "--strict", "shim", "node", "-e", "1"})
-
-	if !yes {
-		t.Fatal("leading --yes should enable nvx yes mode")
-	}
-	if !noSandbox {
-		t.Fatal("leading --no-sandbox should enable nvx no-sandbox mode")
-	}
-	if !strict {
-		t.Fatal("leading --strict should enable nvx strict mode")
-	}
-	if standard {
-		t.Fatal("standard should not be set when only --strict was passed")
-	}
-	want := []string{"nvx", "shim", "node", "-e", "1"}
-	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("args mismatch: got %v want %v", args, want)
-	}
-}
-```
-
-Add `strictFlag`/`standardFlag` as package-level `bool` vars next to `noSandboxFlag` in shim_options.go:
-
-```go
-var noSandboxFlag bool
-var strictFlag bool
-var standardFlag bool
-```
-
-Then wire them into `runShim` (env.go:527) so `shouldSandbox` sees the leading-flag override via `opts`:
-
-```go
-func runShim(cmdName string, args []string, nvxHome string) int {
-	opts := parseShimOptions(args)
-	args = opts.args
-	opts.strictFlag = strictFlag
-	opts.standardFlag = standardFlag
-```
-
-- [ ] **Step 5: Update help text**
-
-In `printHelp` (main.go, `Options:` section, near `--no-sandbox`), add:
-
-```
-  --strict               Contain your own code too for this invocation (not just installs/ad-hoc tools)
-  --standard             Force standard containment for this invocation, overriding a project's strict policy
-```
-
-- [ ] **Step 6: Run full suite**
-
-Run: `go build ./... && go vet ./... && go test ./...`
-Expected: all green. Pay attention to any existing test that calls `shouldSandbox` directly with the old 3-arg signature — update call sites to the new 4-arg form (`cmdName, args, policy, opts`).
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add shim_options.go main.go containment_test.go remediation_test.go
-git commit -m "containment: wire classification + isolation level into shouldSandbox, add --strict/--standard"
-```
-
----
-
-### Task 4: `isolation.level` policy field with loosen/tighten trust coverage
+**Note on ordering:** this task is deliberately sequenced *before* the `shouldSandbox` wiring task (Task 4) because that task's `shouldSandbox` calls `policy.IsolationLevel()` — that accessor must exist first, or Task 4 will not compile.
 
 **Files:**
 - Modify: `policy.go`
@@ -781,6 +498,291 @@ git commit -m "policy: add isolation.level (standard/strict) with loosen/tighten
 
 ---
 
+### Task 4: Leading `--strict`/`--standard` flags with anti-smuggling, wired into `shouldSandbox`
+
+**Files:**
+- Modify: `shim_options.go`
+- Modify: `main.go`
+- Modify: `containment_test.go` (re-enable the two flag-override subtests)
+- Modify: `remediation_test.go` (update `parseStartupFlags` call sites to the new 5-value return form)
+
+- [ ] **Step 1: Extend `containment_test.go`**
+
+Add the two previously-skipped subtests back into `TestShouldContain`'s table (they already appear in Task 2's Step 1 listing above — uncomment/add them now):
+
+```go
+		{"per-command --strict overrides standard level", classYourCode, levelStandard, shimOptions{strictFlag: true}, true},
+		// --standard downgrades the effective level from strict to standard for
+		// this call, but standard still contains installs — it must never act
+		// as a blanket bypass for code you did not write.
+		{"per-command --standard downgrades level but still contains installs", classInstall, levelStrict, shimOptions{standardFlag: true}, true},
+		{"per-command --standard leaves your own code uncontained", classYourCode, levelStrict, shimOptions{standardFlag: true}, false},
+```
+
+Run: `go test ./... -run TestShouldContain -v`
+Expected: PASS (the struct fields already exist from Task 2; this is just exercising them).
+
+- [ ] **Step 2: Add payload-smuggling detection to `parseShimOptions`**
+
+Read the current `shim_options.go` (already shown above) before editing. Add a `payloadStrict`/`payloadStandard` pair mirroring `payloadNoSandbox`, and parse `--strict`/`--standard` out of the wrapped command's own args (so `npm --strict install` doesn't silently do anything unexpected — it must be stripped and flagged, exactly like `--no-sandbox`):
+
+```go
+type shimOptions struct {
+	filesystemProvider string
+	// payloadNoSandbox records a --no-sandbox smuggled through the wrapped
+	// command (e.g. `npx --no-sandbox`). It is stripped but NOT honored: only an
+	// explicit `nvx --no-sandbox <cmd>` disables isolation, so nothing can bypass
+	// the sandbox by tacking a flag onto a package manager.
+	payloadNoSandbox bool
+	// payloadStrict / payloadStandard record --strict/--standard smuggled
+	// through the wrapped command's own args. Stripped but NOT honored, for the
+	// same anti-bypass reason as payloadNoSandbox: only a leading
+	// `nvx --strict`/`nvx --standard` (strictFlag/standardFlag) changes the
+	// containment level.
+	payloadStrict   bool
+	payloadStandard bool
+	// strictFlag / standardFlag record a leading `nvx --strict`/`nvx --standard`
+	// override for this invocation.
+	strictFlag   bool
+	standardFlag bool
+	args         []string
+}
+
+func parseShimOptions(args []string) shimOptions {
+	opts := shimOptions{args: args}
+	var filtered []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--no-sandbox":
+			opts.payloadNoSandbox = true
+		case arg == "--strict":
+			opts.payloadStrict = true
+		case arg == "--standard":
+			opts.payloadStandard = true
+		case strings.HasPrefix(arg, "--filesystem-provider="):
+			opts.filesystemProvider = strings.TrimPrefix(arg, "--filesystem-provider=")
+		case arg == "--filesystem-provider" && i+1 < len(args):
+			opts.filesystemProvider = args[i+1]
+			i++
+		default:
+			filtered = append(filtered, arg)
+		}
+	}
+	opts.args = filtered
+	return opts
+}
+```
+
+Note `strictFlag`/`standardFlag` (the ones `shouldContain` reads) are set by the caller (`runShim` in env.go, from the leading `nvx --strict` global, added in Step 4 below) — `parseShimOptions` only ever populates the `payload*` pair, never `strictFlag`/`standardFlag` directly, so a smuggled flag can never take effect. This mirrors exactly how `noSandboxFlag` (a package-level global set by `main.go`'s argument parsing) is distinct from `payloadNoSandbox`.
+
+- [ ] **Step 3: Rewrite `shouldSandbox` to use classification**
+
+Replace `shouldSandbox` in shim_options.go:
+
+```go
+func shouldSandbox(cmdName string, args []string, policy Policy, opts shimOptions) bool {
+	// Only a leading `nvx --no-sandbox ...` (noSandboxFlag) disables isolation;
+	// a --no-sandbox smuggled into the wrapped command's args does not.
+	if noSandboxFlag {
+		return false
+	}
+	if inSandboxSession() {
+		return false
+	}
+	if os.Getenv("NVX_SANDBOX") == "1" || os.Getenv("NVX_SANDBOX") == "true" {
+		return false
+	}
+	if !policy.Isolation.Enabled {
+		return false
+	}
+	provider := runtimeForShim(cmdName)
+	isWrapped := isProjectBinCommand(cmdName)
+	for _, c := range provider.ShimCommands() {
+		if strings.EqualFold(c, cmdName) {
+			isWrapped = true
+			break
+		}
+	}
+	if !isWrapped {
+		return false
+	}
+
+	class := classifyInvocation(cmdName, args)
+	level := policy.IsolationLevel() // added by Task 3, so this call already resolves
+	return shouldContain(class, level, opts)
+}
+```
+
+This changes `shouldSandbox`'s signature (adds `args []string`) — find its one call site in env.go's `runShim` (`if shouldSandbox(cmdName, policy, opts) {`) and update it to `if shouldSandbox(cmdName, args, policy, opts) {`. `args` is already in scope there (it's `opts.args`, reassigned to the local `args` variable at env.go:529).
+
+- [ ] **Step 4: Add the leading `nvx --strict`/`nvx --standard` flags in main.go**
+
+main.go:13-42 is the exact mechanism to extend:
+
+```go
+var yesFlag = false
+
+func init() {
+	var yes, noSandbox bool
+	os.Args, yes, noSandbox = parseStartupFlags(os.Args)
+	yesFlag = yes
+	noSandboxFlag = noSandbox
+}
+
+func parseStartupFlags(args []string) ([]string, bool, bool) {
+	if len(args) <= 1 {
+		return args, false, false
+	}
+	filtered := []string{args[0]}
+	yes := false
+	noSandbox := false
+	i := 1
+	for ; i < len(args); i++ {
+		switch args[i] {
+		case "-y", "--yes":
+			yes = true
+		case "--no-sandbox":
+			noSandbox = true
+		default:
+			filtered = append(filtered, args[i:]...)
+			return filtered, yes, noSandbox
+		}
+	}
+	return filtered, yes, noSandbox
+}
+```
+
+`parseStartupFlags` only recognizes flags *before* the first non-flag token (the command name itself, e.g. `npx` in `nvx --no-sandbox npx wrangler login`) — anything after that is passed through untouched via `filtered = append(filtered, args[i:]...)`. This is exactly the leading-flag boundary the spec requires, and it's why a `--strict` smuggled into the wrapped command's own args (handled separately by `parseShimOptions` in Step 2 above) can never reach this function.
+
+Replace main.go:13-42 with:
+
+```go
+var yesFlag = false
+
+func init() {
+	var yes, noSandbox, strict, standard bool
+	os.Args, yes, noSandbox, strict, standard = parseStartupFlags(os.Args)
+	yesFlag = yes
+	noSandboxFlag = noSandbox
+	// If both are passed, fail toward more containment, not less.
+	strictFlag = strict
+	standardFlag = standard && !strict
+}
+
+func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
+	if len(args) <= 1 {
+		return args, false, false, false, false
+	}
+	filtered := []string{args[0]}
+	yes := false
+	noSandbox := false
+	strict := false
+	standard := false
+	i := 1
+	for ; i < len(args); i++ {
+		switch args[i] {
+		case "-y", "--yes":
+			yes = true
+		case "--no-sandbox":
+			noSandbox = true
+		case "--strict":
+			strict = true
+		case "--standard":
+			standard = true
+		default:
+			filtered = append(filtered, args[i:]...)
+			return filtered, yes, noSandbox, strict, standard
+		}
+	}
+	return filtered, yes, noSandbox, strict, standard
+}
+```
+
+`parseStartupFlags` is also called directly by two existing tests in `remediation_test.go` (lines 319-347) using the old 3-return-value form — these must be updated to the new 5-value form or the package will fail to compile. Replace both:
+
+```go
+func TestParseStartupFlagsDoesNotConsumeShimPayloadFlags(t *testing.T) {
+	args, yes, noSandbox, strict, standard := parseStartupFlags([]string{"nvx", "shim", "npx", "-y", "create-vite", "--no-sandbox"})
+
+	if yes {
+		t.Fatal("shim payload -y must not enable nvx --yes")
+	}
+	if noSandbox {
+		t.Fatal("shim payload --no-sandbox must not disable nvx sandboxing")
+	}
+	if strict || standard {
+		t.Fatal("shim payload --strict/--standard must not set the leading nvx flags")
+	}
+	want := []string{"nvx", "shim", "npx", "-y", "create-vite", "--no-sandbox"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args changed unexpectedly: got %v want %v", args, want)
+	}
+}
+
+func TestParseStartupFlagsOnlyConsumesLeadingGlobalFlags(t *testing.T) {
+	args, yes, noSandbox, strict, standard := parseStartupFlags([]string{"nvx", "--yes", "--no-sandbox", "--strict", "shim", "node", "-e", "1"})
+
+	if !yes {
+		t.Fatal("leading --yes should enable nvx yes mode")
+	}
+	if !noSandbox {
+		t.Fatal("leading --no-sandbox should enable nvx no-sandbox mode")
+	}
+	if !strict {
+		t.Fatal("leading --strict should enable nvx strict mode")
+	}
+	if standard {
+		t.Fatal("standard should not be set when only --strict was passed")
+	}
+	want := []string{"nvx", "shim", "node", "-e", "1"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args mismatch: got %v want %v", args, want)
+	}
+}
+```
+
+Add `strictFlag`/`standardFlag` as package-level `bool` vars next to `noSandboxFlag` in shim_options.go:
+
+```go
+var noSandboxFlag bool
+var strictFlag bool
+var standardFlag bool
+```
+
+Then wire them into `runShim` (env.go:527) so `shouldSandbox` sees the leading-flag override via `opts`:
+
+```go
+func runShim(cmdName string, args []string, nvxHome string) int {
+	opts := parseShimOptions(args)
+	args = opts.args
+	opts.strictFlag = strictFlag
+	opts.standardFlag = standardFlag
+```
+
+- [ ] **Step 5: Update help text**
+
+In `printHelp` (main.go, `Options:` section, near `--no-sandbox`), add:
+
+```
+  --strict               Contain your own code too for this invocation (not just installs/ad-hoc tools)
+  --standard             Force standard containment for this invocation, overriding a project's strict policy
+```
+
+- [ ] **Step 6: Run full suite**
+
+Run: `go build ./... && go vet ./... && go test ./...`
+Expected: all green. Pay attention to any existing test that calls `shouldSandbox` directly with the old 3-arg signature — update call sites to the new 4-arg form (`cmdName, args, policy, opts`).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add shim_options.go main.go containment_test.go remediation_test.go
+git commit -m "containment: wire classification + isolation level into shouldSandbox, add --strict/--standard"
+```
+
+---
+
 ### Task 5: `nvx policy init` scaffolds `isolation.level` and README/help mention the containment model
 
 **Files:**
@@ -825,10 +827,10 @@ Final gate: `go build ./... && go vet ./... && go test ./...` green. Manual chec
 - Part 2 classification table → Task 1, fully covered by `classify_test.go` including bun's `a` alias, uv's `pip install`, deno's `add npm:`.
 - Part 3 levels table + per-command override + policy-trust interaction → Tasks 2–4.
 - Part 4 containment profile ("identical profile regardless of class... the change is *when* it applies") → intentionally **no new profile code** in this plan; `runSandbox`/`SandboxConfig` are unchanged, only the decision of *whether* to call them changes. This matches the spec's explicit statement that Part 4 requires no filesystem/network profile changes.
-- Nested-invocation short-circuit preserved → Task 3 Step 3 keeps the `inSandboxSession()`/`NVX_SANDBOX` checks ahead of classification in `shouldSandbox`.
+- Nested-invocation short-circuit preserved → Task 4 Step 3 keeps the `inSandboxSession()`/`NVX_SANDBOX` checks ahead of classification in `shouldSandbox`.
 
 **Placeholder scan:** none — every step has complete code or an exact, locatable existing-code reference (line numbers from the current codebase state) rather than "similar to X."
 
-**Type consistency:** `invocationClass` (Task 1) is consumed unchanged by `shouldContain` (Task 2) and `shouldSandbox` (Task 3). `isolationLevel` (Task 2) is consumed unchanged by `Policy.IsolationLevel()` (Task 4). `shimOptions.strictFlag`/`standardFlag` declared in Task 2, populated in Task 3 — no rename drift. `shouldSandbox`'s signature change (adds `args`) is applied consistently at its one call site in env.go.
+**Type consistency:** `invocationClass` (Task 1) is consumed unchanged by `shouldContain` (Task 2) and `shouldSandbox` (Task 4). `isolationLevel` (Task 2) is consumed unchanged by `Policy.IsolationLevel()` (Task 3). `shimOptions.strictFlag`/`standardFlag` declared in Task 2, populated in Task 4 — no rename drift. `shouldSandbox`'s signature change (adds `args`) is applied consistently at its one call site in env.go.
 
-**Buildability per commit:** Task 2 deliberately adds the (unused-until-Task-3) `strictFlag`/`standardFlag` fields to `shimOptions` in its own commit so `containment.go` compiles standalone — flagged explicitly in Task 2 Step 3 to avoid a broken intermediate commit.
+**Buildability per commit:** Task 2 deliberately adds the (unused-until-Task-4) `strictFlag`/`standardFlag` fields to `shimOptions` in its own commit so `containment.go` compiles standalone — flagged explicitly in Task 2 Step 3 to avoid a broken intermediate commit. **Ordering fix:** Task 3 (policy field) is sequenced before Task 4 (shouldSandbox wiring) — not in the order they were first drafted — because Task 4's `shouldSandbox` calls `policy.IsolationLevel()`, which Task 3 defines; the original draft had this backwards and would not have compiled at the Task-4 commit. Caught and corrected before dispatching Task 3's implementer.
