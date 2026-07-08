@@ -19,10 +19,25 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1
 	}
 
-	profilePath := filepath.Join(guestHome, "nvx.sb")
 	profile := buildSeatbeltProfile(netCtx, guestHome, workDir, config.NvxHome, filepath.Dir(cmdPath))
-	if err := os.WriteFile(profilePath, []byte(profile), 0600); err != nil {
+	profileFile, err := os.CreateTemp("", "nvx-*.sb")
+	if err != nil {
+		LogError("Failed to create Seatbelt profile file: %v", err)
+		return 1
+	}
+	profilePath := profileFile.Name()
+	defer os.Remove(profilePath)
+	if _, err := profileFile.Write([]byte(profile)); err != nil {
+		profileFile.Close()
 		LogError("Failed to write Seatbelt profile: %v", err)
+		return 1
+	}
+	if err := profileFile.Close(); err != nil {
+		LogError("Failed to close Seatbelt profile file: %v", err)
+		return 1
+	}
+	if err := os.Chmod(profilePath, 0600); err != nil {
+		LogError("Failed to set permissions on Seatbelt profile file: %v", err)
 		return 1
 	}
 
