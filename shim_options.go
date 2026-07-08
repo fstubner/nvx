@@ -15,6 +15,12 @@ type shimOptions struct {
 	// the sandbox by tacking a flag onto a package manager.
 	payloadNoSandbox bool
 	args             []string
+
+	// strictFlag / standardFlag record a leading `nvx --strict`/`nvx --standard`
+	// override for this invocation. Populated by a later task; declared here so
+	// shouldContain has a stable signature from its first commit.
+	strictFlag   bool
+	standardFlag bool
 }
 
 func parseShimOptions(args []string) shimOptions {
