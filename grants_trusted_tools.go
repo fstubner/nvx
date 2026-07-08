@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // authLikeSubcommands are the ad-hoc-tool subcommands that plausibly need to
 // persist credentials/config to the user's real home — exactly the spec's own
@@ -62,4 +65,45 @@ func trustedToolCandidate(cmd string, args []string) (tool string, wantsRealHome
 		return tool, false
 	}
 	return tool, authLikeSubcommands[strings.ToLower(toks[1])]
+}
+
+// ensureTrustedToolGrant decides whether toolName should receive the real
+// user home directory for this sandboxed run. Returns true if it should
+// (either already granted, or the user just approved it now); false if
+// denied, unsupported on this platform, or toolName is empty. Prompts at
+// most once per project per tool; the decision persists in the project's
+// grant file under nvxHome, never in the project tree.
+func ensureTrustedToolGrant(nvxHome, toolName string) bool {
+	if toolName == "" {
+		return false
+	}
+	scope := projectScopeDir()
+	if scope == "" {
+		return false
+	}
+
+	g := loadProjectGrants(nvxHome, scope)
+	if g.hasTrustedTool(toolName) {
+		return true
+	}
+
+	if !realHomeSwapSupported() {
+		LogInfo("%q could persist credentials to your real home on Linux/macOS; the Windows sandbox can't grant that safely yet. Run without isolation for this command: nvx --no-sandbox <cmd> ...", toolName)
+		return false
+	}
+
+	msg := fmt.Sprintf("%q wants access to your real home directory to save credentials/config (e.g. login tokens). Allow?", toolName)
+	if !PromptYesNo(msg) {
+		auditLog(nvxHome, "trusted_tool_denied", map[string]string{"tool": toolName, "project": scope})
+		return false
+	}
+
+	g.TrustedTools = append(g.TrustedTools, toolName)
+	g.ProjectPath = scope
+	if err := saveProjectGrants(nvxHome, g); err != nil {
+		LogWarn("Failed to persist trusted-tool grant: %v", err)
+		return false
+	}
+	auditLog(nvxHome, "trusted_tool_granted", map[string]string{"tool": toolName, "project": scope})
+	return true
 }

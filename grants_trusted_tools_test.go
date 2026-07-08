@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestTrustedToolCandidate(t *testing.T) {
 	tests := []struct {
@@ -46,5 +50,46 @@ func TestStripVersionSuffix(t *testing.T) {
 		if got := stripVersionSuffix(tc.in); got != tc.want {
 			t.Errorf("stripVersionSuffix(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestEnsureTrustedToolGrantReturnsTrueWhenAlreadyGranted(t *testing.T) {
+	tmp := t.TempDir()
+	projectDir := filepath.Join(tmp, "project")
+	nvxHome := filepath.Join(tmp, ".nvx")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nvxHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+
+	scope := projectScopeDir()
+	g := loadProjectGrants(nvxHome, scope)
+	g.TrustedTools = append(g.TrustedTools, "wrangler")
+	g.ProjectPath = scope
+	if err := saveProjectGrants(nvxHome, g); err != nil {
+		t.Fatal(err)
+	}
+
+	// Already granted: must return true WITHOUT prompting (no TTY available in
+	// `go test`, so a prompt attempt would deny and this assertion would catch it).
+	if !ensureTrustedToolGrant(nvxHome, "wrangler") {
+		t.Fatal("expected true for an already-granted tool")
+	}
+}
+
+func TestEnsureTrustedToolGrantEmptyToolName(t *testing.T) {
+	if ensureTrustedToolGrant(t.TempDir(), "") {
+		t.Fatal("empty tool name must never be granted")
 	}
 }
