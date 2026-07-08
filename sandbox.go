@@ -24,6 +24,11 @@ type SandboxConfig struct {
 	WorkDir string
 	// FilesystemProvider overrides isolation.filesystem.provider from policy.
 	FilesystemProvider string
+	// ToolName is set when this invocation is a granted trusted tool (see
+	// ensureTrustedToolGrant) — the native sandbox uses the real home
+	// directory instead of an ephemeral guest profile for the run. Empty
+	// means "use the ephemeral guest home" (the default, contained behavior).
+	ToolName string
 }
 
 // sensitiveEnvPrefixes are environment variable prefixes that will be scrubbed
