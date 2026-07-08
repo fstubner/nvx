@@ -51,6 +51,9 @@ type IsolationPolicy struct {
 	Enabled    bool             `json:"enabled"`
 	Filesystem FilesystemPolicy `json:"filesystem"`
 	Network    NetworkPolicy    `json:"network"`
+	// Level selects standard vs strict containment (see isolationLevel in
+	// containment.go). Empty/unrecognized values normalize to "standard".
+	Level string `json:"level,omitempty"`
 	// Legacy top-level provider from older policy files.
 	Provider string        `json:"provider,omitempty"`
 	Runtime  RuntimePolicy `json:"runtime,omitempty"`
@@ -228,6 +231,16 @@ func (p Policy) PinnedRuntimeVersion(runtimeName string) string {
 		return p.Runtime.Version
 	}
 	return ""
+}
+
+// IsolationLevel returns the effective containment level, normalizing an
+// empty or unrecognized isolation.level value to standard.
+func (p Policy) IsolationLevel() isolationLevel {
+	level, ok := parseIsolationLevel(p.Isolation.Level)
+	if !ok {
+		LogWarn("Unrecognized isolation.level %q in policy; using standard.", p.Isolation.Level)
+	}
+	return level
 }
 
 func (p Policy) FilesystemProvider() string {
@@ -465,6 +478,14 @@ func networkModeRank(mode string) int {
 	}
 }
 
+func isolationLevelRank(level string) int {
+	l, _ := parseIsolationLevel(level)
+	if l == levelStrict {
+		return 2
+	}
+	return 1
+}
+
 func hostsAdded(before, after []string) bool {
 	seen := map[string]bool{}
 	for _, h := range before {
@@ -508,6 +529,9 @@ func policyLoosens(before, after Policy) bool {
 		return true
 	}
 	if before.EnforceIgnoreScripts && !after.EnforceIgnoreScripts {
+		return true
+	}
+	if isolationLevelRank(after.Isolation.Level) < isolationLevelRank(before.Isolation.Level) {
 		return true
 	}
 	return false
@@ -561,6 +585,9 @@ func MergePolicies(global, local Policy) Policy {
 		merged.Isolation.Enabled = local.Isolation.Enabled
 	} else if local.Isolation.Enabled {
 		merged.Isolation.Enabled = true
+	}
+	if local.Isolation.Level != "" {
+		merged.Isolation.Level = local.Isolation.Level
 	}
 	if local.Isolation.Filesystem.Provider != "" {
 		merged.Isolation.Filesystem.Provider = local.Isolation.Filesystem.Provider
