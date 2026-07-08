@@ -177,6 +177,13 @@ func main() {
 	case "doctor":
 		os.Exit(runDoctor(nvxHome))
 
+	case "grants":
+		if len(os.Args) < 3 {
+			LogError("Usage: nvx grants list | nvx grants reset [--all]")
+			os.Exit(1)
+		}
+		os.Exit(runGrants(os.Args[2:], nvxHome))
+
 	case "setup":
 		undo := false
 		for _, a := range os.Args[2:] {
@@ -248,6 +255,8 @@ func commandHelpText(command string) string {
 		return "nvx cleanup\n\nRemove stale sandbox guest profiles from previous interrupted runs.\n"
 	case "doctor":
 		return "nvx doctor\n\nCheck that ~/.nvx/bin is first on PATH so nvx intercepts node/npm/npx/bun.\nRegenerates shims and, on Windows, repairs a shadowed persistent PATH.\n"
+	case "grants":
+		return "nvx grants list\nnvx grants reset [--all]\n\nInspect or forget the approve-once grants recorded for the current project\n(or every project, with --all): egress hosts, trusted tools, and trusted\nproject policy files. Grants live under ~/.nvx/grants, never in the project.\n"
 	}
 	return ""
 }
@@ -308,6 +317,8 @@ Commands:
   setup                    (Windows) One-time elevated setup that lets the
                            sandbox run package managers; 'setup --undo' reverses
   doctor                   Check and repair that nvx intercepts node/npm/npx on PATH
+  grants list              Show this project's approved egress hosts, trusted tools, and policy pins
+  grants reset [--all]     Forget this project's grants (or every project's, with --all)
 
 Options:
   --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
