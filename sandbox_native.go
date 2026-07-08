@@ -7,6 +7,14 @@ import (
 	"strings"
 )
 
+// resolveUseRealHome decides whether a sandboxed run should use the real
+// user home directory instead of an ephemeral guest profile: only when a
+// trusted tool is set, the platform supports the swap, and the real home
+// path actually resolved.
+func resolveUseRealHome(toolName string, swapSupported bool, realHome string) bool {
+	return toolName != "" && swapSupported && realHome != ""
+}
+
 // runNativeSandbox is the hardened default sandbox: platform-specific OS
 // primitives (AppContainer on Windows, Landlock on Linux, Seatbelt on macOS)
 // layered on env scrubbing and an ephemeral guest profile.
@@ -19,12 +27,21 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 
 	LogInfo("Sandbox session: %s", sandboxID)
 
-	guestHome, err := createGuestProfile(config.NvxHome, sandboxID)
-	if err != nil {
-		LogError("Failed to create sandbox guest profile: %v", err)
-		return 1
+	realHome, _ := os.UserHomeDir()
+	useRealHome := resolveUseRealHome(config.ToolName, realHomeSwapSupported(), realHome)
+
+	var guestHome string
+	if useRealHome {
+		guestHome = realHome
+		LogInfo("%q is a trusted tool for this project: using your real home directory. Filesystem/network containment elsewhere is unchanged.", config.ToolName)
+	} else {
+		guestHome, err = createGuestProfile(config.NvxHome, sandboxID)
+		if err != nil {
+			LogError("Failed to create sandbox guest profile: %v", err)
+			return 1
+		}
+		defer cleanupGuestProfile(config.NvxHome, sandboxID)
 	}
-	defer cleanupGuestProfile(config.NvxHome, sandboxID)
 
 	cleanEnv := scrubEnvironment(guestHome)
 	cleanEnv = applyProxyEnv(cleanEnv, egress)
