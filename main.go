@@ -239,7 +239,7 @@ func commandHelpText(command string) string {
 	case "verify-install":
 		return "nvx verify-install <package> [package...]\n\nInternal security verifier used by shims. Checks policy blocklists, typosquatting, install scripts, release age, and OSV vulnerabilities.\n"
 	case "policy":
-		return "nvx policy init [--global] [--project] [--force]\n\nCreate a global or project .nvx policy file.\n"
+		return "nvx policy init [--global] [--project] [--force]\n\nCreate a global or project .nvx policy file. Includes isolation.level\n(\"standard\" or \"strict\") — standard contains installs and ad-hoc tool runs;\nstrict also contains your own code. Override per-invocation with\nnvx --strict/--standard.\n"
 	case "init-shims":
 		return "nvx init-shims\n\nGenerate PATH shims in ~/.nvx/bin and project-bin shims for node_modules/.bin when run in a Node project.\n"
 	case "shim":
