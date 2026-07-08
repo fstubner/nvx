@@ -38,17 +38,18 @@ func (l isolationLevel) String() string {
 // being invoked, the effective isolation level, and any per-command flag
 // override, should this invocation run inside the sandbox?
 func shouldContain(class invocationClass, level isolationLevel, opts shimOptions) bool {
-	// A per-invocation flag is an unconditional escape hatch: `--strict` always
-	// contains, `--standard` always releases, regardless of class or the
-	// ambient policy level.
+	// A per-invocation flag overrides the effective isolation level for this
+	// call only — it is not a blanket bypass. `--standard` downgrades strict to
+	// standard, but standard still contains everything that is not your own
+	// code (installs, ad-hoc tools); it never uncontains an install.
+	effectiveLevel := level
 	if opts.strictFlag {
-		return true
-	}
-	if opts.standardFlag {
-		return false
+		effectiveLevel = levelStrict
+	} else if opts.standardFlag {
+		effectiveLevel = levelStandard
 	}
 
-	if level == levelStrict {
+	if effectiveLevel == levelStrict {
 		return true
 	}
 	// standard: only code you did not write is contained.
