@@ -528,6 +528,8 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 	opts := parseShimOptions(args)
 	args = opts.args
 
+	hintIfShadowed(nvxHome)
+
 	if err := ensureProjectPolicyTrust(nvxHome); err != nil {
 		LogError("Failed to load security policy: %v", err)
 		return 1

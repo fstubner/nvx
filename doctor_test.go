@@ -192,6 +192,20 @@ func TestRebuildUserPath(t *testing.T) {
 	}
 }
 
+func TestPathIsShadowed(t *testing.T) {
+	nvxHome := t.TempDir()
+	shimDir := filepath.Join(nvxHome, "bin")
+	current := filepath.Join(nvxHome, "current")
+	sep := string(os.PathListSeparator)
+
+	if pathIsShadowed(shimDir+sep+current, nvxHome) {
+		t.Fatalf("healthy PATH should not be shadowed")
+	}
+	if !pathIsShadowed(current+sep+shimDir, nvxHome) {
+		t.Fatalf("current ahead of shim dir should be shadowed")
+	}
+}
+
 // writeExec creates an executable file (0755) so Unix resolution accepts it.
 func writeExec(t *testing.T, path string) {
 	t.Helper()

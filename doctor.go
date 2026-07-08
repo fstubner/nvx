@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // pathResolveExts returns the executable extensions to try when resolving a
@@ -281,4 +282,24 @@ func formatDoctorReport(rep doctorReport) string {
 		}
 	}
 	return b.String()
+}
+
+// pathIsShadowed reports whether a raw-runtime dir precedes the shim dir on the
+// given PATH (a partially-broken interception setup).
+func pathIsShadowed(pathEnv, nvxHome string) bool {
+	rep := diagnosePath(pathEnv, nvxHome, nil)
+	return rep.shimDirOnPath && len(rep.shadowedBy) > 0
+}
+
+var shadowHintOnce sync.Once
+
+// hintIfShadowed warns at most once per process when the current PATH shadows
+// the shim dir, so a wrapped command that happens to still route through nvx
+// nudges the user to run `nvx doctor` before a future command bypasses it.
+func hintIfShadowed(nvxHome string) {
+	if pathIsShadowed(os.Getenv("PATH"), nvxHome) {
+		shadowHintOnce.Do(func() {
+			LogWarn("A runtime dir is ahead of nvx's shim dir on PATH; some commands may bypass nvx. Run: nvx doctor")
+		})
+	}
 }
