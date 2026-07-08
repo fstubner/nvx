@@ -243,8 +243,11 @@ func TestShouldContain(t *testing.T) {
 		{"strict install contained", classInstall, levelStrict, shimOptions{}, true},
 		{"strict ad-hoc-tool contained", classAdHocTool, levelStrict, shimOptions{}, true},
 		{"per-command --strict overrides standard level", classYourCode, levelStandard, shimOptions{strictFlag: true}, true},
-		{"per-command --standard overrides strict level", classInstall, levelStrict, shimOptions{standardFlag: true}, false},
-		{"per-command --standard does not uncontain your own install choice", classYourCode, levelStrict, shimOptions{standardFlag: true}, false},
+		// --standard downgrades the effective level from strict to standard for
+		// this call, but standard still contains installs — it must never act
+		// as a blanket bypass for code you did not write.
+		{"per-command --standard downgrades level but still contains installs", classInstall, levelStrict, shimOptions{standardFlag: true}, true},
+		{"per-command --standard leaves your own code uncontained", classYourCode, levelStrict, shimOptions{standardFlag: true}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -374,8 +377,11 @@ Add the two previously-skipped subtests back into `TestShouldContain`'s table (t
 
 ```go
 		{"per-command --strict overrides standard level", classYourCode, levelStandard, shimOptions{strictFlag: true}, true},
-		{"per-command --standard overrides strict level", classInstall, levelStrict, shimOptions{standardFlag: true}, false},
-		{"per-command --standard does not uncontain your own install choice", classYourCode, levelStrict, shimOptions{standardFlag: true}, false},
+		// --standard downgrades the effective level from strict to standard for
+		// this call, but standard still contains installs — it must never act
+		// as a blanket bypass for code you did not write.
+		{"per-command --standard downgrades level but still contains installs", classInstall, levelStrict, shimOptions{standardFlag: true}, true},
+		{"per-command --standard leaves your own code uncontained", classYourCode, levelStrict, shimOptions{standardFlag: true}, false},
 ```
 
 Run: `go test ./... -run TestShouldContain -v`
