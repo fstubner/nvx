@@ -69,12 +69,13 @@ func trustedToolCandidate(cmd string, args []string) (tool string, wantsRealHome
 
 // ensureTrustedToolGrant decides whether toolName should receive the real
 // user home directory for this sandboxed run. Returns true if it should
-// (either already granted, or the user just approved it now); false if
-// denied, unsupported on this platform, or toolName is empty. Prompts at
-// most once per project per tool; the decision persists in the project's
-// grant file under nvxHome, never in the project tree.
+// (either already granted, or the user just approved it now — even if that
+// approval couldn't be persisted); false if denied, unsupported on this
+// platform, or toolName/nvxHome is empty. Prompts at most once per project
+// per tool; the decision persists in the project's grant file under
+// nvxHome, never in the project tree.
 func ensureTrustedToolGrant(nvxHome, toolName string) bool {
-	if toolName == "" {
+	if toolName == "" || nvxHome == "" {
 		return false
 	}
 	scope := projectScopeDir()
@@ -88,6 +89,7 @@ func ensureTrustedToolGrant(nvxHome, toolName string) bool {
 	}
 
 	if !realHomeSwapSupported() {
+		auditLog(nvxHome, "trusted_tool_platform_unsupported", map[string]string{"tool": toolName})
 		LogInfo("%q could persist credentials to your real home on Linux/macOS; the Windows sandbox can't grant that safely yet. Run without isolation for this command: nvx --no-sandbox <cmd> ...", toolName)
 		return false
 	}
@@ -102,7 +104,10 @@ func ensureTrustedToolGrant(nvxHome, toolName string) bool {
 	g.ProjectPath = scope
 	if err := saveProjectGrants(nvxHome, g); err != nil {
 		LogWarn("Failed to persist trusted-tool grant: %v", err)
-		return false
+		auditLog(nvxHome, "trusted_tool_grant_persist_failed", map[string]string{"tool": toolName, "project": scope})
+		// The user's explicit approval stands for this run even though it
+		// couldn't be recorded; a future run will simply prompt again.
+		return true
 	}
 	auditLog(nvxHome, "trusted_tool_granted", map[string]string{"tool": toolName, "project": scope})
 	return true
