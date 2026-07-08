@@ -170,6 +170,28 @@ func TestFormatDoctorReport(t *testing.T) {
 	}
 }
 
+func TestRebuildUserPath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows user-PATH repair semantics")
+	}
+	shimDir := `C:\Users\u\.nvx\bin`
+	current := `C:\Users\u\.nvx\current`
+	other := `C:\Windows\System32`
+
+	// current is ahead of the shim dir and must be dropped; shim dir must lead.
+	existing := current + ";" + other + ";" + shimDir
+	got := rebuildUserPath(existing, shimDir, []string{current})
+	want := shimDir + ";" + other
+	if got != want {
+		t.Fatalf("rebuildUserPath = %q, want %q", got, want)
+	}
+
+	// Idempotent: a healthy PATH is unchanged.
+	if again := rebuildUserPath(got, shimDir, []string{current}); again != want {
+		t.Fatalf("rebuildUserPath not idempotent: %q", again)
+	}
+}
+
 // writeExec creates an executable file (0755) so Unix resolution accepts it.
 func writeExec(t *testing.T, path string) {
 	t.Helper()
