@@ -13,13 +13,28 @@ import (
 // tree, so that code running inside the sandbox (which can write the working
 // directory) cannot edit the settings that govern it.
 //
-//   - AllowHosts:  egress hosts the user approved interactively.
-//   - PolicyPins:  sha256 of each project policy file the user has trusted,
+//   - AllowHosts:    egress hosts the user approved interactively.
+//   - TrustedTools:  ad-hoc tool names (e.g. "wrangler") approved to receive
+//     the real user home instead of the ephemeral sandbox guest home, so
+//     credentials they save (e.g. `wrangler login`) persist.
+//   - PolicyPins:    sha256 of each project policy file the user has trusted,
 //     keyed by cleaned absolute path.
 type projectGrants struct {
-	ProjectPath string            `json:"project_path"`
-	AllowHosts  []string          `json:"allow_hosts,omitempty"`
-	PolicyPins  map[string]string `json:"policy_pins,omitempty"`
+	ProjectPath  string            `json:"project_path"`
+	AllowHosts   []string          `json:"allow_hosts,omitempty"`
+	TrustedTools []string          `json:"trusted_tools,omitempty"`
+	PolicyPins   map[string]string `json:"policy_pins,omitempty"`
+}
+
+// hasTrustedTool reports whether tool (case-insensitive) is in the granted
+// trusted-tools list for this project.
+func (g projectGrants) hasTrustedTool(tool string) bool {
+	for _, t := range g.TrustedTools {
+		if strings.EqualFold(t, tool) {
+			return true
+		}
+	}
+	return false
 }
 
 // projectScopeDir identifies the current project for grant/pin storage: the

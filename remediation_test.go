@@ -970,3 +970,52 @@ func TestProjectBinShimQuotesCommandNames(t *testing.T) {
 		t.Fatalf("POSIX shim did not quote command name safely:\n%s", text)
 	}
 }
+
+func TestTrustedToolGrantPersistsUnderNvxHome(t *testing.T) {
+	tmp := t.TempDir()
+	projectDir := filepath.Join(tmp, "project")
+	nvxHome := filepath.Join(tmp, ".nvx")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nvxHome, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+
+	scope := projectScopeDir()
+	g := loadProjectGrants(nvxHome, scope)
+	if g.hasTrustedTool("wrangler") {
+		t.Fatal("fresh grants must not already trust wrangler")
+	}
+
+	g.TrustedTools = append(g.TrustedTools, "wrangler")
+	g.ProjectPath = scope
+	if err := saveProjectGrants(nvxHome, g); err != nil {
+		t.Fatalf("saveProjectGrants: %v", err)
+	}
+
+	// Never written into the project tree.
+	if _, err := os.Stat(filepath.Join(projectDir, ".nvx-policy.json")); err == nil {
+		t.Fatal("trusted-tool grant must not create a policy file inside the project")
+	}
+
+	reloaded := loadProjectGrants(nvxHome, scope)
+	if !reloaded.hasTrustedTool("wrangler") {
+		t.Fatal("expected wrangler to be a persisted trusted tool after reload")
+	}
+	if reloaded.hasTrustedTool("Wrangler") == false {
+		t.Fatal("hasTrustedTool must be case-insensitive")
+	}
+	if reloaded.hasTrustedTool("gh") {
+		t.Fatal("unrelated tool must not be trusted")
+	}
+}
