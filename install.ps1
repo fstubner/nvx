@@ -10,7 +10,6 @@ $ErrorActionPreference = 'Stop'
 # Define installation paths
 $nvxHome = Join-Path $HOME ".nvx"
 $binDir = Join-Path $nvxHome "bin"
-$currentLink = Join-Path $nvxHome "current"
 
 Write-Host "Setting up nvx directories..."
 
@@ -37,24 +36,11 @@ if (-not $hasBin) {
     $modified = $true
 }
 
-# Prepend current link (global default node runtime path)
-$hasCurrent = $false
-foreach ($part in $pathParts) {
-    $cleanPart = $part.Trim().TrimEnd('\')
-    if ($cleanPart -eq $currentLink.TrimEnd('\')) {
-        $hasCurrent = $true
-    }
-}
-if (-not $hasCurrent) {
-    $userPath = "$currentLink;$userPath"
-    $modified = $true
-}
-
 if ($modified) {
     Write-Host "Adding nvx paths to your User environment variables..."
     [Environment]::SetEnvironmentVariable("Path", $userPath, "User")
     # Update current session path
-    $env:PATH = "$binDir;$currentLink;$env:PATH"
+    $env:PATH = "$binDir;$env:PATH"
 }
 
 # 2. Check and configure PowerShell Execution Policy
