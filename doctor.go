@@ -162,6 +162,58 @@ func shimPathPrependSnippet(shell, shimDir string) string {
 		`$env:PATH = "$__nvx_bin;$env:PATH"` + "\n"
 }
 
+// runDoctor diagnoses shim interception against the current PATH, regenerates
+// shims, and repairs a shadowed persistent PATH where it can. Returns 0 when
+// interception is healthy after any repair, 1 when the user must act manually.
+func runDoctor(nvxHome string) int {
+	if err := generateShims(nvxHome); err != nil {
+		LogWarn("Could not regenerate shims: %v", err)
+	}
+
+	cmds := coreShimCommands()
+	rep := diagnosePath(os.Getenv("PATH"), nvxHome, cmds)
+	fmt.Print(formatDoctorReport(rep))
+
+	healthy := rep.shimDirOnPath && len(rep.shadowedBy) == 0
+	if healthy {
+		LogSuccess("nvx is intercepting commands correctly.")
+		return 0
+	}
+
+	// Attempt a persistent-PATH repair (Windows); POSIX is a no-op.
+	if changed, err := repairPersistentPath(nvxHome); err != nil {
+		LogWarn("Could not repair the persistent PATH automatically: %v", err)
+	} else if changed {
+		LogSuccess("Repaired your persistent PATH. Open a new terminal for it to take effect.")
+	}
+
+	LogInfo("To fix the current shell now, run:")
+	if runtime.GOOS == "windows" {
+		LogInfo(`  $env:PATH = "%s;$env:PATH"`, shimDirPath(nvxHome))
+	} else {
+		LogInfo(`  export PATH="%s:$PATH"`, shimDirPath(nvxHome))
+	}
+	LogInfo("Ensure your shell profile contains:  eval \"$(nvx env)\"  (or the PowerShell equivalent).")
+	return 1
+}
+
+// coreShimCommands is the subset of wrapped commands worth resolving in the
+// doctor report — the ones users invoke directly. Falls back to all shim
+// commands if the registry names none of them.
+func coreShimCommands() []string {
+	want := map[string]bool{"node": true, "npm": true, "npx": true, "bun": true, "bunx": true}
+	var out []string
+	for _, c := range allShimCommands() {
+		if want[strings.ToLower(c)] {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return allShimCommands()
+	}
+	return out
+}
+
 // shimDirPath returns the nvx shim directory (~/.nvx/bin).
 func shimDirPath(nvxHome string) string {
 	return filepath.Join(nvxHome, "bin")
