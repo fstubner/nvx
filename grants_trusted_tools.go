@@ -6,9 +6,9 @@ import (
 )
 
 // authLikeSubcommands are the ad-hoc-tool subcommands that plausibly need to
-// persist credentials/config to the user's real home — exactly the spec's own
-// examples (wrangler login, gh auth, aws configure). Intentionally narrow: the
-// goal is prompting rarely, not on every never-before-seen npx invocation.
+// persist credentials/config across runs — exactly the spec's own examples
+// (wrangler login, gh auth, aws configure). Intentionally narrow: the goal is
+// prompting rarely, not on every never-before-seen npx invocation.
 var authLikeSubcommands = map[string]bool{
 	"login": true, "auth": true, "configure": true,
 }

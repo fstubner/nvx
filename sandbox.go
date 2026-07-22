@@ -462,8 +462,10 @@ func execBareCommand(config SandboxConfig) int {
 	return 0
 }
 
-// cleanupStaleSandboxes removes any leftover sandbox home directories from
-// previous sessions that failed to clean up (e.g., due to crashes).
+// cleanupStaleSandboxes removes leftover EPHEMERAL sandbox homes from
+// previous sessions that failed to clean up (e.g., due to crashes). It
+// deliberately touches only sandbox_home, never tool_home (persistent
+// per-tool profiles), whose whole purpose is to survive across runs.
 func cleanupStaleSandboxes(nvxHome string) {
 	sandboxDir := getSandboxHomeDir(nvxHome)
 	entries, err := os.ReadDir(sandboxDir)
