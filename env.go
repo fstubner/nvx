@@ -563,7 +563,7 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 			LogInfo("--no-sandbox is ignored when passed to a wrapped command. To run without isolation, use: nvx --no-sandbox %s ...", cmdName)
 		}
 		toolName := ""
-		if tool, wantsRealHome := trustedToolCandidate(cmdName, args); wantsRealHome {
+		if tool, wantsPersistence := trustedToolCandidate(cmdName, args); wantsPersistence {
 			if ensureTrustedToolGrant(nvxHome, tool) {
 				toolName = tool
 			}

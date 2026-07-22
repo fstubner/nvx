@@ -26,9 +26,9 @@ type SandboxConfig struct {
 	// FilesystemProvider overrides isolation.filesystem.provider from policy.
 	FilesystemProvider string
 	// ToolName is set when this invocation is a granted trusted tool (see
-	// ensureTrustedToolGrant) — the native sandbox uses the real home
-	// directory instead of an ephemeral guest profile for the run. Empty
-	// means "use the ephemeral guest home" (the default, contained behavior).
+	// ensureTrustedToolGrant) — the native sandbox uses a persistent per-tool
+	// guest profile instead of an ephemeral one for the run. Empty means "use
+	// the ephemeral guest home" (the default, contained behavior).
 	ToolName string
 }
 
@@ -114,18 +114,6 @@ func getToolHomeDir(nvxHome string) string {
 func toolHomeKey(scopeDir, toolName string) string {
 	h := sha256.Sum256([]byte(filepath.Clean(scopeDir) + "\x00" + strings.ToLower(toolName)))
 	return hex.EncodeToString(h[:])[:16]
-}
-
-// realHomeSwapSupported reports whether this platform can safely swap a
-// trusted tool's sandbox HOME for the user's real home directory. Windows is
-// excluded: granting an AppContainer write access to a real home directory
-// would require the same recursive icacls write on the profile root that is
-// already known to hang behind the OneDrive/Defender filter driver (see
-// windows_setup_windows.go's profile-root exclusion). Linux (Landlock) and
-// macOS (Seatbelt) grant filesystem access via an in-process rule/profile
-// list, not a filesystem ACL mutation, so neither has this risk.
-func realHomeSwapSupported() bool {
-	return runtime.GOOS != "windows"
 }
 
 // createProfileSkeleton creates the minimal directory structure a guest home
