@@ -102,11 +102,9 @@ func TestEnsureTrustedToolGrantEmptyNvxHome(t *testing.T) {
 
 // Note: a save-failure test for ensureTrustedToolGrant (approve, then have
 // saveProjectGrants fail, and confirm the function still returns true) is
-// deliberately omitted here. realHomeSwapSupported() returns false on
-// Windows, so on this platform the function always returns false before
-// ever reaching PromptYesNo/saveProjectGrants — there's no way to drive the
-// persist-failure branch from a Windows `go test` run without adding a
-// test-only override for realHomeSwapSupported, which would be more
-// machinery than the assertion is worth. The behavior is instead covered
-// directly by TestEnsureTrustedToolGrantEmptyNvxHome (guard) and by the
-// deny/grant paths in TestEnsureTrustedToolGrantReturnsTrueWhenAlreadyGranted.
+// deliberately omitted. Under `go test` there is no interactive TTY, so
+// PromptYesNo denies before saveProjectGrants is ever reached — there's no
+// way to drive the persist-failure branch without a test-only prompt
+// override, which is more machinery than the assertion is worth. The behavior
+// is covered directly by TestEnsureTrustedToolGrantEmptyNvxHome (guard) and
+// the already-granted path in TestEnsureTrustedToolGrantReturnsTrueWhenAlreadyGranted.

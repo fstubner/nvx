@@ -50,9 +50,9 @@ func stripVersionSuffix(spec string) string {
 
 // trustedToolCandidate inspects an ad-hoc-tool invocation (npx/bunx/uvx/pyx)
 // and returns the bare tool name and whether its subcommand looks like it
-// needs to persist credentials to the real home. Returns ("", false) for any
-// command that is not an ad-hoc-tool executor.
-func trustedToolCandidate(cmd string, args []string) (tool string, wantsRealHome bool) {
+// needs to persist credentials/config across runs (an auth-shaped subcommand).
+// Returns ("", false) for any command that is not an ad-hoc-tool executor.
+func trustedToolCandidate(cmd string, args []string) (tool string, wantsPersistence bool) {
 	if !executorCommands[strings.ToLower(cmd)] {
 		return "", false
 	}
@@ -67,13 +67,14 @@ func trustedToolCandidate(cmd string, args []string) (tool string, wantsRealHome
 	return tool, authLikeSubcommands[strings.ToLower(toks[1])]
 }
 
-// ensureTrustedToolGrant decides whether toolName should receive the real
-// user home directory for this sandboxed run. Returns true if it should
-// (either already granted, or the user just approved it now — even if that
-// approval couldn't be persisted); false if denied, unsupported on this
-// platform, or toolName/nvxHome is empty. Prompts at most once per project
-// per tool; the decision persists in the project's grant file under
-// nvxHome, never in the project tree.
+// ensureTrustedToolGrant decides whether toolName gets a persistent per-project
+// profile for this and future sandboxed runs (so logins/config persist).
+// Returns true if it should (already granted, or the user just approved — even
+// if that approval couldn't be persisted); false if denied or toolName/nvxHome
+// is empty. Prompts at most once per project per tool; the decision persists in
+// the project's grant file under nvxHome, never in the project tree. The
+// profile is always contained under nvxHome and never touches the real home, so
+// this works uniformly on all platforms.
 func ensureTrustedToolGrant(nvxHome, toolName string) bool {
 	if toolName == "" || nvxHome == "" {
 		return false
@@ -88,13 +89,7 @@ func ensureTrustedToolGrant(nvxHome, toolName string) bool {
 		return true
 	}
 
-	if !realHomeSwapSupported() {
-		auditLog(nvxHome, "trusted_tool_platform_unsupported", map[string]string{"tool": toolName})
-		LogInfo("%q could persist credentials to your real home on Linux/macOS; the Windows sandbox can't grant that safely yet. Run without isolation for this command: nvx --no-sandbox <cmd> ...", toolName)
-		return false
-	}
-
-	msg := fmt.Sprintf("%q wants access to your real home directory to save credentials/config (e.g. login tokens). Allow?", toolName)
+	msg := fmt.Sprintf("Let %q keep a persistent profile for this project so its logins/config survive across runs? (Still sandboxed; your real home is untouched.)", toolName)
 	if !PromptYesNo(msg) {
 		auditLog(nvxHome, "trusted_tool_denied", map[string]string{"tool": toolName, "project": scope})
 		return false

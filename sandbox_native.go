@@ -7,12 +7,11 @@ import (
 	"strings"
 )
 
-// resolveUseRealHome decides whether a sandboxed run should use the real
-// user home directory instead of an ephemeral guest profile: only when a
-// trusted tool is set, the platform supports the swap, and the real home
-// path actually resolved.
-func resolveUseRealHome(toolName string, swapSupported bool, realHome string) bool {
-	return toolName != "" && swapSupported && realHome != ""
+// usePersistentProfile reports whether a run should use a persistent per-tool
+// guest profile instead of an ephemeral one. ToolName is set (in runShim) only
+// for an approved trusted tool, so its presence is the signal.
+func usePersistentProfile(toolName string) bool {
+	return toolName != ""
 }
 
 // runNativeSandbox is the hardened default sandbox: platform-specific OS
@@ -27,13 +26,17 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 
 	LogInfo("Sandbox session: %s", sandboxID)
 
-	realHome, _ := os.UserHomeDir()
-	useRealHome := resolveUseRealHome(config.ToolName, realHomeSwapSupported(), realHome)
-
 	var guestHome string
-	if useRealHome {
-		guestHome = realHome
-		LogInfo("%q is a trusted tool for this project: using your real home directory. Filesystem/network containment elsewhere is unchanged.", config.ToolName)
+	if usePersistentProfile(config.ToolName) {
+		scope := projectScopeDir()
+		guestHome, err = ensurePersistentGuestProfile(config.NvxHome, scope, config.ToolName)
+		if err != nil {
+			LogError("Failed to create persistent tool profile: %v", err)
+			return 1
+		}
+		// Persistent: intentionally NOT cleaned up, so credentials survive to
+		// the next run. Still fully contained; the real home is never used.
+		LogInfo("%q: using a persistent profile for this project (contained; your real home is untouched).", config.ToolName)
 	} else {
 		guestHome, err = createGuestProfile(config.NvxHome, sandboxID)
 		if err != nil {
