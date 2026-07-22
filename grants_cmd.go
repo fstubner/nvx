@@ -22,7 +22,7 @@ func formatProjectGrants(g projectGrants) string {
 	if len(g.TrustedTools) == 0 {
 		b.WriteString("  trusted tools: (none)\n")
 	} else {
-		b.WriteString("  trusted tools (real home access):\n")
+		b.WriteString("  trusted tools (persistent profile):\n")
 		for _, t := range g.TrustedTools {
 			fmt.Fprintf(&b, "    - %s\n", t)
 		}
