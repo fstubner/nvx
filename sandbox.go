@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -99,6 +100,22 @@ func getSandboxHomeDir(nvxHome string) string {
 	return filepath.Join(nvxHome, "sandbox_home")
 }
 
+// getToolHomeDir returns the root directory for persistent per-tool guest
+// profiles. It is a sibling of getSandboxHomeDir (the ephemeral root) so that
+// cleanupStaleSandboxes, which wipes sandbox_home, never touches persistent
+// tool state.
+func getToolHomeDir(nvxHome string) string {
+	return filepath.Join(nvxHome, "tool_home")
+}
+
+// toolHomeKey derives a stable directory name for a (project scope, tool)
+// pair, so a tool trusted in one project gets its own persistent profile that
+// is not shared with other projects or other tools.
+func toolHomeKey(scopeDir, toolName string) string {
+	h := sha256.Sum256([]byte(filepath.Clean(scopeDir) + "\x00" + strings.ToLower(toolName)))
+	return hex.EncodeToString(h[:])[:16]
+}
+
 // realHomeSwapSupported reports whether this platform can safely swap a
 // trusted tool's sandbox HOME for the user's real home directory. Windows is
 // excluded: granting an AppContainer write access to a real home directory
@@ -111,15 +128,10 @@ func realHomeSwapSupported() bool {
 	return runtime.GOOS != "windows"
 }
 
-// createGuestProfile creates an ephemeral guest home directory for the sandbox session.
-// Returns the path to the guest home and any error encountered.
-func createGuestProfile(nvxHome string, sandboxID string) (string, error) {
-	guestHome := filepath.Join(getSandboxHomeDir(nvxHome), sandboxID)
-	if err := os.MkdirAll(guestHome, 0700); err != nil {
-		return "", fmt.Errorf("failed to create guest profile directory: %w", err)
-	}
-
-	// Create minimal directory structure inside the guest home
+// createProfileSkeleton creates the minimal directory structure a guest home
+// needs (scratch tmp + config/cache dirs) so a low-privilege sandboxed process
+// can write to expected locations.
+func createProfileSkeleton(guestHome string) error {
 	subdirs := []string{"tmp", ".config", ".cache"}
 	if runtime.GOOS == "windows" {
 		subdirs = append(subdirs, filepath.Join("AppData", "Roaming"), filepath.Join("AppData", "Local"))
@@ -128,10 +140,39 @@ func createGuestProfile(nvxHome string, sandboxID string) (string, error) {
 	}
 	for _, subdir := range subdirs {
 		if err := os.MkdirAll(filepath.Join(guestHome, subdir), 0700); err != nil {
-			return "", fmt.Errorf("failed to create guest profile subdirectory %s: %w", subdir, err)
+			return fmt.Errorf("failed to create guest profile subdirectory %s: %w", subdir, err)
 		}
 	}
+	return nil
+}
 
+// createGuestProfile creates an ephemeral guest home directory for the sandbox session.
+// Returns the path to the guest home and any error encountered.
+func createGuestProfile(nvxHome string, sandboxID string) (string, error) {
+	guestHome := filepath.Join(getSandboxHomeDir(nvxHome), sandboxID)
+	if err := os.MkdirAll(guestHome, 0700); err != nil {
+		return "", fmt.Errorf("failed to create guest profile directory: %w", err)
+	}
+	if err := createProfileSkeleton(guestHome); err != nil {
+		return "", err
+	}
+	return guestHome, nil
+}
+
+// ensurePersistentGuestProfile returns a stable guest home for (scopeDir,
+// toolName), creating it (with the standard skeleton) on first use and reusing
+// it — without wiping existing state — thereafter. Unlike createGuestProfile,
+// this directory is never cleaned up after a run, so credentials a trusted
+// tool writes survive across invocations. It lives entirely under nvxHome and
+// never touches the user's real home.
+func ensurePersistentGuestProfile(nvxHome, scopeDir, toolName string) (string, error) {
+	guestHome := filepath.Join(getToolHomeDir(nvxHome), toolHomeKey(scopeDir, toolName))
+	if err := os.MkdirAll(guestHome, 0700); err != nil {
+		return "", fmt.Errorf("failed to create persistent tool profile: %w", err)
+	}
+	if err := createProfileSkeleton(guestHome); err != nil {
+		return "", err
+	}
 	return guestHome, nil
 }
 
