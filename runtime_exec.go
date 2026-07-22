@@ -60,22 +60,36 @@ func (n NodeProvider) ResolveBinary(cmd string, nvxHome string, pinnedVer string
 	if err != nil {
 		return ""
 	}
+	versionDir := filepath.Join(nvxHome, "versions", "node", resolvedVer)
 
 	cmd = strings.ToLower(cmd)
+
+	// npm/npx can be self-updated via `npm install -g npm@x`, which (when
+	// NPM_CONFIG_PREFIX is set, as it is in every real session — see
+	// runUse/runAuto) lands in the version's npm_global prefix rather than
+	// the bundled node_modules/npm. Check there first so a self-update
+	// actually takes effect; node itself is never installed this way, so it
+	// always resolves to the bundled binary only.
+	if cmd == "npm" || cmd == "npx" {
+		if p := npmGlobalOverridePath(versionDir, cmd); p != "" {
+			return p
+		}
+	}
+
 	var binaryPath string
 	if runtime.GOOS == "windows" {
 		switch cmd {
 		case "node":
-			binaryPath = filepath.Join(nvxHome, "versions", "node", resolvedVer, "node.exe")
+			binaryPath = filepath.Join(versionDir, "node.exe")
 		case "npm":
-			binaryPath = filepath.Join(nvxHome, "versions", "node", resolvedVer, "npm.cmd")
+			binaryPath = filepath.Join(versionDir, "npm.cmd")
 		case "npx":
-			binaryPath = filepath.Join(nvxHome, "versions", "node", resolvedVer, "npx.cmd")
+			binaryPath = filepath.Join(versionDir, "npx.cmd")
 		}
 	} else {
 		switch cmd {
 		case "node", "npm", "npx":
-			binaryPath = filepath.Join(nvxHome, "versions", "node", resolvedVer, "bin", cmd)
+			binaryPath = filepath.Join(versionDir, "bin", cmd)
 		}
 	}
 
@@ -83,6 +97,21 @@ func (n NodeProvider) ResolveBinary(cmd string, nvxHome string, pinnedVer string
 		if _, err := os.Stat(binaryPath); err == nil {
 			return binaryPath
 		}
+	}
+	return ""
+}
+
+// npmGlobalOverridePath returns the path to cmd inside versionDir's npm_global
+// prefix — where a self-updated npm/npx lands — if it exists there, else "".
+func npmGlobalOverridePath(versionDir, cmd string) string {
+	binDir := GetNpmPrefixBinDir(filepath.Join(versionDir, "npm_global"))
+	name := cmd
+	if runtime.GOOS == "windows" {
+		name += ".cmd"
+	}
+	p := filepath.Join(binDir, name)
+	if info, err := os.Stat(p); err == nil && !info.IsDir() {
+		return p
 	}
 	return ""
 }
