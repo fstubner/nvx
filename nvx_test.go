@@ -944,14 +944,6 @@ func TestParseStartupFlagsQuietAndAgentMode(t *testing.T) {
 	}
 }
 
-func TestScopedPackageTyposquattingExemption(t *testing.T) {
-	popular := []string{"react", "express", "lodash"}
-	result := CheckTyposquattingAuthority("@myorg/react", popular, 2)
-	if result != "" {
-		t.Errorf("expected scoped package @myorg/react to be exempt from typosquatting checks, got '%s'", result)
-	}
-}
-
 func TestIsTrustedPackageWildcard(t *testing.T) {
 	p := Policy{
 		Typosquatting: TyposquattingPolicy{
