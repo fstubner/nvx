@@ -209,12 +209,19 @@ func (p Policy) ReleaseAgeMinHours() int {
 	return 0
 }
 
-// IsTrustedPackage returns true when pkgName is listed in typosquatting.trusted_packages.
+// IsTrustedPackage returns true when pkgName is listed in typosquatting.trusted_packages,
+// or matches a wildcard pattern (e.g. "@myorg/*", "internal-*").
 func (p Policy) IsTrustedPackage(pkgName string) bool {
 	lower := strings.ToLower(pkgName)
 	for _, t := range p.Typosquatting.TrustedPackages {
-		if strings.ToLower(t) == lower {
+		tLower := strings.ToLower(t)
+		if tLower == lower {
 			return true
+		}
+		if strings.Contains(tLower, "*") || strings.Contains(tLower, "?") {
+			if matched, err := filepath.Match(tLower, lower); err == nil && matched {
+				return true
+			}
 		}
 	}
 	return false

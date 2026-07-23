@@ -11,6 +11,8 @@ import (
 )
 
 var yesFlag = false
+var quietFlag = false
+var agentModeFlag = false
 
 func init() {
 	var yes, noSandbox, strict, standard bool
@@ -20,6 +22,13 @@ func init() {
 	// If both are passed, fail toward more containment, not less.
 	strictFlag = strict
 	standardFlag = standard && !strict
+	if os.Getenv("NVX_QUIET") == "1" || strings.EqualFold(os.Getenv("NVX_QUIET"), "true") {
+		quietFlag = true
+	}
+	if os.Getenv("NVX_AGENT_MODE") == "1" || strings.EqualFold(os.Getenv("NVX_AGENT_MODE"), "true") {
+		agentModeFlag = true
+		yesFlag = true
+	}
 }
 
 func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
@@ -35,6 +44,11 @@ func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
 	for ; i < len(args); i++ {
 		switch args[i] {
 		case "-y", "--yes":
+			yes = true
+		case "-q", "--quiet":
+			quietFlag = true
+		case "--agent-mode":
+			agentModeFlag = true
 			yes = true
 		case "--no-sandbox":
 			noSandbox = true
@@ -124,6 +138,13 @@ func main() {
 
 	case "auto":
 		runAuto(nvxHome, parseShellArg(os.Args[2:]))
+
+	case "import":
+		source := "all"
+		if len(os.Args) >= 3 {
+			source = os.Args[2]
+		}
+		runImport(source, nvxHome)
 
 	case "verify-install":
 		if len(os.Args) < 3 {
@@ -319,6 +340,8 @@ Commands:
   doctor                   Check and repair that nvx intercepts node/npm/npx on PATH
   grants list              Show this project's approved egress hosts, trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)
+  import [nvm|fnm|volta]  Import Node.js versions already installed via nvm, fnm, or volta
+                           (defaults to scanning all three)
 
 Options:
   --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
@@ -327,6 +350,9 @@ Options:
   --strict               Contain your own code too for this invocation (not just installs/ad-hoc tools)
   --standard             Force standard containment for this invocation, overriding a project's strict policy
   -y, --yes              Auto-approve all prompts
+  -q, --quiet            Suppress success/info messages (errors and warnings still print)
+  --agent-mode           Auto-approve all prompts and suppress success/info messages
+                         (equivalent to -y -q; also settable via NVX_AGENT_MODE=1)
 
 Examples:
   nvx install lts
@@ -337,10 +363,16 @@ Examples:
 
 // UI Logging helpers (stderr)
 func LogSuccess(format string, a ...interface{}) {
+	if quietFlag {
+		return
+	}
 	fmt.Fprintf(os.Stderr, "\x1b[32m✔\x1b[0m "+format+"\n", a...)
 }
 
 func LogInfo(format string, a ...interface{}) {
+	if quietFlag {
+		return
+	}
 	fmt.Fprintf(os.Stderr, "\x1b[36mℹ\x1b[0m "+format+"\n", a...)
 }
 
