@@ -580,6 +580,9 @@ func TestDetectInstallPackages(t *testing.T) {
 		// Leading flags must not bypass detection
 		{[]string{"--loglevel=error", "install", "evil-pkg"}, []string{"evil-pkg"}},
 		{[]string{"-g", "install", "evil-pkg"}, []string{"evil-pkg"}},
+		// A flag this package has no specific knowledge of, taking a value,
+		// must not hide the subcommand behind its own value.
+		{[]string{"--loglevel", "verbose", "install", "evil-pkg"}, []string{"evil-pkg"}},
 		// npm typo aliases
 		{[]string{"isntall", "lodash"}, []string{"lodash"}},
 		{[]string{"in", "lodash"}, []string{"lodash"}},
@@ -920,3 +923,58 @@ func TestLoadPolicyCascading(t *testing.T) {
 		t.Error("expected trusted-parent to be in trusted packages list")
 	}
 }
+
+func TestParseStartupFlagsQuietAndAgentMode(t *testing.T) {
+	quietFlag = false
+	agentModeFlag = false
+	args := []string{"nvx", "-q", "--agent-mode", "install", "20"}
+	filtered, yes, _, _, _ := parseStartupFlags(args)
+
+	if !quietFlag {
+		t.Error("expected quietFlag to be true when -q is passed")
+	}
+	if !agentModeFlag {
+		t.Error("expected agentModeFlag to be true when --agent-mode is passed")
+	}
+	if !yes {
+		t.Error("expected yes to be true when --agent-mode is passed")
+	}
+	if len(filtered) != 3 || filtered[1] != "install" || filtered[2] != "20" {
+		t.Errorf("unexpected filtered args: %v", filtered)
+	}
+}
+
+func TestScopedPackageTyposquattingExemption(t *testing.T) {
+	popular := []string{"react", "express", "lodash"}
+	result := CheckTyposquattingAuthority("@myorg/react", popular, 2)
+	if result != "" {
+		t.Errorf("expected scoped package @myorg/react to be exempt from typosquatting checks, got '%s'", result)
+	}
+}
+
+func TestIsTrustedPackageWildcard(t *testing.T) {
+	p := Policy{
+		Typosquatting: TyposquattingPolicy{
+			TrustedPackages: []string{"@myorg/*", "internal-*", "exact-pkg"},
+		},
+	}
+
+	tests := []struct {
+		pkg      string
+		expected bool
+	}{
+		{"@myorg/component", true},
+		{"@myorg/helpers", true},
+		{"internal-tool", true},
+		{"exact-pkg", true},
+		{"other-pkg", false},
+		{"@otherorg/component", false},
+	}
+
+	for _, tc := range tests {
+		if got := p.IsTrustedPackage(tc.pkg); got != tc.expected {
+			t.Errorf("IsTrustedPackage(%q) = %v; expected %v", tc.pkg, got, tc.expected)
+		}
+	}
+}
+

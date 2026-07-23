@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -47,7 +46,16 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 		return 127
 	}
 
-	profile := buildSeatbeltProfile(netCtx, guestHome, cwd, config.NvxHome, filepath.Dir(cmdPath))
+	// Only the guest home and the working directory are writable — matching
+	// the Windows AppContainer and Linux Landlock write scope. nvxHome (and
+	// therefore versions/*/npm_global, grants/, policy.json) and the runtime
+	// binary's own directory must NOT be writable: this profile used to pass
+	// both as writable roots, which let any sandboxed process rewrite the
+	// global policy, self-approve grants, or trojan the node/npm binaries
+	// themselves — a full, persistent sandbox defeat. Reads remain broad
+	// (file-read* below) so the dynamic linker and tooling can still find
+	// everything they need; only writes are scoped down.
+	profile := buildSeatbeltProfile(netCtx, guestHome, cwd)
 	profileFile, err := os.CreateTemp("", "nvx-*.sb")
 	if err != nil {
 		LogError("Failed to create Seatbelt profile file: %v", err)

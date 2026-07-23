@@ -295,29 +295,105 @@ var installAliases = map[string]bool{
 	"isntall": true, "add": true,
 }
 
-// detectInstallPackages scans package manager arguments for an install-style
-// subcommand and returns the package names being installed. The subcommand is
-// the first non-flag argument, so leading flags (e.g. `npm --loglevel=error
-// install pkg`) cannot bypass detection.
-func detectInstallPackages(args []string) []string {
-	subIdx := -1
+// findInstallVerbIndex scans args for a token matching installAliases or one
+// of extraVerbs, and returns its index, or -1 if none is found. It does NOT
+// assume the first non-flag token is the subcommand — it scans every
+// non-flag-shaped token until it finds a real match (or a "--" passthrough
+// separator, which conventionally ends flag/subcommand parsing). This means
+// an unrecognized value-taking flag ahead of the real subcommand (e.g. `npm
+// --loglevel verbose install pkg`, where --loglevel isn't in any hardcoded
+// "takes a value" list) can never hide an install: the scan simply keeps
+// going past the flag's value and finds "install" further along. The only
+// failure direction is a stray non-flag token that happens to match a verb
+// name being mistaken for the subcommand, which pushes a command toward MORE
+// containment/verification, never less — the safe direction for a security
+// classifier to fail in.
+func findInstallVerbIndex(args []string, extraVerbs ...string) int {
+	extra := make(map[string]bool, len(extraVerbs))
+	for _, v := range extraVerbs {
+		extra[strings.ToLower(v)] = true
+	}
 	for i, arg := range args {
-		if !strings.HasPrefix(arg, "-") {
-			subIdx = i
-			break
+		if arg == "--" {
+			return -1
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		lower := strings.ToLower(arg)
+		if installAliases[lower] || extra[lower] {
+			return i
 		}
 	}
-	if subIdx == -1 || !installAliases[args[subIdx]] {
+	return -1
+}
+
+// hasInstallVerb reports whether args contains an install-style subcommand
+// (installAliases plus any extraVerbs). See findInstallVerbIndex for how it
+// avoids being fooled by an unrecognized value-taking flag.
+func hasInstallVerb(args []string, extraVerbs ...string) bool {
+	return findInstallVerbIndex(args, extraVerbs...) != -1
+}
+
+// installPackagesArg finds an install-style subcommand in args (installAliases
+// plus any extraVerbs) and returns the non-flag tokens that follow it — the
+// explicitly named packages. Returns nil if no install verb is found.
+func installPackagesArg(args []string, extraVerbs ...string) []string {
+	subIdx := findInstallVerbIndex(args, extraVerbs...)
+	if subIdx == -1 {
 		return nil
 	}
-
 	var pkgs []string
 	for _, arg := range args[subIdx+1:] {
+		if arg == "--" {
+			break
+		}
 		if !strings.HasPrefix(arg, "-") {
 			pkgs = append(pkgs, arg)
 		}
 	}
 	return pkgs
+}
+
+// detectInstallPackages scans package manager arguments for an install-style
+// subcommand and returns the package names being installed.
+func detectInstallPackages(args []string) []string {
+	return installPackagesArg(args)
+}
+
+// globalInstallFlags are the npm/yarn/pnpm flags that make an install target
+// the shared, version-wide npm_global prefix instead of the project's
+// node_modules.
+var globalInstallFlags = map[string]bool{"-g": true, "--global": true}
+
+// isGlobalInstall reports whether args requests a global package-manager
+// install. The sandbox deliberately never grants write access to npm_global
+// on any platform (see prepareAppContainerFilesystem, applyLandlockSandbox,
+// buildSeatbeltProfile): a shared, version-wide location that every future
+// invocation trusts (runtime_exec.go's npmGlobalOverridePath) must never be
+// writable by contained, potentially malicious code, or a single compromised
+// install could plant a binary that silently becomes the resolved npm/npx
+// for every project going forward. So a global install can only run
+// un-contained — runShim checks this to fail with a clear message instead of
+// a confusing permission error partway through.
+func isGlobalInstall(cmdName string, args []string) bool {
+	switch strings.ToLower(cmdName) {
+	case "npm", "yarn", "pnpm":
+	default:
+		return false
+	}
+	if !hasInstallVerb(args, "ci") {
+		return false
+	}
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		if globalInstallFlags[arg] {
+			return true
+		}
+	}
+	return false
 }
 
 func detectShimPackagesForVerification(cmdName string, args []string) []string {
@@ -326,8 +402,7 @@ func detectShimPackagesForVerification(cmdName string, args []string) []string {
 		if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
 			return pkgs
 		}
-		sub := firstNonFlagArg(args)
-		if sub == "ci" || installAliases[sub] {
+		if hasInstallVerb(args, "ci") {
 			if pkgs := packagesFromPackageLock(); len(pkgs) > 0 {
 				return pkgs
 			}
@@ -335,49 +410,16 @@ func detectShimPackagesForVerification(cmdName string, args []string) []string {
 		}
 	case "bun":
 		// bun add/install/i/a [pkg...]; "a" is Bun's short alias for add.
-		sub := firstNonFlagArg(args)
-		if sub == "add" || sub == "a" || installAliases[sub] {
-			if pkgs := packagesAfterSubcommand(args); len(pkgs) > 0 {
-				return pkgs
-			}
+		if pkgs := installPackagesArg(args, "a"); len(pkgs) > 0 {
+			return pkgs
+		}
+		if hasInstallVerb(args, "a") {
 			return packagesFromPackageJSON()
 		}
 	case "npx", "bunx":
 		return detectExecutorPackages(args)
 	}
 	return nil
-}
-
-// packagesAfterSubcommand returns the non-flag arguments following the first
-// non-flag token (the subcommand), i.e. the explicitly named packages.
-func packagesAfterSubcommand(args []string) []string {
-	var pkgs []string
-	seenSub := false
-	for _, arg := range args {
-		if !seenSub {
-			if !strings.HasPrefix(arg, "-") {
-				seenSub = true
-			}
-			continue
-		}
-		if !strings.HasPrefix(arg, "-") {
-			pkgs = append(pkgs, arg)
-		}
-	}
-	return pkgs
-}
-
-func firstNonFlagArg(args []string) string {
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if !strings.HasPrefix(arg, "-") {
-			return arg
-		}
-		if flagTakesValue(arg) && !strings.Contains(arg, "=") && i+1 < len(args) {
-			i++
-		}
-	}
-	return ""
 }
 
 func detectExecutorPackages(args []string) []string {
@@ -408,9 +450,20 @@ func detectExecutorPackages(args []string) []string {
 	return dedupeStrings(pkgs)
 }
 
+// flagTakesValue reports whether arg is a known flag that consumes the next
+// token as its value, so callers that need positional detection (which
+// package/tool a command targets) can skip over it correctly. This list can
+// never be exhaustive across every package manager's evolving flag set — it
+// is a best-effort improvement for helpers where the failure mode of missing
+// an entry is a wrong verification target or a missed UX prompt, not a
+// containment decision. Containment itself (classifyInvocation) does not
+// depend on this list; it scans for the subcommand verb directly instead
+// (see hasInstallVerb) so an unrecognized flag here cannot bypass a sandbox.
 func flagTakesValue(arg string) bool {
 	switch arg {
-	case "-p", "--package", "--prefix", "--registry", "--cache", "-c", "--call", "--shell":
+	case "-p", "--package", "--prefix", "--registry", "--cache", "-c", "--call", "--shell",
+		"--loglevel", "--tag", "--scope", "--userconfig", "--otp",
+		"-w", "--workspace", "--cwd", "--filter":
 		return true
 	}
 	return false
@@ -561,6 +614,12 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 	if shouldSandbox(cmdName, args, policy, opts) {
 		if opts.payloadNoSandbox {
 			LogInfo("--no-sandbox is ignored when passed to a wrapped command. To run without isolation, use: nvx --no-sandbox %s ...", cmdName)
+		}
+		if isGlobalInstall(cmdName, args) {
+			LogError("Global installs (-g) can't run inside the sandbox.")
+			LogInfo("They need write access to a location every future nvx invocation trusts, which the sandbox deliberately never grants — a contained install must not be able to plant something that later runs un-contained.")
+			LogInfo("Run it without OS isolation instead:  nvx --no-sandbox %s ...", cmdName)
+			return 1
 		}
 		toolName := ""
 		if tool, wantsPersistence := trustedToolCandidate(cmdName, args); wantsPersistence {
