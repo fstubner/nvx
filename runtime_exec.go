@@ -71,7 +71,7 @@ func (n NodeProvider) ResolveBinary(cmd string, nvxHome string, pinnedVer string
 	// actually takes effect; node itself is never installed this way, so it
 	// always resolves to the bundled binary only.
 	if cmd == "npm" || cmd == "npx" {
-		if p := npmGlobalOverridePath(versionDir, cmd); p != "" {
+		if p := npmGlobalOverridePath(nvxHome, versionDir, cmd); p != "" {
 			return p
 		}
 	}
@@ -103,15 +103,27 @@ func (n NodeProvider) ResolveBinary(cmd string, nvxHome string, pinnedVer string
 
 // npmGlobalOverridePath returns the path to cmd inside versionDir's npm_global
 // prefix — where a self-updated npm/npx lands — if it exists there, else "".
-func npmGlobalOverridePath(versionDir, cmd string) string {
+//
+// This override is trusted with no further integrity check once it exists,
+// and every command resolved through it (isGlobalInstall blocks contained
+// code from ever creating or modifying it, but nothing re-verifies it on
+// each use) persists across every future invocation on this version, in
+// every project, sandboxed or not. Each use is audit-logged so that trail is
+// at least inspectable (`~/.nvx/audit.log`) rather than fully silent.
+func npmGlobalOverridePath(nvxHome, versionDir, cmd string) string {
 	binDir := GetNpmPrefixBinDir(filepath.Join(versionDir, "npm_global"))
 	name := cmd
 	if runtime.GOOS == "windows" {
 		name += ".cmd"
 	}
 	p := filepath.Join(binDir, name)
-	if info, err := os.Stat(p); err == nil && !info.IsDir() {
-		return p
+	info, err := os.Stat(p)
+	if err != nil || info.IsDir() {
+		return ""
 	}
-	return ""
+	auditLog(nvxHome, "npm_global_override_used", map[string]string{
+		"path": p,
+		"cmd":  cmd,
+	})
+	return p
 }

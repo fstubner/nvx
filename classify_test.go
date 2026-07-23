@@ -40,6 +40,19 @@ func TestClassifyInvocation(t *testing.T) {
 		// leading flags must not defeat subcommand detection
 		{"npm with global flag then install", "npm", []string{"--loglevel=error", "install", "pkg"}, classInstall},
 		{"npm with global flag then run", "npm", []string{"--silent", "run", "build"}, classYourCode},
+
+		// an UNRECOGNIZED value-taking flag ahead of the real subcommand must
+		// not misclassify an install as your-code (the original bug: a fixed
+		// "flags that take a value" allowlist let any flag outside it hide
+		// the subcommand behind its own value).
+		{"npm unknown value flag then install", "npm", []string{"--loglevel", "verbose", "install", "evil-pkg"}, classInstall},
+		{"npm unrecognized flag then run stays your-code", "npm", []string{"--loglevel", "verbose", "run", "build"}, classYourCode},
+		{"yarn unknown value flag then add", "yarn", []string{"--cwd", "/tmp/proj", "add", "lodash"}, classInstall},
+		{"bun unknown value flag then install", "bun", []string{"--registry", "https://example.com", "install"}, classInstall},
+
+		// a literal "install"-shaped word passed through `--` to your own
+		// script must NOT be misread as the subcommand.
+		{"npm run passthrough word install stays your-code", "npm", []string{"run", "deploy", "--", "install"}, classYourCode},
 	}
 
 	for _, tc := range tests {

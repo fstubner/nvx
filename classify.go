@@ -24,7 +24,11 @@ var executorCommands = map[string]bool{
 // classifyInvocation determines which containment class a wrapped command
 // invocation falls into. It is subcommand-aware: the same command name (npm,
 // bun, uv) can be your-code, install, or (for npx/bunx/uvx/pyx) an ad-hoc tool
-// runner, depending on its first non-flag argument.
+// runner, depending on whether an install-style verb appears anywhere in its
+// arguments (see hasInstallVerb) — not just whether the first non-flag
+// argument happens to be one, since a preceding value-taking flag this
+// classifier doesn't recognize would otherwise let an install slip through
+// uncontained.
 func classifyInvocation(cmd string, args []string) invocationClass {
 	lower := strings.ToLower(cmd)
 
@@ -32,26 +36,24 @@ func classifyInvocation(cmd string, args []string) invocationClass {
 		return classAdHocTool
 	}
 
-	sub := firstNonFlagArg(args)
-
 	switch lower {
 	case "npm", "yarn", "pnpm":
-		if sub == "ci" || installAliases[sub] {
+		if hasInstallVerb(args, "ci") {
 			return classInstall
 		}
 		return classYourCode
 	case "bun":
-		if sub == "install" || sub == "add" || sub == "a" || installAliases[sub] {
+		if hasInstallVerb(args, "a") {
 			return classInstall
 		}
 		return classYourCode
 	case "uv":
-		if sub == "add" || sub == "pip" || installAliases[sub] {
+		if hasInstallVerb(args, "pip") {
 			return classInstall
 		}
 		return classYourCode
 	case "deno":
-		if sub == "add" || sub == "install" {
+		if hasInstallVerb(args) {
 			return classInstall
 		}
 		return classYourCode
