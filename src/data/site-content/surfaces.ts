@@ -3,7 +3,7 @@ import type { SectionCopy, SurfaceCard } from './types';
 export const surfacesCopy: SectionCopy = {
   heading: 'Choose how to work with your network',
   leadHtml:
-    'Use the desktop app for review, the terminal UI for live sessions, the CLI for scripts, and MCP for agent workflows. They all call the same Rust core, so results stay consistent no matter which interface you choose. <a href="/docs/">Full docs →</a>',
+    'Use the desktop app for review, the terminal UI for live sessions, the CLI for scripts, and MCP for agent workflows. They all call the same Rust core, so results stay consistent no matter which interface you choose.',
 };
 
 export const surfaces: SurfaceCard[] = [

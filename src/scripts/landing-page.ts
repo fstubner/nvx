@@ -1,4 +1,17 @@
-export function initLandingPage(repo: string): void {
+interface HeroDownload {
+  label: string;
+  url: string;
+  hint?: string;
+}
+
+function platformFor(url: string): "windows" | "macos" | "linux" {
+  const ext = url.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "msi" || ext === "exe") return "windows";
+  if (ext === "dmg") return "macos";
+  return "linux";
+}
+
+export function initLandingPage(repo: string, downloads: HeroDownload[] = []): void {
 document.getElementById("y").textContent = new Date().getFullYear();
 
     // Live social proof: GitHub stars + cumulative release asset downloads.
@@ -237,27 +250,14 @@ document.getElementById("y").textContent = new Date().getFullYear();
         : "macos";
       setOS(detected);
 
-      const packageInstall = document.getElementById("hero-package-install");
-      if (packageInstall) {
-        const packageCommands = {
-          windows: "winget install fstubner.netscli",
-          macos: "brew tap fstubner/tap && brew install netscli",
-          linux: "curl -fsSL https://raw.githubusercontent.com/fstubner/netscli/main/scripts/install.sh | bash",
-        };
-        const packageCommand = packageCommands[detected] || packageCommands.linux;
-        packageInstall.dataset.copy = packageCommand;
-        const code = packageInstall.querySelector("code");
-        if (code) code.textContent = packageCommand;
-      }
-
+      // Swap the primary desktop-download button to the visitor's detected
+      // platform, sourced from the product's configured `hero.downloads`
+      // (site-content/hero.ts) rather than a hardcoded URL, so this works
+      // for any product's installer set.
       const desktopDownload = document.getElementById("hero-desktop-download");
-      if (desktopDownload) {
-        const desktopUrls = {
-          windows: "https://github.com/fstubner/netscli/releases/latest/download/netscli-gui-windows-x86_64.msi",
-          macos: "https://github.com/fstubner/netscli/releases/latest/download/netscli-gui-macos-aarch64.dmg",
-          linux: "https://github.com/fstubner/netscli/releases/latest/download/netscli-gui-linux-x86_64.AppImage",
-        };
-        desktopDownload.href = desktopUrls[detected] || desktopUrls.windows;
+      if (desktopDownload && downloads.length > 0) {
+        const byPlatform = downloads.find((d) => platformFor(d.url) === detected);
+        desktopDownload.href = (byPlatform || downloads[0]).url;
       }
     }
 

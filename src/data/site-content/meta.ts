@@ -14,6 +14,9 @@ export const meta: Meta = {
   ogImage: 'https://netscli.com/assets/tui-discover.png',
   faviconPath: '/favicon.svg',
   themeColor: '#111',
+  changelogTitle: 'NetsCLI release notes',
+  changelogDescription:
+    'Versioned release notes for shipped NetsCLI changes, fixes, and packaging updates.',
 };
 
 export const branding: Branding = {
@@ -22,4 +25,7 @@ export const branding: Branding = {
   accentGradient: 'linear-gradient(90deg,#059669,#0aae7a 50%,#1edcff)',
   bg: '#111',
   fg: '#d4d4d4',
+  accent: '#0aae7a',
+  accentAlt: '#1edcff',
+  accentHover: '#23d198',
 };

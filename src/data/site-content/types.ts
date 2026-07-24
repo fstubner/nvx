@@ -22,6 +22,10 @@ export interface Meta {
   /** Favicon + apple-touch-icon. */
   faviconPath: string;
   themeColor: string;
+  /** /changelog/ page <title> and <meta name="description">. Only used
+   *  when modules.changelog is true. */
+  changelogTitle?: string;
+  changelogDescription?: string;
 }
 
 export interface Branding {
@@ -35,6 +39,18 @@ export interface Branding {
   bg: string;
   /** Default body text colour. */
   fg: string;
+  /** Primary accent colour (buttons, links, focus rings) as a single hex
+   *  value — the solid-colour counterpart to `accentGradient`. Consumed as
+   *  the `--accent` CSS custom property (see layouts/Page.astro); every
+   *  component should reference `var(--accent)` instead of hardcoding this
+   *  hex value, so retheming means editing it in one place. */
+  accent: string;
+  /** Secondary accent colour used at the opposite end of `accentGradient`
+   *  and for a few hover/highlight states. Consumed as `--accent-alt`. */
+  accentAlt: string;
+  /** Brighter accent variant used for hover/focus states on interactive
+   *  elements. Consumed as `--accent-hover`. */
+  accentHover: string;
 }
 
 export interface Hero {
@@ -56,6 +72,18 @@ export interface Hero {
   heroImageWebp?: string;
   /** Link to the source repo for the "View source" pill. */
   sourceUrl: string;
+  /** Optional per-platform installer downloads, rendered as a primary
+   *  "Desktop app" button + dropdown menu in the hero. Omit entirely for
+   *  products with no downloadable installer (e.g. a hosted/SaaS product) —
+   *  the hero then shows only the quick-install command. */
+  downloads?: SurfaceDownload[];
+  /** Label for the primary download button, e.g. "Desktop app". Required
+   *  if `downloads` is set. */
+  downloadsLabel?: string;
+  /** Optional secondary command shown below the quick-install command,
+   *  e.g. a package-manager one-liner (`winget install ...`,
+   *  `brew install ...`). Omit to show only the quick-install command. */
+  packageManagerInstall?: string;
 }
 
 export interface SurfaceCard {
@@ -138,9 +166,21 @@ export interface SectionCopy {
   leadHtml: string;
 }
 
+export interface Modules {
+  /** Whether the /docs/ Starlight section exists for this product. When
+   *  false, nav/footer/404 stop linking to /docs/ and in-copy "Full docs →"
+   *  references are omitted — but the Starlight integration itself must
+   *  also be removed from astro.config.mjs (see the comment there). */
+  docs: boolean;
+  /** Whether the /changelog/ page exists for this product. When false,
+   *  nav/footer stop linking to /changelog/. */
+  changelog: boolean;
+}
+
 export interface SiteData {
   meta: Meta;
   branding: Branding;
+  modules: Modules;
   hero: Hero;
   /** Visible headings + leads for each main section. */
   copy: {

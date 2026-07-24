@@ -3,7 +3,7 @@ import type { InstallEntry, Platform, SectionCopy, TryCommand } from './types';
 export const installCopy: SectionCopy = {
   heading: 'Get started',
   leadHtml:
-    'Install NetsCLI, then run a scan or lookup from the desktop app, TUI, or CLI. <a href="/docs/">Full docs →</a>',
+    'Install NetsCLI, then run a scan or lookup from the desktop app, TUI, or CLI.',
 };
 
 export const installByPlatform: Record<Platform, InstallEntry[]> = {

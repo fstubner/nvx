@@ -1,14 +1,17 @@
 ---
 import { site } from '../data/site';
-const { install, copy } = site;
+const { install, copy, modules } = site;
 const { byPlatform, tryCommands, binariesNote } = install;
 const oses = ['windows', 'macos', 'linux'] as const;
 const labels = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
+const installLeadHtml = modules.docs
+  ? `${copy.install.leadHtml} <a href="/docs/">Full docs →</a>`
+  : copy.install.leadHtml;
 ---
 <section id="install">
   <div class="w">
     <h2>{copy.install.heading}</h2>
-    <p class="lead" set:html={copy.install.leadHtml} />
+    <p class="lead" set:html={installLeadHtml} />
 
     <div class="install-grid">
       <div class="os-tabs" role="tablist" aria-label="Choose operating system">
@@ -121,7 +124,7 @@ const labels = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
   border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s;
 }
 .os-tab:hover{color:#ccc}
-.os-tab.active{color:#fafafa;border-bottom-color:#0aae7a;font-weight:500}
+.os-tab.active{color:#fafafa;border-bottom-color:var(--accent);font-weight:500}
 .os-panel{display:none}
 .os-panel.active{display:block}
 .reco{
@@ -145,8 +148,8 @@ const labels = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
   color:#ccc;overflow-wrap:anywhere;word-break:normal;padding-right:50px;
 }
 .footer-note{margin-top:14px;font-size:.8125rem;color:#777}
-.footer-note a{color:#0aae7a;text-decoration:underline;text-underline-offset:3px}
-.footer-note a:hover{color:#23d198}
+.footer-note a{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
+.footer-note a:hover{color:var(--accent-hover)}
 
 /* Try it sidebar — one row per command, each row gets .has-copy so the
    existing copy-button JS auto-attaches a button. */
@@ -215,7 +218,7 @@ const labels = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
   display:inline-flex;flex-direction:column;align-items:flex-start;gap:2px;
   padding:9px 14px;border-radius:8px;
   background:rgba(10,174,122,.10);border:1px solid rgba(10,174,122,.45);
-  color:#0aae7a;font-size:.85rem;font-weight:500;text-decoration:none;
+  color:var(--accent);font-size:.85rem;font-weight:500;text-decoration:none;
   transition:background .15s,color .15s,border-color .15s;
 }
 .surface-download-btn:hover{

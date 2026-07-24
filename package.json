@@ -1,6 +1,6 @@
 {
-  "name": "netscli-site",
-  "description": "netscli.com landing page",
+  "name": "product-site-template",
+  "description": "Reusable modular landing page + docs + changelog template for launching new products.",
   "type": "module",
   "private": true,
   "scripts": {

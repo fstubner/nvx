@@ -1,12 +1,15 @@
 ---
 import { site } from '../data/site';
-const { surfaces, copy } = site;
+const { surfaces, copy, modules } = site;
+const surfacesLeadHtml = modules.docs
+  ? `${copy.surfaces.leadHtml} <a href="/docs/">Full docs →</a>`
+  : copy.surfaces.leadHtml;
 ---
 <section id="surfaces" class="surfaces-section">
   <div class="w">
     <div class="surfaces-intro">
       <h2>{copy.surfaces.heading}</h2>
-      <p class="lead" set:html={copy.surfaces.leadHtml} />
+      <p class="lead" set:html={surfacesLeadHtml} />
     </div>
 
     <div class="surfaces">
@@ -97,7 +100,7 @@ const { surfaces, copy } = site;
 }
 .surface-visual img:focus-visible,
 .bigshot img:focus-visible{
-  outline:2px solid #1edcff;
+  outline:2px solid var(--accent-alt);
   outline-offset:3px;
 }
 .surface-visual .codeblock{

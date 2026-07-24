@@ -3,6 +3,7 @@
 // product. Every component reads the assembled `site` export from here.
 
 import { branding, meta } from './site-content/meta';
+import { modules } from './site-content/modules';
 import { hero } from './site-content/hero';
 import { surfaces, surfacesCopy } from './site-content/surfaces';
 import {
@@ -13,7 +14,7 @@ import {
 } from './site-content/install';
 import { faq, faqCopy } from './site-content/faq';
 import { analytics, builtWith, social } from './site-content/footer';
-import { readProductVersion } from './site-content/version';
+import { productVersion } from './site-content/version';
 import type { SiteData } from './site-content/types';
 
 export type {
@@ -24,6 +25,7 @@ export type {
   Hero,
   InstallEntry,
   Meta,
+  Modules,
   Platform,
   SectionCopy,
   SiteData,
@@ -36,6 +38,7 @@ export type {
 export const site: SiteData = {
   meta,
   branding,
+  modules,
   hero,
   copy: {
     surfaces: surfacesCopy,
@@ -52,5 +55,5 @@ export const site: SiteData = {
   builtWith,
   social,
   analytics,
-  version: readProductVersion(),
+  version: productVersion,
 };

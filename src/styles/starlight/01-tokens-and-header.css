@@ -49,12 +49,12 @@ html[data-theme='light'] ::backdrop {
 
 :root {
   --sl-nav-height: 3.75rem;
-  --netscli-shell-width: 72rem;
+  --shell-width: 72rem;
   --netscli-docs-sidebar-width: 16rem;
   --netscli-docs-toc-width: 13rem;
   --netscli-docs-shell-gutter: clamp(1.25rem, 2vw, 2.5rem);
   --netscli-docs-frame-width: calc(
-    var(--netscli-shell-width) + var(--netscli-docs-sidebar-width) + var(--netscli-docs-toc-width)
+    var(--shell-width) + var(--netscli-docs-sidebar-width) + var(--netscli-docs-toc-width)
   );
 }
 

@@ -15,4 +15,33 @@ export const hero: Hero = {
   heroImageWidth: 1640,
   heroImageHeight: 930,
   sourceUrl: 'https://github.com/fstubner/netscli',
+  downloadsLabel: 'Desktop app',
+  downloads: [
+    {
+      label: 'Windows',
+      hint: 'AMD64',
+      url: 'https://github.com/fstubner/netscli/releases/latest/download/netscli-gui-windows-x86_64.msi',
+    },
+    {
+      label: 'macOS',
+      hint: 'Apple silicon',
+      url: 'https://github.com/fstubner/netscli/releases/latest/download/netscli-gui-macos-aarch64.dmg',
+    },
+    {
+      label: 'macOS',
+      hint: 'Intel x86_64',
+      url: 'https://github.com/fstubner/netscli/releases/latest/download/netscli-gui-macos-x86_64.dmg',
+    },
+    {
+      label: 'Linux',
+      hint: 'x86_64 portable',
+      url: 'https://github.com/fstubner/netscli/releases/latest/download/netscli-gui-linux-x86_64.AppImage',
+    },
+    {
+      label: 'Debian / Ubuntu',
+      hint: 'AMD64',
+      url: 'https://github.com/fstubner/netscli/releases/latest/download/netscli-gui-linux-x86_64.deb',
+    },
+  ],
+  packageManagerInstall: 'winget install fstubner.netscli',
 };

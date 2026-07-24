@@ -1,6 +1,6 @@
 ---
 import { site } from '../data/site';
-const { branding, hero } = site;
+const { branding, hero, meta, modules } = site;
 const onHome = Astro.url.pathname === '/';
 const pathname = Astro.url.pathname;
 const homeAnchor = (id: string) => (onHome ? `#${id}` : `/#${id}`);
@@ -8,14 +8,16 @@ const links = [
   { href: homeAnchor('surfaces'), label: 'Features', active: false, section: 'surfaces' },
   { href: homeAnchor('install'), label: 'Install', active: false, section: 'install' },
   { href: homeAnchor('faq'), label: 'FAQ', active: false, section: 'faq' },
-  { href: '/docs/', label: 'Docs', active: pathname.startsWith('/docs') },
-  { href: '/changelog/', label: 'Changelog', active: pathname.startsWith('/changelog') },
+  ...(modules.docs ? [{ href: '/docs/', label: 'Docs', active: pathname.startsWith('/docs') }] : []),
+  ...(modules.changelog
+    ? [{ href: '/changelog/', label: 'Changelog', active: pathname.startsWith('/changelog') }]
+    : []),
   { href: hero.sourceUrl, label: 'GitHub', active: false, external: true },
 ];
 ---
 <nav data-site-nav data-open="false">
   <div class="nav-inner">
-    <a class="mark" href="/" aria-label="NetsCLI home">
+    <a class="mark" href="/" aria-label={`${meta.siteName} home`}>
       <img src={branding.wordmark} alt="" width="160" height="32" />
     </a>
     <button
@@ -99,7 +101,7 @@ body.nav-scrolled nav::after{
   opacity:1;
 }
 .nav-inner{
-  max-width:var(--netscli-shell-width);margin:0 auto;padding:12px var(--netscli-shell-gutter);
+  max-width:var(--shell-width);margin:0 auto;padding:12px var(--shell-gutter);
   display:flex;align-items:center;justify-content:space-between;gap:18px;
   flex-wrap:wrap;
   position:relative;
@@ -153,7 +155,7 @@ body.nav-scrolled nav::after{
 .nlinks a:hover{color:#e5e5e5}
 .nlinks a[aria-current="page"]{
   color:#e5e5e5;
-  border-bottom-color:#0aae7a;
+  border-bottom-color:var(--accent);
 }
 .external-link{
   display:inline-flex;
@@ -165,7 +167,7 @@ body.nav-scrolled nav::after{
 .external-link::after{
   content:"↗";
   flex:0 0 auto;
-  color:#0aae7a;
+  color:var(--accent);
   font-size:.92em;
   font-weight:700;
   line-height:1;
@@ -173,7 +175,7 @@ body.nav-scrolled nav::after{
   text-decoration:none;
 }
 .external-link:hover::after{
-  color:#23d198;
+  color:var(--accent-hover);
   opacity:1;
 }
 @media(max-width:600px){
@@ -211,7 +213,7 @@ body.nav-scrolled nav::after{
   }
   .nlinks a:hover,
   .nlinks a[aria-current='page']{
-    border-left-color:#0aae7a;
+    border-left-color:var(--accent);
     border-bottom-color:transparent;
     background:rgba(10,174,122,.1);
   }
