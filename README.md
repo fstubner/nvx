@@ -156,6 +156,16 @@ live; don't repeat that.
   etc. in `src/scripts/docs-header.ts` and `styles/starlight/*.css`) still
   carry a `netscli` prefix. They're private implementation details with no
   visible-string leakage, so left alone for this pass.
+- `npm run test:a11y` reports a `color-contrast` violation on `/docs/*`
+  pages (Starlight footer + mobile-section-nav external links, 14
+  occurrences) on GitHub Actions' headless Chrome that does not reproduce
+  locally on Windows Chrome with the identical build — an environment-
+  dependent font-rendering/antialiasing difference right at the WCAG AA
+  threshold, in pre-existing Starlight component styling untouched by this
+  pass. Both CI checks above are `continue-on-error` so they stay visible
+  without gating merges; worth a real fix (bump contrast a notch on
+  `.external-link`/`.docs-footer`/`.docs-mobile-section-*`) before relying
+  on this template's docs footer as-is for a new product.
 
 ## Using this for a new product
 
