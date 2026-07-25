@@ -22,7 +22,13 @@ var nodeSandboxPreserveFlags = []string{"--preserve-symlinks-main", "--preserve-
 //     files can't be CreateProcess'd and the cmd.exe fallback is denied inside
 //     the container.
 //   - any node.exe invocation gains the preserve-symlinks flags (see above).
-func rewriteWindowsNodeCommand(cmdPath string, args []string) (string, []string) {
+//
+// nodeExeFallback is used when no node.exe sits beside the .cmd, which is the
+// normal layout for a self-updated npm living in a version's npm_global prefix.
+// Without it the rewrite would bail and launch the batch wrapper, whose own
+// `IF EXIST "%dp0%\node.exe"` check then fails and degrades to a bare `node`
+// that is not resolvable inside the container.
+func rewriteWindowsNodeCommand(cmdPath string, args []string, nodeExeFallback string) (string, []string) {
 	switch strings.ToLower(filepath.Base(cmdPath)) {
 	case "npm.cmd", "npx.cmd":
 		cli := "npm-cli.js"
@@ -31,7 +37,12 @@ func rewriteWindowsNodeCommand(cmdPath string, args []string) (string, []string)
 		}
 		dir := filepath.Dir(cmdPath)
 		nodeExe := filepath.Join(dir, "node.exe")
+		// Keep the CLI next to the .cmd we resolved, so a self-updated npm stays
+		// the one that runs; only the interpreter falls back.
 		cliPath := filepath.Join(dir, "node_modules", "npm", "bin", cli)
+		if !regularFileExists(nodeExe) && regularFileExists(nodeExeFallback) {
+			nodeExe = nodeExeFallback
+		}
 		if !regularFileExists(nodeExe) || !regularFileExists(cliPath) {
 			return cmdPath, args
 		}
@@ -51,8 +62,27 @@ func rewriteWindowsNodeCommand(cmdPath string, args []string) (string, []string)
 }
 
 func regularFileExists(path string) bool {
+	if path == "" {
+		return false
+	}
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+// resolveSandboxNodeExe locates the node.exe of the runtime version this session
+// is using, for use as the interpreter when a resolved npm.cmd/npx.cmd has no
+// node.exe of its own. Returns "" if no version is active, in which case the
+// rewrite simply declines rather than guessing.
+func resolveSandboxNodeExe(nvxHome string) string {
+	rt := runtimeForShim("node")
+	ver := getActiveShellVersionFor(nvxHome, rt.Name())
+	if ver == "" {
+		ver = getGlobalDefaultVersionFor(nvxHome, rt.Name())
+	}
+	if ver == "" {
+		return ""
+	}
+	return resolvePinnedCommandPath("node", nvxHome, ver, rt)
 }
 
 // platformLaunchNative applies AppContainer isolation on Windows.
@@ -87,7 +117,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1
 	}
 	// Adapt node/npm/npx for AppContainer launch (direct node.exe, realpath-safe).
-	cmdPath, launchArgs := rewriteWindowsNodeCommand(cmdPath, config.Args)
+	cmdPath, launchArgs := rewriteWindowsNodeCommand(cmdPath, config.Args, resolveSandboxNodeExe(config.NvxHome))
 
 	cmdPath, err = ensureAppContainerCommand(sid, config.NvxHome, cmdPath)
 	if err != nil {
@@ -100,6 +130,14 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// The host's own node dir is on PATH but is not accessible to the container;
 	// this directory is granted RX above.
 	cleanEnv = prependPath(cleanEnv, filepath.Dir(cmdPath))
+
+	// The preserve-symlinks flags above only cover the process nvx launches.
+	// npm scripts spawn further node processes, whose own entry-point resolution
+	// realpaths up to the drive root — a path an AppContainer cannot stat unless
+	// that volume's root was granted by `nvx setup` (only the system drive is,
+	// so any project on another drive fails). NODE_OPTIONS carries the flags into
+	// every child so the realpath walk is skipped there too.
+	cleanEnv = setNodeOptionsPreserveSymlinks(cleanEnv)
 
 	// Network: AppContainers cannot reach the loopback egress proxy, so by
 	// default we grant internetClient and run direct (network works, egress not
@@ -151,6 +189,25 @@ func prependPath(env []string, dir string) []string {
 		}
 	}
 	return append(env, "PATH="+dir)
+}
+
+// setNodeOptionsPreserveSymlinks ensures NODE_OPTIONS carries the
+// preserve-symlinks flags, so node processes spawned *inside* the sandbox (npm
+// scripts, tool launchers) skip the realpath walk that the flags on nvx's own
+// launch command line only cover for the top-level process.
+func setNodeOptionsPreserveSymlinks(env []string) []string {
+	flags := strings.Join(nodeSandboxPreserveFlags, " ")
+	for i, e := range env {
+		kv := strings.SplitN(e, "=", 2)
+		if len(kv) == 2 && strings.EqualFold(kv[0], "NODE_OPTIONS") {
+			if strings.Contains(kv[1], "--preserve-symlinks") {
+				return env // already covered; don't duplicate
+			}
+			env[i] = "NODE_OPTIONS=" + strings.TrimSpace(kv[1]+" "+flags)
+			return env
+		}
+	}
+	return append(env, "NODE_OPTIONS="+flags)
 }
 
 func stripProxyEnv(env []string) []string {
