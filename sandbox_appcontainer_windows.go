@@ -149,13 +149,49 @@ func deleteAppContainerProfile(profileName string) {
 	_, _, _ = procDeleteAppContainerProfile.Call(uintptr(unsafe.Pointer(name)))
 }
 
+// appContainerHasGrant reports whether path already carries an allow ACE for
+// sidStr, whether set directly or inherited from an ancestor. A non-recursive
+// ACL read costs ~50ms even on a tree with tens of thousands of files, which
+// makes the far more expensive grant below idempotent: after the first run the
+// ACE is already in place and there is nothing to do.
+func appContainerHasGrant(sidStr, path string) bool {
+	out, err := runWinCmd(10*time.Second, "icacls", path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, sidStr) {
+			continue
+		}
+		// An explicit deny must not be read as "already granted".
+		if strings.Contains(strings.ToUpper(line), "(DENY)") {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// grantAppContainerPath gives the AppContainer modify access to path and its
+// descendants.
+//
+// (OI)(CI) marks the ACE inheritable, and NTFS propagates it to *existing*
+// children as well as new ones, so `/t` is unnecessary. It is also actively
+// harmful: `/t` rewrites every descendant's ACL individually, which on a real
+// project (measured: 45k files) blows the timeout outright, and it aborts on any
+// child whose ACL cannot be rewritten — e.g. a project-local .nvx directory
+// carrying ACEs from other tooling, the exact failure users hit as
+// "Access is denied" followed by a 20s stall on every single invocation.
 func grantAppContainerPath(sid uintptr, path string) error {
 	sidStr, err := appContainerSidToString(sid)
 	if err != nil {
 		return err
 	}
+	if appContainerHasGrant(sidStr, path) {
+		return nil
+	}
 	grantArg := fmt.Sprintf("*%s:(OI)(CI)(M)", sidStr)
-	out, err := runWinCmd(20*time.Second, "icacls", path, "/grant", grantArg, "/t", "/c", "/q")
+	out, err := runWinCmd(45*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -274,23 +310,37 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	return out.Close()
 }
 
+// grantAppContainerPathReadExecTree gives the AppContainer read/execute on path
+// and its descendants. Inheritable rather than /t-recursive, for the reasons in
+// grantAppContainerPath — this one runs on the runtime version directory, whose
+// bundled node_modules alone is thousands of files.
 func grantAppContainerPathReadExecTree(sid uintptr, path string) error {
 	sidStr, err := appContainerSidToString(sid)
 	if err != nil {
 		return err
 	}
+	if appContainerHasGrant(sidStr, path) {
+		return nil
+	}
 	grantArg := fmt.Sprintf("*%s:(OI)(CI)(RX)", sidStr)
-	out, err := runWinCmd(20*time.Second, "icacls", path, "/grant", grantArg, "/t", "/q")
+	out, err := runWinCmd(45*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls RX tree grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
+// grantAppContainerPathReadExec grants this-folder-only read/execute, used for
+// traverse rights on ancestor directories. Skipped when access is already
+// present, so the common case costs one cheap ACL read instead of a write that
+// can stall behind a filter driver.
 func grantAppContainerPathReadExec(sid uintptr, path string) error {
 	sidStr, err := appContainerSidToString(sid)
 	if err != nil {
 		return err
+	}
+	if appContainerHasGrant(sidStr, path) {
+		return nil
 	}
 	grantArg := fmt.Sprintf("*%s:(RX)", sidStr)
 	out, err := runWinCmd(15*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
