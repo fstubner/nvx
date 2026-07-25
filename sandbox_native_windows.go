@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,19 +101,18 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	}
 	defer syscall.LocalFree(syscall.Handle(sid))
 
-	// Real package-manager workflows stat ancestor directories (up to C:\), which
-	// an AppContainer cannot do until `nvx setup` grants it. Rather than launch a
-	// run we know will fail with a cryptic EPERM, refuse with a clear choice.
-	if isPackageManagerCommand(config.Command) && !windowsSandboxSetupDone(config.NvxHome) {
-		LogError("%s can't run under the Windows sandbox until one-time setup is done.", config.Command)
-		LogInfo("Choose one:")
-		LogInfo("  * Run 'nvx setup' from an Administrator terminal to enable the sandbox (recommended).")
-		LogInfo("  * Run it without OS isolation:  nvx --no-sandbox %s ...", config.Command)
-		LogInfo("    (typosquat / vulnerability / install-script checks still apply).")
-		return 1
+	// Package-manager workflows used to require the elevated `nvx setup` grants,
+	// because node resolved its entry point by realpath'ing up to the drive root
+	// -- a stat an AppContainer cannot do there. NODE_OPTIONS now carries
+	// --preserve-symlinks into every child, so that walk no longer happens and
+	// the sandbox runs unelevated. Verified against an AppContainer SID holding no
+	// grant on the system drive root at all (see the unelevated probe test): both
+	// `npm -v` and `npm run <script>` complete normally. So this is advisory now,
+	// not a refusal -- elevation buys allowlisted egress and drive-root access for
+	// tools that still walk that far, and nothing else.
+	if isPackageManagerCommand(config.Command) {
+		noteMissingElevatedGrants(config.NvxHome, sid, workDir)
 	}
-
-	warnIfVolumeRootUngranted(sid, workDir)
 
 	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
 		LogError("AppContainer filesystem setup failed: %v", err)
@@ -193,30 +193,88 @@ func prependPath(env []string, dir string) []string {
 	return append(env, "PATH="+dir)
 }
 
-// warnIfVolumeRootUngranted reports, in plain terms, that the volume holding the
-// working directory has no root grant for the sandbox. Tools that resolve a path
-// walk up to that root, and the stat there fails as an unexplained EPERM on e.g.
-// "H:\" — granting the root needs elevation, so this points at `nvx setup`
-// rather than trying and failing to do it here.
-func warnIfVolumeRootUngranted(sid uintptr, workDir string) {
-	if workDir == "" {
-		return
-	}
-	vol := filepath.VolumeName(workDir)
-	if vol == "" {
-		return
-	}
-	root := vol + `\`
-	sysDrive := os.Getenv("SystemDrive")
-	if sysDrive != "" && strings.EqualFold(vol, sysDrive) {
-		return // covered by the existing setup check
-	}
+// noteMissingElevatedGrants reports which drive roots the sandbox cannot read,
+// based on the actual ACLs rather than on whether a setup marker file exists --
+// so it stays accurate if setup was undone, or if a project sits on a volume a
+// previous setup did not cover. Purely informational: these grants are optional
+// (see the caller), and only an elevated `nvx setup` can add them.
+//
+// Reported once per drive root so a normal session is not narrated on every run.
+func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 	sidStr, err := appContainerSidToString(sid)
-	if err != nil || appContainerHasGrant(sidStr, root) {
+	if err != nil {
 		return
 	}
-	LogWarn("The sandbox has no access to %s, the drive this project lives on.", root)
-	LogInfo("Tools that resolve paths up to the drive root will fail there. Re-run 'nvx setup' from an Administrator terminal to grant it (it now covers every fixed drive), or use --no-sandbox.")
+
+	sysDrive := os.Getenv("SystemDrive")
+	if sysDrive == "" {
+		sysDrive = "C:"
+	}
+
+	roots := []string{sysDrive + `\`}
+	if vol := filepath.VolumeName(workDir); vol != "" && !strings.EqualFold(vol, sysDrive) {
+		roots = append(roots, vol+`\`)
+	}
+
+	var missing []string
+	for _, r := range roots {
+		if !appContainerHasGrant(sidStr, r) && !driveRootNoticeSeen(nvxHome, r) {
+			missing = append(missing, r)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+
+	LogWarn("The sandbox cannot read %s. Most workflows are unaffected.", strings.Join(missing, " or "))
+	LogInfo("A tool that resolves paths all the way to a drive root may fail there. To grant it: 'nvx setup' from an Administrator terminal (optional; it covers every fixed drive).")
+	for _, r := range missing {
+		markDriveRootNoticeSeen(nvxHome, r)
+	}
+}
+
+func driveRootNoticeFile(nvxHome string) string {
+	return filepath.Join(nvxHome, "drive-root-notices.json")
+}
+
+// driveRootNoticeSeen reports whether the advisory for root has already been
+// shown. Best-effort: an unreadable/corrupt file just means the notice repeats,
+// which is strictly better than suppressing it wrongly.
+func driveRootNoticeSeen(nvxHome, root string) bool {
+	data, err := os.ReadFile(driveRootNoticeFile(nvxHome))
+	if err != nil {
+		return false
+	}
+	var seen []string
+	if json.Unmarshal(data, &seen) != nil {
+		return false
+	}
+	for _, s := range seen {
+		if strings.EqualFold(s, root) {
+			return true
+		}
+	}
+	return false
+}
+
+func markDriveRootNoticeSeen(nvxHome, root string) {
+	var seen []string
+	if data, err := os.ReadFile(driveRootNoticeFile(nvxHome)); err == nil {
+		_ = json.Unmarshal(data, &seen)
+	}
+	for _, s := range seen {
+		if strings.EqualFold(s, root) {
+			return
+		}
+	}
+	seen = append(seen, root)
+	data, err := json.Marshal(seen)
+	if err != nil {
+		return
+	}
+	if os.MkdirAll(nvxHome, 0o700) == nil {
+		_ = os.WriteFile(driveRootNoticeFile(nvxHome), data, 0o600)
+	}
 }
 
 // setNodeOptionsPreserveSymlinks ensures NODE_OPTIONS carries the

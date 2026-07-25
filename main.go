@@ -335,8 +335,10 @@ Commands:
   policy init              Scaffold ~/.nvx/policy.json and/or .nvx-policy.json
   shim <cmd> [args]        Internal shim router for package managers
   cleanup                  Remove stale sandbox sessions from previous runs
-  setup                    (Windows) One-time elevated setup that lets the
-                           sandbox run package managers; 'setup --undo' reverses
+  setup                    (Windows, optional) One-time elevated setup adding
+                           OS-allowlisted egress and drive-root access; the
+                           sandbox runs unelevated without it. 'setup --undo'
+                           reverses it
   doctor                   Check and repair that nvx intercepts node/npm/npx on PATH
   grants list              Show this project's approved egress hosts, trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)
