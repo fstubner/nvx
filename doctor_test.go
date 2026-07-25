@@ -213,6 +213,55 @@ func TestPathIsShadowed(t *testing.T) {
 	}
 }
 
+// hintIfShadowed must persist its "already shown" state across process
+// boundaries, not just within one process: a single user-facing command
+// routinely spawns a tree of separate nvx.exe processes (an npm lifecycle
+// script alone can nest prepublishOnly -> build -> clean -> node), so an
+// in-process sync.Once reprints the warning once per process in that tree
+// rather than once overall. It must also re-arm once the condition clears, so
+// a later recurrence is not silently suppressed forever.
+func TestHintIfShadowedPersistsAcrossProcessesAndRearms(t *testing.T) {
+	nvxHome := t.TempDir()
+	shimDir := filepath.Join(nvxHome, "bin")
+	current := filepath.Join(nvxHome, "current")
+	sep := string(os.PathListSeparator)
+	shadowedPath := current + sep + shimDir
+	healthyPath := shimDir + sep + current
+
+	t.Setenv("PATH", shadowedPath)
+	marker := shadowHintMarkerPath(nvxHome)
+
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("marker should not exist before the first call")
+	}
+	hintIfShadowed(nvxHome)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("expected the marker to persist to disk, surviving past this process's lifetime")
+	}
+
+	// A second call under the same still-shadowed PATH must not error or
+	// duplicate the marker; the guard is "already shown", not "shown exactly
+	// once ever".
+	hintIfShadowed(nvxHome)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("marker should remain present while still shadowed")
+	}
+
+	// Condition clears (e.g. `nvx doctor` fixed PATH) -> marker must clear too,
+	// so a later recurrence is reported again rather than staying suppressed.
+	t.Setenv("PATH", healthyPath)
+	hintIfShadowed(nvxHome)
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("expected the marker to be removed once the condition clears")
+	}
+
+	t.Setenv("PATH", shadowedPath)
+	hintIfShadowed(nvxHome)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("expected a recurrence after clearing to be reported (marker re-armed)")
+	}
+}
+
 // writeExec creates an executable file (0755) so Unix resolution accepts it.
 func writeExec(t *testing.T, path string) {
 	t.Helper()

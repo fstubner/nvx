@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 )
 
 // pathResolveExts returns the executable extensions to try when resolving a
@@ -291,15 +290,30 @@ func pathIsShadowed(pathEnv, nvxHome string) bool {
 	return rep.shimDirOnPath && len(rep.shadowedBy) > 0
 }
 
-var shadowHintOnce sync.Once
+func shadowHintMarkerPath(nvxHome string) string {
+	return filepath.Join(nvxHome, "shadow-hint-shown")
+}
 
-// hintIfShadowed warns at most once per process when the current PATH shadows
-// the shim dir, so a wrapped command that happens to still route through nvx
-// nudges the user to run `nvx doctor` before a future command bypasses it.
+// hintIfShadowed warns once per ongoing occurrence of PATH shadowing the shim
+// dir, so a wrapped command that happens to still route through nvx nudges the
+// user to run `nvx doctor` before a future command bypasses it.
+//
+// The guard is a marker file, not an in-process sync.Once: a single user-facing
+// command routinely spawns a whole tree of nvx shim processes (an npm lifecycle
+// script alone can nest prepublishOnly -> build -> clean -> node, each its own
+// process), so a per-process guard reprints the same warning once per process in
+// that tree instead of once. The marker is removed as soon as the condition
+// clears, so it re-arms if shadowing recurs later rather than going silent
+// forever after the first sighting.
 func hintIfShadowed(nvxHome string) {
-	if pathIsShadowed(os.Getenv("PATH"), nvxHome) {
-		shadowHintOnce.Do(func() {
-			LogWarn("A runtime dir is ahead of nvx's shim dir on PATH; some commands may bypass nvx. Run: nvx doctor")
-		})
+	marker := shadowHintMarkerPath(nvxHome)
+	if !pathIsShadowed(os.Getenv("PATH"), nvxHome) {
+		_ = os.Remove(marker)
+		return
 	}
+	if _, err := os.Stat(marker); err == nil {
+		return // already shown for this ongoing occurrence
+	}
+	LogWarn("A runtime dir is ahead of nvx's shim dir on PATH; some commands may bypass nvx. Run: nvx doctor")
+	_ = os.WriteFile(marker, nil, 0o600)
 }
