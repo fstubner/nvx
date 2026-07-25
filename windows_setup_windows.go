@@ -30,6 +30,32 @@ func runWinCmd(timeout time.Duration, name string, args ...string) ([]byte, erro
 
 var procGetTokenInformation = modAdvapi32.NewProc("GetTokenInformation")
 
+var procGetDriveTypeW = modKernel32.NewProc("GetDriveTypeW")
+
+const driveFixed = 3 // DRIVE_FIXED
+
+// fixedDriveRoots returns the root directory of every fixed volume on the
+// machine (skipping removable, network, and CD-ROM drives). Projects commonly
+// live off the system drive, and a tool that resolves a path walks up to that
+// volume's root — a stat an AppContainer cannot perform unless the root itself
+// carries a grant, since "bypass traverse checking" does not cover reading the
+// root's own attributes.
+func fixedDriveRoots() []string {
+	var roots []string
+	for c := 'A'; c <= 'Z'; c++ {
+		root := string(c) + `:\`
+		p, err := syscall.UTF16PtrFromString(root)
+		if err != nil {
+			continue
+		}
+		t, _, _ := procGetDriveTypeW.Call(uintptr(unsafe.Pointer(p)))
+		if t == driveFixed {
+			roots = append(roots, root)
+		}
+	}
+	return roots
+}
+
 // isElevated reports whether the current process token is elevated (admin).
 func isElevated() bool {
 	var token syscall.Token
@@ -84,6 +110,14 @@ func windowsAncestorGrantPaths() []string {
 			add(vol + `\`)
 			add(filepath.Join(vol+`\`, "Users"))
 		}
+	}
+	// Every other fixed volume's root too: a project living off the system drive
+	// (H:\work\...) makes tools resolve paths up to that root, and without a
+	// grant there the stat fails with a bare EPERM on e.g. "H:\". Root only —
+	// this-folder-only RX, so the volume's contents stay governed by their own
+	// ACLs and nothing below the root becomes readable by this.
+	for _, root := range fixedDriveRoots() {
+		add(root)
 	}
 	return paths
 }

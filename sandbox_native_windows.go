@@ -112,6 +112,8 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1
 	}
 
+	warnIfVolumeRootUngranted(sid, workDir)
+
 	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
 		LogError("AppContainer filesystem setup failed: %v", err)
 		return 1
@@ -189,6 +191,32 @@ func prependPath(env []string, dir string) []string {
 		}
 	}
 	return append(env, "PATH="+dir)
+}
+
+// warnIfVolumeRootUngranted reports, in plain terms, that the volume holding the
+// working directory has no root grant for the sandbox. Tools that resolve a path
+// walk up to that root, and the stat there fails as an unexplained EPERM on e.g.
+// "H:\" — granting the root needs elevation, so this points at `nvx setup`
+// rather than trying and failing to do it here.
+func warnIfVolumeRootUngranted(sid uintptr, workDir string) {
+	if workDir == "" {
+		return
+	}
+	vol := filepath.VolumeName(workDir)
+	if vol == "" {
+		return
+	}
+	root := vol + `\`
+	sysDrive := os.Getenv("SystemDrive")
+	if sysDrive != "" && strings.EqualFold(vol, sysDrive) {
+		return // covered by the existing setup check
+	}
+	sidStr, err := appContainerSidToString(sid)
+	if err != nil || appContainerHasGrant(sidStr, root) {
+		return
+	}
+	LogWarn("The sandbox has no access to %s, the drive this project lives on.", root)
+	LogInfo("Tools that resolve paths up to the drive root will fail there. Re-run 'nvx setup' from an Administrator terminal to grant it (it now covers every fixed drive), or use --no-sandbox.")
 }
 
 // setNodeOptionsPreserveSymlinks ensures NODE_OPTIONS carries the
