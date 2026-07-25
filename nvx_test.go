@@ -970,3 +970,26 @@ func TestIsTrustedPackageWildcard(t *testing.T) {
 	}
 }
 
+// The uncontained ("your own code") path must announce its status exactly
+// once per user-facing command, not once per process: a build script's own
+// npm/node invocations are each a separate nvx.exe process, so only the
+// outermost one should report — a per-process guard (e.g. sync.Once) would
+// reprint on every nested invocation instead, one per level of the script tree.
+func TestIsTopLevelShimInvocation(t *testing.T) {
+	t.Setenv(nvxActiveEnvVar, "")
+	if !isTopLevelShimInvocation() {
+		t.Error("expected the first call in a fresh process tree to be top-level")
+	}
+	if isTopLevelShimInvocation() {
+		t.Error("expected a second call in the same process to report nested, now that the tree is marked active")
+	}
+
+	// Simulates a nested nvx.exe process: the env var is already set because a
+	// parent invocation (e.g. the outer `npm publish`) set it before spawning
+	// this child, exactly as a real child process inherits it.
+	t.Setenv(nvxActiveEnvVar, "1")
+	if isTopLevelShimInvocation() {
+		t.Error("expected a process that inherited the active marker to report nested")
+	}
+}
+

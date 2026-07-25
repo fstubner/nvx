@@ -11,6 +11,27 @@ import (
 	"strings"
 )
 
+// nvxActiveEnvVar marks that the current process tree already reported its
+// top-level containment status, so a nested nvx-shimmed invocation (e.g. a
+// build script's own npm/node calls) does not repeat it. Set once and inherited
+// by every child process from then on — see runShim's uncontained-path status
+// line for why a per-process guard is not enough here.
+const nvxActiveEnvVar = "NVX_SHIM_ACTIVE"
+
+// isTopLevelShimInvocation reports whether this process is the outermost
+// nvx-shimmed invocation in its process tree, marking the tree as active for
+// any child so nested invocations answer false. os.Setenv only affects this
+// process's own environment block, but child processes started afterwards
+// (exec.Command with a nil Env) inherit that block, so the mark propagates
+// down through however many nested nvx.exe processes a build script spawns.
+func isTopLevelShimInvocation() bool {
+	if os.Getenv(nvxActiveEnvVar) != "" {
+		return false
+	}
+	_ = os.Setenv(nvxActiveEnvVar, "1")
+	return true
+}
+
 // GetHomeDir returns the root directory for nvx (defaults to ~/.nvx)
 func GetHomeDir() string {
 	if home := os.Getenv("NVX_HOME"); home != "" {
@@ -634,6 +655,19 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 			FilesystemProvider: opts.filesystemProvider,
 			ToolName:           toolName,
 		})
+	}
+
+	// Uncontained is the "your own code" path (run scripts, publish, whoami,
+	// ...): whether that's true or not is exactly what a security-conscious
+	// user needs to see, not infer from an absent sandbox banner. But a single
+	// typed command routinely spawns a whole tree of further nvx-shimmed
+	// processes (an npm lifecycle script alone can nest prepublishOnly ->
+	// build -> clean -> node, each a distinct process) — unlike the sandboxed
+	// path, whose guest PATH never includes nvx's own shim dir, so nothing it
+	// spawns re-enters nvx's classification at all. Only the outermost
+	// invocation in that tree should report its own status.
+	if isTopLevelShimInvocation() {
+		LogInfo("Running directly (not sandboxed): %s %s", cmdName, strings.Join(args, " "))
 	}
 
 	rt := runtimeForShim(cmdName)
