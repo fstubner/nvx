@@ -188,6 +188,13 @@ func ensureAppContainerCommand(sid uintptr, nvxHome, cmdPath string) (string, er
 			return "", err
 		}
 	}
+	// dir's own subtree is now granted, but dir itself commonly sits several
+	// levels below the profile root (e.g. ~/.nvx/versions/node/<version>/) —
+	// without traverse rights on those intermediate ancestors, the sandboxed
+	// process can resolve the binary's parent but fails to lstat/traverse its
+	// way there (Node's own realpathSync on argv[0] hits this during startup).
+	// Mirrors the same treatment workDir/guestHome already get.
+	grantWorkdirAncestors(sid, dir)
 	return usePath, nil
 }
 

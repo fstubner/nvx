@@ -2,7 +2,123 @@
 
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// A self-updated npm lands in the version's npm_global prefix, whose directory
+// has no sibling node.exe. The rewrite must still produce a direct node.exe
+// call: falling back to launching npm.cmd itself means cmd.exe runs the batch
+// wrapper, whose `IF EXIST "%dp0%\node.exe"` fails and degrades _prog to a bare
+// `node` that is not on PATH inside the container -- surfacing as
+// '"node"' is not recognized.
+func TestRewriteWindowsNodeCommandUsesFallbackNodeExe(t *testing.T) {
+	versionDir := t.TempDir()
+	nodeExe := filepath.Join(versionDir, "node.exe")
+	if err := os.WriteFile(nodeExe, []byte("stub"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// npm_global/npm.cmd with its own npm-cli.js, and deliberately no node.exe.
+	globalDir := filepath.Join(versionDir, "npm_global")
+	cliPath := filepath.Join(globalDir, "node_modules", "npm", "bin", "npm-cli.js")
+	if err := os.MkdirAll(filepath.Dir(cliPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cliPath, []byte("stub"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	npmCmd := filepath.Join(globalDir, "npm.cmd")
+	if err := os.WriteFile(npmCmd, []byte("@echo off"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	gotPath, gotArgs := rewriteWindowsNodeCommand(npmCmd, []string{"-v"}, nodeExe)
+
+	if gotPath != nodeExe {
+		t.Errorf("expected launch via fallback node.exe %q, got %q", nodeExe, gotPath)
+	}
+	if !strings.HasSuffix(gotPath, ".exe") {
+		t.Errorf("expected an .exe launch target, got %q (a batch file would hit the cmd.exe wrapper)", gotPath)
+	}
+	joined := strings.Join(gotArgs, " ")
+	// The self-updated npm's own CLI must still be the one executed.
+	if !strings.Contains(joined, cliPath) {
+		t.Errorf("expected args to reference the npm_global npm-cli.js %q, got %v", cliPath, gotArgs)
+	}
+	if !strings.Contains(joined, "-v") {
+		t.Errorf("expected caller args preserved, got %v", gotArgs)
+	}
+}
+
+// Nested node processes (npm scripts spawn them constantly) never see the
+// command-line preserve-symlinks flags, so node's entry-point resolution
+// realpaths up to the drive root -- which an AppContainer cannot stat unless
+// that volume's root was granted. NODE_OPTIONS carries the flags to children.
+func TestSetNodeOptionsPreserveSymlinks(t *testing.T) {
+	t.Run("adds when absent", func(t *testing.T) {
+		got := setNodeOptionsPreserveSymlinks([]string{"PATH=C:\\x"})
+		var found string
+		for _, e := range got {
+			if strings.HasPrefix(e, "NODE_OPTIONS=") {
+				found = e
+			}
+		}
+		if !strings.Contains(found, "--preserve-symlinks-main") ||
+			!strings.Contains(found, "--preserve-symlinks") {
+			t.Errorf("expected both preserve-symlinks flags, got %q", found)
+		}
+	})
+
+	t.Run("appends to existing value", func(t *testing.T) {
+		got := setNodeOptionsPreserveSymlinks([]string{"NODE_OPTIONS=--max-old-space-size=256"})
+		if len(got) != 1 {
+			t.Fatalf("expected no new entry, got %v", got)
+		}
+		if !strings.Contains(got[0], "--max-old-space-size=256") {
+			t.Errorf("expected existing options preserved, got %q", got[0])
+		}
+		if !strings.Contains(got[0], "--preserve-symlinks") {
+			t.Errorf("expected flags appended, got %q", got[0])
+		}
+	})
+
+	t.Run("does not duplicate", func(t *testing.T) {
+		got := setNodeOptionsPreserveSymlinks([]string{"NODE_OPTIONS=--preserve-symlinks"})
+		if n := strings.Count(got[0], "--preserve-symlinks"); n != 1 {
+			t.Errorf("expected no duplication, got %q", got[0])
+		}
+	})
+}
+
+// When node.exe does sit beside npm.cmd (the bundled layout), that one wins and
+// the fallback is not needed.
+func TestRewriteWindowsNodeCommandPrefersSiblingNodeExe(t *testing.T) {
+	dir := t.TempDir()
+	sibling := filepath.Join(dir, "node.exe")
+	if err := os.WriteFile(sibling, []byte("stub"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cliPath := filepath.Join(dir, "node_modules", "npm", "bin", "npm-cli.js")
+	if err := os.MkdirAll(filepath.Dir(cliPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cliPath, []byte("stub"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	npmCmd := filepath.Join(dir, "npm.cmd")
+	if err := os.WriteFile(npmCmd, []byte("@echo off"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	gotPath, _ := rewriteWindowsNodeCommand(npmCmd, nil, filepath.Join("C:\\", "unused", "node.exe"))
+	if gotPath != sibling {
+		t.Errorf("expected sibling node.exe %q, got %q", sibling, gotPath)
+	}
+}
 
 func TestBuildWindowsCommandLine(t *testing.T) {
 	got := buildWindowsCommandLine(`C:\Program Files\node\node.exe`, []string{"-e", "console.log(\"hi\")"})
