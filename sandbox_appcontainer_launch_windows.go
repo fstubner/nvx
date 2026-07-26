@@ -240,6 +240,27 @@ func launchAppContainerProcessOnce(
 		_ = syscall.CloseHandle(pi.hThread)
 	}()
 
+	// The child was created with CREATE_BREAKAWAY_FROM_JOB (needed so a
+	// restrictive CI job object doesn't block CreateProcess), so it starts with
+	// no job membership at all. Assign it to a job of our own, configured to
+	// kill everything in it the moment the job's last handle closes -- which
+	// happens automatically if this process is killed before reaching
+	// WaitForSingleObject below. Without this, a client that gives up on a slow
+	// sandbox setup (e.g. an MCP client's connection timeout) and kills nvx
+	// leaves the already-launched child running forever; this is what actually
+	// reaps it, and job membership covers anything the child spawns too.
+	// Best-effort: job objects are a defense-in-depth safety net, not a
+	// containment guarantee, so a failure here logs rather than aborting a
+	// command the user is waiting on.
+	if job, jobErr := createReapingJob(); jobErr != nil {
+		LogWarn("Could not set up process-tree reaping for this sandbox session: %v", jobErr)
+	} else {
+		defer func() { _ = syscall.CloseHandle(job) }()
+		if err := assignToReapingJob(job, pi.hProcess); err != nil {
+			LogWarn("Could not enable process-tree reaping for this sandbox session: %v", err)
+		}
+	}
+
 	waitRet, _, waitErr := procWaitForSingleObject.Call(uintptr(pi.hProcess), INFINITE)
 	if waitRet == 0xFFFFFFFF {
 		return 1, fmt.Errorf("WaitForSingleObject: %w", waitErr)
