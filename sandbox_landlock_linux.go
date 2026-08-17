@@ -263,12 +263,12 @@ func runLandlockExecChild(guestHome, workDir, nvxHome, networkMode, shimCommand,
 	applyLinuxNamespaces(cmd, guestHome)
 
 	LogInfo("Linux Landlock + namespace isolation active")
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
-		}
+	if err := cmd.Start(); err != nil {
 		LogError("Sandbox execution failed: %v", err)
 		return 1
 	}
-	return 0
+	// Not cmd.Wait(): this process is PID 1 of a PID namespace, so orphaned
+	// descendants reparent here and only an explicit wait4 loop will reap them.
+	// Waiting in two places would race os/exec for the target's exit status.
+	return reapUntilChildExits(cmd.Process.Pid)
 }
