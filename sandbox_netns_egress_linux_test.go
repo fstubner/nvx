@@ -32,9 +32,7 @@ func TestNetnsContainedProcessReachesOnlyAllowlistedHosts(t *testing.T) {
 		runNetnsEgressChild()
 		return
 	}
-	if os.Geteuid() != 0 {
-		t.Skip("creating a network namespace needs root (run privileged)")
-	}
+	requireNamespaceSupport(t, syscall.CLONE_NEWNET)
 	if _, err := exec.LookPath("ip"); err != nil {
 		t.Skip("iproute2 not installed; bringUpLoopback needs `ip`")
 	}
