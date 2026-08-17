@@ -416,7 +416,17 @@ func ExtractTarGz(tarPath, destDir string) error {
 		case tar.TypeSymlink:
 			// Verify that the symlink target is safe and does not escape destDir
 			linkTarget := header.Linkname
-			if filepath.IsAbs(linkTarget) || strings.Contains(linkTarget, ":") {
+			// filepath.IsAbs is platform-specific: on Windows it is FALSE for a
+			// POSIX-rooted path like "/etc/passwd", because an absolute Windows path
+			// needs a drive letter. filepath.Join below then folds the leading slash
+			// away, so the containment check that follows also passes, and the
+			// symlink is created -- resolving to \etc\passwd on the current drive,
+			// outside destDir. Tar archives carry POSIX paths regardless of the host,
+			// so rooted targets are rejected explicitly rather than via IsAbs alone.
+			if filepath.IsAbs(linkTarget) ||
+				strings.HasPrefix(linkTarget, "/") ||
+				strings.HasPrefix(linkTarget, `\`) ||
+				strings.Contains(linkTarget, ":") {
 				return fmt.Errorf("illegal absolute symlink target in tar archive: %s -> %s", fpath, linkTarget)
 			}
 			resolvedTarget := filepath.Join(filepath.Dir(fpath), linkTarget) // #nosec G305 -- linkTarget is relative, colon-free, and resolved below against destDir.
