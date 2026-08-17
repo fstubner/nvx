@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 )
 
 // platformLaunchNative runs the command under sandbox-exec (Seatbelt) with
@@ -19,7 +18,14 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1
 	}
 
-	profile := buildSeatbeltProfile(netCtx, guestHome, workDir, config.NvxHome, filepath.Dir(cmdPath))
+	// Only the guest home and the working directory are writable. This used to also
+	// pass config.NvxHome and the runtime binary's directory, which let any
+	// sandboxed process rewrite policy.json, self-approve grants, poison
+	// npm_global, read and rewrite tool_home credentials, or trojan the node
+	// binary itself -- a persistent sandbox defeat on the DEFAULT macOS path. The
+	// legacy caller in sandbox_seatbelt.go was fixed in July; this one was missed,
+	// so the comment there described a guarantee the shipped path did not provide.
+	profile := buildSeatbeltProfile(netCtx, guestHome, workDir)
 	profileFile, err := os.CreateTemp("", "nvx-*.sb")
 	if err != nil {
 		LogError("Failed to create Seatbelt profile file: %v", err)
