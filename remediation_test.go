@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -897,9 +898,33 @@ func TestNodeUninstallRefusesGlobalDefaultVersion(t *testing.T) {
 	}
 }
 
-func TestAppVersionMatchesCurrentBetaRelease(t *testing.T) {
-	if appVersion != "0.3.0" {
-		t.Fatalf("appVersion = %q, want 0.3.0", appVersion)
+// TestAppVersionMatchesNewestChangelogEntry replaces an assertion that appVersion
+// equalled a hardcoded "0.3.0". That restated the constant, so it could only fail
+// when someone deliberately bumped the version -- and it had to be edited at every
+// release, which made it a chore rather than a check. It also held the drift in
+// place: version.go claimed 0.3.0 for months while no v0.3.0 tag existed.
+//
+// The invariant worth enforcing is that the shipped version and the newest
+// documented version agree, so bumping one without the other fails here.
+func TestAppVersionMatchesNewestChangelogEntry(t *testing.T) {
+	data, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		t.Fatalf("read CHANGELOG.md: %v", err)
+	}
+
+	// The newest released heading, skipping "## [Unreleased]".
+	re := regexp.MustCompile(`(?m)^## \[(\d+\.\d+\.\d+[^\]]*)\]`)
+	match := re.FindSubmatch(data)
+	if match == nil {
+		t.Fatal("no versioned '## [x.y.z]' heading found in CHANGELOG.md")
+	}
+	newest := string(match[1])
+
+	if appVersion != newest {
+		t.Fatalf("appVersion = %q but the newest CHANGELOG entry is %q.\n"+
+			"Bump both together: a version with no changelog entry ships undocumented, "+
+			"and an entry with no bump means users cannot tell what they are running.",
+			appVersion, newest)
 	}
 }
 
