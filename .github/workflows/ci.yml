@@ -65,6 +65,17 @@ jobs:
     # egress test does not: it needs CAP_SYS_ADMIN for unshare and `ip` from
     # iproute2, so it skipped silently and the one path that proves a contained
     # process can reach the outside proxy went unverified.
+    # install.sh shipped for months writing only `eval "$(nvx env)"` into the shell
+    # profile, never putting nvx on PATH -- so every new shell printed
+    # "nvx: command not found" and nvx never activated. Nothing tested the
+    # installer, which is why it went unnoticed. Runs on macOS too: that is where
+    # bash is a LOGIN shell and reads .bash_profile rather than .bashrc, the case
+    # the profile-selection logic exists for.
+    - name: Installer shell-profile test
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: sh scripts/test-install-profile.sh
+
     - name: Linux containment tests (privileged)
       if: matrix.os == 'ubuntu-latest'
       shell: bash
