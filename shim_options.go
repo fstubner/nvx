@@ -65,7 +65,17 @@ func shouldSandbox(cmdName string, args []string, policy Policy, opts shimOption
 		return false
 	}
 	if os.Getenv("NVX_SANDBOX") == "1" || os.Getenv("NVX_SANDBOX") == "true" {
-		return false
+		// The marker is an inherited environment variable, so an ambient
+		// NVX_SANDBOX=1 -- exported in a shell profile, left in a CI config, written
+		// by a malicious postinstall -- would otherwise disable containment for every
+		// later run, silently and permanently. Honour it only when we cannot prove it
+		// is false.
+		if containmentDisproved() {
+			LogWarn("NVX_SANDBOX is set, but this process is not inside a sandbox; ignoring it and containing anyway.")
+			LogInfo("Something set NVX_SANDBOX outside a sandbox. If that was not deliberate, check your shell profile and CI environment.")
+		} else {
+			return false
+		}
 	}
 	if !policy.Isolation.Enabled {
 		return false
