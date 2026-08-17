@@ -20,6 +20,13 @@ const (
 	bpfJeq = 0x10
 	bpfK   = 0x00
 	bpfRet = 0x06
+	bpfAlu = 0x04
+	bpfAnd = 0x50
+
+	// sockTypeMask isolates the base socket type from the SOCK_CLOEXEC /
+	// SOCK_NONBLOCK flags that socket(2) accepts OR'd into its type argument
+	// (linux/net.h SOCK_TYPE_MASK).
+	sockTypeMask = 0xF
 
 	seccompRetAllow = 0x7fff0000
 	seccompRetErrno = 0x00050000 + 1 // EPERM
@@ -112,23 +119,34 @@ func buildOfflineNetworkFilter() []syscall.SockFilter {
 
 // buildProxyNetworkFilter denies IPv4/IPv6 UDP socket creation; TCP is allowed
 // for loopback proxy use while the network namespace blocks non-loopback routes.
+// AF_UNIX is never refused -- it is not a network socket, and denying it breaks
+// ordinary local IPC.
+//
+// The predecessor of this filter was inverted: it loaded args[0] (domain),
+// branched on it, and then compared the *same* accumulator against SOCK_DGRAM
+// whenever the domain test fell through, because the false branch skipped the
+// instruction that reloads args[1]. Net effect on a real kernel: IPv4 TCP denied
+// (breaking the very proxy this mode exists to serve), IPv4 UDP allowed, and
+// AF_UNIX denied. Any edit here must keep
+// sandbox_network_seccomp_linux_test.go's real-kernel probes green -- hand-written
+// cBPF jump offsets are not reviewable by inspection alone.
 func buildProxyNetworkFilter() []syscall.SockFilter {
 	retAllow := bpfStmt(bpfRet|bpfK, seccompRetAllow)
 	retErrno := bpfStmt(bpfRet|bpfK, seccompRetErrno)
 	socket := uint32(syscall.SYS_SOCKET)
 
+	// Jump targets are index+1+offset; the two returns sit at [8] (deny) and
+	// [9] (allow).
 	return []syscall.SockFilter{
-		ldWAbs(sdOffsetNr),
-		bpfJump(bpfJmp|bpfJeq|bpfK, socket, 0, 9),
-		ldWAbs(sdOffsetArgs0),
-		bpfJump(bpfJmp|bpfJeq|bpfK, afInet, 0, 1),
-		ldWAbs(sdOffsetArgs1),
-		bpfJump(bpfJmp|bpfJeq|bpfK, sockDgram, 0, 4),
-		ldWAbs(sdOffsetArgs0),
-		bpfJump(bpfJmp|bpfJeq|bpfK, afInet6, 0, 3),
-		ldWAbs(sdOffsetArgs1),
-		bpfJump(bpfJmp|bpfJeq|bpfK, sockDgram, 0, 0),
-		retErrno,
-		retAllow,
+		/* 0 */ ldWAbs(sdOffsetNr),
+		/* 1 */ bpfJump(bpfJmp|bpfJeq|bpfK, socket, 0, 7), // not socket() -> allow
+		/* 2 */ ldWAbs(sdOffsetArgs1), // type
+		/* 3 */ bpfStmt(bpfAlu|bpfAnd|bpfK, sockTypeMask), // strip SOCK_CLOEXEC/NONBLOCK
+		/* 4 */ bpfJump(bpfJmp|bpfJeq|bpfK, sockDgram, 0, 4), // not datagram -> allow
+		/* 5 */ ldWAbs(sdOffsetArgs0), // domain
+		/* 6 */ bpfJump(bpfJmp|bpfJeq|bpfK, afInet, 1, 0), // AF_INET datagram -> deny
+		/* 7 */ bpfJump(bpfJmp|bpfJeq|bpfK, afInet6, 0, 1), // AF_INET6 datagram -> deny
+		/* 8 */ retErrno,
+		/* 9 */ retAllow,
 	}
 }

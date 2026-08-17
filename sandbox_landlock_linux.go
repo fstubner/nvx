@@ -127,6 +127,44 @@ func prctlSetNoNewPrivs() error {
 	return nil
 }
 
+// landlockRule is one path plus the access mask to grant beneath it.
+type landlockRule struct {
+	path   string
+	access uint64
+}
+
+// landlockReadOnlyRules returns the read-only roots the sandbox grants, each
+// paired with an access mask valid for that path's inode type. Paths that do not
+// exist are skipped.
+func landlockReadOnlyRules(nvxHome string) []landlockRule {
+	paths := []string{
+		"/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc",
+		"/dev/null", "/dev/urandom", "/dev/random", "/dev/zero",
+	}
+	if nvxHome != "" {
+		paths = append(paths, nvxHome)
+	}
+
+	var rules []landlockRule
+	for _, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		access := landlockAccessReadExec
+		if !info.IsDir() {
+			// Landlock validates the requested rights against the inode type, so
+			// a directory-only right on a non-directory is rejected with EINVAL.
+			// Every /dev entry above is a character device, and applyLandlockSandbox
+			// treats an add-rule failure as fatal -- so leaving READ_DIR set here
+			// killed every Linux sandbox launch on every Linux system.
+			access &^= landlockAccessFSReadDir
+		}
+		rules = append(rules, landlockRule{path: p, access: access})
+	}
+	return rules
+}
+
 func applyLandlockSandbox(guestHome, workDir, nvxHome string) error {
 	if err := prctlSetNoNewPrivs(); err != nil {
 		return fmt.Errorf("prctl(NO_NEW_PRIVS): %w", err)
@@ -147,19 +185,9 @@ func applyLandlockSandbox(guestHome, workDir, nvxHome string) error {
 		}
 	}
 
-	readOnlyRoots := []string{
-		"/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc",
-		"/dev/null", "/dev/urandom", "/dev/random", "/dev/zero",
-	}
-	if nvxHome != "" {
-		readOnlyRoots = append(readOnlyRoots, nvxHome)
-	}
-	for _, root := range readOnlyRoots {
-		if _, err := os.Stat(root); err != nil {
-			continue
-		}
-		if err := landlockAddRule(fd, landlockAccessReadExec, root); err != nil {
-			return fmt.Errorf("landlock read rule for %q: %w", root, err)
+	for _, rule := range landlockReadOnlyRules(nvxHome) {
+		if err := landlockAddRule(fd, rule.access, rule.path); err != nil {
+			return fmt.Errorf("landlock read rule for %q: %w", rule.path, err)
 		}
 	}
 
