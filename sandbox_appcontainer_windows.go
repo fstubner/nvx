@@ -28,9 +28,16 @@ var (
 )
 
 // prepareAppContainerFilesystem grants the AppContainer SID write access to
-// guestHome and workDir. guestHome gets a low mandatory integrity label for
-// compatibility with legacy constrained launches; workDir stays default
-// integrity so a normal AppContainer child can use it as cwd.
+// guestHome and workDir -- and nothing else. That pair is sandboxWritableRoots;
+// see its comment for why nvxHome must never be added here. The two are granted
+// separately rather than in a loop because their failure handling differs: the
+// guest home is required and also takes an integrity label, while the working
+// directory is best-effort. Anything beyond these two is a write-containment
+// escape, not a convenience.
+//
+// guestHome gets a low mandatory integrity label for compatibility with legacy
+// constrained launches; workDir stays default integrity so a normal AppContainer
+// child can use it as cwd.
 func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) error {
 	// The guest home must be writable; it is nvx-owned and safe to grant.
 	if guestHome != "" {
