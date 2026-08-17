@@ -106,9 +106,41 @@ chmod +x "$BIN_DIR/nvx"
 SHELL_NAME="$(basename "$SHELL")"
 MARKER_LINE='# nvx (Node Version X-platform) shell integration'
 # Single-quoted so $HOME and $PATH reach the profile unexpanded and resolve at
-# shell startup.
-PATH_LINE='export PATH="$HOME/.nvx/bin:$PATH"'
+# shell startup. Guarded against re-entry because the block is written to both an
+# interactive and a login profile, and on most systems the login one sources the
+# interactive one -- an unguarded export would then add the directory to PATH twice
+# per shell, compounding in nested shells.
+PATH_LINE='case ":$PATH:" in *":$HOME/.nvx/bin:"*) ;; *) export PATH="$HOME/.nvx/bin:$PATH" ;; esac'
 INTEGRATION_LINE='eval "$(nvx env)"'
+
+# profile_has_path_line matches any nvx bin PATH entry, not one exact string, so a
+# profile written by an earlier installer (or edited by hand) is recognised instead
+# of being given a second, redundant line.
+profile_has_path_line() {
+    grep -Fq '.nvx/bin' "$1"
+}
+
+# bash_login_profile picks the file a bash LOGIN shell will actually read, in bash's
+# own precedence order: .bash_profile, then .bash_login, then .profile.
+#
+# This matters most on macOS, where Terminal starts bash as a login shell -- which
+# reads none of .bashrc. Writing only to .bashrc there means nvx never activates.
+#
+# It only creates .bash_profile when none of the three exist. Creating one while
+# .profile is present would be actively harmful: bash reads the FIRST match and
+# ignores the rest, so a new .bash_profile silently stops .profile from ever being
+# read, discarding whatever environment the user kept there.
+bash_login_profile() {
+    if [ -f "$HOME/.bash_profile" ]; then
+        echo "$HOME/.bash_profile"
+    elif [ -f "$HOME/.bash_login" ]; then
+        echo "$HOME/.bash_login"
+    elif [ -f "$HOME/.profile" ]; then
+        echo "$HOME/.profile"
+    else
+        echo "$HOME/.bash_profile"
+    fi
+}
 
 # The PATH export MUST precede the eval. Earlier versions of this installer wrote
 # only the eval, so on the next shell `nvx` was not resolvable, the eval emitted
@@ -127,7 +159,7 @@ setup_profile() {
         touch "$PROFILE_FILE"
     fi
 
-    if grep -Fq "$PATH_LINE" "$PROFILE_FILE"; then
+    if profile_has_path_line "$PROFILE_FILE"; then
         # Already correct. Only add the eval if something removed it.
         if ! grep -q "nvx env" "$PROFILE_FILE"; then
             printf '%s\n' "$INTEGRATION_LINE" >> "$PROFILE_FILE"
@@ -146,7 +178,7 @@ setup_profile() {
             { print }
         ' "$PROFILE_FILE" > "$TMP_PROFILE"
 
-        if [ -s "$TMP_PROFILE" ] && grep -Fq "$PATH_LINE" "$TMP_PROFILE"; then
+        if [ -s "$TMP_PROFILE" ] && profile_has_path_line "$TMP_PROFILE"; then
             # Write through the original file rather than mv, so its permissions
             # and ownership survive; a profile that becomes 0600 or root-owned is
             # its own outage.
@@ -168,10 +200,17 @@ setup_profile() {
 
 case "$SHELL_NAME" in
     bash)
+        # Interactive non-login shells (the common case on Linux) read .bashrc;
+        # login shells (the common case on macOS) read none of it. Both are needed.
         setup_profile "$HOME/.bashrc" "true"
-        setup_profile "$HOME/.bash_profile" "false"
+        BASH_LOGIN_FILE="$(bash_login_profile)"
+        if [ "$BASH_LOGIN_FILE" != "$HOME/.bashrc" ]; then
+            setup_profile "$BASH_LOGIN_FILE" "true"
+        fi
         ;;
     zsh)
+        # zsh reads .zshrc for every interactive shell, login or not, so one file
+        # covers both cases.
         setup_profile "$HOME/.zshrc" "true"
         ;;
     *)
