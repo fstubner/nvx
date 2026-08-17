@@ -81,9 +81,7 @@ func TestPipedStdioReachesRealAppContainerChild(t *testing.T) {
 
 	got := readWithTimeout(t, read)
 
-	if launchErr != nil {
-		t.Fatalf("launch failed: %v (output %q)", launchErr, got)
-	}
+	requireAppContainerLaunch(t, launchErr)
 	if exitCode != 0 {
 		t.Errorf("child exit code = %d, want 0", exitCode)
 	}
@@ -93,4 +91,27 @@ func TestPipedStdioReachesRealAppContainerChild(t *testing.T) {
 		t.Logf("marker received through the pipe: %q", strings.TrimSpace(got))
 	}
 
+}
+
+// requireAppContainerLaunch decides whether a failed AppContainer launch is this
+// environment's limitation or a real defect.
+//
+// GitHub-hosted Windows runners cannot create AppContainer children at all:
+// CreateProcess returns "Access is denied" for every executable, including
+// C:\Windows\System32\cmd.exe. That was long asserted in the smoke scripts as a
+// blanket `exit 0` on CI; running these probes there in CI run 32077425413
+// confirmed it, so it is now measured rather than assumed.
+//
+// A skip is therefore correct on such a host -- but only for THAT error. Skipping on
+// any launch failure, which two of these probes previously did, would silently
+// swallow a genuine regression in the launcher. Anything else is a failure.
+func requireAppContainerLaunch(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	if strings.Contains(err.Error(), "Access is denied") {
+		t.Skipf("this host cannot create AppContainer children (%v); GitHub-hosted Windows runners are known to refuse, so the probe cannot run here", err)
+	}
+	t.Fatalf("AppContainer launch failed for a reason other than the host refusing it: %v", err)
 }

@@ -130,9 +130,9 @@ func TestAppContainerCanReachAFUnixSocket(t *testing.T) {
 	t.Logf("child exit=%d err=%v", exitCode, launchErr)
 	t.Logf("child output: %q", out)
 
+	requireAppContainerLaunch(t, launchErr)
+
 	switch {
-	case launchErr != nil:
-		t.Skipf("could not launch the contained probe: %v", launchErr)
 	case contains(out, "afunix=REACHED"):
 		t.Log("RESULT: AF_UNIX CROSSES the AppContainer boundary -- the Linux relay design is viable on Windows, and egress could be allowlisted by default without elevation.")
 	case contains(out, "afunix=DENIED"):
@@ -244,9 +244,9 @@ func TestAppContainerIntraContainerLoopback(t *testing.T) {
 
 	t.Logf("child exit=%d err=%v", exitCode, launchErr)
 	t.Logf("child output: %q", out)
+	requireAppContainerLaunch(t, launchErr)
+
 	switch {
-	case launchErr != nil:
-		t.Skipf("could not launch: %v", launchErr)
 	case contains(out, "selfloopback=REACHED"):
 		t.Log("RESULT: intra-container loopback WORKS -- an in-container relay is viable, so Windows could get allowlisted egress by default with no elevation.")
 	default:
