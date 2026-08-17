@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -189,6 +190,15 @@ func TestLevenshteinDistance(t *testing.T) {
 }
 
 func TestCheckTyposquatting(t *testing.T) {
+	// Without this stub the check makes two live HTTPS requests per near-match
+	// name. That made the suite ~5x slower, sent traffic to api.npmjs.org from
+	// every machine running `go test`, and -- worse -- silently chose a different
+	// branch depending on whether the network happened to work.
+	stubWeeklyDownloads(t, map[string]int{
+		"lodash": 60_000_000, "express": 30_000_000,
+		"lodas": 12, "expres": 30,
+	})
+
 	mockPopular := []string{"lodash", "express"}
 	tests := []struct {
 		input    string
@@ -1012,5 +1022,78 @@ func TestEscapeScopedPackageNeutralisesHostileNames(t *testing.T) {
 		if strings.ContainsAny(got, "/? #") {
 			t.Errorf("%s: EscapeScopedPackage(%q) = %q still carries a URL-significant character", tc.name, tc.input, got)
 		}
+	}
+}
+
+// stubWeeklyDownloads replaces the registry lookup for one test.
+func stubWeeklyDownloads(t *testing.T, counts map[string]int) {
+	t.Helper()
+	prev := weeklyDownloads
+	weeklyDownloads = func(pkg string) (int, error) {
+		n, ok := counts[pkg]
+		if !ok {
+			return 0, fmt.Errorf("no stubbed download count for %q", pkg)
+		}
+		return n, nil
+	}
+	t.Cleanup(func() { weeklyDownloads = prev })
+}
+
+// TestCheckTyposquattingAuthorityThresholds covers the download comparison itself,
+// which previously ran only when a live request happened to succeed and was never
+// asserted deliberately: a package is a typosquat only when the lookalike is both
+// popular in absolute terms (>50k/week) and vastly more downloaded (>100x).
+func TestCheckTyposquattingAuthorityThresholds(t *testing.T) {
+	cases := []struct {
+		name    string
+		counts  map[string]int
+		query   string
+		wantHit string
+	}{
+		{
+			name:    "obscure name against a hugely popular lookalike is flagged",
+			counts:  map[string]int{"lodash": 60_000_000, "lodas": 10},
+			query:   "lodas",
+			wantHit: "lodash",
+		},
+		{
+			name:    "a lookalike that is not popular enough is not flagged",
+			counts:  map[string]int{"lodash": 40_000, "lodas": 1},
+			query:   "lodas",
+			wantHit: "",
+		},
+		{
+			name:    "a similarly-downloaded package is a peer, not a squat",
+			counts:  map[string]int{"lodash": 60_000_000, "lodas": 5_000_000},
+			query:   "lodas",
+			wantHit: "",
+		},
+		{
+			name:    "exactly at 100x is not over the threshold",
+			counts:  map[string]int{"lodash": 10_000_000, "lodas": 100_000},
+			query:   "lodas",
+			wantHit: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stubWeeklyDownloads(t, tc.counts)
+			if got := CheckTyposquatting(tc.query, []string{"lodash"}); got != tc.wantHit {
+				t.Errorf("CheckTyposquatting(%q) = %q, want %q", tc.query, got, tc.wantHit)
+			}
+		})
+	}
+}
+
+// TestCheckTyposquattingFallsBackWhenLookupFails pins the offline behaviour: if the
+// registry cannot be reached, a near-match is flagged on name similarity alone
+// rather than being waved through.
+func TestCheckTyposquattingFallsBackWhenLookupFails(t *testing.T) {
+	prev := weeklyDownloads
+	weeklyDownloads = func(string) (int, error) { return 0, fmt.Errorf("network unreachable") }
+	t.Cleanup(func() { weeklyDownloads = prev })
+
+	if got := CheckTyposquatting("lodas", []string{"lodash"}); got != "lodash" {
+		t.Errorf("with the registry unreachable, a near-match must still be flagged; got %q", got)
 	}
 }

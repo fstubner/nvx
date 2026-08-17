@@ -204,6 +204,17 @@ func CheckTyposquatting(pkgName string, popularList []string) string {
 	return CheckTyposquattingAuthority(pkgName, popularList, 2)
 }
 
+// weeklyDownloads is the seam the typosquat check goes through, so a test can
+// exercise the authority comparison without reaching api.npmjs.org. Following the
+// resolveNpmPackageDetailsForVerify pattern below.
+//
+// Without it, CheckTyposquattingAuthority made two live HTTPS requests per
+// near-match name, which meant the test suite silently took different branches
+// depending on whether the machine had network: the download-threshold logic ran
+// only when a request happened to succeed, and the offline fallback ran otherwise.
+// Neither was ever asserted deliberately.
+var weeklyDownloads = GetWeeklyDownloads
+
 // CheckTyposquattingAuthority dynamically compares weekly downloads to detect typosquatting threats
 func CheckTyposquattingAuthority(pkgName string, popularList []string, maxDist int) string {
 	pkgName = strings.ToLower(strings.TrimSpace(pkgName))
@@ -217,8 +228,8 @@ func CheckTyposquattingAuthority(pkgName string, popularList []string, maxDist i
 		dist := LevenshteinDistance(pkgName, popular)
 		if dist >= 1 && dist <= maxDist {
 			// Query downloads to verify authority
-			pkgDownloads, errPkg := GetWeeklyDownloads(pkgName)
-			suspectDownloads, errSus := GetWeeklyDownloads(popular)
+			pkgDownloads, errPkg := weeklyDownloads(pkgName)
+			suspectDownloads, errSus := weeklyDownloads(popular)
 
 			if errPkg == nil && errSus == nil {
 				// Authority threshold: if the target is high-popularity (>50k/week)
