@@ -65,6 +65,7 @@ func installSeccompFilter(filter []syscall.SockFilter) error {
 		return fmt.Errorf("prctl NO_NEW_PRIVS: %w", err)
 	}
 	prog := syscall.SockFprog{
+		// #nosec G115 -- the filters are built in this file and run to a couple of dozen instructions; the kernel's own BPF ceiling is 4096, far below uint16
 		Len:    uint16(len(filter)),
 		Filter: &filter[0],
 	}
@@ -82,10 +83,12 @@ func installSeccompFilter(filter []syscall.SockFilter) error {
 }
 
 func bpfStmt(code, k uint32) syscall.SockFilter {
+	// #nosec G115 -- code is a BPF opcode built from the bpf* constants in this file, never external input
 	return syscall.SockFilter{Code: uint16(code), K: k}
 }
 
 func bpfJump(code, k, jt, jf uint32) syscall.SockFilter {
+	// #nosec G115 -- jt/jf are jump offsets within a filter of a couple of dozen instructions, so they cannot approach 255; truncating one would silently produce a wrong filter, which is why these stay literal and short
 	return syscall.SockFilter{Code: uint16(code), K: k, Jt: uint8(jt), Jf: uint8(jf)}
 }
 

@@ -265,6 +265,8 @@ func GetWeeklyDownloads(pkgName string) (int, error) {
 	url := fmt.Sprintf("https://api.npmjs.org/downloads/point/last-week/%s", escapedPkg)
 
 	client := &http.Client{Timeout: 5 * time.Second}
+	// #nosec G704 -- same as ResolveNpmPackageDetails: hardcoded host, path segment
+	// escaped via url.PathEscape.
 	resp, err := client.Get(url)
 	if err != nil {
 		return 0, err
@@ -373,6 +375,10 @@ var scanVulnerabilitiesBatchForVerify = ScanVulnerabilitiesBatch
 // ResolveNpmPackageDetails queries npm registry for latest version, publish age, and installation script status
 func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, publishTime time.Time, hasScripts bool, err error) {
 	client := &http.Client{Timeout: 8 * time.Second}
+	// #nosec G704 -- the host is a hardcoded literal, so this cannot be pointed at
+	// another server; only the path segment varies, and EscapeScopedPackage runs it
+	// through url.PathEscape first. gosec's taint analysis does not model the
+	// hardcoded-host case.
 	resp, err := client.Get(fmt.Sprintf("https://registry.npmjs.org/%s", EscapeScopedPackage(pkgName)))
 	if err != nil {
 		return "", time.Time{}, false, err
