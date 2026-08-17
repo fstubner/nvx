@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
+	"unsafe"
 )
 
 // A self-updated npm lands in the version's npm_global prefix, whose directory
@@ -199,5 +201,64 @@ func TestBuildWindowsEnvironmentBlock(t *testing.T) {
 	}
 	if block == nil {
 		t.Fatal("expected non-nil environment block")
+	}
+}
+
+// TestBuildWindowsEnvironmentBlockHandlesNonBMP covers the bug the previous
+// implementation had: it wrote uint16(r) per rune, truncating anything above
+// U+FFFF, so an emoji in an environment value silently became a different
+// character. It also sized the buffer in bytes while writing per rune. The
+// pre-existing test used only ASCII, where neither defect can show.
+func TestBuildWindowsEnvironmentBlockHandlesNonBMP(t *testing.T) {
+	// U+1F600 needs a surrogate pair; U+00E9 and U+4E2D are multi-byte in UTF-8
+	// but single UTF-16 units, which is what exposed the byte-vs-rune sizing.
+	entries := []string{"EMOJI=\U0001F600", "ACCENT=café", "CJK=中文"}
+
+	ptr, err := buildWindowsEnvironmentBlock(entries)
+	if err != nil {
+		t.Fatalf("buildWindowsEnvironmentBlock: %v", err)
+	}
+	if ptr == nil {
+		t.Fatal("expected a block")
+	}
+
+	// Walk the block back out: NUL-separated strings, double-NUL terminated.
+	//
+	// The length is computed rather than over-estimated: unsafe.Slice with a bound
+	// past the real allocation is a checkptr violation, which aborts the whole
+	// binary under -race ("unsafe.Slice result straddles multiple allocations")
+	// rather than failing this one test.
+	want := 1 // the block's own terminator
+	for _, e := range entries {
+		want += len(utf16.Encode([]rune(e))) + 1
+	}
+	var got []string
+	units := unsafe.Slice(ptr, want)
+	start := 0
+	for i := 0; i < len(units); i++ {
+		if units[i] != 0 {
+			continue
+		}
+		if i == start { // second NUL in a row: end of block
+			break
+		}
+		got = append(got, string(utf16.Decode(units[start:i])))
+		start = i + 1
+	}
+
+	if len(got) != len(entries) {
+		t.Fatalf("decoded %d entries %q, want %d", len(got), got, len(entries))
+	}
+	for i := range entries {
+		if got[i] != entries[i] {
+			t.Errorf("entry %d round-tripped as %q, want %q", i, got[i], entries[i])
+		}
+	}
+}
+
+func TestBuildWindowsEnvironmentBlockRejectsEmbeddedNUL(t *testing.T) {
+	// A NUL would terminate the block early and silently drop everything after it.
+	if _, err := buildWindowsEnvironmentBlock([]string{"OK=1", "BAD=a\x00b", "LOST=2"}); err == nil {
+		t.Error("an entry containing a NUL must be refused, not silently truncate the block")
 	}
 }

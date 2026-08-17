@@ -1,6 +1,6 @@
 param(
     [string]$Version = "0.4.0",
-    [string]$GoVersion = "1.26.4"
+    [string]$GoVersion = "1.26.6"
 )
 
 # build-release.ps1

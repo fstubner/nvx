@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 )
 
@@ -133,6 +134,7 @@ func launchAppContainerProcessOnce(
 	}
 	if len(capAttrs) > 0 {
 		secCaps.capabilities = uintptr(unsafe.Pointer(&capAttrs[0]))
+		// #nosec G115 -- capAttrs holds the capability SIDs nvx itself passes in, currently at most two
 		secCaps.capabilityCount = uint32(len(capAttrs))
 	}
 	if err := updateProcThreadAttribute(
@@ -378,22 +380,33 @@ func quoteWindowsArg(s string) string {
 	return b.String()
 }
 
+// buildWindowsEnvironmentBlock renders env as the NUL-separated, double-NUL
+// terminated UTF-16 block CreateProcess expects.
+//
+// The previous implementation wrote uint16(r) for each rune, which silently
+// corrupted anything outside the BMP: a rune above U+FFFF was truncated to its low
+// 16 bits, so U+1F600 (an emoji) became U+F600, a private-use character. It also
+// sized the buffer from len(entry) -- a BYTE count -- while writing one unit per
+// RUNE, so the two disagreed for any non-ASCII input. The existing test used only
+// ASCII, where bytes and runes coincide and the truncation cannot show up.
+//
+// utf16.Encode emits a correct surrogate pair for non-BMP characters, and sizing
+// follows the encoded result rather than being computed separately.
 func buildWindowsEnvironmentBlock(env []string) (*uint16, error) {
 	if len(env) == 0 {
 		return nil, nil
 	}
-	var size int
+	var block []uint16
 	for _, entry := range env {
-		size += len(entry) + 1
-	}
-	block := make([]uint16, size+1)
-	offset := 0
-	for _, entry := range env {
-		for _, r := range entry {
-			block[offset] = uint16(r)
-			offset++
+		// A NUL inside an entry would terminate the block early and silently drop
+		// every variable after it. Windows cannot represent one in an environment
+		// value anyway, so refuse rather than truncate.
+		if strings.ContainsRune(entry, 0) {
+			return nil, fmt.Errorf("environment entry contains a NUL character: %q", entry)
 		}
-		offset++
+		block = append(block, utf16.Encode([]rune(entry))...)
+		block = append(block, 0)
 	}
+	block = append(block, 0)
 	return &block[0], nil
 }
