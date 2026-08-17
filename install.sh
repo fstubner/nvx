@@ -104,23 +104,66 @@ chmod +x "$BIN_DIR/nvx"
 
 # 3. Add to shell profiles
 SHELL_NAME="$(basename "$SHELL")"
+MARKER_LINE='# nvx (Node Version X-platform) shell integration'
+# Single-quoted so $HOME and $PATH reach the profile unexpanded and resolve at
+# shell startup.
+PATH_LINE='export PATH="$HOME/.nvx/bin:$PATH"'
 INTEGRATION_LINE='eval "$(nvx env)"'
 
+# The PATH export MUST precede the eval. Earlier versions of this installer wrote
+# only the eval, so on the next shell `nvx` was not resolvable, the eval emitted
+# "nvx: command not found", and nvx never activated -- on every new shell, forever.
+# Appending the export after the eval does not fix that: the eval still runs first
+# and still fails. So an existing profile is repaired by inserting the line above
+# the eval rather than appending to the end.
 setup_profile() {
     PROFILE_FILE="$1"
     CREATE_IF_MISSING="$2"
-    if [ -f "$PROFILE_FILE" ] || [ "$CREATE_IF_MISSING" = "true" ]; then
-        if [ ! -f "$PROFILE_FILE" ]; then
-            touch "$PROFILE_FILE"
-        fi
-        if ! grep -q "nvx env" "$PROFILE_FILE"; then
-            echo "Adding shell integration to $PROFILE_FILE..."
-            echo "" >> "$PROFILE_FILE"
-            echo "# nvx (Node Version X-platform) shell integration" >> "$PROFILE_FILE"
 
-            echo "$INTEGRATION_LINE" >> "$PROFILE_FILE"
-        fi
+    if [ ! -f "$PROFILE_FILE" ] && [ "$CREATE_IF_MISSING" != "true" ]; then
+        return 0
     fi
+    if [ ! -f "$PROFILE_FILE" ]; then
+        touch "$PROFILE_FILE"
+    fi
+
+    if grep -Fq "$PATH_LINE" "$PROFILE_FILE"; then
+        # Already correct. Only add the eval if something removed it.
+        if ! grep -q "nvx env" "$PROFILE_FILE"; then
+            printf '%s\n' "$INTEGRATION_LINE" >> "$PROFILE_FILE"
+        fi
+        return 0
+    fi
+
+    if grep -q "nvx env" "$PROFILE_FILE"; then
+        echo "Repairing nvx shell integration in $PROFILE_FILE..."
+        # This edits a file the user owns and did not ask us to rewrite, so keep a
+        # copy. Losing a shell profile is not recoverable from here.
+        cp "$PROFILE_FILE" "$PROFILE_FILE.nvx-backup"
+        TMP_PROFILE="$PROFILE_FILE.nvx-tmp.$$"
+        awk -v pathline="$PATH_LINE" '
+            !inserted && index($0, "nvx env") { print pathline; inserted = 1 }
+            { print }
+        ' "$PROFILE_FILE" > "$TMP_PROFILE"
+
+        if [ -s "$TMP_PROFILE" ] && grep -Fq "$PATH_LINE" "$TMP_PROFILE"; then
+            # Write through the original file rather than mv, so its permissions
+            # and ownership survive; a profile that becomes 0600 or root-owned is
+            # its own outage.
+            cat "$TMP_PROFILE" > "$PROFILE_FILE"
+            rm -f "$TMP_PROFILE"
+            echo "  (previous contents saved to $PROFILE_FILE.nvx-backup)"
+        else
+            rm -f "$TMP_PROFILE"
+            echo "Warning: could not repair $PROFILE_FILE automatically." >&2
+            echo "Add this line immediately above the nvx eval:" >&2
+            echo "  $PATH_LINE" >&2
+        fi
+        return 0
+    fi
+
+    echo "Adding shell integration to $PROFILE_FILE..."
+    printf '\n%s\n%s\n%s\n' "$MARKER_LINE" "$PATH_LINE" "$INTEGRATION_LINE" >> "$PROFILE_FILE"
 }
 
 case "$SHELL_NAME" in
@@ -139,6 +182,7 @@ esac
 
 echo ""
 echo "nvx has been successfully installed!"
-echo "Please restart your shell or run the following to apply:"
-echo "  export PATH=\"\$HOME/.nvx/bin:\$PATH\""
+echo "Your shell profile has been updated, so new shells pick it up automatically."
+echo "To use nvx in THIS shell without restarting it, run:"
+echo "  $PATH_LINE"
 echo "  $INTEGRATION_LINE"
