@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -142,7 +143,23 @@ func landlockReadOnlyRules(nvxHome string) []landlockRule {
 		"/dev/null", "/dev/urandom", "/dev/random", "/dev/zero",
 	}
 	if nvxHome != "" {
-		paths = append(paths, nvxHome)
+		// Grant the runtime trees, NOT all of nvxHome. That directory is nvx's own
+		// control plane and credential store, and a contained process needs none
+		// of it: tool_home holds credentials a trusted tool persisted (wrangler
+		// tokens, gh auth), grants/ is the pin store the entire policy-trust
+		// boundary depends on, policy.json is the baseline every project policy is
+		// compared against, cache/bin-resolve.json maps command names to absolute
+		// paths that nvx later executes *unsandboxed*, and sandbox_home holds other
+		// concurrent sessions' guest homes.
+		//
+		// Landlock is allowlist-only -- there is no deny rule -- so narrowing the
+		// grant is the only way to exclude them. The guest home is granted
+		// separately with full access, including when it lives under tool_home.
+		paths = append(paths,
+			filepath.Join(nvxHome, "versions"), // runtimes: read+exec is the point
+			filepath.Join(nvxHome, "bin"),      // shims: PATH still resolves nested node/npm here
+			filepath.Join(nvxHome, "current"),  // symlink into versions; resolved at rule-add time
+		)
 	}
 
 	var rules []landlockRule
