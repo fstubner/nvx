@@ -8,15 +8,15 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
 const (
-	appContainerName = "nvx.sandbox"
+	appContainerNamePrefix = "nvx.sandbox"
 )
 
 var (
@@ -24,47 +24,105 @@ var (
 
 	procCreateAppContainerProfile                 = modUserenv.NewProc("CreateAppContainerProfile")
 	procDeriveAppContainerSidFromAppContainerName = modUserenv.NewProc("DeriveAppContainerSidFromAppContainerName")
+	procDeleteAppContainerProfile                 = modUserenv.NewProc("DeleteAppContainerProfile")
 )
 
 // prepareAppContainerFilesystem grants the AppContainer SID write access to
-// guestHome and workDir. Only guestHome gets a Low integrity label — workDir
-// stays default integrity so a medium-IL AppContainer child can use it as cwd.
+// guestHome and workDir -- and nothing else. That pair is sandboxWritableRoots;
+// see its comment for why nvxHome must never be added here. The two are granted
+// separately rather than in a loop because their failure handling differs: the
+// guest home is required and also takes an integrity label, while the working
+// directory is best-effort. Anything beyond these two is a write-containment
+// escape, not a convenience.
+//
+// guestHome gets a low mandatory integrity label for compatibility with legacy
+// constrained launches; workDir stays default integrity so a normal AppContainer
+// child can use it as cwd.
 func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) error {
-	for _, dir := range []string{guestHome, workDir} {
-		if dir == "" {
-			continue
-		}
-		if err := grantAppContainerPath(sid, dir); err != nil {
+	// The guest home must be writable; it is nvx-owned and safe to grant.
+	if guestHome != "" {
+		if err := grantAppContainerPath(sid, guestHome); err != nil {
 			return err
 		}
-	}
-	if guestHome != "" {
 		if err := labelLowIntegrity(guestHome); err != nil {
 			return fmt.Errorf("integrity label for %q: %w", guestHome, err)
 		}
 	}
+
+	// The working-directory grant is best-effort. Many commands (e.g. npx) never
+	// write the cwd, and the profile root both cannot be granted (its ACL write
+	// hangs behind the OneDrive/Defender filter driver) and already grants ALL
+	// APPLICATION PACKAGES for stat/traverse. Sandbox writes go to the guest home
+	// regardless, so a failed workdir grant should not abort the run.
+	if workDir != "" && !isProfileRoot(workDir) {
+		if err := grantAppContainerPath(sid, workDir); err != nil {
+			LogWarn("Could not grant the sandbox write access to %q: %v", workDir, err)
+			LogInfo("Commands that write the current folder may fail here; run from a project subfolder, or use --no-sandbox.")
+		}
+	}
+	// Tools stat the ancestors of both the working directory and the guest home
+	// (which is HOME inside the sandbox), so grant traverse on both chains.
+	aWork, eWork := grantWorkdirAncestors(sid, workDir)
+	aHome, eHome := grantWorkdirAncestors(sid, guestHome)
+	if skipped := (eWork + eHome) - (aWork + aHome); skipped > 0 {
+		// Not worth a warning: these grants are advisory and the command runs without
+		// them. Silence would hide a genuinely slow filesystem, so report once per
+		// launch rather than once per directory chain.
+		LogInfo("Skipped %d of %d ancestor permission checks to keep startup fast.", skipped, eWork+eHome)
+	}
 	return nil
 }
 
-func ensureAppContainerSID() (uintptr, error) {
-	name, err := syscall.UTF16PtrFromString(appContainerName)
+func isProfileRoot(dir string) bool {
+	up := os.Getenv("USERPROFILE")
+	return up != "" && strings.EqualFold(filepath.Clean(dir), filepath.Clean(up))
+}
+
+// grantWorkdirAncestors grants the AppContainer this-folder RX on each ancestor
+// directory of workDir that sits strictly below the user profile root, so tools
+// that stat ancestors (npm walking up to find a project root) succeed. It stops
+// at the profile root: that root already grants ALL APPLICATION PACKAGES (and
+// writing its ACL hangs behind the OneDrive/Defender filter driver), and C:\ /
+// C:\Users are handled once by `nvx setup`. Best-effort and time-boxed.
+// grantWorkdirAncestors returns how many ancestor grants it attempted and how many
+// were eligible, so the caller can report once for the whole launch rather than
+// once per chain.
+func grantWorkdirAncestors(sid uintptr, workDir string) (attempted, eligible int) {
+	paths := ancestorGrantPaths(workDir, os.Getenv("USERPROFILE"))
+	if len(paths) == 0 {
+		return 0, 0
+	}
+	attempted = grantAncestorsWithinBudget(paths, ancestorGrantBudget, func(p string) error {
+		return grantAppContainerPathReadExecTimeboxed(sid, p, ancestorGrantPerPath)
+	})
+	return attempted, len(paths)
+}
+
+// isPathStrictlyUnder reports whether path is a proper descendant of base.
+func isPathStrictlyUnder(path, base string) bool {
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return false
+	}
+	return rel != "." && !strings.HasPrefix(rel, "..")
+}
+
+func ensureAppContainerSID(profileName string) (uintptr, error) {
+	name, err := syscall.UTF16PtrFromString(profileName)
 	if err != nil {
 		return 0, err
 	}
-
-	var sid uintptr
-	hr, _, _ := procDeriveAppContainerSidFromAppContainerName.Call(
-		uintptr(unsafe.Pointer(name)),
-		uintptr(unsafe.Pointer(&sid)),
-	)
-	if hr == 0 && sid != 0 {
-		return sid, nil
-	}
-
 	display, _ := syscall.UTF16PtrFromString("nvx sandbox")
 	desc, _ := syscall.UTF16PtrFromString("Ephemeral nvx execution sandbox")
+
+	// Register the profile FIRST. DeriveAppContainerSidFromAppContainerName
+	// succeeds for any valid name whether or not a profile is registered, so
+	// deriving first would skip CreateAppContainerProfile and leave the SID
+	// unbacked — CreateProcess then fails with "cannot find the file specified".
+	// Creating first is idempotent: an existing profile returns ALREADY_EXISTS,
+	// after which we derive the SID for the registered profile.
 	var newSid uintptr
-	hr, _, callErr := procCreateAppContainerProfile.Call(
+	hr, _, createErr := procCreateAppContainerProfile.Call(
 		uintptr(unsafe.Pointer(name)),
 		uintptr(unsafe.Pointer(display)),
 		uintptr(unsafe.Pointer(desc)),
@@ -75,27 +133,70 @@ func ensureAppContainerSID() (uintptr, error) {
 		return newSid, nil
 	}
 
-	// 0x80073D10 = HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)
-	if hr == 0x80073D10 {
-		hr, _, callErr = procDeriveAppContainerSidFromAppContainerName.Call(
-			uintptr(unsafe.Pointer(name)),
-			uintptr(unsafe.Pointer(&sid)),
-		)
-		if hr == 0 && sid != 0 {
-			return sid, nil
-		}
+	// Profile already exists (or create failed) — derive the SID for it.
+	var sid uintptr
+	dhr, _, deriveErr := procDeriveAppContainerSidFromAppContainerName.Call(
+		uintptr(unsafe.Pointer(name)),
+		uintptr(unsafe.Pointer(&sid)),
+	)
+	if dhr == 0 && sid != 0 {
+		return sid, nil
 	}
 
-	return 0, fmt.Errorf("DeriveAppContainerSid failed (hr=0x%X): %v", hr, callErr)
+	return 0, fmt.Errorf("AppContainer profile unavailable (create hr=0x%X: %v; derive hr=0x%X: %v)", hr, createErr, dhr, deriveErr)
 }
 
+func deleteAppContainerProfile(profileName string) {
+	name, err := syscall.UTF16PtrFromString(profileName)
+	if err != nil {
+		return
+	}
+	_, _, _ = procDeleteAppContainerProfile.Call(uintptr(unsafe.Pointer(name)))
+}
+
+// appContainerHasGrant reports whether path already carries an allow ACE for
+// sidStr, whether set directly or inherited from an ancestor. A non-recursive
+// ACL read costs ~50ms even on a tree with tens of thousands of files, which
+// makes the far more expensive grant below idempotent: after the first run the
+// ACE is already in place and there is nothing to do.
+func appContainerHasGrant(sidStr, path string) bool {
+	out, err := runWinCmd(10*time.Second, "icacls", path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, sidStr) {
+			continue
+		}
+		// An explicit deny must not be read as "already granted".
+		if strings.Contains(strings.ToUpper(line), "(DENY)") {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// grantAppContainerPath gives the AppContainer modify access to path and its
+// descendants.
+//
+// (OI)(CI) marks the ACE inheritable, and NTFS propagates it to *existing*
+// children as well as new ones, so `/t` is unnecessary. It is also actively
+// harmful: `/t` rewrites every descendant's ACL individually, which on a real
+// project (measured: 45k files) blows the timeout outright, and it aborts on any
+// child whose ACL cannot be rewritten — e.g. a project-local .nvx directory
+// carrying ACEs from other tooling, the exact failure users hit as
+// "Access is denied" followed by a 20s stall on every single invocation.
 func grantAppContainerPath(sid uintptr, path string) error {
 	sidStr, err := appContainerSidToString(sid)
 	if err != nil {
 		return err
 	}
+	if appContainerHasGrant(sidStr, path) {
+		return nil
+	}
 	grantArg := fmt.Sprintf("*%s:(OI)(CI)(M)", sidStr)
-	out, err := exec.Command("icacls", path, "/grant", grantArg, "/t", "/c", "/q").CombinedOutput()
+	out, err := runWinCmd(45*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -128,6 +229,13 @@ func ensureAppContainerCommand(sid uintptr, nvxHome, cmdPath string) (string, er
 			return "", err
 		}
 	}
+	// dir's own subtree is now granted, but dir itself commonly sits several
+	// levels below the profile root (e.g. ~/.nvx/versions/node/<version>/) —
+	// without traverse rights on those intermediate ancestors, the sandboxed
+	// process can resolve the binary's parent but fails to lstat/traverse its
+	// way there (Node's own realpathSync on argv[0] hits this during startup).
+	// Mirrors the same treatment workDir/guestHome already get.
+	_, _ = grantWorkdirAncestors(sid, dir)
 	return usePath, nil
 }
 
@@ -159,7 +267,7 @@ func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {
 	if _, err := os.Stat(destExe); err == nil {
 		return destExe, nil
 	}
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0700); err != nil {
 		return "", err
 	}
 	if err := copyDirTree(srcDir, destDir); err != nil {
@@ -179,9 +287,9 @@ func copyDirTree(src, dst string) error {
 		}
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode().Perm())
+			return os.MkdirAll(target, info.Mode().Perm()&0750)
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
 			return err
 		}
 		return copyFile(path, target, info.Mode())
@@ -195,38 +303,59 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode.Perm())
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode.Perm()&0750)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
 		return err
 	}
 	return out.Close()
 }
 
+// grantAppContainerPathReadExecTree gives the AppContainer read/execute on path
+// and its descendants. Inheritable rather than /t-recursive, for the reasons in
+// grantAppContainerPath — this one runs on the runtime version directory, whose
+// bundled node_modules alone is thousands of files.
 func grantAppContainerPathReadExecTree(sid uintptr, path string) error {
 	sidStr, err := appContainerSidToString(sid)
 	if err != nil {
 		return err
 	}
+	if appContainerHasGrant(sidStr, path) {
+		return nil
+	}
 	grantArg := fmt.Sprintf("*%s:(OI)(CI)(RX)", sidStr)
-	out, err := exec.Command("icacls", path, "/grant", grantArg, "/t", "/q").CombinedOutput()
+	out, err := runWinCmd(45*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls RX tree grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
+// grantAppContainerPathReadExec grants this-folder-only read/execute, used for
+// traverse rights on ancestor directories. Skipped when access is already
+// present, so the common case costs one cheap ACL read instead of a write that
+// can stall behind a filter driver.
 func grantAppContainerPathReadExec(sid uintptr, path string) error {
+	return grantAppContainerPathReadExecTimeboxed(sid, path, 15*time.Second)
+}
+
+// grantAppContainerPathReadExecTimeboxed is grantAppContainerPathReadExec with an
+// explicit per-call timeout, so the ancestor walk can bound an individual grant far
+// more tightly than a direct, necessary grant would want.
+func grantAppContainerPathReadExecTimeboxed(sid uintptr, path string, timeout time.Duration) error {
 	sidStr, err := appContainerSidToString(sid)
 	if err != nil {
 		return err
 	}
+	if appContainerHasGrant(sidStr, path) {
+		return nil
+	}
 	grantArg := fmt.Sprintf("*%s:(RX)", sidStr)
-	out, err := exec.Command("icacls", path, "/grant", grantArg, "/c", "/q").CombinedOutput()
+	out, err := runWinCmd(timeout, "icacls", path, "/grant", grantArg, "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls RX grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
 	}

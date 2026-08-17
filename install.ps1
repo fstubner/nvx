@@ -1,12 +1,15 @@
-# Installer script for nvx (Node Version X-platform)
+param(
+    [switch]$InsecureSkipChecksum,
+    [switch]$UseLocalBinary
+)
 
+# Installer script for nvx (Node Version X-platform)
 
 $ErrorActionPreference = 'Stop'
 
 # Define installation paths
 $nvxHome = Join-Path $HOME ".nvx"
 $binDir = Join-Path $nvxHome "bin"
-$currentLink = Join-Path $nvxHome "current"
 
 Write-Host "Setting up nvx directories..."
 
@@ -33,24 +36,11 @@ if (-not $hasBin) {
     $modified = $true
 }
 
-# Prepend current link (global default node runtime path)
-$hasCurrent = $false
-foreach ($part in $pathParts) {
-    $cleanPart = $part.Trim().TrimEnd('\')
-    if ($cleanPart -eq $currentLink.TrimEnd('\')) {
-        $hasCurrent = $true
-    }
-}
-if (-not $hasCurrent) {
-    $userPath = "$currentLink;$userPath"
-    $modified = $true
-}
-
 if ($modified) {
     Write-Host "Adding nvx paths to your User environment variables..."
     [Environment]::SetEnvironmentVariable("Path", $userPath, "User")
     # Update current session path
-    $env:PATH = "$binDir;$currentLink;$env:PATH"
+    $env:PATH = "$binDir;$env:PATH"
 }
 
 # 2. Check and configure PowerShell Execution Policy
@@ -91,7 +81,7 @@ if (-not $alreadyIntegrated) {
 
 # 3. Handle Binary Setup
 $localBinary = Join-Path $PSScriptRoot "nvx.exe"
-if (Test-Path $localBinary) {
+if (($UseLocalBinary -or $env:NVX_USE_LOCAL_BINARY -eq "1") -and (Test-Path $localBinary)) {
     Write-Host "Copying compiled nvx.exe to bin directory..."
     Copy-Item -Path $localBinary -Destination (Join-Path $binDir "nvx.exe") -Force
 } else {
@@ -117,7 +107,14 @@ if (Test-Path $localBinary) {
             }
             Write-Host "Checksum verified successfully."
         } catch {
-            Write-Warning "Checksum file not available. Skipping verification."
+            if ($InsecureSkipChecksum -or $env:NVX_INSECURE_SKIP_CHECKSUM -eq "1") {
+                Write-Warning "Checksum file not available. Skipping verification because insecure skip was explicitly requested."
+            } else {
+                Write-Error "Checksum file not available. Refusing to install without verification."
+                Remove-Item $binPath -Force -ErrorAction SilentlyContinue
+                Remove-Item $checksumPath -Force -ErrorAction SilentlyContinue
+                exit 1
+            }
         }
     } catch {
         Write-Error "Failed to download nvx binary: $_"
@@ -129,4 +126,35 @@ if (Test-Path $localBinary) {
 
 Write-Host ""
 Write-Host "nvx has been successfully installed!"
+
+# 4. Offer the one-time sandbox setup.
+# Package managers (npm/npx/yarn/pnpm) can only run under the Windows sandbox
+# after a one-time elevated grant. Offer it here (default: skip). It is entirely
+# optional and re-runnable later with 'nvx setup'.
+$nvxExe = Join-Path $binDir "nvx.exe"
+$interactive = ([Environment]::UserInteractive) -and (-not $env:CI) -and (-not $env:NVX_NONINTERACTIVE) -and ($Host.Name -ne 'Default Host')
+if ($interactive -and (Test-Path $nvxExe)) {
+    Write-Host ""
+    Write-Host "Optional: enable the Windows sandbox for package managers (npm/npx/yarn/pnpm)."
+    Write-Host "This needs a single Administrator approval (UAC). You can also do it later with 'nvx setup'."
+    $answer = Read-Host "Enable the sandbox now? [y/N]"
+    if ($answer -match '^(y|yes)$') {
+        Write-Host "Requesting Administrator approval to run 'nvx setup'..."
+        try {
+            $p = Start-Process -FilePath $nvxExe -ArgumentList 'setup' -Verb RunAs -Wait -PassThru
+            if ($p.ExitCode -eq 0) {
+                Write-Host "Sandbox setup complete."
+            } else {
+                Write-Warning "Sandbox setup did not complete. Run 'nvx setup' from an Administrator terminal to try again."
+            }
+        } catch {
+            Write-Warning "Elevation was declined or failed. Run 'nvx setup' from an Administrator terminal later."
+        }
+    } else {
+        Write-Host "Skipped. Package-manager commands will run without OS isolation until you run 'nvx setup'."
+        Write-Host "(Supply-chain checks still apply, and you can bypass per command with --no-sandbox.)"
+    }
+}
+
+Write-Host ""
 Write-Host "Please open a new PowerShell window to start using nvx."

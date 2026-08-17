@@ -3,9 +3,10 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 )
 
 // platformLaunchNative runs the command under sandbox-exec (Seatbelt) with
@@ -17,21 +18,44 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1
 	}
 
-	profilePath := filepath.Join(guestHome, "nvx.sb")
+	// Only the guest home and the working directory are writable. This used to also
+	// pass config.NvxHome and the runtime binary's directory, which let any
+	// sandboxed process rewrite policy.json, self-approve grants, poison
+	// npm_global, read and rewrite tool_home credentials, or trojan the node
+	// binary itself -- a persistent sandbox defeat on the DEFAULT macOS path. The
+	// legacy caller in sandbox_seatbelt.go was fixed in July; this one was missed,
+	// so the comment there described a guarantee the shipped path did not provide.
 	profile := buildSeatbeltProfile(netCtx, guestHome, workDir)
-	if err := os.WriteFile(profilePath, []byte(profile), 0644); err != nil {
+	profileFile, err := os.CreateTemp("", "nvx-*.sb")
+	if err != nil {
+		LogError("Failed to create Seatbelt profile file: %v", err)
+		return 1
+	}
+	profilePath := profileFile.Name()
+	defer os.Remove(profilePath)
+	if _, err := profileFile.Write([]byte(profile)); err != nil {
+		profileFile.Close()
 		LogError("Failed to write Seatbelt profile: %v", err)
+		return 1
+	}
+	if err := profileFile.Close(); err != nil {
+		LogError("Failed to close Seatbelt profile file: %v", err)
+		return 1
+	}
+	if err := os.Chmod(profilePath, 0600); err != nil {
+		LogError("Failed to set permissions on Seatbelt profile file: %v", err)
 		return 1
 	}
 
 	args := []string{"-f", profilePath, cmdPath}
 	args = append(args, config.Args...)
 
+	var errBuf bytes.Buffer
 	cmd := exec.Command(sandboxExec, args...)
 	cmd.Env = cleanEnv
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = io.MultiWriter(os.Stderr, &errBuf)
 	if workDir != "" {
 		cmd.Dir = workDir
 	}
@@ -39,6 +63,12 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	LogInfo("macOS Seatbelt isolation active")
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
+			// A non-zero exit with no child output usually means sandbox-exec
+			// itself rejected the launch (bad profile / unresolved command).
+			// Surface the details so failures are diagnosable, not silent.
+			if errBuf.Len() == 0 {
+				LogError("Sandboxed command exited %d with no output (command=%q, profile=%s).", exitErr.ExitCode(), cmdPath, profilePath)
+			}
 			return exitErr.ExitCode()
 		}
 		LogError("Seatbelt execution failed: %v", err)

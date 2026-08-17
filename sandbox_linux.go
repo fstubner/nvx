@@ -16,16 +16,17 @@ func applySandboxIsolation(cmd *exec.Cmd, guestHome string) {
 
 // applyLinuxNamespaces configures the process with Linux kernel namespaces:
 //   - CLONE_NEWNS: Isolate mount namespace (prevents bind-mount escape)
-//   - CLONE_NEWPID: Isolate PID namespace (sandboxed process sees itself as PID 1)
 //   - CLONE_NEWUSER: required for unprivileged namespace creation
+//
+// The PID namespace is deliberately NOT created here. It belongs to the sandbox
+// supervisor (see supervisorCloneFlags): the teardown guarantee depends on nvx's
+// own process being PID 1, and a second namespace rooted at the target would put
+// the target beyond that guarantee.
 func applyLinuxNamespaces(cmd *exec.Cmd, guestHome string) {
 	cloneFlags := uintptr(0)
 
 	// CLONE_NEWNS: new mount namespace
 	cloneFlags |= syscall.CLONE_NEWNS
-
-	// CLONE_NEWPID: new PID namespace
-	cloneFlags |= syscall.CLONE_NEWPID
 
 	// CLONE_NEWUSER: required for unprivileged namespace creation
 	cloneFlags |= syscall.CLONE_NEWUSER
@@ -51,7 +52,7 @@ func applyLinuxNamespaces(cmd *exec.Cmd, guestHome string) {
 		Setpgid: true,
 	}
 
-	LogInfo("Linux namespace isolation active (NEWNS|NEWPID|NEWUSER)")
+	LogInfo("Linux namespace isolation active (NEWNS|NEWUSER; PID namespace owned by the supervisor)")
 }
 
 func closeTokenHandle(cmd *exec.Cmd) {}

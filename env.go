@@ -7,8 +7,30 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 )
+
+// nvxActiveEnvVar marks that the current process tree already reported its
+// top-level containment status, so a nested nvx-shimmed invocation (e.g. a
+// build script's own npm/node calls) does not repeat it. Set once and inherited
+// by every child process from then on — see runShim's uncontained-path status
+// line for why a per-process guard is not enough here.
+const nvxActiveEnvVar = "NVX_SHIM_ACTIVE"
+
+// isTopLevelShimInvocation reports whether this process is the outermost
+// nvx-shimmed invocation in its process tree, marking the tree as active for
+// any child so nested invocations answer false. os.Setenv only affects this
+// process's own environment block, but child processes started afterwards
+// (exec.Command with a nil Env) inherit that block, so the mark propagates
+// down through however many nested nvx.exe processes a build script spawns.
+func isTopLevelShimInvocation() bool {
+	if os.Getenv(nvxActiveEnvVar) != "" {
+		return false
+	}
+	_ = os.Setenv(nvxActiveEnvVar, "1")
+	return true
+}
 
 // GetHomeDir returns the root directory for nvx (defaults to ~/.nvx)
 func GetHomeDir() string {
@@ -34,15 +56,26 @@ func GetDownloadsDir() string {
 
 // GetCurrentLinkPath returns the path of the global default link
 func GetCurrentLinkPath() string {
-	return filepath.Join(GetHomeDir(), "current")
+	return currentLinkPath(GetHomeDir())
 }
 
-// GetVersionBinDir returns the directory containing the node executable for a given version folder
+func currentLinkPath(nvxHome string) string {
+	return filepath.Join(nvxHome, "current")
+}
+
+// GetVersionBinDir returns the directory containing a runtime's executables for
+// a given version folder. On Unix that is always <versionDir>/bin. On Windows
+// most runtimes place the binary at the version root (node.exe, bun.exe), but
+// some (e.g. Go) keep a bin/ subdir on every platform; prefer it when present.
 func GetVersionBinDir(versionDir string) string {
+	binSub := filepath.Join(versionDir, "bin")
 	if runtime.GOOS == "windows" {
+		if info, err := os.Stat(binSub); err == nil && info.IsDir() {
+			return binSub
+		}
 		return versionDir
 	}
-	return filepath.Join(versionDir, "bin")
+	return binSub
 }
 
 // GetNpmPrefixBinDir returns the executable directory for a given npm prefix
@@ -69,7 +102,7 @@ func CreateLink(link, target string) error {
 		}
 	}
 
-	if err := os.MkdirAll(filepath.Dir(link), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
@@ -102,24 +135,33 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 	currentLinkBin := GetVersionBinDir(currentLink)
 	currentLinkNpm := GetNpmGlobalBinDir(currentLink)
 
+	// Scope the strip to a single runtime when the target names one, so that
+	// switching (say) Bun does not evict an active Node from PATH. Legacy/flat
+	// version dirs and node keep the original whole-versions-dir behavior.
+	targetRuntime := runtimeFromVersionDir(nvxHome, targetVersionDir)
+	isNodeScope := targetRuntime == "" || targetRuntime == "node"
+	stripPrefix := filepath.Clean(versionsDir) + string(os.PathSeparator)
+	if targetRuntime != "" {
+		stripPrefix = filepath.Clean(filepath.Join(versionsDir, targetRuntime)) + string(os.PathSeparator)
+	}
+
 	for _, part := range parts {
 		if part == "" {
 			continue
 		}
 		normPart := filepath.Clean(part)
-		normVersionsDir := filepath.Clean(versionsDir)
 		normCurrentLink := filepath.Clean(currentLink)
 		normCurrentLinkBin := filepath.Clean(currentLinkBin)
 		normCurrentLinkNpm := filepath.Clean(currentLinkNpm)
 
-		// Remove any specific v* version paths or npm_global paths inside versions Dir
-		if strings.HasPrefix(strings.ToLower(normPart), strings.ToLower(normVersionsDir)+string(os.PathSeparator)) {
+		// Remove v* version and npm_global paths for the runtime being switched.
+		if strings.HasPrefix(strings.ToLower(normPart), strings.ToLower(stripPrefix)) {
 			continue
 		}
-		// Also clean the .nvx\current path and default npm_global paths if we are setting a terminal version
-		if strings.ToLower(normPart) == strings.ToLower(normCurrentLink) || 
-			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkBin) || 
-			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkNpm) {
+		// Clean the node default-link paths only when switching node itself.
+		if isNodeScope && (strings.ToLower(normPart) == strings.ToLower(normCurrentLink) ||
+			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkBin) ||
+			strings.ToLower(normPart) == strings.ToLower(normCurrentLinkNpm)) {
 			continue
 		}
 		// Remove stale project-scoped tool dirs from previously visited projects
@@ -141,14 +183,18 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 	}
 	cleaned = finalCleaned
 
-	// Prepend the new target version directory and the npm prefix bin directory
+	// Prepend the new target version directory and (for node) its npm prefix bin.
 	if targetVersionDir != "" {
 		binDir := GetVersionBinDir(targetVersionDir)
-		if npmPrefixDir == "" {
-			npmPrefixDir = filepath.Join(targetVersionDir, "npm_global")
+		if isNodeScope {
+			if npmPrefixDir == "" {
+				npmPrefixDir = filepath.Join(targetVersionDir, "npm_global")
+			}
+			npmBinDir := GetNpmPrefixBinDir(npmPrefixDir)
+			cleaned = append([]string{npmBinDir, binDir}, cleaned...)
+		} else {
+			cleaned = append([]string{binDir}, cleaned...)
 		}
-		npmBinDir := GetNpmPrefixBinDir(npmPrefixDir)
-		cleaned = append([]string{npmBinDir, binDir}, cleaned...)
 	}
 
 	// Global nvx shims first, then project node_modules/.bin shims, then runtime paths.
@@ -168,8 +214,20 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 }
 
 // lookPathSkippingNvxShims resolves cmdName on PATH with ~/.nvx/bin removed so
-// shim wrappers (node.cmd) are not mistaken for the real runtime binary.
+// shim wrappers (node.cmd) are not mistaken for the real runtime binary. The
+// (slow, on Windows) PATH scan is memoized per PATH via the bin-resolve cache.
 func lookPathSkippingNvxShims(cmdName, nvxHome string) (string, error) {
+	if cached := lookupBinCache(nvxHome, cmdName); cached != "" {
+		return cached, nil
+	}
+	resolved, err := lookPathSkippingNvxShimsUncached(cmdName, nvxHome)
+	if err == nil {
+		storeBinCache(nvxHome, cmdName, resolved)
+	}
+	return resolved, err
+}
+
+func lookPathSkippingNvxShimsUncached(cmdName, nvxHome string) (string, error) {
 	shimDir := filepath.Join(nvxHome, "bin")
 	pathEnv := os.Getenv("PATH")
 	var filtered []string
@@ -180,8 +238,14 @@ func lookPathSkippingNvxShims(cmdName, nvxHome string) (string, error) {
 		filtered = append(filtered, part)
 	}
 	restore := pathEnv
-	os.Setenv("PATH", strings.Join(filtered, string(filepath.ListSeparator)))
-	defer os.Setenv("PATH", restore)
+	if err := os.Setenv("PATH", strings.Join(filtered, string(filepath.ListSeparator))); err != nil {
+		return "", fmt.Errorf("temporarily update PATH: %w", err)
+	}
+	defer func() {
+		if err := os.Setenv("PATH", restore); err != nil {
+			LogWarn("Failed to restore PATH after runtime lookup: %v", err)
+		}
+	}()
 	return exec.LookPath(cmdName)
 }
 
@@ -197,32 +261,50 @@ func preferWindowsRuntimeExe(cmdPath string) string {
 	return cmdPath
 }
 
-func generateShims(nvxHome string) {
+func generateShims(nvxHome string) error {
 	shimDir := filepath.Join(nvxHome, "bin")
-	os.MkdirAll(shimDir, 0755)
+	if err := os.MkdirAll(shimDir, 0700); err != nil {
+		return fmt.Errorf("create shim directory: %w", err)
+	}
 
 	exePath, err := os.Executable()
 	if err != nil {
 		exePath = "nvx"
 	}
-	exeCmd := fmt.Sprintf("\"%s\"", exePath)
-	if runtime.GOOS != "windows" {
-		exeCmd = fmt.Sprintf("'%s'", exePath)
-	}
-
 	for _, cmd := range allShimCommands() {
 		if runtime.GOOS == "windows" {
-			content := fmt.Sprintf("@echo off\r\n%s shim %s %%*\r\n", exeCmd, cmd)
-			os.WriteFile(filepath.Join(shimDir, cmd+".cmd"), []byte(content), 0755)
+			exeCmd := quoteWindowsBatchArg(exePath)
+			content := fmt.Sprintf("@echo off\r\n%s shim %s %%*\r\n", exeCmd, quoteWindowsBatchArg(cmd))
+			if err := writeExecutableFile(filepath.Join(shimDir, cmd+".cmd"), []byte(content)); err != nil {
+				return fmt.Errorf("write cmd shim for %s: %w", cmd, err)
+			}
 
-			contentPs1 := fmt.Sprintf("& %s shim %s @args\r\n", exeCmd, cmd)
-			os.WriteFile(filepath.Join(shimDir, cmd+".ps1"), []byte(contentPs1), 0755)
+			contentPs1 := fmt.Sprintf("& %s shim %s @args\r\n", quotePowerShell(exePath), quotePowerShell(cmd))
+			if err := writeExecutableFile(filepath.Join(shimDir, cmd+".ps1"), []byte(contentPs1)); err != nil {
+				return fmt.Errorf("write PowerShell shim for %s: %w", cmd, err)
+			}
 		} else {
-			content := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", exeCmd, cmd)
+			content := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", quotePOSIXShell(exePath), quotePOSIXShell(cmd))
 			shimPath := filepath.Join(shimDir, cmd)
-			os.WriteFile(shimPath, []byte(content), 0755)
+			if err := writeExecutableFile(shimPath, []byte(content)); err != nil {
+				return fmt.Errorf("write shim for %s: %w", cmd, err)
+			}
 		}
 	}
+	return nil
+}
+
+func quoteWindowsBatchArg(s string) string {
+	escaped := strings.ReplaceAll(s, `%`, `%%`)
+	escaped = strings.ReplaceAll(escaped, `"`, `""`)
+	return `"` + escaped + `"`
+}
+
+func writeExecutableFile(path string, data []byte) error {
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0700) // #nosec G302 -- generated shim wrappers must be executable by the owner.
 }
 
 // installAliases covers the install/add spellings accepted by npm, yarn, and
@@ -234,24 +316,59 @@ var installAliases = map[string]bool{
 	"isntall": true, "add": true,
 }
 
-// detectInstallPackages scans package manager arguments for an install-style
-// subcommand and returns the package names being installed. The subcommand is
-// the first non-flag argument, so leading flags (e.g. `npm --loglevel=error
-// install pkg`) cannot bypass detection.
-func detectInstallPackages(args []string) []string {
-	subIdx := -1
+// findInstallVerbIndex scans args for a token matching installAliases or one
+// of extraVerbs, and returns its index, or -1 if none is found. It does NOT
+// assume the first non-flag token is the subcommand — it scans every
+// non-flag-shaped token until it finds a real match (or a "--" passthrough
+// separator, which conventionally ends flag/subcommand parsing). This means
+// an unrecognized value-taking flag ahead of the real subcommand (e.g. `npm
+// --loglevel verbose install pkg`, where --loglevel isn't in any hardcoded
+// "takes a value" list) can never hide an install: the scan simply keeps
+// going past the flag's value and finds "install" further along. The only
+// failure direction is a stray non-flag token that happens to match a verb
+// name being mistaken for the subcommand, which pushes a command toward MORE
+// containment/verification, never less — the safe direction for a security
+// classifier to fail in.
+func findInstallVerbIndex(args []string, extraVerbs ...string) int {
+	extra := make(map[string]bool, len(extraVerbs))
+	for _, v := range extraVerbs {
+		extra[strings.ToLower(v)] = true
+	}
 	for i, arg := range args {
-		if !strings.HasPrefix(arg, "-") {
-			subIdx = i
-			break
+		if arg == "--" {
+			return -1
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		lower := strings.ToLower(arg)
+		if installAliases[lower] || extra[lower] {
+			return i
 		}
 	}
-	if subIdx == -1 || !installAliases[args[subIdx]] {
+	return -1
+}
+
+// hasInstallVerb reports whether args contains an install-style subcommand
+// (installAliases plus any extraVerbs). See findInstallVerbIndex for how it
+// avoids being fooled by an unrecognized value-taking flag.
+func hasInstallVerb(args []string, extraVerbs ...string) bool {
+	return findInstallVerbIndex(args, extraVerbs...) != -1
+}
+
+// installPackagesArg finds an install-style subcommand in args (installAliases
+// plus any extraVerbs) and returns the non-flag tokens that follow it — the
+// explicitly named packages. Returns nil if no install verb is found.
+func installPackagesArg(args []string, extraVerbs ...string) []string {
+	subIdx := findInstallVerbIndex(args, extraVerbs...)
+	if subIdx == -1 {
 		return nil
 	}
-
 	var pkgs []string
 	for _, arg := range args[subIdx+1:] {
+		if arg == "--" {
+			break
+		}
 		if !strings.HasPrefix(arg, "-") {
 			pkgs = append(pkgs, arg)
 		}
@@ -259,16 +376,253 @@ func detectInstallPackages(args []string) []string {
 	return pkgs
 }
 
+// detectInstallPackages scans package manager arguments for an install-style
+// subcommand and returns the package names being installed.
+func detectInstallPackages(args []string) []string {
+	return installPackagesArg(args)
+}
+
+// globalInstallFlags are the npm/yarn/pnpm flags that make an install target
+// the shared, version-wide npm_global prefix instead of the project's
+// node_modules.
+var globalInstallFlags = map[string]bool{"-g": true, "--global": true}
+
+// isGlobalInstall reports whether args requests a global package-manager
+// install. The sandbox deliberately never grants write access to npm_global
+// on any platform (see prepareAppContainerFilesystem, applyLandlockSandbox,
+// buildSeatbeltProfile): a shared, version-wide location that every future
+// invocation trusts (runtime_exec.go's npmGlobalOverridePath) must never be
+// writable by contained, potentially malicious code, or a single compromised
+// install could plant a binary that silently becomes the resolved npm/npx
+// for every project going forward. So a global install can only run
+// un-contained — runShim checks this to fail with a clear message instead of
+// a confusing permission error partway through.
+func isGlobalInstall(cmdName string, args []string) bool {
+	switch strings.ToLower(cmdName) {
+	case "npm", "yarn", "pnpm":
+	default:
+		return false
+	}
+	if !hasInstallVerb(args, "ci") {
+		return false
+	}
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		if globalInstallFlags[arg] {
+			return true
+		}
+	}
+	return false
+}
+
+func detectShimPackagesForVerification(cmdName string, args []string) []string {
+	switch strings.ToLower(cmdName) {
+	case "npm", "yarn", "pnpm":
+		if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
+			return pkgs
+		}
+		if hasInstallVerb(args, "ci") {
+			if pkgs := packagesFromPackageLock(); len(pkgs) > 0 {
+				return pkgs
+			}
+			return packagesFromPackageJSON()
+		}
+	case "bun":
+		// bun add/install/i/a [pkg...]; "a" is Bun's short alias for add.
+		if pkgs := installPackagesArg(args, "a"); len(pkgs) > 0 {
+			return pkgs
+		}
+		if hasInstallVerb(args, "a") {
+			return packagesFromPackageJSON()
+		}
+	case "npx", "bunx":
+		return detectExecutorPackages(args)
+	}
+	return nil
+}
+
+func detectExecutorPackages(args []string) []string {
+	var pkgs []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-p" || arg == "--package":
+			if i+1 < len(args) {
+				pkgs = append(pkgs, args[i+1])
+				i++
+			}
+		case strings.HasPrefix(arg, "--package="):
+			if v := strings.TrimPrefix(arg, "--package="); v != "" {
+				pkgs = append(pkgs, v)
+			}
+		case strings.HasPrefix(arg, "-"):
+			if flagTakesValue(arg) && !strings.Contains(arg, "=") && i+1 < len(args) {
+				i++
+			}
+		default:
+			if len(pkgs) > 0 {
+				return dedupeStrings(pkgs)
+			}
+			return []string{arg}
+		}
+	}
+	return dedupeStrings(pkgs)
+}
+
+// flagTakesValue reports whether arg is a known flag that consumes the next
+// token as its value, so callers that need positional detection (which
+// package/tool a command targets) can skip over it correctly. This list can
+// never be exhaustive across every package manager's evolving flag set — it
+// is a best-effort improvement for helpers where the failure mode of missing
+// an entry is a wrong verification target or a missed UX prompt, not a
+// containment decision. Containment itself (classifyInvocation) does not
+// depend on this list; it scans for the subcommand verb directly instead
+// (see hasInstallVerb) so an unrecognized flag here cannot bypass a sandbox.
+func flagTakesValue(arg string) bool {
+	switch arg {
+	case "-p", "--package", "--prefix", "--registry", "--cache", "-c", "--call", "--shell",
+		"--loglevel", "--tag", "--scope", "--userconfig", "--otp",
+		"-w", "--workspace", "--cwd", "--filter":
+		return true
+	}
+	return false
+}
+
+type packageLockFile struct {
+	Packages     map[string]packageLockPackage `json:"packages"`
+	Dependencies map[string]packageLockPackage `json:"dependencies"`
+}
+
+type packageLockPackage struct {
+	Version      string                        `json:"version"`
+	Dependencies map[string]packageLockPackage `json:"dependencies"`
+}
+
+func packagesFromPackageLock() []string {
+	data, err := os.ReadFile("package-lock.json")
+	if err != nil {
+		return nil
+	}
+	var lock packageLockFile
+	if err := json.Unmarshal(data, &lock); err != nil {
+		LogWarn("Failed to parse package-lock.json for verification: %v", err)
+		return nil
+	}
+	seen := map[string]bool{}
+	var pkgs []string
+	for path, pkg := range lock.Packages {
+		name := packageNameFromLockPath(path)
+		if name == "" || pkg.Version == "" {
+			continue
+		}
+		query := name + "@" + pkg.Version
+		if !seen[query] {
+			seen[query] = true
+			pkgs = append(pkgs, query)
+		}
+	}
+	addLockDependencies(lock.Dependencies, seen, &pkgs)
+	sort.Strings(pkgs)
+	return pkgs
+}
+
+func addLockDependencies(deps map[string]packageLockPackage, seen map[string]bool, out *[]string) {
+	for name, dep := range deps {
+		if dep.Version != "" {
+			query := name + "@" + dep.Version
+			if !seen[query] {
+				seen[query] = true
+				*out = append(*out, query)
+			}
+		}
+		addLockDependencies(dep.Dependencies, seen, out)
+	}
+}
+
+func packageNameFromLockPath(path string) string {
+	const marker = "node_modules/"
+	idx := strings.LastIndex(path, marker)
+	if idx == -1 {
+		return ""
+	}
+	return path[idx+len(marker):]
+}
+
+func packagesFromPackageJSON() []string {
+	data, err := os.ReadFile("package.json")
+	if err != nil {
+		return nil
+	}
+	var pkg struct {
+		Dependencies         map[string]string `json:"dependencies"`
+		DevDependencies      map[string]string `json:"devDependencies"`
+		OptionalDependencies map[string]string `json:"optionalDependencies"`
+		PeerDependencies     map[string]string `json:"peerDependencies"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		LogWarn("Failed to parse package.json for verification: %v", err)
+		return nil
+	}
+	seen := map[string]bool{}
+	var pkgs []string
+	for _, deps := range []map[string]string{
+		pkg.Dependencies,
+		pkg.DevDependencies,
+		pkg.OptionalDependencies,
+		pkg.PeerDependencies,
+	} {
+		for name := range deps {
+			if !seen[name] {
+				seen[name] = true
+				pkgs = append(pkgs, name)
+			}
+		}
+	}
+	sort.Strings(pkgs)
+	return pkgs
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
 func runShim(cmdName string, args []string, nvxHome string) int {
 	opts := parseShimOptions(args)
 	args = opts.args
+	opts.strictFlag = strictFlag
+	opts.standardFlag = standardFlag
 
-	policy, _ := LoadPolicy(nvxHome)
+	hintIfShadowed(nvxHome)
 
-	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" {
-		if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
+	if err := ensureProjectPolicyTrust(nvxHome); err != nil {
+		LogError("Failed to load security policy: %v", err)
+		return 1
+	}
+	policy, err := LoadPolicy(nvxHome)
+	if err != nil {
+		LogError("Failed to load security policy: %v", err)
+		return 1
+	}
+
+	switch cmdName {
+	case "npm", "yarn", "pnpm", "npx", "bun", "bunx":
+		if pkgs := detectShimPackagesForVerification(cmdName, args); len(pkgs) > 0 {
 			runVerifyInstall(pkgs, nvxHome)
 		}
+	}
+	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" {
 		if cwd, err := os.Getwd(); err == nil {
 			if root := findProjectRoot(cwd); root != "" {
 				if err := generateProjectBinShims(root, nvxHome); err != nil {
@@ -278,22 +632,51 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 		}
 	}
 
-	if shouldSandbox(cmdName, policy, opts) {
+	if shouldSandbox(cmdName, args, policy, opts) {
+		if opts.payloadNoSandbox {
+			LogInfo("--no-sandbox is ignored when passed to a wrapped command. To run without isolation, use: nvx --no-sandbox %s ...", cmdName)
+		}
+		if isGlobalInstall(cmdName, args) {
+			LogError("Global installs (-g) can't run inside the sandbox.")
+			LogInfo("They need write access to a location every future nvx invocation trusts, which the sandbox deliberately never grants — a contained install must not be able to plant something that later runs un-contained.")
+			LogInfo("Run it without OS isolation instead:  nvx --no-sandbox %s ...", cmdName)
+			return 1
+		}
+		toolName := ""
+		if tool, wantsPersistence := trustedToolCandidate(cmdName, args); wantsPersistence {
+			if ensureTrustedToolGrant(nvxHome, tool) {
+				toolName = tool
+			}
+		}
 		return runSandbox(SandboxConfig{
 			NvxHome:            nvxHome,
 			Command:            cmdName,
 			Args:               args,
 			FilesystemProvider: opts.filesystemProvider,
+			ToolName:           toolName,
 		})
 	}
 
-	rt := runtimeForShim(cmdName)
-	nodeVer := getActiveShellVersion(nvxHome)
-	if nodeVer == "" {
-		nodeVer = getGlobalDefaultVersion(nvxHome)
+	// Uncontained is the "your own code" path (run scripts, publish, whoami,
+	// ...): whether that's true or not is exactly what a security-conscious
+	// user needs to see, not infer from an absent sandbox banner. But a single
+	// typed command routinely spawns a whole tree of further nvx-shimmed
+	// processes (an npm lifecycle script alone can nest prepublishOnly ->
+	// build -> clean -> node, each a distinct process) — unlike the sandboxed
+	// path, whose guest PATH never includes nvx's own shim dir, so nothing it
+	// spawns re-enters nvx's classification at all. Only the outermost
+	// invocation in that tree should report its own status.
+	if isTopLevelShimInvocation() {
+		LogInfo("Running directly (not sandboxed): %s %s", cmdName, strings.Join(args, " "))
 	}
 
-	binaryPath := resolvePinnedCommandPath(cmdName, nvxHome, nodeVer, rt)
+	rt := runtimeForShim(cmdName)
+	activeVer := getActiveShellVersionFor(nvxHome, rt.Name())
+	if activeVer == "" {
+		activeVer = getGlobalDefaultVersionFor(nvxHome, rt.Name())
+	}
+
+	binaryPath := resolvePinnedCommandPath(cmdName, nvxHome, activeVer, rt)
 	if binaryPath == "" {
 		if p := resolveProjectBinCommand(cmdName); p != "" {
 			binaryPath = p
@@ -352,10 +735,26 @@ func FormatPathForShell(shell, rawPath string) string {
 	return rawPath
 }
 
+func shellEnvAssignment(shell, key, value string) string {
+	if shell == "bash" || shell == "zsh" {
+		return "export " + key + "=" + quotePOSIXShell(value) + "\n"
+	}
+	return "$env:" + key + " = " + quotePowerShell(value) + "\n"
+}
+
+func quotePOSIXShell(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func quotePowerShell(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
 // PackageJSON is the minimal structure needed to extract the node version engines
 type PackageJSON struct {
 	Engines struct {
 		Node string `json:"node"`
+		Bun  string `json:"bun"`
 	} `json:"engines"`
 	Volta struct {
 		Node string `json:"node"`

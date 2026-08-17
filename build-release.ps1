@@ -1,5 +1,10 @@
+param(
+    [string]$Version = "0.4.0",
+    [string]$GoVersion = "1.26.6"
+)
+
 # build-release.ps1
-# Script to download Go 1.23.1 and cross-compile release binaries with checksums
+# Script to download Go and cross-compile release binaries with checksums
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -10,17 +15,38 @@ $goTempDir = Join-Path $scratchDir "go_temp"
 $goExe = Join-Path $goTempDir "go\bin\go.exe"
 $distDir = Join-Path $PSScriptRoot "dist"
 
-# 1. Download and extract Go 1.23.1 if not present
+# 1. Download and extract Go if not present
 if (-not (Test-Path $goExe)) {
-    Write-Host "Go 1.23.1 compiler not found. Downloading..." -ForegroundColor Cyan
+    Write-Host "Go $GoVersion compiler not found. Downloading..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $scratchDir -Force | Out-Null
     New-Item -ItemType Directory -Path $goTempDir -Force | Out-Null
-    $zipPath = Join-Path $scratchDir "go1.23.1.zip"
-    
+    $zipPath = Join-Path $scratchDir "go$GoVersion.zip"
     [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri "https://go.dev/dl/go1.23.1.windows-amd64.zip" -OutFile $zipPath -UseBasicParsing
-    
-    Write-Host "Extracting Go 1.23.1..." -ForegroundColor Cyan
+    $goUrl = "https://go.dev/dl/go$GoVersion.windows-amd64.zip"
+    Invoke-WebRequest -Uri $goUrl -OutFile $zipPath -UseBasicParsing
+
+    # The expected hash comes from the download index, not from a "<file>.sha256"
+    # sidecar. go.dev no longer serves those: the URL returns HTTP 200 with an HTML
+    # page, so the old code parsed "<!DOCTYPE" as the expected hash and this script
+    # threw "checksum verification failed" on every run, whatever was downloaded.
+    # A 404 would have been easier to spot; a 200 of the wrong content type is not.
+    $goIndex = Invoke-RestMethod -Uri "https://go.dev/dl/?mode=json&include=all" -UseBasicParsing
+    $goFile = $goIndex | ForEach-Object { $_.files } |
+        Where-Object { $_.filename -eq "go$GoVersion.windows-amd64.zip" } |
+        Select-Object -First 1
+    if (-not $goFile -or [string]::IsNullOrWhiteSpace($goFile.sha256)) {
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        throw "No published SHA256 for go$GoVersion.windows-amd64.zip; refusing to build with an unverified toolchain."
+    }
+    $expectedSha = $goFile.sha256.Trim().ToUpper()
+    $actualSha = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToUpper()
+    if ($expectedSha -ne $actualSha) {
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        throw "Go toolchain checksum verification failed. Expected $expectedSha, got $actualSha."
+    }
+    Write-Host "Go $GoVersion toolchain checksum verified." -ForegroundColor Green
+
+    Write-Host "Extracting Go $GoVersion..." -ForegroundColor Cyan
     Expand-Archive -Path $zipPath -DestinationPath $goTempDir -Force
     Remove-Item $zipPath -Force
 }
@@ -54,7 +80,7 @@ foreach ($target in $matrix) {
     $env:GOOS = $target.os
     $env:GOARCH = $target.arch
     
-    & $goExe build -ldflags="-s -w" -o $outPath .
+    & $goExe build -ldflags="-s -w -X main.appVersion=$Version" -o $outPath .
     
     # Reset env variables
     $env:GOOS = $null

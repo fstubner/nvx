@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
+
+var appVersion = "0.4.0"
 
 // Release represents a Node.js release from the official index.json
 type Release struct {
@@ -130,6 +133,24 @@ type RuntimeProvider interface {
 	ShimCommands() []string
 	ResolveBinary(cmd string, nvxHome string, pinnedVer string) string
 	DefaultNetworkAllow() []string
+	// SandboxImage returns the Docker image for a version (e.g. "node:20.11.0"),
+	// or "" if the runtime has no container image.
+	SandboxImage(version string) string
+	// SessionEnv returns extra environment variables to set when this runtime is
+	// activated for a shell session (e.g. GOROOT for Go, RUSTUP_HOME for Rust).
+	// Node and Bun need none and return nil. This is the extension point that
+	// lets future runtimes activate without changing the session-env plumbing.
+	SessionEnv(versionDir string) map[string]string
+}
+
+// runtimeDockerImage builds "<repo>:<tag>" from a version, defaulting to the
+// latest tag when no version is known.
+func runtimeDockerImage(repo, version string) string {
+	tag := "latest"
+	if v := strings.TrimPrefix(version, "v"); v != "" {
+		tag = v
+	}
+	return repo + ":" + tag
 }
 
 // NodeProvider implements RuntimeProvider for Node.js
@@ -187,6 +208,63 @@ func (n NodeProvider) DetectConfig(dir string) (version string, sourceFile strin
 	return DetectVersionConfig(dir)
 }
 
+func isNodeVersionInstalled(nvxHome, version string) bool {
+	versionDir := filepath.Join(nvxHome, "versions", "node", version)
+	binary := nodeBinaryPath(versionDir)
+	if info, err := os.Stat(binary); err == nil && !info.IsDir() {
+		return true
+	}
+	return false
+}
+
+func nodeBinaryPath(versionDir string) string {
+	binary := filepath.Join(versionDir, "bin", "node")
+	if runtime.GOOS == "windows" {
+		binary = filepath.Join(versionDir, "node.exe")
+	}
+	return binary
+}
+
+func acquireInstallLock(nvxHome, version string) (func(), error) {
+	return acquireRuntimeInstallLock(nvxHome, "node", version)
+}
+
+func acquireRuntimeInstallLock(nvxHome, runtimeName, version string) (func(), error) {
+	lockDir := filepath.Join(nvxHome, "versions", runtimeName)
+	if err := os.MkdirAll(lockDir, 0700); err != nil {
+		return nil, fmt.Errorf("create install lock directory: %w", err)
+	}
+	lockName, err := installLockFileName(version)
+	if err != nil {
+		return nil, err
+	}
+	lockPath := filepath.Join(lockDir, lockName)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("install for %s %s is already in progress or lock cannot be created: %w", runtimeName, version, err)
+	}
+	_, _ = fmt.Fprintf(f, "%d\n", os.Getpid())
+	release := func() {
+		_ = f.Close()
+		_ = os.Remove(lockPath)
+	}
+	return release, nil
+}
+
+func installLockFileName(version string) (string, error) {
+	version = strings.TrimSpace(version)
+	if version == "" || version == "." || version == ".." || filepath.Base(version) != version || filepath.VolumeName(version) != "" {
+		return "", fmt.Errorf("invalid Node.js version for install lock: %q", version)
+	}
+	for _, r := range version {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '-' || r == '_' {
+			continue
+		}
+		return "", fmt.Errorf("invalid Node.js version for install lock: %q", version)
+	}
+	return version + ".lock", nil
+}
+
 func (n NodeProvider) Install(version string, nvxHome string) error {
 	releases, err := FetchReleases()
 	if err != nil {
@@ -199,9 +277,23 @@ func (n NodeProvider) Install(version string, nvxHome string) error {
 	}
 
 	resolvedVer := release.Version
+	// Same guard as the Bun provider: this becomes a path segment, and the install
+	// calls os.RemoveAll on the resulting directory.
+	if err := safeVersionComponent(resolvedVer); err != nil {
+		return fmt.Errorf("refusing to install Node.js: %w", err)
+	}
 	destDir := filepath.Join(nvxHome, "versions", "node", resolvedVer)
 
-	if info, err := os.Stat(destDir); err == nil && info.IsDir() {
+	if isNodeVersionInstalled(nvxHome, resolvedVer) {
+		LogSuccess("Node.js %s is already installed.", resolvedVer)
+		return nil
+	}
+	releaseLock, err := acquireInstallLock(nvxHome, resolvedVer)
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+	if isNodeVersionInstalled(nvxHome, resolvedVer) {
 		LogSuccess("Node.js %s is already installed.", resolvedVer)
 		return nil
 	}
@@ -210,6 +302,7 @@ func (n NodeProvider) Install(version string, nvxHome string) error {
 	archiveFilename := fmt.Sprintf("node-%s-%s-%s.%s", resolvedVer, getOS(), arch, getExtension())
 	url := fmt.Sprintf("https://nodejs.org/dist/%s/%s", resolvedVer, archiveFilename)
 	tempFile := filepath.Join(GetDownloadsDir(), archiveFilename)
+	extractDir := destDir + fmt.Sprintf(".tmp.%d", os.Getpid())
 
 	LogInfo("Installing Node.js %s (%s)", resolvedVer, arch)
 	LogInfo("URL: %s", url)
@@ -225,19 +318,29 @@ func (n NodeProvider) Install(version string, nvxHome string) error {
 		return err
 	}
 
+	_ = os.RemoveAll(extractDir)
+	defer os.RemoveAll(extractDir)
 	if getOS() == "win" {
-		err = ExtractZip(tempFile, destDir)
+		err = ExtractZip(tempFile, extractDir)
 	} else {
-		err = ExtractTarGz(tempFile, destDir)
+		err = ExtractTarGz(tempFile, extractDir)
 	}
 
 	if err != nil {
 		return err
 	}
+	if info, err := os.Stat(nodeBinaryPath(extractDir)); err != nil || info.IsDir() {
+		return fmt.Errorf("extracted Node.js archive did not contain expected runtime binary at %s", nodeBinaryPath(extractDir))
+	}
+	if err := os.RemoveAll(destDir); err != nil {
+		return fmt.Errorf("remove incomplete install directory: %w", err)
+	}
+	if err := os.Rename(extractDir, destDir); err != nil {
+		return fmt.Errorf("activate installed Node.js version: %w", err)
+	}
 
 	LogSuccess("Node.js %s installed successfully to: %s", resolvedVer, destDir)
 	return nil
-
 
 }
 
@@ -246,7 +349,16 @@ func (n NodeProvider) Uninstall(version string, nvxHome string) error {
 	if err != nil {
 		return err
 	}
+	if getGlobalDefaultVersion(nvxHome) == resolvedVer {
+		return fmt.Errorf("refusing to uninstall Node.js %s because it is the global default; set a different default first", resolvedVer)
+	}
+	if getActiveShellVersion(nvxHome) == resolvedVer {
+		return fmt.Errorf("refusing to uninstall Node.js %s because it is active in this shell", resolvedVer)
+	}
 
+	if err := safeVersionComponent(resolvedVer); err != nil {
+		return fmt.Errorf("refusing to uninstall Node.js: %w", err)
+	}
 	destDir := filepath.Join(nvxHome, "versions", "node", resolvedVer)
 	LogInfo("Uninstalling Node.js %s...", resolvedVer)
 
@@ -270,7 +382,10 @@ func MigrateLegacyNodeVersions(nvxHome string) {
 	nodeDir := filepath.Join(nvxHome, "versions", "node")
 	for _, entry := range entries {
 		if entry.IsDir() && strings.HasPrefix(entry.Name(), "v") {
-			_ = os.MkdirAll(nodeDir, 0755)
+			if err := os.MkdirAll(nodeDir, 0700); err != nil {
+				LogWarn("Failed to create Node versions directory for migration: %v", err)
+				continue
+			}
 			oldPath := filepath.Join(legacyDir, entry.Name())
 			newPath := filepath.Join(nodeDir, entry.Name())
 			_ = os.Rename(oldPath, newPath)
@@ -281,5 +396,5 @@ func MigrateLegacyNodeVersions(nvxHome string) {
 // Providers maps runtime names to their respective RuntimeProvider implementations
 var Providers = map[string]RuntimeProvider{
 	"node": NodeProvider{},
+	"bun":  BunProvider{},
 }
-

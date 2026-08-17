@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-18
+
+**0.3.0 was never published.** It has a dated entry below and `version.go` claims
+it, but no `v0.3.0` tag exists, so the newest downloadable build is `v0.2.0-beta`
+— which predates every fix listed here. Anyone tracking releases has none of this.
+
+### Security
+
+Each of these was reproduced by execution, not inferred from reading.
+
+* **Linux containment did not work at all.** Every sandboxed launch failed on
+  `/dev/null`: the read-only rules requested a directory-only Landlock right on a
+  character device, which the kernel rejects, and the failure was fatal. It failed
+  closed, so nothing was exposed — the feature was simply dead on every Linux system.
+* **Linux proxy mode could not reach allowed hosts.** The egress proxy was started
+  *inside* the loopback-only network namespace, leaving allowlisted traffic no route
+  out. The proxy now runs outside the namespace and the contained process reaches it
+  over a UNIX socket, which a namespace does not contain.
+* **The Linux seccomp filter was inverted**, allowing the UDP it claimed to block
+  and denying the AF_UNIX the sandbox needs. Unreachable while containment was dead;
+  fixed alongside it.
+* **`linux/arm64` used the wrong syscall numbers** — every entry one too high, so
+  `landlock_restrict_self` invoked `memfd_secret` and the error misleadingly blamed
+  the kernel version. This is a published release target.
+* **The Linux sandbox could read all of `~/.nvx`**, including other tools' persisted
+  credentials in `tool_home`, the grants pin store, and `policy.json`. Narrowed to
+  the runtime trees it actually needs.
+* **macOS granted the sandbox write access to `~/.nvx` and the runtime directory**
+  on the default path, so a contained process could rewrite `policy.json`,
+  self-approve grants, poison `npm_global`, or replace the `node` binary every later
+  run executes. A persistent sandbox defeat.
+* **Windows never delivered piped stdio to the sandboxed child**, so every
+  stdio-protocol daemon — that is, every MCP server — failed deterministically, while
+  interactive use looked healthy.
+* **Orphaned sandbox processes were not cleaned up** (Linux reaping, Windows job
+  object), so abandoned launches accumulated until the tool had to be removed.
+* **A cached binary path is now validated before execution** instead of being
+  trusted to still be on `PATH`.
+* **Fixed a data race in the egress proxy** that could abort a run outright: the
+  session map was read without the lock guarding its writes, and ordinary parallel
+  package-manager traffic could trigger it.
+
+### Changed
+
+* **macOS: `npm install -g` inside the sandbox is now denied**, matching Windows and
+  Linux. Global installs write under `~/.nvx`, which is no longer writable from
+  inside. This is the documented design, but it is a behaviour change for anyone who
+  relied on the gap.
+* **Windows: `nvx setup` is optional.** The sandbox runs unelevated; setup adds the
+  loopback exemption that enables allowlisted egress.
+* **Windows sandbox startup is roughly 13x faster** — a measured launch went from
+  90.7s to 6.6s. The cost was an ACL walk re-granting directory ancestors on every
+  launch, hanging on one of them until it timed out.
+* **Uncontained runs are announced** rather than proceeding silently.
+
+### Fixed
+
+* **Documentation corrected where it overclaimed.** `README.md`, `SECURITY.md` and
+  `docs/enforcement-matrix.md` stated that Windows restricts egress to the policy
+  allowlist. It does not, unless an elevated `nvx setup` has run: by default the
+  sandbox is granted `internetClient` and the proxy variables are stripped, so the
+  allowlist is never consulted — not even cooperatively.
+* **CI verifies containment instead of reporting green.** Both Windows smoke tests
+  exited 0 unconditionally on CI, and the egress test asserted only that blocked
+  traffic fails — which a sandbox denying everything passes perfectly. The privileged
+  Linux tests now run, and both egress tests assert the allow path too.
+
+### Added
+
+* `nvx doctor` — diagnoses and repairs shim interception, including a shadowed
+  persistent `PATH` on Windows.
+* `nvx grants list` and `nvx grants reset [--all]`.
+* `nvx import`, quiet/agent-mode flags, and wildcard trusted-package patterns.
+* Containment v2: subcommand-aware classification, `isolation.level`
+  (`standard`/`strict`), and `--strict`/`--standard` flags.
+* Persistent per-tool guest profiles under `~/.nvx/tool_home`, so a trusted tool
+  keeps its own state without being handed the real home directory.
+
+### Known limitations
+
+* **Windows egress is not allowlisted without an elevated `nvx setup`.** A
+  no-elevation design has been shown feasible — an AppContainer can reach an AF_UNIX
+  socket held by the parent, and intra-container loopback works — but it needs an
+  in-container supervisor that does not exist yet.
+* **The macOS fixes are verified at profile-generation level only.** Whether
+  `sandbox-exec` enforces the generated profile as written has not been re-tested on
+  macOS hardware.
+* **The sandbox re-entrancy marker is a plain environment variable** and can be
+  forged by a process able to set its own environment.
+
+## [0.3.0] - 2026-07-05
+
+### Added
+* **Bun runtime**: `nvx install bun@1.2` (and `bun`/`latest`), managed the same way as Node.js with mandatory checksum verification. `bun`/`bunx` shims route to the Bun provider.
+* **`runtime@version` CLI**: install/use/default/uninstall accept a runtime prefix; a bare version stays Node.js for nvm compatibility. Node and Bun can be active in one shell without evicting each other from `PATH`.
+* **FilesystemProvider registry**: `native` and `docker` are first-class; `wsl`/`wslc`/`systemd-nspawn` are gated behind `NVX_EXPERIMENTAL=1`. An unavailable backend (e.g. Docker not running) fails closed before launch.
+* **Docker hardening**: image selected per runtime; `offline`/`loopback` enforced with `--network none`; `--cap-drop=ALL`, `no-new-privileges`, `--pids-limit`, `tmpfs /tmp`.
+* **Audit log**: `~/.nvx/audit.log` records egress allow/deny and policy-trust events.
+* **Docs**: `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `docs/runtime-providers.md`, `docs/enforcement-matrix.md`, and a tag-triggered release workflow.
+
+### Changed
+* **JS runtime focus**: shipped runtimes are Node.js and Bun only. Deno, Go, Python, and uv/pyx work remains on the `feature/polyglot-runtimes` branch.
+* **Project policy trust**: approved egress hosts persist under `~/.nvx/grants` (outside the project tree) instead of `.nvx-policy.json`. A project policy file that would weaken settings is ignored unless its exact contents are trusted for that project (prompted once; fail-closed when non-interactive).
+* **Fail-closed policy parsing**: the Linux sandbox child aborts on a policy parse error instead of falling back to defaults.
+* **Faster shims**: resolved runtime binary paths are cached (keyed by `PATH`) so the shim skips the expensive Windows `PATH` scan on repeat calls — dispatch overhead drops from ~100 ms to ~38 ms on Windows, and measures ~3 ms on Linux and ~4 ms on macOS (GitHub-hosted runners). See `scripts/bench.py`.
+
 ## [0.2.0-beta] - 2026-07-02
 
 ### Added
