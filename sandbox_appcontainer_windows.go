@@ -55,8 +55,14 @@ func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) error
 	}
 	// Tools stat the ancestors of both the working directory and the guest home
 	// (which is HOME inside the sandbox), so grant traverse on both chains.
-	grantWorkdirAncestors(sid, workDir)
-	grantWorkdirAncestors(sid, guestHome)
+	aWork, eWork := grantWorkdirAncestors(sid, workDir)
+	aHome, eHome := grantWorkdirAncestors(sid, guestHome)
+	if skipped := (eWork + eHome) - (aWork + aHome); skipped > 0 {
+		// Not worth a warning: these grants are advisory and the command runs without
+		// them. Silence would hide a genuinely slow filesystem, so report once per
+		// launch rather than once per directory chain.
+		LogInfo("Skipped %d of %d ancestor permission checks to keep startup fast.", skipped, eWork+eHome)
+	}
 	return nil
 }
 
@@ -71,26 +77,18 @@ func isProfileRoot(dir string) bool {
 // at the profile root: that root already grants ALL APPLICATION PACKAGES (and
 // writing its ACL hangs behind the OneDrive/Defender filter driver), and C:\ /
 // C:\Users are handled once by `nvx setup`. Best-effort and time-boxed.
-func grantWorkdirAncestors(sid uintptr, workDir string) {
-	if workDir == "" {
-		return
+// grantWorkdirAncestors returns how many ancestor grants it attempted and how many
+// were eligible, so the caller can report once for the whole launch rather than
+// once per chain.
+func grantWorkdirAncestors(sid uintptr, workDir string) (attempted, eligible int) {
+	paths := ancestorGrantPaths(workDir, os.Getenv("USERPROFILE"))
+	if len(paths) == 0 {
+		return 0, 0
 	}
-	profile := ""
-	if up := os.Getenv("USERPROFILE"); up != "" {
-		profile = filepath.Clean(up)
-	}
-	dir := filepath.Dir(filepath.Clean(workDir))
-	for i := 0; i < 40; i++ {
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break // reached the drive root
-		}
-		if profile == "" || !isPathStrictlyUnder(dir, profile) {
-			break
-		}
-		_ = grantAppContainerPathReadExec(sid, dir)
-		dir = parent
-	}
+	attempted = grantAncestorsWithinBudget(paths, ancestorGrantBudget, func(p string) error {
+		return grantAppContainerPathReadExecTimeboxed(sid, p, ancestorGrantPerPath)
+	})
+	return attempted, len(paths)
 }
 
 // isPathStrictlyUnder reports whether path is a proper descendant of base.
@@ -230,7 +228,7 @@ func ensureAppContainerCommand(sid uintptr, nvxHome, cmdPath string) (string, er
 	// process can resolve the binary's parent but fails to lstat/traverse its
 	// way there (Node's own realpathSync on argv[0] hits this during startup).
 	// Mirrors the same treatment workDir/guestHome already get.
-	grantWorkdirAncestors(sid, dir)
+	_, _ = grantWorkdirAncestors(sid, dir)
 	return usePath, nil
 }
 
@@ -335,6 +333,13 @@ func grantAppContainerPathReadExecTree(sid uintptr, path string) error {
 // present, so the common case costs one cheap ACL read instead of a write that
 // can stall behind a filter driver.
 func grantAppContainerPathReadExec(sid uintptr, path string) error {
+	return grantAppContainerPathReadExecTimeboxed(sid, path, 15*time.Second)
+}
+
+// grantAppContainerPathReadExecTimeboxed is grantAppContainerPathReadExec with an
+// explicit per-call timeout, so the ancestor walk can bound an individual grant far
+// more tightly than a direct, necessary grant would want.
+func grantAppContainerPathReadExecTimeboxed(sid uintptr, path string, timeout time.Duration) error {
 	sidStr, err := appContainerSidToString(sid)
 	if err != nil {
 		return err
@@ -343,7 +348,7 @@ func grantAppContainerPathReadExec(sid uintptr, path string) error {
 		return nil
 	}
 	grantArg := fmt.Sprintf("*%s:(RX)", sidStr)
-	out, err := runWinCmd(15*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
+	out, err := runWinCmd(timeout, "icacls", path, "/grant", grantArg, "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls RX grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
