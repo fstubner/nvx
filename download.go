@@ -42,6 +42,7 @@ func DownloadFile(url, destPath string) error {
 	client := &http.Client{
 		Timeout: 60 * time.Second,
 	}
+	// #nosec G704 -- fetching a caller-supplied URL is this function's entire purpose; the URLs are built from the runtime release indexes, and what arrives is checksum-verified before use
 	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
@@ -394,6 +395,7 @@ func ExtractTarGz(tarPath, destDir string) error {
 
 		switch header.Typeflag {
 		case tar.TypeDir:
+			// #nosec G115 -- header.Mode is attacker-controlled, but &0770 bounds the result: setuid, setgid, sticky and world bits cannot survive the mask however the conversion wraps
 			if err := os.MkdirAll(fpath, os.FileMode(header.Mode)&0770); err != nil {
 				return fmt.Errorf("failed to create directory: %w", err)
 			}
@@ -401,6 +403,7 @@ func ExtractTarGz(tarPath, destDir string) error {
 			if err := os.MkdirAll(filepath.Dir(fpath), 0700); err != nil {
 				return fmt.Errorf("failed to create subdirectory: %w", err)
 			}
+			// #nosec G115 -- same as above: &0770 bounds an attacker-controlled tar mode, so no setuid/setgid bit can reach the created file
 			outFile, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode)&0770)
 			if err != nil {
 				return fmt.Errorf("failed to open destination file %s: %w", fpath, err)

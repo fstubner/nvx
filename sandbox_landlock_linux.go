@@ -89,6 +89,7 @@ func landlockAddRule(rulesetFD int, access uint64, path string) error {
 	}
 	defer syscall.Close(parentFD)
 
+	// #nosec G115 -- parentFD is a file descriptor from syscall.Open; the kernel's per-process limit is orders of magnitude below int32
 	attr := landlockPathBeneathAttr{allowedAccess: access, parentFd: int32(parentFD)}
 	_, errno := landlockCall(
 		landlockSyscallAddRule(),

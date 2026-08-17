@@ -19,12 +19,22 @@ $ErrorActionPreference = 'Stop'
 #   G103 - use of unsafe. Unavoidable: the Windows sandbox calls Win32 APIs
 #          directly, which requires unsafe.Pointer. 48 of the 48 hits are in the
 #          syscall layer.
+#   G702 - command injection by taint analysis. Both hits are exec.Command on a
+#          runtime path nvx itself resolved. Running a user-named binary is what
+#          this tool is; same reasoning as G204 above.
+#   G703 - path traversal by taint analysis. 22 hits, essentially all os.Stat or
+#          filepath.Join on paths derived from CLI arguments and policy, most of
+#          them read-only existence checks. Same reasoning as G304 above.
+# Triaged 2026-08-17: of 34 findings, one was real (registry URLs built from an
+# unescaped package name, fixed) and the rest fell into the categories above.
+# G115 and the remaining G704 are annotated at the source instead, because integer
+# conversion and outbound requests are classes worth keeping enabled elsewhere.
 # Narrower suppressions live at the source as #nosec comments with a reason.
 # Tool versions are PINNED, not @latest. A gate whose strictness drifts with
 # upstream releases turns red without a code change, and then gets ignored.
 # Upgrading is a deliberate act: newer gosec adds rules (the v2.2x taint-analysis
 # set, G702/G703/G704) that report findings this codebase has never triaged.
-$GosecExclude = 'G204,G304,G301,G306,G103'
+$GosecExclude = 'G204,G304,G301,G306,G103,G702,G703'
 
 # Where `go install` actually puts binaries. This used to be hardcoded to
 # $env:USERPROFILE\go\bin, which is wrong wherever GOPATH or GOBIN is set
