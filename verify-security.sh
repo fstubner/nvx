@@ -62,27 +62,46 @@ run_check() {
 
 echo -e "\033[36mRunning local security checks for nvx...\033[0m"
 
-# 1. govulncheck
-if command -v govulncheck >/dev/null 2>&1; then
-    GOVULNCHECK="govulncheck"
-elif [ -x "$GO_BIN_DIR/govulncheck" ]; then
-    GOVULNCHECK="$GO_BIN_DIR/govulncheck"
-else
-    echo -e "\033[33mInstalling govulncheck...\033[0m"
-    go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-    GOVULNCHECK="$GO_BIN_DIR/govulncheck"
-fi
+# ensure_tool guarantees the tool on disk is BOTH the pinned version and built by
+# the Go toolchain now in use, reinstalling it otherwise.
+#
+# The previous logic installed only when the binary was missing, so a stale one was
+# reused forever. That is not theoretical: after a Go upgrade, binaries built by the
+# old toolchain could not parse the newer source at all -- govulncheck reported
+# "uses version go1.19 of the source-processing packages but runs version go1.26 of
+# 'go list'" and gosec panicked inside x/tools. Both failures looked like the code
+# was at fault.
+#
+# `go version -m` reports both facts from the binary's embedded build info, which is
+# the only reliable source: gosec built via `go install` reports its own --version
+# as "dev". Checking is fast; installing unconditionally costs ~17s per run, which
+# is enough to stop people running the gate.
+ensure_tool() {
+    label="$1"; exe="$2"; module="$3"; version="$4"; modpath="$5"
+    gover="$(go env GOVERSION 2>/dev/null)"
 
-# 2. gosec
-if command -v gosec >/dev/null 2>&1; then
-    GOSEC="gosec"
-elif [ -x "$GO_BIN_DIR/gosec" ]; then
-    GOSEC="$GO_BIN_DIR/gosec"
-else
-    echo -e "\033[33mInstalling gosec...\033[0m"
-    go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
-    GOSEC="$GO_BIN_DIR/gosec"
-fi
+    if [ -x "$exe" ]; then
+        info="$(go version -m "$exe" 2>/dev/null)"
+        built="$(printf '%s\n' "$info" | head -1 | sed 's/.*: *//')"
+        modver="$(printf '%s\n' "$info" | awk -v m="$modpath" '$1=="mod" && $2==m {print $3; exit}')"
+        if [ "$built" = "$gover" ] && [ "$modver" = "$version" ]; then
+            return 0
+        fi
+        printf '\033[33mReinstalling %s: have %s built by %s, want %s built by %s\033[0m\n' \
+            "$label" "${modver:-unknown}" "${built:-unknown}" "$version" "$gover"
+    else
+        printf '\033[33mInstalling %s %s...\033[0m\n' "$label" "$version"
+    fi
+    go install "$module@$version"
+}
+
+ensure_tool "govulncheck" "$GO_BIN_DIR/govulncheck" "golang.org/x/vuln/cmd/govulncheck" "v1.7.0" "golang.org/x/vuln"
+ensure_tool "gosec" "$GO_BIN_DIR/gosec" "github.com/securego/gosec/v2/cmd/gosec" "v2.28.0" "github.com/securego/gosec/v2"
+
+# Always run the copies we just verified, never whatever is first on PATH -- a
+# different build of either tool there would silently change what this gate checks.
+GOVULNCHECK="$GO_BIN_DIR/govulncheck"
+GOSEC="$GO_BIN_DIR/gosec"
 
 run_check "govulncheck" "$GOVULNCHECK" ./...
 run_check "gosec" "$GOSEC" "-exclude=$GOSEC_EXCLUDE" ./...
