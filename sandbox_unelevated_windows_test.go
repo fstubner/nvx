@@ -61,7 +61,12 @@ func TestUnelevatedSandboxRunsPackageManager(t *testing.T) {
 	}
 	npmPath := resolvePinnedCommandPath("npm", nvxHome, ver, rt)
 	if npmPath == "" {
-		t.Fatal("could not resolve npm")
+		// An nvx-managed runtime under ~/.nvx/versions is a precondition, not the
+		// thing under test -- a machine that has node on PATH but has never run
+		// `nvx install` resolves to "". Failing here would report an environment gap
+		// as a defect. scripts/sandbox-smoke.ps1 stages a runtime itself and covers
+		// this same launch path where that matters.
+		t.Skipf("no nvx-managed %s runtime staged under %s; run `nvx install` or see scripts/sandbox-smoke.ps1", rt.Name(), nvxHome)
 	}
 	t.Logf("npm resolved to: %s", npmPath)
 
