@@ -7,10 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-08-17
-
-*Prepared but not yet tagged. If the tag lands on a different day, update the date
-above.*
+## [0.4.0] - 2026-08-18
 
 **0.3.0 was never published.** It has a dated entry below and `version.go` claims
 it, but no `v0.3.0` tag exists, so the newest downloadable build is `v0.2.0-beta`
