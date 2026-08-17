@@ -1,15 +1,21 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
+// usePersistentProfile reports whether a run should use a persistent per-tool
+// guest profile instead of an ephemeral one. ToolName is set (in runShim) only
+// for an approved trusted tool, so its presence is the signal.
+func usePersistentProfile(toolName string) bool {
+	return toolName != ""
+}
+
 // runNativeSandbox is the hardened default sandbox: platform-specific OS
-// primitives (AppContainer + Low IL on Windows, Landlock on Linux, Seatbelt
-// on macOS) layered on env scrubbing and an ephemeral guest profile.
+// primitives (AppContainer on Windows, Landlock on Linux, Seatbelt on macOS)
+// layered on env scrubbing and an ephemeral guest profile.
 func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, netCtx NetworkLaunchContext) int {
 	sandboxID, err := generateSandboxID()
 	if err != nil {
@@ -19,12 +25,33 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 
 	LogInfo("Sandbox session: %s", sandboxID)
 
-	guestHome, err := createGuestProfile(config.NvxHome, sandboxID)
-	if err != nil {
-		LogError("Failed to create sandbox guest profile: %v", err)
+	var guestHome string
+	if usePersistentProfile(config.ToolName) {
+		scope := projectScopeDir()
+		guestHome, err = ensurePersistentGuestProfile(config.NvxHome, scope, config.ToolName)
+		if err != nil {
+			LogError("Failed to create persistent tool profile: %v", err)
+			return 1
+		}
+		// Persistent: intentionally NOT cleaned up, so credentials survive to
+		// the next run. Still fully contained; the real home is never used.
+		LogInfo("%q: using a persistent profile for this project (contained; your real home is untouched).", config.ToolName)
+	} else {
+		guestHome, err = createGuestProfile(config.NvxHome, sandboxID)
+		if err != nil {
+			LogError("Failed to create sandbox guest profile: %v", err)
+			return 1
+		}
+		defer cleanupGuestProfile(config.NvxHome, sandboxID)
+	}
+
+	// Platforms that place the sandboxed process in a network namespace need the
+	// parent's proxy exposed on a UNIX socket inside the guest home, since a
+	// namespace-local TCP address cannot reach out. No-op elsewhere.
+	if err := prepareEgressForNamespace(egress, guestHome, &netCtx); err != nil {
+		LogError("Egress proxy setup for namespace isolation failed: %v", err)
 		return 1
 	}
-	defer cleanupGuestProfile(config.NvxHome, sandboxID)
 
 	cleanEnv := scrubEnvironment(guestHome)
 	cleanEnv = applyProxyEnv(cleanEnv, egress)
@@ -55,11 +82,11 @@ func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
 		}
 	}
 
-	nodeVer := getActiveShellVersion(config.NvxHome)
-	if nodeVer == "" {
-		nodeVer = getGlobalDefaultVersion(config.NvxHome)
+	activeVer := getActiveShellVersionFor(config.NvxHome, rt.Name())
+	if activeVer == "" {
+		activeVer = getGlobalDefaultVersionFor(config.NvxHome, rt.Name())
 	}
-	if p := resolvePinnedCommandPath(config.Command, config.NvxHome, nodeVer, rt); p != "" {
+	if p := resolvePinnedCommandPath(config.Command, config.NvxHome, activeVer, rt); p != "" {
 		return preferWindowsRuntimeExe(p)
 	}
 	if p := resolveProjectBinCommand(config.Command); p != "" {
@@ -75,7 +102,7 @@ func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
 }
 
 // parseLandlockExecArgs parses internal __landlock-exec arguments.
-func parseLandlockExecArgs(argv []string) (guestHome, workDir, nvxHome, networkMode, shimCommand string, proxyPort int, cmdPath string, cmdArgs []string, ok bool) {
+func parseLandlockExecArgs(argv []string) (guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath string, cmdArgs []string, ok bool) {
 	for i := 0; i < len(argv); i++ {
 		arg := argv[i]
 		switch {
@@ -89,16 +116,16 @@ func parseLandlockExecArgs(argv []string) (guestHome, workDir, nvxHome, networkM
 			networkMode = strings.TrimPrefix(arg, "--network-mode=")
 		case strings.HasPrefix(arg, "--command="):
 			shimCommand = strings.TrimPrefix(arg, "--command=")
-		case strings.HasPrefix(arg, "--proxy-port="):
-			fmt.Sscanf(strings.TrimPrefix(arg, "--proxy-port="), "%d", &proxyPort)
+		case strings.HasPrefix(arg, "--egress-socket="):
+			egressSocket = strings.TrimPrefix(arg, "--egress-socket=")
 		case arg == "--":
 			if i+1 < len(argv) {
 				cmdPath = argv[i+1]
 				cmdArgs = argv[i+2:]
-				return guestHome, workDir, nvxHome, networkMode, shimCommand, proxyPort, cmdPath, cmdArgs, guestHome != "" && workDir != "" && cmdPath != ""
+				return guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath, cmdArgs, guestHome != "" && workDir != "" && cmdPath != ""
 			}
-			return "", "", "", "", "", 0, "", nil, false
+			return "", "", "", "", "", "", "", nil, false
 		}
 	}
-	return "", "", "", "", "", 0, "", nil, false
+	return "", "", "", "", "", "", "", nil, false
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -24,6 +25,11 @@ type SandboxConfig struct {
 	WorkDir string
 	// FilesystemProvider overrides isolation.filesystem.provider from policy.
 	FilesystemProvider string
+	// ToolName is set when this invocation is a granted trusted tool (see
+	// ensureTrustedToolGrant) — the native sandbox uses a persistent per-tool
+	// guest profile instead of an ephemeral one for the run. Empty means "use
+	// the ephemeral guest home" (the default, contained behavior).
+	ToolName string
 }
 
 // sensitiveEnvPrefixes are environment variable prefixes that will be scrubbed
@@ -55,21 +61,17 @@ var sensitiveEnvPrefixes = []string{
 // windowsAllowedEnvKeys are the only environment variables allowed through on Windows
 // when running in sandbox mode.
 var windowsAllowedEnvKeys = map[string]bool{
-	"PATH":              true,
-	"PATHEXT":           true,
-	"SYSTEMROOT":        true,
-	"SYSTEMDRIVE":       true,
-	"COMSPEC":           true,
-	"TEMP":              true,
-	"TMP":               true,
-	"WINDIR":            true,
-	"HTTP_PROXY":        true,
-	"HTTPS_PROXY":       true,
-	"ALL_PROXY":         true,
-	"NO_PROXY":          true,
+	"PATH":                   true,
+	"PATHEXT":                true,
+	"SYSTEMROOT":             true,
+	"SYSTEMDRIVE":            true,
+	"COMSPEC":                true,
+	"TEMP":                   true,
+	"TMP":                    true,
+	"WINDIR":                 true,
 	"PROCESSOR_ARCHITECTURE": true,
 	"NUMBER_OF_PROCESSORS":   true,
-	"OS":                true,
+	"OS":                     true,
 }
 
 // unixAllowedEnvKeys are the only environment variables allowed through on Unix
@@ -82,10 +84,6 @@ var unixAllowedEnvKeys = map[string]bool{
 	"LANG":   true,
 	"LC_ALL": true,
 	"USER":   true,
-	"HTTP_PROXY":  true,
-	"HTTPS_PROXY": true,
-	"ALL_PROXY":   true,
-	"NO_PROXY":    true,
 }
 
 // generateSandboxID creates a short random identifier for an ephemeral sandbox session.
@@ -102,19 +100,67 @@ func getSandboxHomeDir(nvxHome string) string {
 	return filepath.Join(nvxHome, "sandbox_home")
 }
 
+// getToolHomeDir returns the root directory for persistent per-tool guest
+// profiles. It is a sibling of getSandboxHomeDir (the ephemeral root) so that
+// cleanupStaleSandboxes, which wipes sandbox_home, never touches persistent
+// tool state.
+func getToolHomeDir(nvxHome string) string {
+	return filepath.Join(nvxHome, "tool_home")
+}
+
+// toolHomeKey derives a stable directory name for a (project scope, tool)
+// pair, so a tool trusted in one project gets its own persistent profile that
+// is not shared with other projects or other tools.
+func toolHomeKey(scopeDir, toolName string) string {
+	h := sha256.Sum256([]byte(filepath.Clean(scopeDir) + "\x00" + strings.ToLower(toolName)))
+	return hex.EncodeToString(h[:])[:16]
+}
+
+// createProfileSkeleton creates the minimal directory structure a guest home
+// needs (scratch tmp + config/cache dirs) so a low-privilege sandboxed process
+// can write to expected locations.
+func createProfileSkeleton(guestHome string) error {
+	subdirs := []string{"tmp", ".config", ".cache"}
+	if runtime.GOOS == "windows" {
+		subdirs = append(subdirs, filepath.Join("AppData", "Roaming"), filepath.Join("AppData", "Local"))
+	} else {
+		subdirs = append(subdirs, filepath.Join(".local", "share"))
+	}
+	for _, subdir := range subdirs {
+		if err := os.MkdirAll(filepath.Join(guestHome, subdir), 0700); err != nil {
+			return fmt.Errorf("failed to create guest profile subdirectory %s: %w", subdir, err)
+		}
+	}
+	return nil
+}
+
 // createGuestProfile creates an ephemeral guest home directory for the sandbox session.
 // Returns the path to the guest home and any error encountered.
 func createGuestProfile(nvxHome string, sandboxID string) (string, error) {
 	guestHome := filepath.Join(getSandboxHomeDir(nvxHome), sandboxID)
-	if err := os.MkdirAll(guestHome, 0755); err != nil {
+	if err := os.MkdirAll(guestHome, 0700); err != nil {
 		return "", fmt.Errorf("failed to create guest profile directory: %w", err)
 	}
-
-	// Create minimal directory structure inside the guest home
-	for _, subdir := range []string{"tmp", ".config", ".cache"} {
-		_ = os.MkdirAll(filepath.Join(guestHome, subdir), 0755)
+	if err := createProfileSkeleton(guestHome); err != nil {
+		return "", err
 	}
+	return guestHome, nil
+}
 
+// ensurePersistentGuestProfile returns a stable guest home for (scopeDir,
+// toolName), creating it (with the standard skeleton) on first use and reusing
+// it — without wiping existing state — thereafter. Unlike createGuestProfile,
+// this directory is never cleaned up after a run, so credentials a trusted
+// tool writes survive across invocations. It lives entirely under nvxHome and
+// never touches the user's real home.
+func ensurePersistentGuestProfile(nvxHome, scopeDir, toolName string) (string, error) {
+	guestHome := filepath.Join(getToolHomeDir(nvxHome), toolHomeKey(scopeDir, toolName))
+	if err := os.MkdirAll(guestHome, 0700); err != nil {
+		return "", fmt.Errorf("failed to create persistent tool profile: %w", err)
+	}
+	if err := createProfileSkeleton(guestHome); err != nil {
+		return "", err
+	}
 	return guestHome, nil
 }
 
@@ -186,9 +232,6 @@ func scrubEnvironment(guestHome string) []string {
 				fmt.Sprintf("TEMP=%s", guestTmp),
 				fmt.Sprintf("TMP=%s", guestTmp),
 			)
-			// Create the AppData directories
-			_ = os.MkdirAll(filepath.Join(guestHome, "AppData", "Roaming"), 0755)
-			_ = os.MkdirAll(filepath.Join(guestHome, "AppData", "Local"), 0755)
 		} else {
 			cleanEnv = append(cleanEnv,
 				fmt.Sprintf("HOME=%s", guestHome),
@@ -197,7 +240,6 @@ func scrubEnvironment(guestHome string) []string {
 				fmt.Sprintf("XDG_DATA_HOME=%s", filepath.Join(guestHome, ".local", "share")),
 				fmt.Sprintf("TMPDIR=%s", guestTmp),
 			)
-			_ = os.MkdirAll(filepath.Join(guestHome, ".local", "share"), 0755)
 		}
 	}
 
@@ -214,6 +256,11 @@ type NetworkLaunchContext struct {
 	HTTPProxyPort  uint16
 	SOCKSProxyHost string
 	SOCKSProxyPort uint16
+	// EgressSocketPath is the UNIX socket the parent's egress proxy also listens
+	// on, for platforms that put the sandboxed process in a network namespace.
+	// A netns has no route to any allowlisted host, so the proxy must stay
+	// outside it; a UNIX socket is how the contained side still reaches it.
+	EgressSocketPath string
 }
 
 // runSandbox is the main entry point for executing a command inside the nvx sandbox.
@@ -221,51 +268,30 @@ type NetworkLaunchContext struct {
 // isolation primitives, runs the command, and cleans up afterward.
 // resolvePinnedCommandPath is defined in runtime_exec.go.
 
-// runDockerSandbox runs the execution request inside a Docker container
-func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string, egress *EgressProxy) int {
-	nodeVer := pinnedVer
-	if nodeVer == "" {
-		nodeVer = getActiveShellVersion(nvxHome)
+// runDockerSandbox runs the execution request inside a Docker container. The
+// image comes from the runtime provider (node -> node:<ver>, bun -> oven/bun),
+// and offline/loopback network modes are enforced with `--network none`.
+func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string, egress *EgressProxy, rt RuntimeProvider, netCtx NetworkLaunchContext) int {
+	ver := pinnedVer
+	if ver == "" {
+		ver = getActiveShellVersionFor(nvxHome, rt.Name())
 	}
-	if nodeVer == "" {
-		nodeVer = getGlobalDefaultVersion(nvxHome)
+	if ver == "" {
+		ver = getGlobalDefaultVersionFor(nvxHome, rt.Name())
 	}
 
-	imageTag := "latest"
-	if nodeVer != "" {
-		imageTag = strings.TrimPrefix(nodeVer, "v")
+	imageName := rt.SandboxImage(ver)
+	if imageName == "" {
+		LogError("The %s runtime does not provide a Docker image; use the native provider.", rt.Name())
+		return 1
 	}
-	imageName := "node:" + imageTag
 
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "/"
 	}
 
-	dockerArgs := []string{
-		"run",
-		"--rm",
-		"-i",
-	}
-
-	// Bind mount the current directory to container /app directory
-	dockerArgs = append(dockerArgs, "-v", fmt.Sprintf("%s:/app", cwd))
-	dockerArgs = append(dockerArgs, "-w", "/app")
-
-	// Scrub and carry over safe environment variables
-	cleanEnv := scrubEnvironment("")
-	cleanEnv = applyProxyEnv(cleanEnv, egress)
-	for _, envVar := range cleanEnv {
-		parts := strings.SplitN(envVar, "=", 2)
-		if len(parts) == 2 && parts[0] != "PATH" && parts[0] != "NVX_SANDBOX" {
-			dockerArgs = append(dockerArgs, "-e", envVar)
-		}
-	}
-
-	dockerArgs = append(dockerArgs, imageName)
-	dockerArgs = append(dockerArgs, config.Command)
-	dockerArgs = append(dockerArgs, config.Args...)
-
+	dockerArgs := dockerRunArgs(imageName, cwd, config, egress, netCtx)
 	cmd := exec.Command("docker", dockerArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -283,6 +309,37 @@ func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string, eg
 	return 0
 }
 
+// dockerRunArgs builds the `docker run` argument list. It is a pure function so
+// the hardening flags and network handling can be unit-tested without Docker.
+func dockerRunArgs(imageName, cwd string, config SandboxConfig, egress *EgressProxy, netCtx NetworkLaunchContext) []string {
+	args := []string{
+		"run", "--rm", "-i",
+		"--cap-drop=ALL",
+		"--security-opt=no-new-privileges",
+		"--pids-limit=512",
+		"--tmpfs", "/tmp",
+	}
+
+	switch strings.ToLower(strings.TrimSpace(netCtx.Mode)) {
+	case "offline", "loopback":
+		// No network interfaces at all: genuine enforcement, not cooperative.
+		args = append(args, "--network", "none")
+	}
+
+	args = append(args, "-v", fmt.Sprintf("%s:/app", cwd), "-w", "/app")
+
+	cleanEnv := applyProxyEnv(scrubEnvironment(""), egress)
+	for _, envVar := range cleanEnv {
+		parts := strings.SplitN(envVar, "=", 2)
+		if len(parts) == 2 && parts[0] != "PATH" && parts[0] != "NVX_SANDBOX" {
+			args = append(args, "-e", envVar)
+		}
+	}
+
+	args = append(args, imageName, config.Command)
+	return append(args, config.Args...)
+}
+
 // runSandbox is the main entry point for executing a command inside the nvx sandbox.
 // It creates an ephemeral guest profile, scrubs the environment, applies OS-level
 // isolation primitives, runs the command, and cleans up afterward.
@@ -296,12 +353,32 @@ func runSandbox(config SandboxConfig) int {
 
 	policy, err := LoadPolicy(config.NvxHome)
 	if err != nil {
-		LogWarn("Failed to load policy: %v", err)
+		LogError("Failed to load policy: %v", err)
+		return 1
 	}
 
-	provider := policy.FilesystemProvider()
+	providerName := policy.FilesystemProvider()
 	if config.FilesystemProvider != "" {
-		provider = strings.ToLower(config.FilesystemProvider)
+		providerName = strings.ToLower(config.FilesystemProvider)
+	}
+	fsProvider, ok := lookupFilesystemProvider(providerName)
+	if !ok {
+		LogError("Unknown filesystem provider %q. Supported: native, docker.", providerName)
+		return 1
+	}
+	canonical := fsProvider.Name()
+
+	if fsProvider.Experimental() && !experimentalProvidersEnabled() {
+		LogError("Filesystem provider %q is experimental and unsupported. Set NVX_EXPERIMENTAL=1 to enable it, or use the native or docker provider.", canonical)
+		return 1
+	}
+	if err := fsProvider.Available(); err != nil {
+		LogError("Filesystem provider %q is not available: %v", canonical, err)
+		return 1
+	}
+	if !fsProvider.SupportsNetworkMode(policy.Isolation.Network.Mode) {
+		LogError("Filesystem provider %q does not enforce network.mode=%q. Use network.mode=open or the native provider.", canonical, policy.Isolation.Network.Mode)
+		return 1
 	}
 
 	rt := runtimeForShim(config.Command)
@@ -309,13 +386,15 @@ func runSandbox(config SandboxConfig) int {
 
 	ctx := context.Background()
 	var egress *EgressProxy
-	// Linux native re-execs into a loopback-only network namespace and starts its
-	// own egress proxy inside the child; a parent proxy would be unreachable.
-	skipParentProxy := runtime.GOOS == "linux" && provider == "native" &&
-		networkModeRequiresNamespace(policy.Isolation.Network.Mode)
-	if !skipParentProxy {
+	// The egress proxy always runs here, in the parent. Linux native re-execs into
+	// a loopback-only network namespace, and that namespace has no route to any
+	// allowlisted host -- so a proxy started *inside* it (as this used to do) could
+	// never forward anything, which made proxy mode non-functional. The parent
+	// keeps real network access and the contained side reaches it over a UNIX
+	// socket (see prepareEgressForNamespace and startProxyRelay).
+	{
 		var err error
-		egress, err = startEgressProxy(ctx, policy, rt)
+		egress, err = startEgressProxy(ctx, policy, rt, config.NvxHome)
 		if err != nil {
 			LogError("Egress proxy failed: %v", err)
 			return 1
@@ -331,32 +410,41 @@ func runSandbox(config SandboxConfig) int {
 		netCtx.SOCKSProxyHost, netCtx.SOCKSProxyPort = egress.SOCKSListenHostPort()
 	}
 
-	switch provider {
-	case "native":
-		return runNativeSandbox(config, policy, egress, netCtx)
+	return fsProvider.Run(SandboxRequest{
+		Config:  config,
+		Policy:  policy,
+		Runtime: rt,
+		Pinned:  pinnedVer,
+		Egress:  egress,
+		NetCtx:  netCtx,
+	})
+}
+
+func providerSupportsNetworkMode(provider, mode string) bool {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" || mode == "open" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "native", "sandbox-exec", "seatbelt":
+		return true
 	case "docker":
-		return runDockerSandbox(config, config.NvxHome, pinnedVer, egress)
-	case "wslc", "wsl-container", "container":
-		return runWslcSandbox(config, config.NvxHome, pinnedVer)
-	case "wsl", "wsl-distro":
-		return runWslSandbox(config)
-	case "sandbox-exec", "seatbelt":
-		return runSeatbeltSandbox(config, netCtx)
-	case "systemd-nspawn", "nspawn":
-		return runNspawnSandbox(config)
+		// Docker enforces offline/loopback with `--network none`. Proxy mode is
+		// cooperative-only under Docker (the allowlist is not truly enforced),
+		// so it stays disallowed and callers must use the native provider.
+		return mode == "offline" || mode == "loopback"
 	default:
-		LogError("Unknown filesystem provider %q. Supported: native, docker, wslc, wsl, sandbox-exec, systemd-nspawn.", provider)
-		return 1
+		return false
 	}
 }
 
 func execBareCommand(config SandboxConfig) int {
 	rt := runtimeForShim(config.Command)
-	nodeVer := getActiveShellVersion(config.NvxHome)
-	if nodeVer == "" {
-		nodeVer = getGlobalDefaultVersion(config.NvxHome)
+	activeVer := getActiveShellVersionFor(config.NvxHome, rt.Name())
+	if activeVer == "" {
+		activeVer = getGlobalDefaultVersionFor(config.NvxHome, rt.Name())
 	}
-	binaryPath := resolvePinnedCommandPath(config.Command, config.NvxHome, nodeVer, rt)
+	binaryPath := resolvePinnedCommandPath(config.Command, config.NvxHome, activeVer, rt)
 	if binaryPath == "" {
 		var err error
 		binaryPath, err = exec.LookPath(config.Command)
@@ -381,9 +469,10 @@ func execBareCommand(config SandboxConfig) int {
 	return 0
 }
 
-
-// cleanupStaleSandboxes removes any leftover sandbox home directories from
-// previous sessions that failed to clean up (e.g., due to crashes).
+// cleanupStaleSandboxes removes leftover EPHEMERAL sandbox homes from
+// previous sessions that failed to clean up (e.g., due to crashes). It
+// deliberately touches only sandbox_home, never tool_home (persistent
+// per-tool profiles), whose whole purpose is to survive across runs.
 func cleanupStaleSandboxes(nvxHome string) {
 	sandboxDir := getSandboxHomeDir(nvxHome)
 	entries, err := os.ReadDir(sandboxDir)

@@ -2,12 +2,32 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestEnvScriptFrontsShimDir(t *testing.T) {
+	bash := envScript("bash", "/opt/nvx", "/home/u/.nvx/bin")
+	if !strings.Contains(bash, "export PATH=") || !strings.Contains(bash, "/home/u/.nvx/bin") {
+		t.Fatalf("bash env script must front the shim dir:\n%s", bash)
+	}
+	// The nvx shell function must still be emitted.
+	if !strings.Contains(bash, "nvx() {") {
+		t.Fatalf("bash env script must still define the nvx function")
+	}
+
+	ps := envScript("powershell", `C:\opt\nvx.exe`, `C:\Users\u\.nvx\bin`)
+	if !strings.Contains(ps, "$env:PATH") || !strings.Contains(ps, `.nvx\bin`) {
+		t.Fatalf("powershell env script must front the shim dir:\n%s", ps)
+	}
+	if !strings.Contains(ps, "function nvx {") {
+		t.Fatalf("powershell env script must still define the nvx function")
+	}
+}
 
 func TestIsLTS(t *testing.T) {
 	tests := []struct {
@@ -170,6 +190,15 @@ func TestLevenshteinDistance(t *testing.T) {
 }
 
 func TestCheckTyposquatting(t *testing.T) {
+	// Without this stub the check makes two live HTTPS requests per near-match
+	// name. That made the suite ~5x slower, sent traffic to api.npmjs.org from
+	// every machine running `go test`, and -- worse -- silently chose a different
+	// branch depending on whether the network happened to work.
+	stubWeeklyDownloads(t, map[string]int{
+		"lodash": 60_000_000, "express": 30_000_000,
+		"lodas": 12, "expres": 30,
+	})
+
 	mockPopular := []string{"lodash", "express"}
 	tests := []struct {
 		input    string
@@ -506,7 +535,7 @@ func TestCleanupStaleSandboxes(t *testing.T) {
 
 	sandboxDir := getSandboxHomeDir(tmpDir)
 	fakeSandboxPath := filepath.Join(sandboxDir, "stale-session-123")
-	
+
 	err := os.MkdirAll(fakeSandboxPath, 0755)
 	if err != nil {
 		t.Fatalf("failed to create fake stale sandbox path: %v", err)
@@ -561,6 +590,9 @@ func TestDetectInstallPackages(t *testing.T) {
 		// Leading flags must not bypass detection
 		{[]string{"--loglevel=error", "install", "evil-pkg"}, []string{"evil-pkg"}},
 		{[]string{"-g", "install", "evil-pkg"}, []string{"evil-pkg"}},
+		// A flag this package has no specific knowledge of, taking a value,
+		// must not hide the subcommand behind its own value.
+		{[]string{"--loglevel", "verbose", "install", "evil-pkg"}, []string{"evil-pkg"}},
 		// npm typo aliases
 		{[]string{"isntall", "lodash"}, []string{"lodash"}},
 		{[]string{"in", "lodash"}, []string{"lodash"}},
@@ -736,9 +768,9 @@ func TestBuildSeatbeltProfile(t *testing.T) {
 	profile := buildSeatbeltProfile(netCtx, "/guest/home", "/work/dir")
 	for _, expected := range []string{
 		"(version 1)",
-		"(allow default)",
-		"(deny file-write*)",
-		"(deny network*)",
+		"(deny default)",
+		"(allow file-read*",
+		"(allow file-write*",
 		`(subpath "/guest/home")`,
 		`(subpath "/work/dir")`,
 		`(subpath "/private/tmp")`,
@@ -832,27 +864,40 @@ func TestLoadPolicyCascading(t *testing.T) {
 	gData, _ := json.Marshal(globalPolicy)
 	_ = os.WriteFile(filepath.Join(nvxHome, "policy.json"), gData, 0644)
 
-	// Write parent policy: block "parent-blocked" and add trusted package "trusted-parent"
-	parentPolicy := Policy{
-		BlockedPackages: []string{"parent-blocked"},
-		Typosquatting: TyposquattingPolicy{
-			TrustedPackages: []string{"trusted-parent"},
-		},
-	}
-	pData, _ := json.Marshal(parentPolicy)
-	_ = os.WriteFile(filepath.Join(parentDir, ".nvx-policy.json"), pData, 0644)
+	// Write parent policy: block "parent-blocked" and add trusted package "trusted-parent".
+	// Adding a trusted package loosens protection, so this file must be trusted below.
+	parentPath := filepath.Join(parentDir, ".nvx-policy.json")
+	_ = os.WriteFile(parentPath, []byte(`{"blocked_packages":["parent-blocked"],"typosquatting":{"trusted_packages":["trusted-parent"]}}`), 0644)
 
-	// Write child policy: block "child-blocked"
-	childPolicy := Policy{
-		BlockedPackages: []string{"child-blocked"},
-	}
-	cData, _ := json.Marshal(childPolicy)
-	_ = os.WriteFile(filepath.Join(childDir, "policy.json"), cData, 0644)
+	// Write child policy: block "child-blocked" (tightening only, no trust needed)
+	_ = os.WriteFile(filepath.Join(childDir, "policy.json"), []byte(`{"blocked_packages":["child-blocked"]}`), 0644)
 
 	// Change working directory to childDir
 	err = os.Chdir(childDir)
 	if err != nil {
 		t.Fatalf("failed to change wd to childDir: %v", err)
+	}
+
+	// Trust the parent policy's current contents (as an accepted prompt would).
+	// Pin the exact path LoadPolicy will discover from the resolved cwd, via the
+	// same collectProjectPolicyPaths helper, so the key matches byte-for-byte on
+	// every platform (macOS /var symlink, Windows 8.3 TEMP paths, etc.).
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := projectScopeDir()
+	g := loadProjectGrants(nvxHome, scope)
+	g.ProjectPath = scope
+	for _, p := range collectProjectPolicyPaths(cwd, nvxHome) {
+		if strings.HasSuffix(p, ".nvx-policy.json") {
+			if hash, ok := hashPolicyFile(p); ok {
+				g.PolicyPins[filepath.Clean(p)] = hash
+			}
+		}
+	}
+	if err := saveProjectGrants(nvxHome, g); err != nil {
+		t.Fatal(err)
 	}
 
 	// Load policy using nvxHome
@@ -889,3 +934,166 @@ func TestLoadPolicyCascading(t *testing.T) {
 	}
 }
 
+func TestParseStartupFlagsQuietAndAgentMode(t *testing.T) {
+	quietFlag = false
+	agentModeFlag = false
+	args := []string{"nvx", "-q", "--agent-mode", "install", "20"}
+	filtered, yes, _, _, _ := parseStartupFlags(args)
+
+	if !quietFlag {
+		t.Error("expected quietFlag to be true when -q is passed")
+	}
+	if !agentModeFlag {
+		t.Error("expected agentModeFlag to be true when --agent-mode is passed")
+	}
+	if !yes {
+		t.Error("expected yes to be true when --agent-mode is passed")
+	}
+	if len(filtered) != 3 || filtered[1] != "install" || filtered[2] != "20" {
+		t.Errorf("unexpected filtered args: %v", filtered)
+	}
+}
+
+func TestIsTrustedPackageWildcard(t *testing.T) {
+	p := Policy{
+		Typosquatting: TyposquattingPolicy{
+			TrustedPackages: []string{"@myorg/*", "internal-*", "exact-pkg"},
+		},
+	}
+
+	tests := []struct {
+		pkg      string
+		expected bool
+	}{
+		{"@myorg/component", true},
+		{"@myorg/helpers", true},
+		{"internal-tool", true},
+		{"exact-pkg", true},
+		{"other-pkg", false},
+		{"@otherorg/component", false},
+	}
+
+	for _, tc := range tests {
+		if got := p.IsTrustedPackage(tc.pkg); got != tc.expected {
+			t.Errorf("IsTrustedPackage(%q) = %v; expected %v", tc.pkg, got, tc.expected)
+		}
+	}
+}
+
+// The uncontained ("your own code") path must announce its status exactly
+// once per user-facing command, not once per process: a build script's own
+// npm/node invocations are each a separate nvx.exe process, so only the
+// outermost one should report — a per-process guard (e.g. sync.Once) would
+// reprint on every nested invocation instead, one per level of the script tree.
+func TestIsTopLevelShimInvocation(t *testing.T) {
+	t.Setenv(nvxActiveEnvVar, "")
+	if !isTopLevelShimInvocation() {
+		t.Error("expected the first call in a fresh process tree to be top-level")
+	}
+	if isTopLevelShimInvocation() {
+		t.Error("expected a second call in the same process to report nested, now that the tree is marked active")
+	}
+
+	// Simulates a nested nvx.exe process: the env var is already set because a
+	// parent invocation (e.g. the outer `npm publish`) set it before spawning
+	// this child, exactly as a real child process inherits it.
+	t.Setenv(nvxActiveEnvVar, "1")
+	if isTopLevelShimInvocation() {
+		t.Error("expected a process that inherited the active marker to report nested")
+	}
+}
+
+// TestEscapeScopedPackageNeutralisesHostileNames covers what the hand-rolled
+// escaping let through. A package name is not always typed by the user -- it can
+// come from a project policy file or a package.json in a cloned repo -- and it is
+// interpolated into a registry URL path whose response feeds the typosquat and
+// release-age gates.
+func TestEscapeScopedPackageNeutralisesHostileNames(t *testing.T) {
+	cases := []struct{ name, input string }{
+		{"path traversal", "../../../etc/passwd"},
+		{"traversal after a scope", "@scope/../../evil"},
+		{"query truncation", "lodash?fake=1"},
+		{"fragment truncation", "lodash#x"},
+		{"embedded space", "lo dash"},
+		{"double slash", "//evil.com/x"},
+	}
+	for _, tc := range cases {
+		got := EscapeScopedPackage(tc.input)
+		if strings.ContainsAny(got, "/? #") {
+			t.Errorf("%s: EscapeScopedPackage(%q) = %q still carries a URL-significant character", tc.name, tc.input, got)
+		}
+	}
+}
+
+// stubWeeklyDownloads replaces the registry lookup for one test.
+func stubWeeklyDownloads(t *testing.T, counts map[string]int) {
+	t.Helper()
+	prev := weeklyDownloads
+	weeklyDownloads = func(pkg string) (int, error) {
+		n, ok := counts[pkg]
+		if !ok {
+			return 0, fmt.Errorf("no stubbed download count for %q", pkg)
+		}
+		return n, nil
+	}
+	t.Cleanup(func() { weeklyDownloads = prev })
+}
+
+// TestCheckTyposquattingAuthorityThresholds covers the download comparison itself,
+// which previously ran only when a live request happened to succeed and was never
+// asserted deliberately: a package is a typosquat only when the lookalike is both
+// popular in absolute terms (>50k/week) and vastly more downloaded (>100x).
+func TestCheckTyposquattingAuthorityThresholds(t *testing.T) {
+	cases := []struct {
+		name    string
+		counts  map[string]int
+		query   string
+		wantHit string
+	}{
+		{
+			name:    "obscure name against a hugely popular lookalike is flagged",
+			counts:  map[string]int{"lodash": 60_000_000, "lodas": 10},
+			query:   "lodas",
+			wantHit: "lodash",
+		},
+		{
+			name:    "a lookalike that is not popular enough is not flagged",
+			counts:  map[string]int{"lodash": 40_000, "lodas": 1},
+			query:   "lodas",
+			wantHit: "",
+		},
+		{
+			name:    "a similarly-downloaded package is a peer, not a squat",
+			counts:  map[string]int{"lodash": 60_000_000, "lodas": 5_000_000},
+			query:   "lodas",
+			wantHit: "",
+		},
+		{
+			name:    "exactly at 100x is not over the threshold",
+			counts:  map[string]int{"lodash": 10_000_000, "lodas": 100_000},
+			query:   "lodas",
+			wantHit: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stubWeeklyDownloads(t, tc.counts)
+			if got := CheckTyposquatting(tc.query, []string{"lodash"}); got != tc.wantHit {
+				t.Errorf("CheckTyposquatting(%q) = %q, want %q", tc.query, got, tc.wantHit)
+			}
+		})
+	}
+}
+
+// TestCheckTyposquattingFallsBackWhenLookupFails pins the offline behaviour: if the
+// registry cannot be reached, a near-match is flagged on name similarity alone
+// rather than being waved through.
+func TestCheckTyposquattingFallsBackWhenLookupFails(t *testing.T) {
+	prev := weeklyDownloads
+	weeklyDownloads = func(string) (int, error) { return 0, fmt.Errorf("network unreachable") }
+	t.Cleanup(func() { weeklyDownloads = prev })
+
+	if got := CheckTyposquatting("lodas", []string{"lodash"}); got != "lodash" {
+		t.Errorf("with the registry unreachable, a near-match must still be flagged; got %q", got)
+	}
+}

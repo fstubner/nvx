@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 )
 
@@ -30,9 +31,49 @@ type processInformation struct {
 	dwThreadID  uint32
 }
 
+// Well-known capability SIDs (see winnt.h / app-capability docs).
+const (
+	capabilityInternetClientSID             = "S-1-15-3-1"
+	capabilityPrivateNetworkClientServerSID = "S-1-15-3-3"
+	seGroupEnabled                          = 0x00000004
+)
+
+// buildCapabilitySIDAttrs converts capability SID strings into an enabled
+// SID_AND_ATTRIBUTES array for a securityCapabilities struct. The returned free
+// func releases the allocated SIDs and must be called after CreateProcess.
+func buildCapabilitySIDAttrs(sidStrings []string) ([]SID_AND_ATTRIBUTES, func(), error) {
+	var attrs []SID_AND_ATTRIBUTES
+	var sids []*syscall.SID
+	free := func() {
+		for _, s := range sids {
+			// #nosec G104 -- LocalFree gives the caller nothing actionable, and cleanup must continue for every SID
+			procLocalFree.Call(uintptr(unsafe.Pointer(s)))
+		}
+	}
+	for _, str := range sidStrings {
+		p, err := syscall.UTF16PtrFromString(str)
+		if err != nil {
+			free()
+			return nil, nil, err
+		}
+		var sid *syscall.SID
+		if err := convertStringSidToSid(p, &sid); err != nil {
+			free()
+			return nil, nil, fmt.Errorf("convert capability SID %s: %w", str, err)
+		}
+		sids = append(sids, sid)
+		attrs = append(attrs, SID_AND_ATTRIBUTES{
+			Sid:        uintptr(unsafe.Pointer(sid)),
+			Attributes: seGroupEnabled,
+		})
+	}
+	return attrs, free, nil
+}
+
 // launchAppContainerProcess starts cmdPath with AppContainer isolation via
-// CreateProcessAsUserW + PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES. When
-// lowILToken is non-zero, Low IL is stacked on the AppContainer boundary.
+// CreateProcessAsUserW + PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES. The
+// lowILToken path is retained for legacy callers, but native launch passes 0.
+// capabilitySIDs grants AppContainer capabilities (e.g. internetClient).
 func launchAppContainerProcess(
 	cmdPath string,
 	args []string,
@@ -40,8 +81,9 @@ func launchAppContainerProcess(
 	workDir string,
 	appContainerSID uintptr,
 	lowILToken syscall.Token,
+	capabilitySIDs []string,
 ) (exitCode int, err error) {
-	exitCode, err = launchAppContainerProcessOnce(cmdPath, args, env, workDir, appContainerSID, lowILToken)
+	exitCode, err = launchAppContainerProcessOnce(cmdPath, args, env, workDir, appContainerSID, lowILToken, capabilitySIDs)
 	if err == nil || !isCreateProcessMissingFile(err) {
 		return exitCode, err
 	}
@@ -55,7 +97,7 @@ func launchAppContainerProcess(
 		return exitCode, err
 	}
 	wrapped := append([]string{"/c", cmdPath}, args...)
-	return launchAppContainerProcessOnce(cmdExe, wrapped, env, workDir, appContainerSID, lowILToken)
+	return launchAppContainerProcessOnce(cmdExe, wrapped, env, workDir, appContainerSID, lowILToken, capabilitySIDs)
 }
 
 func isCreateProcessMissingFile(err error) bool {
@@ -73,6 +115,7 @@ func launchAppContainerProcessOnce(
 	workDir string,
 	appContainerSID uintptr,
 	lowILToken syscall.Token,
+	capabilitySIDs []string,
 ) (exitCode int, err error) {
 	attrBuf, attrList, err := initProcThreadAttributeList(1)
 	if err != nil {
@@ -80,9 +123,19 @@ func launchAppContainerProcessOnce(
 	}
 	defer deleteProcThreadAttributeList(attrList)
 
+	capAttrs, freeCaps, err := buildCapabilitySIDAttrs(capabilitySIDs)
+	if err != nil {
+		return 1, err
+	}
+	defer freeCaps()
+
 	secCaps := securityCapabilities{
 		appContainerSid: appContainerSID,
-		capabilityCount: 0,
+	}
+	if len(capAttrs) > 0 {
+		secCaps.capabilities = uintptr(unsafe.Pointer(&capAttrs[0]))
+		// #nosec G115 -- capAttrs holds the capability SIDs nvx itself passes in, currently at most two
+		secCaps.capabilityCount = uint32(len(capAttrs))
 	}
 	if err := updateProcThreadAttribute(
 		attrList,
@@ -93,26 +146,28 @@ func launchAppContainerProcessOnce(
 		return 1, err
 	}
 
-	stdin, err := syscall.GetStdHandle(syscall.STD_INPUT_HANDLE)
-	if err != nil {
-		return 1, fmt.Errorf("stdin handle: %w", err)
-	}
-	stdout, err := syscall.GetStdHandle(syscall.STD_OUTPUT_HANDLE)
-	if err != nil {
-		return 1, fmt.Errorf("stdout handle: %w", err)
-	}
-	stderr, err := syscall.GetStdHandle(syscall.STD_ERROR_HANDLE)
-	if err != nil {
-		return 1, fmt.Errorf("stderr handle: %w", err)
-	}
-
 	var si startupInfoEx
 	si.Cb = uint32(unsafe.Sizeof(si))
-	si.Flags = 0
-	si.StdInput = stdin
-	si.StdOutput = stdout
-	si.StdErr = stderr
 	si.lpAttributeList = attrList
+
+	// Standard handles reach the child only when STARTF_USESTDHANDLES and
+	// bInheritHandles are BOTH set; setting just one is worse than neither (the
+	// child fails to start). See prepareInheritableStdio.
+	stdio := prepareInheritableStdio()
+	var inheritHandles uintptr
+	if stdio.inheritable {
+		si.Flags = STARTF_USESTDHANDLES
+		si.StdInput = stdio.in
+		si.StdOutput = stdio.out
+		si.StdErr = stdio.err
+		inheritHandles = 1
+	} else {
+		// Some console handles cannot be made inheritable (the original reason this
+		// code passed FALSE). A console-attached child still inherits the console,
+		// so interactive use works -- but a piped child gets nothing, so say so
+		// rather than letting an MCP server fail mysteriously.
+		LogWarn("Standard handles are not inheritable here; a sandboxed process that communicates over pipes (e.g. an MCP server) will not receive stdio.")
+	}
 
 	cmdLine := buildWindowsCommandLine(cmdPath, args)
 	cmdLineUTF16, err := syscall.UTF16FromString(cmdLine)
@@ -155,7 +210,7 @@ func launchAppContainerProcessOnce(
 			uintptr(unsafe.Pointer(appName)),
 			uintptr(unsafe.Pointer(&cmdLineUTF16[0])),
 			0, 0,
-			0, // do not inherit std handles — GHA console handles may be non-inheritable
+			inheritHandles,
 			creationFlags,
 			uintptr(unsafe.Pointer(envBlock)),
 			uintptr(unsafe.Pointer(workDirPtr)),
@@ -167,7 +222,7 @@ func launchAppContainerProcessOnce(
 			uintptr(unsafe.Pointer(appName)),
 			uintptr(unsafe.Pointer(&cmdLineUTF16[0])),
 			0, 0,
-			0,
+			inheritHandles,
 			creationFlags,
 			uintptr(unsafe.Pointer(envBlock)),
 			uintptr(unsafe.Pointer(workDirPtr)),
@@ -176,14 +231,40 @@ func launchAppContainerProcessOnce(
 		)
 	}
 
-	// Keep attribute buffer alive through CreateProcess.
+	// Keep the attribute buffer and capability SID array alive through CreateProcess.
 	_ = attrBuf
+	_ = capAttrs
 
 	if createOK == 0 {
 		return 1, fmt.Errorf("CreateProcess(AppContainer) exe=%q cwd=%q: %v", cmdPath, workDir, createErr)
 	}
-	defer syscall.CloseHandle(pi.hProcess)
-	defer syscall.CloseHandle(pi.hThread)
+	defer func() {
+		_ = syscall.CloseHandle(pi.hProcess)
+	}()
+	defer func() {
+		_ = syscall.CloseHandle(pi.hThread)
+	}()
+
+	// The child was created with CREATE_BREAKAWAY_FROM_JOB (needed so a
+	// restrictive CI job object doesn't block CreateProcess), so it starts with
+	// no job membership at all. Assign it to a job of our own, configured to
+	// kill everything in it the moment the job's last handle closes -- which
+	// happens automatically if this process is killed before reaching
+	// WaitForSingleObject below. Without this, a client that gives up on a slow
+	// sandbox setup (e.g. an MCP client's connection timeout) and kills nvx
+	// leaves the already-launched child running forever; this is what actually
+	// reaps it, and job membership covers anything the child spawns too.
+	// Best-effort: job objects are a defense-in-depth safety net, not a
+	// containment guarantee, so a failure here logs rather than aborting a
+	// command the user is waiting on.
+	if job, jobErr := createReapingJob(); jobErr != nil {
+		LogWarn("Could not set up process-tree reaping for this sandbox session: %v", jobErr)
+	} else {
+		defer func() { _ = syscall.CloseHandle(job) }()
+		if err := assignToReapingJob(job, pi.hProcess); err != nil {
+			LogWarn("Could not enable process-tree reaping for this sandbox session: %v", err)
+		}
+	}
 
 	waitRet, _, waitErr := procWaitForSingleObject.Call(uintptr(pi.hProcess), INFINITE)
 	if waitRet == 0xFFFFFFFF {
@@ -239,7 +320,7 @@ func updateProcThreadAttribute(list uintptr, attr uintptr, value unsafe.Pointer,
 
 func deleteProcThreadAttributeList(list uintptr) {
 	if list != 0 {
-		procDeleteProcThreadAttributeList.Call(list)
+		_, _, _ = procDeleteProcThreadAttributeList.Call(list)
 	}
 }
 
@@ -293,28 +374,39 @@ func quoteWindowsArg(s string) string {
 		}
 	}
 	for ; slashes > 0; slashes-- {
-		b.WriteByte('\\')
+		b.WriteString(`\\`)
 	}
 	b.WriteByte('"')
 	return b.String()
 }
 
+// buildWindowsEnvironmentBlock renders env as the NUL-separated, double-NUL
+// terminated UTF-16 block CreateProcess expects.
+//
+// The previous implementation wrote uint16(r) for each rune, which silently
+// corrupted anything outside the BMP: a rune above U+FFFF was truncated to its low
+// 16 bits, so U+1F600 (an emoji) became U+F600, a private-use character. It also
+// sized the buffer from len(entry) -- a BYTE count -- while writing one unit per
+// RUNE, so the two disagreed for any non-ASCII input. The existing test used only
+// ASCII, where bytes and runes coincide and the truncation cannot show up.
+//
+// utf16.Encode emits a correct surrogate pair for non-BMP characters, and sizing
+// follows the encoded result rather than being computed separately.
 func buildWindowsEnvironmentBlock(env []string) (*uint16, error) {
 	if len(env) == 0 {
 		return nil, nil
 	}
-	var size int
+	var block []uint16
 	for _, entry := range env {
-		size += len(entry) + 1
-	}
-	block := make([]uint16, size+1)
-	offset := 0
-	for _, entry := range env {
-		for _, r := range entry {
-			block[offset] = uint16(r)
-			offset++
+		// A NUL inside an entry would terminate the block early and silently drop
+		// every variable after it. Windows cannot represent one in an environment
+		// value anyway, so refuse rather than truncate.
+		if strings.ContainsRune(entry, 0) {
+			return nil, fmt.Errorf("environment entry contains a NUL character: %q", entry)
 		}
-		offset++
+		block = append(block, utf16.Encode([]rune(entry))...)
+		block = append(block, 0)
 	}
+	block = append(block, 0)
 	return &block[0], nil
 }

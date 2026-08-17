@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,7 +77,7 @@ func LevenshteinDistance(s, t string) int {
 // LoadPopularPackages returns the typosquatting checklist, syncing from a remote source if outdated
 func LoadPopularPackages(nvxHome string) []string {
 	cachePath := filepath.Join(nvxHome, "popular_packages.json")
-	
+
 	// Check if local cache is fresh (less than 7 days old)
 	if info, err := os.Stat(cachePath); err == nil && time.Since(info.ModTime()) < 7*24*time.Hour {
 		data, err := os.ReadFile(cachePath)
@@ -145,10 +146,15 @@ func syncPopularPackages(cachePath string) ([]string, error) {
 	}
 
 	// Write cache file
-	os.MkdirAll(filepath.Dir(cachePath), 0755)
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0700); err != nil {
+		return list, fmt.Errorf("create popular-package cache directory: %w", err)
+	}
 	data, err := json.Marshal(list)
-	if err == nil {
-		_ = os.WriteFile(cachePath, data, 0644)
+	if err != nil {
+		return list, fmt.Errorf("encode popular-package cache: %w", err)
+	}
+	if err := os.WriteFile(cachePath, data, 0600); err != nil {
+		return list, fmt.Errorf("write popular-package cache: %w", err)
 	}
 	return list, nil
 }
@@ -198,6 +204,17 @@ func CheckTyposquatting(pkgName string, popularList []string) string {
 	return CheckTyposquattingAuthority(pkgName, popularList, 2)
 }
 
+// weeklyDownloads is the seam the typosquat check goes through, so a test can
+// exercise the authority comparison without reaching api.npmjs.org. Following the
+// resolveNpmPackageDetailsForVerify pattern below.
+//
+// Without it, CheckTyposquattingAuthority made two live HTTPS requests per
+// near-match name, which meant the test suite silently took different branches
+// depending on whether the machine had network: the download-threshold logic ran
+// only when a request happened to succeed, and the offline fallback ran otherwise.
+// Neither was ever asserted deliberately.
+var weeklyDownloads = GetWeeklyDownloads
+
 // CheckTyposquattingAuthority dynamically compares weekly downloads to detect typosquatting threats
 func CheckTyposquattingAuthority(pkgName string, popularList []string, maxDist int) string {
 	pkgName = strings.ToLower(strings.TrimSpace(pkgName))
@@ -211,13 +228,13 @@ func CheckTyposquattingAuthority(pkgName string, popularList []string, maxDist i
 		dist := LevenshteinDistance(pkgName, popular)
 		if dist >= 1 && dist <= maxDist {
 			// Query downloads to verify authority
-			pkgDownloads, errPkg := GetWeeklyDownloads(pkgName)
-			suspectDownloads, errSus := GetWeeklyDownloads(popular)
+			pkgDownloads, errPkg := weeklyDownloads(pkgName)
+			suspectDownloads, errSus := weeklyDownloads(popular)
 
 			if errPkg == nil && errSus == nil {
 				// Authority threshold: if the target is high-popularity (>50k/week)
 				// AND it has more than 100x the weekly downloads of the installed package, it's a typosquat
-				if suspectDownloads > 50000 && suspectDownloads > 100 * pkgDownloads {
+				if suspectDownloads > 50000 && suspectDownloads > 100*pkgDownloads {
 					return popular
 				}
 			} else {
@@ -235,13 +252,22 @@ type NpmDownloadsResponse struct {
 	Package   string `json:"package"`
 }
 
-// EscapeScopedPackage replaces "/" with "%2F" for scoped package names
+// EscapeScopedPackage makes a package name safe to interpolate into a registry
+// URL path.
+//
+// It used to hand-roll the escaping: replace the single "/" in a scoped name with
+// %2F and return everything else untouched. That covers the case it was written
+// for and nothing else, so a name containing "../", a space, "?" or "#" went into
+// the URL path verbatim. A name is not always something the user typed -- it can
+// come from a project policy file or a package.json in a cloned repository -- and
+// the responses feed the typosquat and release-age gates, so steering a lookup at
+// a different path than the one being installed is a way to influence what those
+// gates see.
+//
+// url.PathEscape produces byte-identical output for real package names
+// (@types/node -> @types%2Fnode, lodash -> lodash) and neutralises the rest.
 func EscapeScopedPackage(pkg string) string {
-	if strings.HasPrefix(pkg, "@") && strings.Contains(pkg, "/") {
-		parts := strings.SplitN(pkg, "/", 2)
-		return parts[0] + "%2F" + parts[1]
-	}
-	return pkg
+	return url.PathEscape(pkg)
 }
 
 // GetWeeklyDownloads queries the public npm downloads point API
@@ -250,6 +276,8 @@ func GetWeeklyDownloads(pkgName string) (int, error) {
 	url := fmt.Sprintf("https://api.npmjs.org/downloads/point/last-week/%s", escapedPkg)
 
 	client := &http.Client{Timeout: 5 * time.Second}
+	// #nosec G704 -- same as ResolveNpmPackageDetails: hardcoded host, path segment
+	// escaped via url.PathEscape.
 	resp, err := client.Get(url)
 	if err != nil {
 		return 0, err
@@ -352,15 +380,21 @@ type NpmVersionDetails struct {
 	Scripts map[string]string `json:"scripts"`
 }
 
+var resolveNpmPackageDetailsForVerify = ResolveNpmPackageDetails
+var scanVulnerabilitiesBatchForVerify = ScanVulnerabilitiesBatch
+
 // ResolveNpmPackageDetails queries npm registry for latest version, publish age, and installation script status
 func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, publishTime time.Time, hasScripts bool, err error) {
 	client := &http.Client{Timeout: 8 * time.Second}
+	// #nosec G704 -- the host is a hardcoded literal, so this cannot be pointed at
+	// another server; only the path segment varies, and EscapeScopedPackage runs it
+	// through url.PathEscape first. gosec's taint analysis does not model the
+	// hardcoded-host case.
 	resp, err := client.Get(fmt.Sprintf("https://registry.npmjs.org/%s", EscapeScopedPackage(pkgName)))
 	if err != nil {
 		return "", time.Time{}, false, err
 	}
 	defer resp.Body.Close()
-
 
 	if resp.StatusCode != http.StatusOK {
 		return "", time.Time{}, false, fmt.Errorf("registry returned HTTP %s", resp.Status)
@@ -406,10 +440,17 @@ func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, pub
 	return resolvedVer, pubTime, hasInstallScripts, nil
 }
 
+// publishAgeShouldWarn reports whether pubTime is younger than the configured window.
+func publishAgeShouldWarn(pubTime time.Time, minAgeHours int, now time.Time) bool {
+	if pubTime.IsZero() || minAgeHours <= 0 {
+		return false
+	}
+	return now.Sub(pubTime) < time.Duration(minAgeHours)*time.Hour
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
 }
-

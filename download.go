@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const maxExtractedArchiveBytes int64 = 2 << 30
+
 // GetArch returns the Node.js architecture suffix for downloads (x64, x86, arm64)
 func GetArch() string {
 	switch runtime.GOARCH {
@@ -33,13 +35,14 @@ func GetArch() string {
 // DownloadFile downloads a URL to a local filepath, displaying a progress bar to stderr
 func DownloadFile(url, destPath string) error {
 	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0700); err != nil {
 		return fmt.Errorf("failed to create directory for download: %w", err)
 	}
 
 	client := &http.Client{
 		Timeout: 60 * time.Second,
 	}
+	// #nosec G704 -- fetching a caller-supplied URL is this function's entire purpose; the URLs are built from the runtime release indexes, and what arrives is checksum-verified before use
 	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
@@ -50,7 +53,7 @@ func DownloadFile(url, destPath string) error {
 		return fmt.Errorf("download failed: HTTP %s", resp.Status)
 	}
 
-	out, err := os.Create(destPath)
+	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create local file: %w", err)
 	}
@@ -90,16 +93,23 @@ func ComputeSHA256(filePath string) (string, error) {
 // VerifyNodeChecksum downloads the SHASUMS256.txt for the given Node version,
 // finds the expected SHA-256 for the archive filename, and verifies the downloaded file's hash.
 func VerifyNodeChecksum(version, archivePath, archiveFilename string) error {
-	// SHASUMS256.txt is at https://nodejs.org/dist/<version>/SHASUMS256.txt
 	shaUrl := fmt.Sprintf("https://nodejs.org/dist/%s/SHASUMS256.txt", version)
-	
+	return VerifyChecksumFromShasums(shaUrl, archivePath, archiveFilename)
+}
+
+// VerifyChecksumFromShasums downloads a SHASUMS256.txt-style manifest (lines of
+// "<sha256>  <filename>"), looks up archiveFilename, and verifies archivePath's
+// hash against it. It is fail-closed: a missing entry or mismatch is an error.
+func VerifyChecksumFromShasums(shaUrl, archivePath, archiveFilename string) error {
 	// Create a secure temp file for checksums
 	tmpFile, err := os.CreateTemp("", "SHASUMS256-*.txt")
 	if err != nil {
 		return fmt.Errorf("failed to create secure temp file: %w", err)
 	}
 	shaTemp := tmpFile.Name()
-	tmpFile.Close() // Close immediately since DownloadFile will open/overwrite it
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close checksum temp file: %w", err)
+	}
 	defer os.Remove(shaTemp)
 
 	LogInfo("Verifying checksum for %s...", archiveFilename)
@@ -113,19 +123,7 @@ func VerifyNodeChecksum(version, archivePath, archiveFilename string) error {
 		return fmt.Errorf("failed to read checksum file: %w", err)
 	}
 
-	expectedSHA := ""
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
-		parts := strings.Fields(line)
-		if len(parts) >= 2 {
-			// Parts[0] is checksum, Parts[1] is filename
-			if parts[1] == archiveFilename {
-				expectedSHA = parts[0]
-				break
-			}
-		}
-	}
-
+	expectedSHA := findShasumEntry(string(content), archiveFilename)
 	if expectedSHA == "" {
 		return fmt.Errorf("checksum entry not found for %s in SHASUMS256.txt", archiveFilename)
 	}
@@ -144,6 +142,90 @@ func VerifyNodeChecksum(version, archivePath, archiveFilename string) error {
 	return nil
 }
 
+// verifyExpectedSHA256 checks archivePath against a known hex SHA-256 (e.g. one
+// carried inline in a release index). Fail-closed on mismatch or empty expected.
+func verifyExpectedSHA256(archivePath, expectedHex string) error {
+	expectedHex = strings.TrimSpace(expectedHex)
+	if expectedHex == "" {
+		return fmt.Errorf("no expected checksum provided for %s", filepath.Base(archivePath))
+	}
+	LogInfo("Verifying checksum for %s...", filepath.Base(archivePath))
+	computed, err := ComputeSHA256(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to compute SHA-256: %w", err)
+	}
+	if !strings.EqualFold(computed, expectedHex) {
+		return fmt.Errorf("checksum verification failed! Expected: %s, Got: %s", expectedHex, computed)
+	}
+	LogSuccess("Checksum verified successfully.")
+	return nil
+}
+
+// findShasumEntry extracts the expected hash for filename from checksum-file
+// content. Accepted forms: sha256sum lines ("<hash>  <filename>", with optional
+// "*" binary marker or "./" prefix); PowerShell Get-FileHash output ("Hash : <hex>",
+// as published for Deno's Windows assets, validated against the Path line's base
+// name when present); and — for per-asset sidecar files — a lone 64-char hash
+// when the file contains exactly one entry.
+func findShasumEntry(content, filename string) string {
+	isHex64 := func(s string) bool {
+		if len(s) != 64 {
+			return false
+		}
+		for _, r := range s {
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				return false
+			}
+		}
+		return true
+	}
+	baseName := func(p string) string {
+		if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+			return p[i+1:]
+		}
+		return p
+	}
+
+	var loneHash, kvHash, kvPath string
+	entries := 0
+	for _, line := range strings.Split(content, "\n") {
+		parts := strings.Fields(strings.TrimSpace(line))
+		if len(parts) == 0 {
+			continue
+		}
+		entries++
+		if len(parts) >= 2 && isHex64(parts[0]) {
+			name := strings.TrimPrefix(parts[1], "*")
+			if name == filename || strings.TrimPrefix(name, "./") == filename {
+				return parts[0]
+			}
+		}
+		if len(parts) == 1 && isHex64(parts[0]) {
+			loneHash = parts[0]
+		}
+		// Get-FileHash key/value lines: "Hash : <hex>", "Path : C:\...\asset.zip"
+		if len(parts) >= 3 && parts[1] == ":" {
+			switch strings.ToLower(parts[0]) {
+			case "hash":
+				if isHex64(parts[2]) {
+					kvHash = parts[2]
+				}
+			case "path":
+				kvPath = parts[len(parts)-1]
+			}
+		}
+	}
+
+	if kvHash != "" && (kvPath == "" || strings.EqualFold(baseName(kvPath), filename)) {
+		return kvHash
+	}
+	// A single-hash file (e.g. <asset>.sha256sum) unambiguously refers to the
+	// asset it was fetched for.
+	if entries == 1 && loneHash != "" {
+		return loneHash
+	}
+	return ""
+}
 
 type progressWriter struct {
 	total      int64
@@ -194,43 +276,50 @@ func (pw *progressWriter) printProgress() {
 	}
 }
 
-// ExtractZip extracts a zip file into destDir, stripping the top-level folder inside the zip
+// ExtractZip extracts a zip file into destDir, stripping the top-level folder
+// inside the zip (e.g. node-vX/, bun-<target>/).
 func ExtractZip(zipPath, destDir string) error {
+	return extractZip(zipPath, destDir, true)
+}
+
+// ExtractZipFlat extracts a zip whose members are already at the archive root
+// (e.g. Deno's deno[.exe]), without stripping a leading folder.
+func ExtractZipFlat(zipPath, destDir string) error {
+	return extractZip(zipPath, destDir, false)
+}
+
+func extractZip(zipPath, destDir string, strip bool) error {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return fmt.Errorf("failed to open zip file: %w", err)
 	}
 	defer r.Close()
 
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0700); err != nil {
 		return fmt.Errorf("failed to create destination folder: %w", err)
 	}
 
 	fmt.Fprint(os.Stderr, "🚚 Extracting files... ")
 	startTime := time.Now()
+	remaining := maxExtractedArchiveBytes
 
 	for _, f := range r.File {
-		parts := strings.Split(f.Name, "/")
-		if len(parts) <= 1 {
-			continue
+		fpath, skip, err := safeArchiveTargetStrip(destDir, f.Name, strip)
+		if err != nil {
+			return fmt.Errorf("illegal file path in zip: %w", err)
 		}
-		strippedPath := filepath.Join(parts[1:]...)
-		if strippedPath == "" {
+		if skip {
 			continue
-		}
-
-		fpath := filepath.Join(destDir, strippedPath)
-
-		if !strings.HasPrefix(fpath, filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path in zip: %s", fpath)
 		}
 
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(fpath, f.Mode())
+			if err := os.MkdirAll(fpath, f.Mode()&0770); err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", fpath, err)
+			}
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fpath), 0700); err != nil {
 			return fmt.Errorf("failed to create subdirectory: %w", err)
 		}
 
@@ -239,17 +328,23 @@ func ExtractZip(zipPath, destDir string) error {
 			return fmt.Errorf("failed to open zip member %s: %w", f.Name, err)
 		}
 
-		dst, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		dst, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode()&0770)
 		if err != nil {
-			src.Close()
+			_ = src.Close()
 			return fmt.Errorf("failed to create file %s: %w", fpath, err)
 		}
 
-		_, err = io.Copy(dst, src)
-		src.Close()
-		dst.Close()
-		if err != nil {
-			return fmt.Errorf("failed to extract file contents for %s: %w", fpath, err)
+		copyErr := copyArchiveFile(dst, src, &remaining, f.Name)
+		srcErr := src.Close()
+		dstErr := dst.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if srcErr != nil {
+			return fmt.Errorf("failed to close zip member %s: %w", f.Name, srcErr)
+		}
+		if dstErr != nil {
+			return fmt.Errorf("failed to close destination file %s: %w", fpath, dstErr)
 		}
 	}
 
@@ -273,12 +368,13 @@ func ExtractTarGz(tarPath, destDir string) error {
 
 	tarReader := tar.NewReader(gzipReader)
 
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0700); err != nil {
 		return fmt.Errorf("failed to create destination folder: %w", err)
 	}
 
 	fmt.Fprint(os.Stderr, "🚚 Extracting files... ")
 	startTime := time.Now()
+	remaining := maxExtractedArchiveBytes
 
 	for {
 		header, err := tarReader.Next()
@@ -289,52 +385,73 @@ func ExtractTarGz(tarPath, destDir string) error {
 			return fmt.Errorf("failed to read tar archive: %w", err)
 		}
 
-		parts := strings.Split(header.Name, "/")
-		if len(parts) <= 1 {
-			continue // skip root folder itself
+		fpath, skip, err := safeArchiveTarget(destDir, header.Name)
+		if err != nil {
+			return fmt.Errorf("illegal file path in tar archive: %w", err)
 		}
-		strippedPath := filepath.Join(parts[1:]...)
-		if strippedPath == "" {
+		if skip {
 			continue
-		}
-
-		fpath := filepath.Join(destDir, strippedPath)
-
-		if !strings.HasPrefix(fpath, filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path in tar archive: %s", fpath)
 		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(fpath, os.FileMode(header.Mode)); err != nil {
+			// #nosec G115 -- header.Mode is attacker-controlled, but &0770 bounds the result: setuid, setgid, sticky and world bits cannot survive the mask however the conversion wraps
+			if err := os.MkdirAll(fpath, os.FileMode(header.Mode)&0770); err != nil {
 				return fmt.Errorf("failed to create directory: %w", err)
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(fpath), 0700); err != nil {
 				return fmt.Errorf("failed to create subdirectory: %w", err)
 			}
-			outFile, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+			// #nosec G115 -- same as above: &0770 bounds an attacker-controlled tar mode, so no setuid/setgid bit can reach the created file
+			outFile, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode)&0770)
 			if err != nil {
 				return fmt.Errorf("failed to open destination file %s: %w", fpath, err)
 			}
-			if _, err := io.Copy(outFile, tarReader); err != nil {
-				outFile.Close()
-				return fmt.Errorf("failed to extract file contents for %s: %w", fpath, err)
+			copyErr := copyArchiveFile(outFile, tarReader, &remaining, header.Name)
+			closeErr := outFile.Close()
+			if copyErr != nil {
+				return copyErr
 			}
-			outFile.Close()
+			if closeErr != nil {
+				return fmt.Errorf("failed to close destination file %s: %w", fpath, closeErr)
+			}
 		case tar.TypeSymlink:
 			// Verify that the symlink target is safe and does not escape destDir
 			linkTarget := header.Linkname
-			if filepath.IsAbs(linkTarget) {
+			// filepath.IsAbs is platform-specific: on Windows it is FALSE for a
+			// POSIX-rooted path like "/etc/passwd", because an absolute Windows path
+			// needs a drive letter. filepath.Join below then folds the leading slash
+			// away, so the containment check that follows also passes, and the
+			// symlink is created -- resolving to \etc\passwd on the current drive,
+			// outside destDir. Tar archives carry POSIX paths regardless of the host,
+			// so rooted targets are rejected explicitly rather than via IsAbs alone.
+			if filepath.IsAbs(linkTarget) ||
+				strings.HasPrefix(linkTarget, "/") ||
+				strings.HasPrefix(linkTarget, `\`) ||
+				strings.Contains(linkTarget, ":") {
 				return fmt.Errorf("illegal absolute symlink target in tar archive: %s -> %s", fpath, linkTarget)
 			}
-			resolvedTarget := filepath.Join(filepath.Dir(fpath), linkTarget)
-			cleanDest := filepath.Clean(destDir)
-			cleanTarget := filepath.Clean(resolvedTarget)
+			resolvedTarget := filepath.Join(filepath.Dir(fpath), linkTarget) // #nosec G305 -- linkTarget is relative, colon-free, and resolved below against destDir.
+			cleanDest, err := filepath.Abs(destDir)
+			if err != nil {
+				return fmt.Errorf("failed to resolve destination directory: %w", err)
+			}
+			cleanDest = filepath.Clean(cleanDest)
+			cleanTarget, err := filepath.Abs(resolvedTarget)
+			if err != nil {
+				return fmt.Errorf("failed to resolve symlink target: %w", err)
+			}
+			cleanTarget = filepath.Clean(cleanTarget)
 			if cleanTarget != cleanDest && !strings.HasPrefix(cleanTarget, cleanDest+string(os.PathSeparator)) {
 				return fmt.Errorf("illegal symlink target outside destination: %s -> %s (resolved: %s)", fpath, linkTarget, cleanTarget)
 			}
 
+			// Ensure the parent directory exists — tar entries do not always list
+			// a directory before the symlinks inside it.
+			if err := os.MkdirAll(filepath.Dir(fpath), 0700); err != nil {
+				return fmt.Errorf("failed to create subdirectory for symlink %s: %w", fpath, err)
+			}
 			// Remove existing symlink/file if it exists
 			if err := os.Remove(fpath); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("failed to remove existing symlink target %s: %w", fpath, err)
@@ -347,5 +464,71 @@ func ExtractTarGz(tarPath, destDir string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "done in %s\n", time.Since(startTime).Round(time.Millisecond))
+	return nil
+}
+
+func safeArchiveTarget(destDir, archiveName string) (string, bool, error) {
+	return safeArchiveTargetStrip(destDir, archiveName, true)
+}
+
+// safeArchiveTargetStrip resolves an archive member to a path under destDir,
+// rejecting traversal. When strip is true the leading path segment is dropped
+// (flattening wrapper folders like node-vX/); when false, members are placed
+// as-is (for archives whose files sit at the root).
+func safeArchiveTargetStrip(destDir, archiveName string, strip bool) (string, bool, error) {
+	normalized := strings.ReplaceAll(archiveName, "\\", "/")
+	parts := strings.Split(normalized, "/")
+	if strip {
+		if len(parts) <= 1 {
+			return "", true, nil
+		}
+		parts = parts[1:]
+	}
+
+	strippedParts := parts
+	for _, part := range strippedParts {
+		if part == "" || part == "." {
+			continue
+		}
+		if part == ".." {
+			return "", false, fmt.Errorf("%s", archiveName)
+		}
+		if strings.Contains(part, ":") {
+			return "", false, fmt.Errorf("%s", archiveName)
+		}
+	}
+
+	strippedPath := filepath.Join(strippedParts...)
+	if strippedPath == "" || strippedPath == "." || filepath.IsAbs(strippedPath) {
+		return "", true, nil
+	}
+
+	cleanDest, err := filepath.Abs(destDir)
+	if err != nil {
+		return "", false, fmt.Errorf("resolve destination: %w", err)
+	}
+	cleanDest = filepath.Clean(cleanDest)
+	cleanTarget := filepath.Clean(filepath.Join(cleanDest, strippedPath))
+	if cleanTarget != cleanDest && !strings.HasPrefix(cleanTarget, cleanDest+string(os.PathSeparator)) {
+		return "", false, fmt.Errorf("%s", archiveName)
+	}
+	return cleanTarget, false, nil
+}
+
+func copyArchiveFile(dst io.Writer, src io.Reader, remaining *int64, name string) error {
+	if *remaining <= 0 {
+		return fmt.Errorf("archive extraction limit exceeded before %s", name)
+	}
+	before := *remaining
+	limited := &io.LimitedReader{R: src, N: before + 1}
+	n, err := io.Copy(dst, limited)
+	if n > before {
+		*remaining = 0
+		return fmt.Errorf("archive extraction limit exceeded while extracting %s", name)
+	}
+	*remaining -= n
+	if err != nil {
+		return fmt.Errorf("failed to extract file contents for %s: %w", name, err)
+	}
 	return nil
 }

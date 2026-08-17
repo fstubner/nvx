@@ -28,9 +28,15 @@ cd "$PROJ"
 
 echo "Testing sandboxed node via shim..."
 PROBE="$PROJ/probe.txt"
+set +e
 "$NVX" shim node -e "require('fs').writeFileSync('probe.txt','ok')"
-if [[ ! -f "$PROBE" ]]; then
-  echo "workdir write failed" >&2
+rc=$?
+set -e
+if [[ $rc -ne 0 || ! -f "$PROBE" ]]; then
+  echo "sandboxed node failed (rc=$rc). Recent Seatbelt denials:" >&2
+  log show --last 90s --style compact \
+    --predicate 'eventMessage CONTAINS[c] "deny" AND (eventMessage CONTAINS[c] "node" OR process == "sandboxd" OR senderImagePath CONTAINS[c] "Sandbox")' \
+    2>/dev/null | tail -40 >&2 || echo "(could not read sandbox log)" >&2
   exit 1
 fi
 

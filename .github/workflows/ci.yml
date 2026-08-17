@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: [ '1.23' ]
+        go: [ '1.26.6' ]
 
 
     steps:
@@ -40,6 +40,18 @@ jobs:
     - name: Run unit tests
       run: go test -v -race ./...
 
+    # These drive a real AppContainer launch end to end (piped stdio through a real
+    # pipe, an unelevated package-manager run). They were written behind NVX_PROBE=1
+    # because they mutate ACLs and create a throwaway profile. Running them here is
+    # what turns "hosted runners cannot host an AppContainer" from an assumption into
+    # a measurement -- if it is true, this step says so with a real error.
+    - name: Windows AppContainer probes
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      env:
+        NVX_PROBE: '1'
+      run: go test -v -run 'TestPipedStdio|TestAppContainer|TestUnelevatedSandbox' .
+
     - name: Windows sandbox smoke
       if: matrix.os == 'windows-latest'
       shell: pwsh
@@ -47,6 +59,35 @@ jobs:
         go build -o nvx.exe .
         ./scripts/sandbox-smoke.ps1
         ./scripts/sandbox-smoke-egress.ps1
+
+    # The unit-test step above already exercises Landlock, the syscall table and
+    # reaping -- those need no privileges and pass on a hosted runner. The netns
+    # egress test does not: it needs CAP_SYS_ADMIN for unshare and `ip` from
+    # iproute2, so it skipped silently and the one path that proves a contained
+    # process can reach the outside proxy went unverified.
+    # install.sh shipped for months writing only `eval "$(nvx env)"` into the shell
+    # profile, never putting nvx on PATH -- so every new shell printed
+    # "nvx: command not found" and nvx never activated. Nothing tested the
+    # installer, which is why it went unnoticed. Runs on macOS too: that is where
+    # bash is a LOGIN shell and reads .bash_profile rather than .bashrc, the case
+    # the profile-selection logic exists for.
+    - name: Installer shell-profile test
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: sh scripts/test-install-profile.sh
+
+    - name: Linux containment tests (privileged)
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq iproute2
+        # -run selects only the namespace-gated tests; a skip here means the
+        # environment still cannot host them, which is worth seeing in the log.
+        sudo -E env "PATH=$PATH" go test -v -run 'TestNetns|TestReap|TestSupervisorClone' . 2>&1 | tee /tmp/priv.log
+        if grep -q '^--- SKIP' /tmp/priv.log; then
+          echo "::warning::a privileged containment test skipped even under sudo; it is verifying nothing"
+        fi
 
     - name: Linux sandbox smoke
       if: matrix.os == 'ubuntu-latest'
@@ -75,7 +116,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.23'
+        go-version: '1.26.6'
         cache: false
 
     - name: Run govulncheck

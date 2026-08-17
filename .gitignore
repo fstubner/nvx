@@ -24,4 +24,7 @@ dist/
 # Release Notes (Temporary)
 release-notes.md
 
+# Internal development session notes (never publish)
+docs/session-history-*.md
+
 

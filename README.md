@@ -4,14 +4,14 @@
 
 
 
-[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go)](#) [![Platforms](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)](#) [![Release](https://img.shields.io/badge/Release-0.1.0--beta-orange?style=flat-square)](#) [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+[![Go Version](https://img.shields.io/badge/Go-1.23%2B-00ADD8?style=flat-square&logo=go)](#) [![Platforms](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)](#) [![Release](https://img.shields.io/badge/Release-0.4.0-orange?style=flat-square)](#) [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 
 
 
-`nvx` is a zero-dependency, ultra-fast, and security-conscious version and package manager. Originally built to address the lack of robust, fast native runtime version managers on Windows, it naturally supports macOS and Linux as a cross-platform tool. 
+`nvx` is a fast, cross-platform **JavaScript runtime version manager** that **audits and sandboxes npm-family toolchain commands — including whatever your AI coding agents run**. It manages **Node.js and Bun** like nvm/fnm, then adds an ambient security layer: every wrapped `npm`/`yarn`/`pnpm`/`npx`/`bun`/`bunx` command is checked for typosquatting and known vulnerabilities and executed inside a native OS sandbox.
 
-It wraps package managers (`npm`/`yarn`/`pnpm`) and executors (`npx`/`bunx`) to enforce cascading policy files, check for typosquatting, scan for vulnerabilities, and run untrusted code inside native process-level sandboxes.
+Zero dependencies, one static binary, Windows/macOS/Linux. Originally built to fix the lack of a fast native runtime manager on Windows; the security layer is what makes it worth switching to.
 
 
 ---
@@ -22,9 +22,9 @@ With modern LLMs, it's now practical to just build the exact tools you want. Whi
 
 Along the way, I wanted to tackle a few other common frustrations:
 - **Supply Chain Safety**: Typosquatting and malicious postinstall scripts are a growing issue. `nvx` intercepts installs on the fly to flag or block suspected threats based on policies and registry checks.
-- **Agentic & AI Safety**: If you use AI coding agents (like Gemini, Claude, or Copilot) to build projects, they execute terminal commands in your local workspace. By automatically wrapping typical package manager commands (`npm`, `yarn`, `pnpm`, `npx`), `nvx` ensures that any package installed or run by an AI agent is audited and secured out of the box. You don't have to worry about agents running raw commands in your shell; they are wrapped automatically, significantly reducing the risk of an agent pulling down a compromised package or executing rogue code.
+- **Agentic & AI Safety**: If you use AI coding agents (like Gemini, Claude, or Copilot) to build projects, they execute terminal commands in your local workspace. By automatically wrapping typical package manager commands (`npm`, `yarn`, `pnpm`, `npx`, `bun`, `bunx`), `nvx` ensures that any package an AI agent installs is audited and anything it runs is contained — with no agent configuration required. No tool can promise a package is safe, but even if a compromised package slips past the checks, it runs inside the sandbox: secrets scrubbed, filesystem writes confined to the project, and network limited to an allowlist. So a bad package can't quietly read your `.env` or phone home.
 - **Process Isolation**: I wanted a sandbox to run untrusted stuff (like `npx` packages) with a clean slate, scrubbing env secrets and locking down filesystem writes.
-- **Sub-millisecond Performance**: The tool has to be fast enough that there's no noticeable overhead compared to running raw commands.
+- **Thin wrapper**: A single static Go binary with no runtime dependencies. Each wrapped command runs through one extra short-lived process; resolved binary paths are cached (keyed by `PATH`) so the shim doesn't rescan `PATH` on every call. Measured dispatch overhead: **~3 ms on Linux, ~4 ms on macOS, ~38 ms on Windows** (process creation is costlier there) — imperceptible next to the commands you actually wait on like `npm install`. Reproduce it with [`scripts/bench.py`](scripts/bench.py).
 - **Clean UX**: Polished CLI output and automatic shell integration hooks for PowerShell, bash, and zsh.
 
 
@@ -33,17 +33,39 @@ Along the way, I wanted to tackle a few other common frustrations:
 
 ## Features
 
-- **Multi-Runtime Core**: Built to manage multiple runtimes (currently supports Node.js; extendable via `RuntimeProvider` to Bun, Deno, or other non-JavaScript/non-TS runtimes like Python, Go, and Rust).
+- **Multi-Runtime Core**: Manages **Node.js and Bun** through a `RuntimeProvider` interface — see [docs/runtime-providers.md](docs/runtime-providers.md). Select Bun with `runtime@version` (e.g. `nvx install bun@1.2`); a bare version stays Node.js for nvm compatibility.
 - **Cascading Security Policies**: Resolves global and local directory-level policy blocks from `.nvx-policy.json`.
 - **Registry-Backed Typosquatting Audits**: Cross-checks package names against a synced list of popular packages and queries the npm registry download API dynamically to verify download counts and distinguish typosquats from legitimate packages.
 
-- **OSV Vulnerability Batch Scanning**: Audits dependency packages against the live Open Source Vulnerabilities database during install.
-- **Supply-Chain Verification**: Flags package updates released in the last 24 hours (mitigating compromise propagation windows).
+- **OSV Vulnerability Batch Scanning**: Audits direct install packages, executor packages, and packages resolved from `package-lock.json` against the live Open Source Vulnerabilities database during install. If no lockfile is present, `package.json` package names are checked as a best-effort fallback.
+- **Supply-Chain Verification**: Flags package versions published within a configurable window (default 24 hours); trusted packages are exempt.
 - **Native Sandbox Engine**: 
   - Purges credential/secret environment keys before execution.
   - Redirects home profile path (`HOME` / `USERPROFILE`) to temporary guest environments.
-  - Uses Windows AppContainer + Low Integrity Level, Linux Landlock + kernel namespaces, and macOS Seatbelt (`sandbox-exec`) for secure sandboxing.
+  - Uses Windows AppContainer, Linux Landlock + kernel namespaces, and macOS Seatbelt (`sandbox-exec`) for secure sandboxing.
 - **Shell Integrations**: Automatic shell configuration for bash, zsh, and PowerShell.
+
+---
+
+## How nvx compares
+
+| | **nvx** | nvm | fnm | volta | asdf / mise | uv |
+|---|---|---|---|---|---|---|
+| Windows / macOS / Linux | ✅ / ✅ / ✅ | ➖ / ✅ / ✅ | ✅ / ✅ / ✅ | ✅ / ✅ / ✅ | ➖\* / ✅ / ✅ | ✅ / ✅ / ✅ |
+| Single static binary | ✅ (Go) | shell script | ✅ (Rust) | ✅ (Rust) | ✅ (mise) | ✅ (Rust) |
+| Runtimes managed | Node.js, Bun | Node | Node | Node | many (plugins) | Python |
+| Auto-switch on `cd` | ✅ | shell hook | ✅ | ✅ | ✅ | project pin |
+| Session-scoped switching (no global mutation) | ✅ | ✅ | ✅ | shims | shims | n/a |
+| Checksum-verified downloads | ✅ | ✅ | ✅ | ✅ | varies | ✅ |
+| Package resolution / lockfiles | ➖ | ➖ | ➖ | ➖ | ➖ | ✅ |
+| Typosquat / OSV / release-age checks | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
+| OS sandbox for install/run | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
+| Egress allowlist for scripts | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
+| Env-secret scrubbing in sandbox | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ |
+
+<sub>\* asdf is Unix-only; mise adds Windows support. Rows reflect out-of-the-box defaults at time of writing.</sub>
+
+nvx is not a package manager and does not resolve dependencies or manage lockfiles.
 
 ---
 
@@ -75,29 +97,32 @@ curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh
 nvx <command> [arguments]
 
 Commands:
-  install <version>      Download and install a Node.js version (e.g. 20, lts, latest)
-  uninstall <version>    Remove an installed Node.js version
-  use <version>          Switch Node.js version in the current terminal session (downloads automatically if missing)
-  default <version>      Set the global default Node.js version (creates a link)
-  list, ls               List all installed Node.js versions
-  list-remote, ls-remote List available Node.js versions from nodejs.org
-  env [--shell=<type>]   Print shell integration script (powershell, bash, zsh)
-  auto [--shell=<type>]  Auto-switch version based on .nvmrc / .node-version / package.json
-  verify-install <pkgs>  Verify package safety before installing (called by wrappers)
-  init-shims             Generate PATH shims in ~/.nvx/bin
-  policy init            Create default policy files (--global, --project, --force)
-  cleanup                Remove stale sandbox sessions from previous runs
-  version, -v            Print version info
+  install <[rt@]version>   Install a runtime version. Bare version = Node.js
+                           (e.g. 20, lts, latest); prefix a runtime with @
+                           (e.g. bun@1.2, bun).
+  uninstall <[rt@]version> Remove an installed runtime version
+  use <[rt@]version>       Switch the current terminal session (installs if missing)
+  default <[rt@]version>   Set the global default for a runtime (creates a link)
+  list, ls                 List installed runtimes and versions
+  list-remote, ls-remote   List available Node.js versions from nodejs.org
+  env [--shell=<type>]     Print shell integration script (powershell, bash, zsh)
+  auto [--shell=<type>]    Auto-switch based on .nvmrc / .node-version /
+                           .bun-version / package.json engines
+  verify-install <pkgs>    Verify package safety before installing (called by wrappers)
+  init-shims               Generate PATH shims in ~/.nvx/bin
+  policy init              Create default policy files (--global, --project, --force)
+  cleanup                  Remove stale sandbox sessions from previous runs
+  version, -v              Print version info
 
-Shim flags (npm, node, npx, yarn, pnpm, bunx via PATH):
-  --no-sandbox           Run without sandbox for this invocation
+Shim flags (node, npm, npx, yarn, pnpm, bun, bunx):
+  --no-sandbox             Run without sandbox for this invocation
   --filesystem-provider=<name>  Override isolation.filesystem.provider
-  -y, --yes              Auto-approve prompts
+                           (native | docker; experimental: wsl, wslc, systemd-nspawn)
 ```
 
 ### Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`npm`, `node`, `npx`, `yarn`, `pnpm`, and `bunx` are sandboxed by default** when `isolation.enabled` is true. No separate sandbox subcommand — just run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun`, and `bunx` are sandboxed by default** when `isolation.enabled` is true. No separate sandbox subcommand — just run commands normally:
 
 ```bash
 npm install
@@ -111,7 +136,7 @@ After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh
 
 ### Non-Interactive Use (CI)
 
-Security prompts (vulnerability warnings, install script confirmations, typosquatting alerts) **fail closed** when no interactive terminal is available: the operation is denied rather than silently approved. In CI pipelines, pass `-y` / `--yes` or set `NVX_YES=true` to approve prompts explicitly.
+Security prompts (vulnerability warnings, install script confirmations, typosquatting alerts) **fail closed** when no interactive terminal is available: the operation is denied rather than silently approved. In CI pipelines, set `NVX_YES=true` to approve prompts explicitly. For direct `nvx` commands, leading `-y` / `--yes` is also supported; package-manager flags after a shim command are forwarded to the package manager.
 
 ### Auto-Swapping
 
@@ -131,6 +156,10 @@ Corporate policies can be defined globally in `~/.nvx/policy.json` and customize
     "enabled": true,
     "max_distance": 2,
     "trusted_packages": ["my-internal-helper"]
+  },
+  "release_age": {
+    "enabled": true,
+    "min_age_hours": 24
   },
   "runtime": {
     "default": "node",
@@ -164,9 +193,10 @@ Policies cascade: the global policy applies everywhere, and local policy files m
 
 ### Policy Reference
 * **`enforce_ignore_scripts`**: When `true`, this forces npm/yarn/pnpm to install packages with `--ignore-scripts`. This blocks execution of hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine.
-* **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary).
-  - `native`: AppContainer + Low IL (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Fail-closed.
-  - `docker`, `wslc`, `wsl`, `sandbox-exec`, `systemd-nspawn`: container or alternate providers (see below).
+* **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary). See the [enforcement matrix](docs/enforcement-matrix.md) for exact guarantees.
+  - `native` (default): AppContainer (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Zero-config, fail-closed.
+  - `docker`: runs in a container (hardened; `offline`/`loopback` enforced via `--network none`). Requires Docker running.
+  - `wsl`, `wslc`, `systemd-nspawn`: experimental; require `NVX_EXPERIMENTAL=1`.
 * **`isolation.network.mode`**: How egress is governed.
   - `proxy` (default): parent-process HTTP CONNECT + SOCKS5 proxy with policy allowlist; injects `HTTP_PROXY` / `HTTPS_PROXY`.
   - `open`: no egress filtering.
@@ -192,18 +222,26 @@ node app.js
 When running in the sandbox:
 * Environment secrets (e.g. `AWS_*`, `GITHUB_*`, `SSH_*`) are scrubbed.
 * Home and temp paths are virtualized to an ephemeral guest profile.
-* **Filesystem** (`isolation.filesystem`): Windows AppContainer + Low IL; Linux Landlock + namespaces; macOS Seatbelt.
-* **Network** (`isolation.network.mode: proxy`): egress via loopback proxy with allowlist; unknown hosts prompt interactively (fail-closed in CI unless `-y`).
+* **Filesystem** (`isolation.filesystem`): Windows AppContainer; Linux Landlock + namespaces; macOS Seatbelt.
+* **Network** (`isolation.network.mode: proxy`): egress via loopback proxy with allowlist; unknown hosts prompt interactively (fail-closed in CI unless `NVX_YES=true`).
 
 ### Verification matrix
 
 | Guarantee | Windows (native) | Linux (native) | macOS (native) |
 |-----------|------------------|----------------|----------------|
-| Host profile write blocked | Yes (AppContainer + Low IL) | Yes (Landlock) | Yes (Seatbelt) |
+| Host profile write blocked | Yes (AppContainer) | Yes (Landlock) | Yes (Seatbelt) |
 | Workdir write allowed | Yes | Yes | Yes |
-| Egress via policy proxy | Yes (AppContainer + loopback proxy) | Yes (loopback netns + in-child proxy) | Yes (Seatbelt + loopback proxy) |
-| Raw TCP/UDP bypass blocked at OS | Yes | Yes (netns + seccomp UDP deny) | Yes (Seatbelt `(deny network*)`) |
+| Egress via policy proxy | Only after an elevated `nvx setup`* | Yes (loopback-only netns + parent proxy over a UNIX socket) | Yes (Seatbelt + loopback proxy) |
+| Raw TCP/UDP bypass blocked at OS | Only after an elevated `nvx setup`* | Yes (netns + seccomp UDP deny) | Yes (Seatbelt `(deny network*)`) |
 | Fail-closed if FS/network primitive missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes |
+
+\* **Windows egress is not allowlisted by default.** An AppContainer cannot reach
+a loopback proxy without a loopback exemption, and only an elevated `nvx setup`
+can add one. Without it the sandbox is granted the `internetClient` capability and
+connects directly, so the allowlist is not consulted. Filesystem containment,
+environment scrubbing and the pre-install supply-chain checks are unaffected. See
+`docs/enforcement-matrix.md` for the full picture, including the no-elevation
+design that would close this.
 
 ---
 
@@ -215,17 +253,18 @@ Traditional managers change system-wide paths or symbolic links, which can disru
 ### How do sandboxed containers handle local servers, ports, and networking?
 Web development requires running local dev servers (e.g. listening on port `3000`) and calling external backend APIs or databases:
 * **Native Sandbox**: Loopback bind/connect works for dev servers. With `network.mode: proxy`, outbound TCP goes through the nvx allowlist proxy (HTTP_PROXY / SOCKS5). Host services on `localhost` remain reachable via `allow_hosts`.
-* **Docker Sandbox**: The Docker container automatically exposes loopback TCP configurations so that the containerized process can reach a backend running locally on the host machine.
+* **Docker Sandbox**: With `network.mode: open`, the container can reach host services via the standard Docker host gateway. With `offline`/`loopback` the container runs with `--network none` (no network at all). Allowlisted `proxy` mode is not supported under Docker — use the native provider when you need per-host egress control.
 
-### What if a project needs multiple runtimes (e.g., Node frontend and Python/Go backend)?
-* **Native Sandbox**: Since the sandbox scrubs environment variables and configures paths on top of your host's standard toolchains, other runtimes installed on your machine (like Python or Go) are fully visible and execute alongside Node.js.
-* **Docker Sandbox**: The default Docker isolation uses a base Node.js image (e.g., `node:20`). If you require a multi-language stack (Node + Python), you can easily package a custom Dockerfile or spin them up via standard container tools (like `docker-compose`) to network them together.
+### What if a project needs both Node and Bun?
+`nvx use node@20` and `nvx use bun@1.2` activate independently in the same shell without evicting each other from `PATH`.
+* **Native Sandbox**: Other toolchains already installed on your host remain visible and run alongside nvx-managed runtimes (not sandboxed unless shimmed).
+* **Docker Sandbox**: The image is chosen from the active runtime (`node:<v>` or `oven/bun:<v>`). For a multi-language stack, supply your own image via a Dockerfile or `docker-compose`.
 
 ### Does nvx handle TypeScript and bundler commands?
 Yes! Since `nvx` hooks into the active runtime context, any globally or locally installed tools—including `tsc`, `ts-node`, `vite`, or `webpack`—execute within the selected Node.js environment automatically.
 
 ### How does automatic command wrapping protect me when using AI coding agents?
-When AI coding agents (like Gemini, Claude, or Copilot) interact with your workspace, they typically run standard commands such as `npm install <package>` or `npx <command>`. Because `nvx` automatically wraps these typical binaries inside the shell session, those commands are transparently intercepted. The packages are verified via typosquatting and vulnerability registry checks, and executors are run within the native sandbox environment. This happens automatically without any special configuration or wrapper commands required from the agent, meaning you don't have to worry about an autonomous agent accidentally downloading or executing a malicious supply-chain package.
+When AI coding agents (like Gemini, Claude, or Copilot) interact with your workspace, they typically run standard commands such as `npm install <package>` or `npx <command>`. Because `nvx` automatically wraps these typical binaries inside the shell session, those commands are transparently intercepted. The packages are checked against typosquatting and vulnerability (OSV) registries, and executors run inside the native sandbox — with no special configuration or wrapper commands required from the agent. This is defense-in-depth that raises the bar against common supply-chain patterns (typosquats, known-vulnerable versions, install-script execution); it reduces risk substantially but is not a guarantee against a determined or novel attacker. See [SECURITY.md](SECURITY.md) for the threat model and its limits.
 
 ---
 
