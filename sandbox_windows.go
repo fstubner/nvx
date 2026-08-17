@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -67,8 +68,13 @@ func applySandboxIsolation(cmd *exec.Cmd, guestHome string) {
 
 // labelLowIntegrity applies a low mandatory integrity label to a directory for
 // compatibility with legacy constrained launch paths.
+// labelLowIntegrity applies a low mandatory integrity label to dir and its
+// contents. Time-boxed like every other icacls call: this one previously had no
+// timeout at all, and it walks the tree (/t), so a large persistent tool profile
+// or a slow filter driver could stall a launch indefinitely. It measured at 0.03s
+// on a fresh guest home, so the bound is generous rather than tight.
 func labelLowIntegrity(dir string) error {
-	out, err := exec.Command("icacls", dir, "/setintegritylevel", "(OI)(CI)Low", "/t", "/c", "/q").CombinedOutput()
+	out, err := runWinCmd(20*time.Second, "icacls", dir, "/setintegritylevel", "(OI)(CI)Low", "/t", "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls failed: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
