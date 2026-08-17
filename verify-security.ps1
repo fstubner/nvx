@@ -66,20 +66,56 @@ function Invoke-Check {
 
 Write-Host "Running local security checks for nvx..." -ForegroundColor Cyan
 
-# 1. govulncheck
-$govulncheckPath = Join-Path $GoBinDir 'govulncheck.exe'
-if (-not (Test-Path $govulncheckPath)) {
-    Write-Host "Installing govulncheck..." -ForegroundColor Yellow
-    go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-}
-Invoke-Check "govulncheck" { & $govulncheckPath ./... }
+# Ensure-Tool guarantees the tool on disk is BOTH the pinned version and built by
+# the Go toolchain now in use, reinstalling it otherwise.
+#
+# The previous logic installed only when the binary was missing, so a stale one was
+# reused forever. That is not theoretical: after a Go upgrade, binaries built by the
+# old toolchain could not parse the newer source at all -- govulncheck reported
+# "uses version go1.19 of the source-processing packages but runs version go1.26 of
+# 'go list'" and gosec panicked inside x/tools. Both failures looked like the code
+# was at fault.
+#
+# `go version -m` reports both facts from the binary's embedded build info, which is
+# the only reliable source: gosec built via `go install` reports its own --version
+# as "dev". Checking is fast; installing unconditionally costs ~17s per run, which
+# is enough to stop people running the gate.
+function Ensure-Tool {
+    param(
+        [string]$Label,
+        [string]$Exe,
+        [string]$Module,
+        [string]$Version,
+        [string]$ModPath
+    )
+    $goVer = (go env GOVERSION)
 
-# 2. gosec
-$gosecPath = Join-Path $GoBinDir 'gosec.exe'
-if (-not (Test-Path $gosecPath)) {
-    Write-Host "Installing gosec..." -ForegroundColor Yellow
-    go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
+    if (Test-Path $Exe) {
+        $info = & go version -m $Exe 2>$null
+        $builtBy = (($info | Select-Object -First 1) -replace '^.*:\s*', '').Trim()
+        $modLine = $info | Where-Object { $_ -match "^\s*mod\s" -and $_ -match [regex]::Escape($ModPath) } | Select-Object -First 1
+        $modVer = if ($modLine) { ($modLine.Trim() -split '\s+')[2] } else { '' }
+        if ($builtBy -eq $goVer -and $modVer -eq $Version) {
+            return
+        }
+        $haveV = if ($modVer) { $modVer } else { 'unknown' }
+        $haveG = if ($builtBy) { $builtBy } else { 'unknown' }
+        Write-Host "Reinstalling ${Label}: have $haveV built by $haveG, want $Version built by $goVer" -ForegroundColor Yellow
+    } else {
+        Write-Host "Installing $Label $Version..." -ForegroundColor Yellow
+    }
+    go install "$Module@$Version"
 }
+
+$govulncheckPath = Join-Path $GoBinDir 'govulncheck.exe'
+$gosecPath = Join-Path $GoBinDir 'gosec.exe'
+
+Ensure-Tool -Label 'govulncheck' -Exe $govulncheckPath -Module 'golang.org/x/vuln/cmd/govulncheck' -Version 'v1.7.0' -ModPath 'golang.org/x/vuln'
+Ensure-Tool -Label 'gosec' -Exe $gosecPath -Module 'github.com/securego/gosec/v2/cmd/gosec' -Version 'v2.28.0' -ModPath 'github.com/securego/gosec/v2'
+
+# Run the copies just verified, never whatever is first on PATH -- a different build
+# of either tool there would silently change what this gate checks.
+Invoke-Check "govulncheck" { & $govulncheckPath ./... }
 Invoke-Check "gosec" { & $gosecPath "-exclude=$GosecExclude" ./... }
 
 # 3. go vet
