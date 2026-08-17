@@ -993,3 +993,24 @@ func TestIsTopLevelShimInvocation(t *testing.T) {
 	}
 }
 
+// TestEscapeScopedPackageNeutralisesHostileNames covers what the hand-rolled
+// escaping let through. A package name is not always typed by the user -- it can
+// come from a project policy file or a package.json in a cloned repo -- and it is
+// interpolated into a registry URL path whose response feeds the typosquat and
+// release-age gates.
+func TestEscapeScopedPackageNeutralisesHostileNames(t *testing.T) {
+	cases := []struct{ name, input string }{
+		{"path traversal", "../../../etc/passwd"},
+		{"traversal after a scope", "@scope/../../evil"},
+		{"query truncation", "lodash?fake=1"},
+		{"fragment truncation", "lodash#x"},
+		{"embedded space", "lo dash"},
+		{"double slash", "//evil.com/x"},
+	}
+	for _, tc := range cases {
+		got := EscapeScopedPackage(tc.input)
+		if strings.ContainsAny(got, "/? #") {
+			t.Errorf("%s: EscapeScopedPackage(%q) = %q still carries a URL-significant character", tc.name, tc.input, got)
+		}
+	}
+}
