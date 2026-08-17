@@ -100,14 +100,20 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 	return 0
 }
 
-// buildSeatbeltProfile generates a Seatbelt policy with filesystem and optional network rules.
-func buildSeatbeltProfile(netCtx NetworkLaunchContext, writableRoots ...string) string {
-	writeRoots := append([]string{
+// buildSeatbeltProfile renders the Seatbelt policy. The writable roots are named
+// parameters rather than a variadic tail on purpose: the tail let one caller pass
+// nvxHome and the runtime binary directory as writable while the other passed the
+// intended two, and the compiler had no reason to object. Adding a writable root
+// should now require editing this signature and every caller with it.
+func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string) string {
+	writeRoots := []string{
 		"/dev",
 		"/private/tmp",
 		"/private/var/tmp",
 		"/private/var/folders",
-	}, writableRoots...)
+		guestHome,
+		workDir,
+	}
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n")
