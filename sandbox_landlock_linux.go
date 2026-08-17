@@ -193,7 +193,7 @@ func applyLandlockSandbox(guestHome, workDir, nvxHome string) error {
 	}
 	defer syscall.Close(fd)
 
-	for _, p := range []string{guestHome, workDir} {
+	for _, p := range sandboxWritableRoots(guestHome, workDir) {
 		if p == "" {
 			continue
 		}

@@ -106,14 +106,12 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 // intended two, and the compiler had no reason to object. Adding a writable root
 // should now require editing this signature and every caller with it.
 func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string) string {
-	writeRoots := []string{
+	writeRoots := append([]string{
 		"/dev",
 		"/private/tmp",
 		"/private/var/tmp",
 		"/private/var/folders",
-		guestHome,
-		workDir,
-	}
+	}, sandboxWritableRoots(guestHome, workDir)...)
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n")
