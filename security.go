@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -240,13 +241,22 @@ type NpmDownloadsResponse struct {
 	Package   string `json:"package"`
 }
 
-// EscapeScopedPackage replaces "/" with "%2F" for scoped package names
+// EscapeScopedPackage makes a package name safe to interpolate into a registry
+// URL path.
+//
+// It used to hand-roll the escaping: replace the single "/" in a scoped name with
+// %2F and return everything else untouched. That covers the case it was written
+// for and nothing else, so a name containing "../", a space, "?" or "#" went into
+// the URL path verbatim. A name is not always something the user typed -- it can
+// come from a project policy file or a package.json in a cloned repository -- and
+// the responses feed the typosquat and release-age gates, so steering a lookup at
+// a different path than the one being installed is a way to influence what those
+// gates see.
+//
+// url.PathEscape produces byte-identical output for real package names
+// (@types/node -> @types%2Fnode, lodash -> lodash) and neutralises the rest.
 func EscapeScopedPackage(pkg string) string {
-	if strings.HasPrefix(pkg, "@") && strings.Contains(pkg, "/") {
-		parts := strings.SplitN(pkg, "/", 2)
-		return parts[0] + "%2F" + parts[1]
-	}
-	return pkg
+	return url.PathEscape(pkg)
 }
 
 // GetWeeklyDownloads queries the public npm downloads point API
