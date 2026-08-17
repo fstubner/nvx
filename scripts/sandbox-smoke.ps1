@@ -40,11 +40,29 @@ if (-not (Test-Path (Join-Path $nvxNode "node.exe"))) {
     New-Item -ItemType Directory -Force -Path $nvxNode | Out-Null
     Copy-Item -Path "$nodeSrc\*" -Destination $nvxNode -Recurse -Force
 }
+# isolation.level = strict is required for what this script asserts. At the default
+# "standard" level a bare `node -e ...` is classified as YOUR OWN CODE and runs
+# uncontained by design, so the host-write assertion below could never hold. That
+# has been true since containment v2 landed and went unnoticed because this script
+# exited 0 on CI without running.
 @{
-    runtime = @{ default = "node"; versions = @{ node = $ver } }
+    runtime   = @{ default = "node"; versions = @{ node = $ver } }
+    isolation = @{ enabled = $true; level = "strict" }
 } | ConvertTo-Json -Depth 4 | Set-Content -Path ".nvx-policy.json" -Encoding utf8
 
 & $nvx init-shims | Out-Null
+
+# Can this host create an AppContainer at all? GitHub-hosted Windows runners cannot:
+# CreateProcess returns "Access is denied" for every executable, including cmd.exe
+# (measured in CI run 32077425413). Probing once and skipping with that reason keeps
+# the environment's limitation from being reported as a product failure -- while
+# still failing normally everywhere the sandbox does work.
+$probe = & $nvx shim node -e "process.exit(0)" 2>&1 | Out-String
+if ($probe -match 'AppContainer launch failed') {
+    Write-Host "This host cannot create AppContainer children; skipping the containment assertions."
+    Write-Host ("  " + $probe.Trim())
+    exit 0
+}
 
 Write-Host "Testing sandboxed node via shim..."
 $probe = Join-Path $proj "probe.txt"
