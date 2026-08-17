@@ -42,7 +42,7 @@ const (
 // applyLinuxNetworkSeccomp installs seccomp filters for network isolation.
 // Loopback-only network namespaces block WAN TCP/UDP; seccomp adds defense in
 // depth by denying inet connect and UDP socket creation in restricted modes.
-func applyLinuxNetworkSeccomp(networkMode string, proxyPort int) error {
+func applyLinuxNetworkSeccomp(networkMode string) error {
 	mode := strings.ToLower(networkMode)
 	switch mode {
 	case "open", "":
@@ -50,7 +50,6 @@ func applyLinuxNetworkSeccomp(networkMode string, proxyPort int) error {
 	case "offline", "loopback":
 		return installSeccompFilter(buildOfflineNetworkFilter())
 	case "proxy":
-		_ = proxyPort
 		return installSeccompFilter(buildProxyNetworkFilter())
 	default:
 		return nil

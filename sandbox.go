@@ -256,6 +256,11 @@ type NetworkLaunchContext struct {
 	HTTPProxyPort  uint16
 	SOCKSProxyHost string
 	SOCKSProxyPort uint16
+	// EgressSocketPath is the UNIX socket the parent's egress proxy also listens
+	// on, for platforms that put the sandboxed process in a network namespace.
+	// A netns has no route to any allowlisted host, so the proxy must stay
+	// outside it; a UNIX socket is how the contained side still reaches it.
+	EgressSocketPath string
 }
 
 // runSandbox is the main entry point for executing a command inside the nvx sandbox.
@@ -381,11 +386,13 @@ func runSandbox(config SandboxConfig) int {
 
 	ctx := context.Background()
 	var egress *EgressProxy
-	// Linux native re-execs into a loopback-only network namespace and starts its
-	// own egress proxy inside the child; a parent proxy would be unreachable.
-	skipParentProxy := runtime.GOOS == "linux" && canonical == "native" &&
-		networkModeRequiresNamespace(policy.Isolation.Network.Mode)
-	if !skipParentProxy {
+	// The egress proxy always runs here, in the parent. Linux native re-execs into
+	// a loopback-only network namespace, and that namespace has no route to any
+	// allowlisted host -- so a proxy started *inside* it (as this used to do) could
+	// never forward anything, which made proxy mode non-functional. The parent
+	// keeps real network access and the contained side reaches it over a UNIX
+	// socket (see prepareEgressForNamespace and startProxyRelay).
+	{
 		var err error
 		egress, err = startEgressProxy(ctx, policy, rt, config.NvxHome)
 		if err != nil {

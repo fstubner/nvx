@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -44,6 +43,14 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 			return 1
 		}
 		defer cleanupGuestProfile(config.NvxHome, sandboxID)
+	}
+
+	// Platforms that place the sandboxed process in a network namespace need the
+	// parent's proxy exposed on a UNIX socket inside the guest home, since a
+	// namespace-local TCP address cannot reach out. No-op elsewhere.
+	if err := prepareEgressForNamespace(egress, guestHome, &netCtx); err != nil {
+		LogError("Egress proxy setup for namespace isolation failed: %v", err)
+		return 1
 	}
 
 	cleanEnv := scrubEnvironment(guestHome)
@@ -95,7 +102,7 @@ func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
 }
 
 // parseLandlockExecArgs parses internal __landlock-exec arguments.
-func parseLandlockExecArgs(argv []string) (guestHome, workDir, nvxHome, networkMode, shimCommand string, proxyPort int, cmdPath string, cmdArgs []string, ok bool) {
+func parseLandlockExecArgs(argv []string) (guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath string, cmdArgs []string, ok bool) {
 	for i := 0; i < len(argv); i++ {
 		arg := argv[i]
 		switch {
@@ -109,18 +116,16 @@ func parseLandlockExecArgs(argv []string) (guestHome, workDir, nvxHome, networkM
 			networkMode = strings.TrimPrefix(arg, "--network-mode=")
 		case strings.HasPrefix(arg, "--command="):
 			shimCommand = strings.TrimPrefix(arg, "--command=")
-		case strings.HasPrefix(arg, "--proxy-port="):
-			if parsed, err := strconv.Atoi(strings.TrimPrefix(arg, "--proxy-port=")); err == nil {
-				proxyPort = parsed
-			}
+		case strings.HasPrefix(arg, "--egress-socket="):
+			egressSocket = strings.TrimPrefix(arg, "--egress-socket=")
 		case arg == "--":
 			if i+1 < len(argv) {
 				cmdPath = argv[i+1]
 				cmdArgs = argv[i+2:]
-				return guestHome, workDir, nvxHome, networkMode, shimCommand, proxyPort, cmdPath, cmdArgs, guestHome != "" && workDir != "" && cmdPath != ""
+				return guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath, cmdArgs, guestHome != "" && workDir != "" && cmdPath != ""
 			}
-			return "", "", "", "", "", 0, "", nil, false
+			return "", "", "", "", "", "", "", nil, false
 		}
 	}
-	return "", "", "", "", "", 0, "", nil, false
+	return "", "", "", "", "", "", "", nil, false
 }
