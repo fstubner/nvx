@@ -10,10 +10,20 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     exit 0
 }
 
-# GitHub-hosted Windows runners cannot spawn AppContainer children (CreateProcess
-# fails for all PE paths even with icacls grants). Same pattern as Linux netns skip.
-if ($env:GITHUB_ACTIONS -eq 'true') {
-    Write-Host "AppContainer unavailable on GitHub Actions Windows runners; skipping native sandbox smoke."
+# This script used to exit 0 unconditionally on GitHub Actions, on the belief that
+# hosted Windows runners cannot spawn AppContainer children. The step therefore
+# reported success having verified nothing, for every run.
+#
+# That belief predates two fixes: piped stdio never reached the child at all
+# (STARTF_USESTDHANDLES was never set), and every launch stalled ~45s in the
+# ancestor-grant walk. Both would make a launch here look impossible. Whether the
+# runners can actually host an AppContainer is now decided by trying it, and a
+# failure is reported as a failure.
+#
+# Set NVX_SMOKE_SKIP_APPCONTAINER=1 to opt out deliberately on a host known not to
+# support it -- an explicit choice, rather than a silent one keyed off CI.
+if ($env:NVX_SMOKE_SKIP_APPCONTAINER -eq '1') {
+    Write-Host "NVX_SMOKE_SKIP_APPCONTAINER=1 set; skipping native sandbox smoke."
     exit 0
 }
 
