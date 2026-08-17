@@ -66,8 +66,8 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		cmd.Dir = workDir
 	}
 
-	// Create the network namespace here, as a clone flag, rather than having the
-	// child unshare itself.
+	// Create the namespaces here, as clone flags, rather than having the child
+	// unshare itself.
 	//
 	// unshare(CLONE_NEWNET) moves only the CALLING THREAD, and the Go runtime
 	// schedules goroutines across threads freely -- so a self-unsharing child ends
@@ -76,9 +76,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// still in the old namespace and one reached the public internet. Supplying the
 	// flag at clone time puts the whole child process in the new namespace from
 	// birth, which is deterministic and needs no thread pinning.
-	if networkModeRequiresNamespace(netCtx.Mode) {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWNET}
-	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: supervisorCloneFlags(netCtx.Mode)}
 
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
