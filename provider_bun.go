@@ -470,17 +470,19 @@ func copyExecutable(src, dst string) error {
 		return err
 	}
 	defer in.Close()
+	// #nosec G302 -- this copies an executable; 0600 would produce a binary that cannot run
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+		out.Close() // #nosec G104 -- the copy error is returned below; a close error would only mask it
 		return err
 	}
 	if err := out.Close(); err != nil {
 		return err
 	}
+	// #nosec G302 -- same reason: the destination is an executable
 	return os.Chmod(dst, 0755)
 }
 

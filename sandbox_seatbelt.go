@@ -64,7 +64,7 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 	profilePath := profileFile.Name()
 	defer os.Remove(profilePath)
 	if _, err := profileFile.Write([]byte(profile)); err != nil {
-		profileFile.Close()
+		profileFile.Close() // #nosec G104 -- the write error below is what matters; a close error on top of it adds nothing
 		LogError("Failed to write Seatbelt profile: %v", err)
 		return 1
 	}

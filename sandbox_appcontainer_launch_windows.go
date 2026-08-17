@@ -45,6 +45,7 @@ func buildCapabilitySIDAttrs(sidStrings []string) ([]SID_AND_ATTRIBUTES, func(),
 	var sids []*syscall.SID
 	free := func() {
 		for _, s := range sids {
+			// #nosec G104 -- LocalFree gives the caller nothing actionable, and cleanup must continue for every SID
 			procLocalFree.Call(uintptr(unsafe.Pointer(s)))
 		}
 	}
