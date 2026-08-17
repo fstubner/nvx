@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,11 @@ type EgressProxy struct {
 	socksAddr string
 	httpLn    net.Listener
 	socksLn   net.Listener
+	// unixLn serves the same HTTP CONNECT handler on a UNIX socket, so a process
+	// in a different network namespace can reach this proxy (see ListenUnix).
+	unixLn   net.Listener
+	unixPath string
+	ctx      context.Context
 	allow     map[string]bool
 	session   map[string]bool
 	policy    Policy
@@ -52,6 +58,7 @@ func startEgressProxy(ctx context.Context, policy Policy, provider RuntimeProvid
 
 	proxyCtx, cancel := context.WithCancel(ctx)
 	p.cancel = cancel
+	p.ctx = proxyCtx
 
 	httpLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -75,6 +82,47 @@ func startEgressProxy(ctx context.Context, policy Policy, provider RuntimeProvid
 	return p, nil
 }
 
+// ListenUnix additionally serves the HTTP CONNECT proxy on a UNIX socket at path.
+//
+// A network namespace does not contain UNIX sockets -- they are filesystem
+// objects -- so this is how a process inside the sandbox's loopback-only netns
+// reaches a proxy that stays outside it and therefore still has real egress.
+// The TCP listeners remain for the platforms that do not use a netns.
+func (p *EgressProxy) ListenUnix(path string) error {
+	if p == nil {
+		return nil
+	}
+	// A stale socket from a crashed run would make Listen fail with EADDRINUSE.
+	_ = os.Remove(path)
+
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return fmt.Errorf("egress proxy unix listen %s: %w", path, err)
+	}
+	// Only the sandbox's own user needs to reach it.
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = ln.Close()
+		return fmt.Errorf("egress proxy socket permissions: %w", err)
+	}
+	p.unixLn = ln
+	p.unixPath = path
+
+	ctx := p.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go p.serveHTTP(ctx, ln)
+	return nil
+}
+
+// UnixSocketPath returns the UNIX socket path, or "" if ListenUnix was not used.
+func (p *EgressProxy) UnixSocketPath() string {
+	if p == nil {
+		return ""
+	}
+	return p.unixPath
+}
+
 func (p *EgressProxy) Close() {
 	if p == nil || p.cancel == nil {
 		return
@@ -85,6 +133,14 @@ func (p *EgressProxy) Close() {
 	}
 	if p.socksLn != nil {
 		_ = p.socksLn.Close()
+	}
+	if p.unixLn != nil {
+		_ = p.unixLn.Close()
+	}
+	// The socket file outlives its listener; leaving it behind would make the
+	// next run's Listen fail with EADDRINUSE.
+	if p.unixPath != "" {
+		_ = os.Remove(p.unixPath)
 	}
 }
 

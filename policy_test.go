@@ -6,13 +6,13 @@ import (
 )
 
 func TestParseLandlockExecArgs(t *testing.T) {
-	guest, work, nvx, mode, shimCmd, port, cmd, args, ok := parseLandlockExecArgs([]string{
+	guest, work, nvx, mode, shimCmd, sock, cmd, args, ok := parseLandlockExecArgs([]string{
 		"--guest-home=/guest",
 		"--work-dir=/work",
 		"--nvx-home=/nvx",
 		"--network-mode=proxy",
 		"--command=node",
-		"--proxy-port=8080",
+		"--egress-socket=/guest/.nvx-egress.sock",
 		"--",
 		"/bin/node",
 		"-v",
@@ -20,8 +20,9 @@ func TestParseLandlockExecArgs(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ok")
 	}
-	if guest != "/guest" || work != "/work" || nvx != "/nvx" || mode != "proxy" || shimCmd != "node" || port != 8080 || cmd != "/bin/node" {
-		t.Fatalf("unexpected parse: %q %q %q %q %q %d %q", guest, work, nvx, mode, shimCmd, port, cmd)
+	if guest != "/guest" || work != "/work" || nvx != "/nvx" || mode != "proxy" || shimCmd != "node" ||
+		sock != "/guest/.nvx-egress.sock" || cmd != "/bin/node" {
+		t.Fatalf("unexpected parse: %q %q %q %q %q %q %q", guest, work, nvx, mode, shimCmd, sock, cmd)
 	}
 	if len(args) != 1 || args[0] != "-v" {
 		t.Fatalf("unexpected args: %v", args)

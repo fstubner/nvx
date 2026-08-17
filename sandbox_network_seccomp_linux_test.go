@@ -61,7 +61,7 @@ func assertFilterBehavior(t *testing.T, mode string) {
 	t.Helper()
 
 	if os.Getenv("NVX_TEST_SECCOMP_CHILD") == mode {
-		if err := applyLinuxNetworkSeccomp(mode, 0); err != nil {
+		if err := applyLinuxNetworkSeccomp(mode); err != nil {
 			fmt.Printf("INSTALL_FAILED=%v\n", err)
 			os.Exit(0)
 		}

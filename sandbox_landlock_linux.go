@@ -197,36 +197,40 @@ func applyLandlockSandbox(guestHome, workDir, nvxHome string) error {
 	return nil
 }
 
-func runLandlockExecChild(guestHome, workDir, nvxHome, networkMode, shimCommand string, proxyPort int, cmdPath string, args []string) int {
+func runLandlockExecChild(guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath string, args []string) int {
+	// The network namespace is created by the parent as a clone flag, so this
+	// process is already inside it (see platformLaunchNative for why it is not
+	// unshared here). Loopback exists but starts down.
 	if networkModeRequiresNamespace(networkMode) {
-		if err := setupLoopbackNetworkNamespace(); err != nil {
+		if err := bringUpLoopback(); err != nil {
 			LogError("Network isolation failed (fail-closed): %v", err)
 			return 1
 		}
 		LogInfo("Linux loopback-only network namespace active")
 	}
 
-	var egress *EgressProxy
-	if strings.ToLower(networkMode) != "open" {
-		policy, err := LoadPolicy(nvxHome)
+	// The egress proxy runs in the parent, outside this namespace, because a
+	// loopback-only namespace has no route to any allowlisted host. Reach it
+	// through a loopback TCP relay that forwards to the parent's UNIX socket.
+	relayCtx, cancelRelay := context.WithCancel(context.Background())
+	defer cancelRelay()
+
+	var proxyEnvAddr string
+	if egressSocket != "" && strings.ToLower(networkMode) != "open" {
+		addr, stop, err := startProxyRelay(relayCtx, egressSocket)
 		if err != nil {
-			LogError("Failed to load policy: %v", err)
+			LogError("Egress relay failed (fail-closed): %v", err)
 			return 1
 		}
-		rt := runtimeForShim(shimCommand)
-		egress, err = startEgressProxy(context.Background(), policy, rt, nvxHome)
-		if err != nil {
-			LogError("Egress proxy failed: %v", err)
-			return 1
-		}
-		defer egress.Close()
+		defer stop()
+		proxyEnvAddr = addr
 	}
 
 	if err := applyLandlockSandbox(guestHome, workDir, nvxHome); err != nil {
 		LogError("Landlock isolation failed: %v", err)
 		return 1
 	}
-	if err := applyLinuxNetworkSeccomp(networkMode, proxyPort); err != nil {
+	if err := applyLinuxNetworkSeccomp(networkMode); err != nil {
 		LogError("Network seccomp failed: %v", err)
 		return 1
 	}
@@ -235,7 +239,7 @@ func runLandlockExecChild(guestHome, workDir, nvxHome, networkMode, shimCommand 
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = applyProxyEnv(os.Environ(), egress)
+	cmd.Env = applyRelayProxyEnv(os.Environ(), proxyEnvAddr)
 	if workDir != "" {
 		cmd.Dir = workDir
 	}
