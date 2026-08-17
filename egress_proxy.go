@@ -28,13 +28,16 @@ type EgressProxy struct {
 	unixLn   net.Listener
 	unixPath string
 	ctx      context.Context
-	allow     map[string]bool
-	session   map[string]bool
-	policy    Policy
-	nvxHome   string
-	promptMu  sync.Mutex
-	prompted  map[string]bool
-	cancel    context.CancelFunc
+	// allow is built once before any connection is served and never mutated, so it
+	// needs no lock. session and prompted are written while connections are in
+	// flight; promptMu guards both.
+	allow    map[string]bool
+	policy   Policy
+	nvxHome  string
+	promptMu sync.Mutex
+	session  map[string]bool
+	prompted map[string]bool
+	cancel   context.CancelFunc
 }
 
 func startEgressProxy(ctx context.Context, policy Policy, provider RuntimeProvider, nvxHome string) (*EgressProxy, error) {
@@ -194,6 +197,17 @@ func parseHostPortSpec(host string, port uint16) hostPort {
 	return hostPort{host: host, port: port}
 }
 
+// sessionAllows reports whether this run has already approved key or wild.
+//
+// It exists so the lookup happens under promptMu. allowed() runs on every
+// per-connection goroutine, so reading the map unlocked raced the prompt path's
+// write and could abort the process with a concurrent map read/write.
+func (p *EgressProxy) sessionAllows(key, wild string) bool {
+	p.promptMu.Lock()
+	defer p.promptMu.Unlock()
+	return p.session[key] || p.session[wild]
+}
+
 func (p *EgressProxy) allowed(hp hostPort) bool {
 	if isLoopback(hp.host) {
 		return true
@@ -206,7 +220,7 @@ func (p *EgressProxy) allowed(hp hostPort) bool {
 	if p.allow[wild] {
 		return true
 	}
-	if p.session[key] || p.session[wild] {
+	if p.sessionAllows(key, wild) {
 		return true
 	}
 
