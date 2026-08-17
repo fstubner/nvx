@@ -27,6 +27,11 @@ if ($env:NVX_SMOKE_SKIP_APPCONTAINER -eq '1') {
     exit 0
 }
 
+# Set-Location below changes the SESSION's location, not just this script's, so any
+# exit path has to put it back. Returning early without doing so left the caller in
+# the scratch directory and the next script in the same CI step could not be found.
+$startLocation = Get-Location
+
 $proj = Join-Path $env:USERPROFILE "nvx-smoke-wd"
 New-Item -ItemType Directory -Force -Path $proj | Out-Null
 Set-Location $proj
@@ -61,6 +66,7 @@ $probe = & $nvx shim node -e "process.exit(0)" 2>&1 | Out-String
 if ($probe -match 'AppContainer launch failed') {
     Write-Host "This host cannot create AppContainer children; skipping the containment assertions."
     Write-Host ("  " + $probe.Trim())
+    Set-Location $startLocation
     exit 0
 }
 
@@ -78,4 +84,5 @@ if (Test-Path $hostFile) {
     Write-Error "host profile write should be blocked"
 }
 
+Set-Location $startLocation
 Write-Host "Windows sandbox smoke passed." -ForegroundColor Green
