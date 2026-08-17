@@ -277,6 +277,11 @@ func (n NodeProvider) Install(version string, nvxHome string) error {
 	}
 
 	resolvedVer := release.Version
+	// Same guard as the Bun provider: this becomes a path segment, and the install
+	// calls os.RemoveAll on the resulting directory.
+	if err := safeVersionComponent(resolvedVer); err != nil {
+		return fmt.Errorf("refusing to install Node.js: %w", err)
+	}
 	destDir := filepath.Join(nvxHome, "versions", "node", resolvedVer)
 
 	if isNodeVersionInstalled(nvxHome, resolvedVer) {
@@ -351,6 +356,9 @@ func (n NodeProvider) Uninstall(version string, nvxHome string) error {
 		return fmt.Errorf("refusing to uninstall Node.js %s because it is active in this shell", resolvedVer)
 	}
 
+	if err := safeVersionComponent(resolvedVer); err != nil {
+		return fmt.Errorf("refusing to uninstall Node.js: %w", err)
+	}
 	destDir := filepath.Join(nvxHome, "versions", "node", resolvedVer)
 	LogInfo("Uninstalling Node.js %s...", resolvedVer)
 

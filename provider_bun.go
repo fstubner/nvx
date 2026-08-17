@@ -336,6 +336,11 @@ func (b BunProvider) Install(version string, nvxHome string) error {
 	if err != nil {
 		return err
 	}
+	// The version becomes a path segment below, and the install removes that
+	// directory before renaming the staging tree into place.
+	if err := safeVersionComponent(resolvedVer); err != nil {
+		return fmt.Errorf("refusing to install Bun: %w", err)
+	}
 	if isBunVersionInstalled(nvxHome, resolvedVer) {
 		LogSuccess("Bun %s is already installed.", resolvedVer)
 		return nil
@@ -422,6 +427,9 @@ func (b BunProvider) Uninstall(version string, nvxHome string) error {
 		return fmt.Errorf("refusing to uninstall Bun %s because it is active in this shell", resolvedVer)
 	}
 
+	if err := safeVersionComponent(resolvedVer); err != nil {
+		return fmt.Errorf("refusing to uninstall Bun: %w", err)
+	}
 	destDir := filepath.Join(nvxHome, "versions", "bun", resolvedVer)
 	LogInfo("Uninstalling Bun %s...", resolvedVer)
 	if err := os.RemoveAll(destDir); err != nil {
