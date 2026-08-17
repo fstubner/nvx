@@ -143,26 +143,28 @@ func launchAppContainerProcessOnce(
 		return 1, err
 	}
 
-	stdin, err := syscall.GetStdHandle(syscall.STD_INPUT_HANDLE)
-	if err != nil {
-		return 1, fmt.Errorf("stdin handle: %w", err)
-	}
-	stdout, err := syscall.GetStdHandle(syscall.STD_OUTPUT_HANDLE)
-	if err != nil {
-		return 1, fmt.Errorf("stdout handle: %w", err)
-	}
-	stderr, err := syscall.GetStdHandle(syscall.STD_ERROR_HANDLE)
-	if err != nil {
-		return 1, fmt.Errorf("stderr handle: %w", err)
-	}
-
 	var si startupInfoEx
 	si.Cb = uint32(unsafe.Sizeof(si))
-	si.Flags = 0
-	si.StdInput = stdin
-	si.StdOutput = stdout
-	si.StdErr = stderr
 	si.lpAttributeList = attrList
+
+	// Standard handles reach the child only when STARTF_USESTDHANDLES and
+	// bInheritHandles are BOTH set; setting just one is worse than neither (the
+	// child fails to start). See prepareInheritableStdio.
+	stdio := prepareInheritableStdio()
+	var inheritHandles uintptr
+	if stdio.inheritable {
+		si.Flags = STARTF_USESTDHANDLES
+		si.StdInput = stdio.in
+		si.StdOutput = stdio.out
+		si.StdErr = stdio.err
+		inheritHandles = 1
+	} else {
+		// Some console handles cannot be made inheritable (the original reason this
+		// code passed FALSE). A console-attached child still inherits the console,
+		// so interactive use works -- but a piped child gets nothing, so say so
+		// rather than letting an MCP server fail mysteriously.
+		LogWarn("Standard handles are not inheritable here; a sandboxed process that communicates over pipes (e.g. an MCP server) will not receive stdio.")
+	}
 
 	cmdLine := buildWindowsCommandLine(cmdPath, args)
 	cmdLineUTF16, err := syscall.UTF16FromString(cmdLine)
@@ -205,7 +207,7 @@ func launchAppContainerProcessOnce(
 			uintptr(unsafe.Pointer(appName)),
 			uintptr(unsafe.Pointer(&cmdLineUTF16[0])),
 			0, 0,
-			0, // do not inherit std handles — GHA console handles may be non-inheritable
+			inheritHandles,
 			creationFlags,
 			uintptr(unsafe.Pointer(envBlock)),
 			uintptr(unsafe.Pointer(workDirPtr)),
@@ -217,7 +219,7 @@ func launchAppContainerProcessOnce(
 			uintptr(unsafe.Pointer(appName)),
 			uintptr(unsafe.Pointer(&cmdLineUTF16[0])),
 			0, 0,
-			0,
+			inheritHandles,
 			creationFlags,
 			uintptr(unsafe.Pointer(envBlock)),
 			uintptr(unsafe.Pointer(workDirPtr)),

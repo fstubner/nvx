@@ -134,9 +134,7 @@ func TestSupervisorDeathTearsDownDescendants(t *testing.T) {
 		time.Sleep(30 * time.Second)
 		return
 	}
-	if os.Geteuid() != 0 {
-		t.Skip("creating a PID namespace needs root")
-	}
+	requireNamespaceSupport(t, supervisorCloneFlags("proxy"))
 
 	hb := filepath.Join(t.TempDir(), "heartbeat")
 	cmd := exec.Command(os.Args[0], "-test.run=TestSupervisorDeathTearsDownDescendants")
@@ -179,5 +177,19 @@ func TestSupervisorDeathTearsDownDescendants(t *testing.T) {
 	if !first.ModTime().Equal(second.ModTime()) {
 		t.Errorf("descendant still alive after the supervisor was killed: heartbeat advanced %v -> %v",
 			first.ModTime(), second.ModTime())
+	}
+}
+
+// requireNamespaceSupport skips unless this process can actually create the given
+// namespaces. Being root is NOT sufficient: a container without CAP_SYS_ADMIN --
+// the default for `docker run` and for GitHub's hosted runners -- returns EPERM
+// from clone(). Guarding on euid alone reproduces the F67 failure mode exactly: a
+// test that assumes its environment and turns CI red instead of skipping.
+func requireNamespaceSupport(t *testing.T, flags uintptr) {
+	t.Helper()
+	probe := exec.Command("/bin/true")
+	probe.SysProcAttr = &syscall.SysProcAttr{Cloneflags: flags}
+	if err := probe.Run(); err != nil {
+		t.Skipf("cannot create the required namespaces here: %v", err)
 	}
 }
