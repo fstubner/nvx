@@ -42,6 +42,10 @@ func runImport(source string, nvxHome string) {
 		if cleanVer == "" {
 			continue
 		}
+		if err := safeVersionComponent("v" + cleanVer); err != nil {
+			LogWarn("Skipping unusable version %q discovered in %s: %v", ver, src, err)
+			continue
+		}
 
 		targetDir := filepath.Join(nvxHome, "versions", provider.Name(), "v"+cleanVer)
 		if _, err := os.Stat(targetDir); err == nil {
