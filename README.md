@@ -231,9 +231,17 @@ When running in the sandbox:
 |-----------|------------------|----------------|----------------|
 | Host profile write blocked | Yes (AppContainer) | Yes (Landlock) | Yes (Seatbelt) |
 | Workdir write allowed | Yes | Yes | Yes |
-| Egress via policy proxy | Yes (AppContainer + loopback proxy) | Restricted/fail-closed in native netns; external brokered allowlist pending | Yes (Seatbelt + loopback proxy) |
-| Raw TCP/UDP bypass blocked at OS | Yes | Yes (netns + seccomp UDP deny) | Yes (Seatbelt `(deny network*)`) |
+| Egress via policy proxy | Only after an elevated `nvx setup`* | Yes (loopback-only netns + parent proxy over a UNIX socket) | Yes (Seatbelt + loopback proxy) |
+| Raw TCP/UDP bypass blocked at OS | Only after an elevated `nvx setup`* | Yes (netns + seccomp UDP deny) | Yes (Seatbelt `(deny network*)`) |
 | Fail-closed if FS/network primitive missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes |
+
+\* **Windows egress is not allowlisted by default.** An AppContainer cannot reach
+a loopback proxy without a loopback exemption, and only an elevated `nvx setup`
+can add one. Without it the sandbox is granted the `internetClient` capability and
+connects directly, so the allowlist is not consulted. Filesystem containment,
+environment scrubbing and the pre-install supply-chain checks are unaffected. See
+`docs/enforcement-matrix.md` for the full picture, including the no-elevation
+design that would close this.
 
 ---
 

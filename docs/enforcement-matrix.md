@@ -22,9 +22,9 @@ silently.
 | Host filesystem write blocked (outside workdir + guest home) | Yes | Yes | Yes |
 | Host filesystem read restricted | Yes | Yes | No² |
 | Environment secrets scrubbed | Yes | Yes | Yes |
-| Egress restricted to policy allowlist | Yes (loopback proxy) | Yes | Yes (loopback proxy) |
-| Non-proxied raw TCP/UDP blocked at OS | Yes (no network capabilities) | Yes (loopback-only netns + seccomp) | Yes (`deny network*` except loopback) |
-| Non-proxied DNS blocked | Partial¹ | Yes (netns) | Partial¹ |
+| Egress restricted to policy allowlist | **No by default**³ | Yes | Yes (loopback proxy) |
+| Non-proxied raw TCP/UDP blocked at OS | **No by default**³ | Yes (loopback-only netns + seccomp) | Yes (`deny network*` except loopback) |
+| Non-proxied DNS blocked | **No by default**³ | Yes (netns) | Partial¹ |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes (needs `/usr/bin/sandbox-exec`) |
 
 ² On macOS the Seatbelt profile allows filesystem reads. The dynamic linker must
@@ -35,11 +35,31 @@ egress control remain enforced, and environment secrets are scrubbed with `$HOME
 redirected to an ephemeral guest profile, so the sensitive material is still
 protected.
 
-¹ On Windows and macOS, egress is gated by the loopback proxy and OS network
-rules. Linux additionally removes all non-loopback interfaces (network
-namespace), so DNS to external resolvers cannot leave; on Windows/macOS a
-determined process could still attempt DNS via the OS resolver. This is the main
-per-OS difference and is why Linux has the strongest network story.
+¹ On macOS, egress is gated by the loopback proxy and OS network rules. Linux
+additionally removes all non-loopback interfaces (network namespace), so DNS to
+external resolvers cannot leave; on macOS a determined process could still
+attempt DNS via the OS resolver. This is the main per-OS difference and is why
+Linux has the strongest network story.
+
+³ **Windows egress is not restricted at all by default, and this table claimed
+otherwise until 2026-08-17.** An AppContainer cannot reach a loopback listener
+without a loopback exemption, which only an elevated `nvx setup` can add. Absent
+that, `windowsSandboxNetwork` grants the `internetClient` capability and
+`stripProxyEnv` removes the proxy variables, so the contained process connects
+directly and the allowlist is never consulted — not even cooperatively. After an
+elevated `nvx setup`, the sandbox is proxied and the allowlist applies as
+described.
+
+Everything else in the Windows column — filesystem write containment, read
+restriction, environment scrubbing, fail-closed setup — is unaffected, and the
+pre-install supply-chain checks run in the unsandboxed parent either way.
+
+A no-elevation path does exist and has been measured: an AppContainer can reach an
+AF_UNIX socket held by the parent (verified with no network capability granted at
+all), and intra-container TCP loopback works. Together those allow the same
+parent-side-proxy plus in-container relay design Linux now uses. It needs an
+in-container supervisor process, which does not exist on Windows yet, so it is a
+planned change rather than a current guarantee.
 
 ## Docker provider
 

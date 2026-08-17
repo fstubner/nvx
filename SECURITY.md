@@ -64,9 +64,21 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   (e.g. GPG). Independent signature verification is on the roadmap.
 - **Network enforcement is strongest on Linux.** On Linux, a loopback-only
   network namespace plus seccomp genuinely block raw sockets and non-proxied
-  DNS. On Windows and macOS, egress control relies on the child process
-  honoring the injected proxy environment variables; a process using raw
-  sockets can bypass the allowlist. See the enforcement matrix in the README.
+  DNS, and the egress proxy runs outside that namespace, reached over a UNIX
+  socket.
+- **On macOS, egress control is cooperative.** It relies on the child honoring
+  the injected proxy environment variables; a process using raw sockets can
+  bypass the allowlist.
+- **On Windows, there is no egress restriction by default at all.** An
+  AppContainer cannot reach a loopback proxy without a loopback exemption, which
+  only an elevated `nvx setup` can add. Without that, nvx grants the sandbox the
+  `internetClient` capability *and removes the proxy environment variables*, so
+  the contained process connects directly and the allowlist is never consulted —
+  not even cooperatively. This is weaker than earlier versions of this document
+  claimed. Filesystem write containment, environment scrubbing and the
+  pre-install supply-chain checks are unaffected. After an elevated `nvx setup`
+  the sandbox is proxied and the allowlist applies. See
+  `docs/enforcement-matrix.md`.
 - **Docker provider allowlist is cooperative.** Under the `docker` isolation
   provider, `network.mode: offline` is enforced via `--network none`, but
   proxy-mode allowlisting is cooperative only and therefore disabled by
