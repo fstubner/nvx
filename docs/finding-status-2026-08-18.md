@@ -65,7 +65,7 @@ blind spot the original assessment had.
 | F29 | open | Only native, docker and seatbelt receive `NetCtx` (`fs_provider.go:79,103,122`); wsl/wslc/nspawn do not. |
 | F36 | open | No `--user` anywhere; containers still run as root with the project bind-mounted. |
 | F37 | open | A checksum **mismatch** is still reported as "Checksum file not available" (`install.ps1:113`). It fails closed, but the message misdescribes a tampering signal. |
-| F15 | open | The lock writes a PID and never checks it for liveness (`version.go:247`). |
+| F15 | **fixed** | A lock whose owner is provably gone is cleared and reported; a live or unparseable one is respected. Reproduced end to end during acceptance before fixing. |
 | F6 | open | `Timeout: 60 * time.Second` still covers the body read (`download.go:43`). |
 | F19 | open | No GPG/signature verification; disclosed in SECURITY.md. |
 | F7 | open | Neither installer verifies the build-provenance attestation CI produces. |
@@ -140,3 +140,9 @@ that did not cover it. A control probe was run before diagnosing F69, confirming
 that a directory nvx never grants is unreachable — without it the cause could have
 been an inherited ALL APPLICATION PACKAGES ACE, and the fix would have been aimed
 at the wrong thing.
+
+## Added by acceptance, 2026-08-18
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| **F71** | Medium | **`nvx doctor` performed an unrequested persistent system change** -- it rewrote the real Windows user PATH on sight, targeting whichever `NVX_HOME` was set, so running it against a throwaway home fronted the real PATH with a temp directory. Found by it happening to the acceptor mid-review. | **fixed** -- diagnosis is read-only; repair moved behind `--fix` |

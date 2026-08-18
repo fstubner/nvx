@@ -196,7 +196,13 @@ func main() {
 		LogSuccess("Sandbox cleanup complete.")
 
 	case "doctor":
-		os.Exit(runDoctor(nvxHome))
+		fixPath := false
+		for _, a := range os.Args[2:] {
+			if a == "--fix" {
+				fixPath = true
+			}
+		}
+		os.Exit(runDoctor(nvxHome, fixPath))
 
 	case "grants":
 		if len(os.Args) < 3 {
@@ -283,7 +289,7 @@ func commandHelpText(command string) string {
 	case "cleanup":
 		return "nvx cleanup\n\nRemove stale sandbox guest profiles from previous interrupted runs.\n"
 	case "doctor":
-		return "nvx doctor\n\nCheck that ~/.nvx/bin is first on PATH so nvx intercepts node/npm/npx/bun.\nRegenerates shims and, on Windows, repairs a shadowed persistent PATH.\n"
+		return "nvx doctor [--fix]\n\nCheck that ~/.nvx/bin is first on PATH so nvx intercepts node/npm/npx/bun.\nRegenerates shims and reports what is wrong.\n\n--fix  Also repair a shadowed persistent PATH (Windows). That edits your\n       user PATH, so nvx does not do it unless you ask.\n"
 	case "grants":
 		return "nvx grants list\nnvx grants reset [--all]\n\nInspect or forget the approve-once grants recorded for the current project\n(or every project, with --all): egress hosts, trusted tools, and trusted\nproject policy files. Grants live under ~/.nvx/grants, never in the project.\n"
 	}
@@ -347,7 +353,7 @@ Commands:
                            OS-allowlisted egress and drive-root access; the
                            sandbox runs unelevated without it. 'setup --undo'
                            reverses it
-  doctor                   Check and repair that nvx intercepts node/npm/npx on PATH
+  doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
   grants list              Show this project's approved egress hosts, trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)
   import [nvm|fnm|volta]  Import Node.js versions already installed via nvm, fnm, or volta

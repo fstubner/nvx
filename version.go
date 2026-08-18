@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -240,8 +241,12 @@ func acquireRuntimeInstallLock(nvxHome, runtimeName, version string) (func(), er
 	}
 	lockPath := filepath.Join(lockDir, lockName)
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil && clearAbandonedInstallLock(lockPath) {
+		// The previous holder is gone, so the lock was abandoned rather than held.
+		f, err = os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("install for %s %s is already in progress or lock cannot be created: %w", runtimeName, version, err)
+		return nil, fmt.Errorf("install for %s %s is already in progress (lock: %s): %w", runtimeName, version, lockPath, err)
 	}
 	_, _ = fmt.Fprintf(f, "%d\n", os.Getpid())
 	release := func() {
@@ -249,6 +254,40 @@ func acquireRuntimeInstallLock(nvxHome, runtimeName, version string) (func(), er
 		_ = os.Remove(lockPath)
 	}
 	return release, nil
+}
+
+// clearAbandonedInstallLock removes an install lock whose owning process is gone,
+// reporting whether it did.
+//
+// The lock records a pid and nothing ever read it back, so an install killed at
+// the wrong moment — Ctrl-C during a download, a laptop closing, a CI job
+// cancelled — blocked that version from ever being installed again. `nvx cleanup`
+// does not touch install locks, and the error said "already in progress", which
+// sends you looking for a process that does not exist. There was no documented
+// recovery short of deleting the file by hand.
+//
+// This is the same liveness question the sandbox guest homes answer, and the same
+// bias: only a lock whose owner is provably gone is cleared. An unreadable or
+// malformed lock is left alone, because "I cannot tell who owns this" is not
+// evidence that nobody does, and stealing a live install's lock would let two
+// extractions write the same directory at once.
+func clearAbandonedInstallLock(lockPath string) bool {
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	if pid == os.Getpid() || processIsRunning(pid) {
+		return false
+	}
+	if err := os.Remove(lockPath); err != nil {
+		return false
+	}
+	LogWarn("Cleared an install lock left behind by a previous run (process %d is gone).", pid)
+	return true
 }
 
 func installLockFileName(version string) (string, error) {

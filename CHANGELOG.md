@@ -34,6 +34,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx doctor` rewrote your persistent PATH without being asked.** It repaired
+  a shadowed PATH the moment it found one, and because the repair targets
+  whichever `NVX_HOME` is set, pointing that at a throwaway directory silently
+  fronted the real user PATH with it. Diagnosis is now read-only; the repair
+  moved behind `nvx doctor --fix`, which the report points at. A flag rather
+  than a prompt deliberately: `NVX_YES` is set as a matter of course by agents
+  and CI, so a prompt would auto-approve a persistent system change for exactly
+  the callers least able to notice it.
+
+* **An interrupted install blocked that version from ever installing again.**
+  The lock file recorded a pid that nothing read back, so Ctrl-C during a
+  download left a lock no command cleared -- `nvx cleanup` does not touch
+  install locks -- while the error said "already in progress", sending you after
+  a process that no longer exists. A lock whose owner is provably gone is now
+  cleared and reported. One whose owner is alive, or whose contents cannot be
+  parsed, is still respected.
+
 * **`nvx cleanup` deleted guest homes belonging to sandboxes that were still
   running**, so running it during a concurrent install destroyed that install's
   `HOME` mid-run. Sessions now record their owning process and are skipped while

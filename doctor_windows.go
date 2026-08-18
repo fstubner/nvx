@@ -12,7 +12,7 @@ import (
 // repairPersistentPath rewrites the User PATH environment variable so the shim
 // dir leads and raw-runtime dirs no longer shadow it. Returns true if it made a
 // change. New shells pick up the updated value.
-func repairPersistentPath(nvxHome string) (bool, error) {
+func repairPersistentPath(nvxHome string, apply bool) (bool, error) {
 	shimDir := shimDirPath(nvxHome)
 	out, err := runWinCmd(15*time.Second, "reg", "query", `HKCU\Environment`, "/v", "Path")
 	if err != nil {
@@ -31,6 +31,15 @@ func repairPersistentPath(nvxHome string) (bool, error) {
 	fixed := rebuildUserPath(existing, shimDir, nvxRuntimeDirs(nvxHome))
 	if existing == fixed {
 		return false, nil
+	}
+	if !apply {
+		// A repair is available but was not asked for. Report that and write
+		// nothing. `nvx doctor` used to edit the persistent PATH on sight, which
+		// is a surprising thing for a command named after diagnosis to do -- and
+		// it fired against whatever NVX_HOME happened to be set, so anyone
+		// pointing that at a throwaway directory had their real PATH rewritten to
+		// front it.
+		return true, nil
 	}
 	// setx truncates at 1024 chars; use PowerShell's [Environment] setter which
 	// does not, matching what install.ps1 uses. The new PATH is passed via an
