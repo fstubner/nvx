@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -101,16 +99,7 @@ func TestEgressProxyOverUnixSocketEnforcesAllowlistBothWays(t *testing.T) {
 	}
 	defer proxy.Close()
 
-	// Not t.TempDir(): it embeds the test name, and sockaddr_un.sun_path caps the
-	// whole path at 108 bytes on Windows exactly as on Unix. This test's name alone
-	// pushes it over, and the bind fails as "invalid argument" -- which reads like a
-	// permissions problem and is not one.
-	sockDir, err := os.MkdirTemp("", "nvxs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(sockDir)
-	sock := filepath.Join(sockDir, "egress.sock")
+	sock := unixSocketTempPath(t)
 	if err := proxy.ListenUnix(sock); err != nil {
 		t.Fatalf("ListenUnix: %v", err)
 	}
