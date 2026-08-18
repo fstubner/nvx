@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-18
+
+**0.4.0 was tagged but never published.** The tag was cut, then held back
+because the README it shipped with made three claims about the sandbox that
+were subsequently disproved by execution — including that a malicious package
+could not read your `.env`, which it can. Those claims were corrected before
+this release. So 0.5.0 is the first published build carrying the 0.4.0 fixes
+as well as its own, and the newest downloadable build before it remains
+`v0.2.0-beta`.
+
 ### Security
 
 * **Windows egress is now actually restricted to the allowlist.** It was not
