@@ -9,7 +9,7 @@
 
 
 
-`nvx` is a fast, cross-platform **JavaScript runtime version manager** that **audits and sandboxes npm-family toolchain commands — including whatever your AI coding agents run**. It manages **Node.js and Bun** like nvm/fnm, then adds an ambient security layer: every wrapped `npm`/`yarn`/`pnpm`/`npx`/`bun`/`bunx` command is checked for typosquatting and known vulnerabilities and executed inside a native OS sandbox.
+`nvx` is a fast, cross-platform **JavaScript runtime version manager** that **audits and sandboxes npm-family toolchain commands — including whatever your AI coding agents run**. It manages **Node.js and Bun** like nvm/fnm, then adds an ambient security layer: installs are checked for typosquatting and known vulnerabilities, and the commands that run untrusted code — package installs and `npx`-style tool runners — are executed inside a native OS sandbox.
 
 Zero dependencies, one static binary, Windows/macOS/Linux. Originally built to fix the lack of a fast native runtime manager on Windows; the security layer is what makes it worth switching to.
 
@@ -22,8 +22,14 @@ With modern LLMs, it's now practical to just build the exact tools you want. Whi
 
 Along the way, I wanted to tackle a few other common frustrations:
 - **Supply Chain Safety**: Typosquatting and malicious postinstall scripts are a growing issue. `nvx` intercepts installs on the fly to flag or block suspected threats based on policies and registry checks.
-- **Agentic & AI Safety**: If you use AI coding agents (like Gemini, Claude, or Copilot) to build projects, they execute terminal commands in your local workspace. By automatically wrapping typical package manager commands (`npm`, `yarn`, `pnpm`, `npx`, `bun`, `bunx`), `nvx` ensures that any package an AI agent installs is audited and anything it runs is contained — with no agent configuration required. No tool can promise a package is safe, but even if a compromised package slips past the checks, it runs inside the sandbox: secrets scrubbed, filesystem writes confined to the project, and network limited to an allowlist. So a bad package can't quietly read your `.env` or phone home.
-- **Process Isolation**: I wanted a sandbox to run untrusted stuff (like `npx` packages) with a clean slate, scrubbing env secrets and locking down filesystem writes.
+- **Agentic & AI Safety**: If you use AI coding agents (like Gemini, Claude, or Copilot) to build projects, they execute terminal commands in your local workspace. By automatically wrapping typical package manager commands (`npm`, `yarn`, `pnpm`, `npx`, `bun`, `bunx`), `nvx` audits what an AI agent installs and contains the commands that execute untrusted code, with no agent configuration required. No tool can promise a package is safe, so the goal is to limit what one can reach if the checks miss it.
+
+  What a contained install can reach: your `package.json`, your lockfile, `node_modules`, and the rest of the project directory it is installing into. Environment variables are scrubbed and writes cannot leave the project.
+
+  What it cannot reach: your home directory — SSH keys, cloud credentials, `~/.npmrc` and its publish token — along with every other project on disk, and anywhere outside the project for writes. That is the class of attack this is built for: credential theft and persistence.
+
+  **Two limits worth stating plainly.** A `.env` file *inside the project* is readable by a contained install, because the project directory has to be readable for the install to work at all — see [Known limitations](#known-limitations). And containment covers installs and ad-hoc tools, not your own code: `npm run build` runs uncontained by default, so a dependency your own code imports is not sandboxed. `isolation.level: strict` extends containment to your own code.
+- **Process Isolation**: I wanted a sandbox to run untrusted stuff (like `npx` packages) with a clean slate: a throwaway `HOME`, scrubbed env secrets, and writes locked to the project.
 - **Thin wrapper**: A single static Go binary with no runtime dependencies. Each wrapped command runs through one extra short-lived process; resolved binary paths are cached (keyed by `PATH`) so the shim doesn't rescan `PATH` on every call. Measured dispatch overhead: **~3 ms on Linux, ~4 ms on macOS, ~38 ms on Windows** (process creation is costlier there) — imperceptible next to the commands you actually wait on like `npm install`. Reproduce it with [`scripts/bench.py`](scripts/bench.py).
 - **Clean UX**: Polished CLI output and automatic shell integration hooks for PowerShell, bash, and zsh.
 
@@ -244,6 +250,32 @@ environment scrubbing and the pre-install supply-chain checks are unaffected. Se
 design that would close this.
 
 ---
+
+## Known limitations
+
+Stated here rather than left implicit, because a security tool that overstates its
+reach is worse than one that is narrow and honest. Each of these is measured, not
+assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
+
+- **A `.env` inside the project is readable by a contained install.** The project
+  directory must be readable for an install to work, and `.env` lives in it.
+  Environment *variables* are scrubbed, but a file is a file. Secrets outside the
+  project — `~/.ssh`, `~/.aws`, `~/.npmrc` — are unreachable.
+- **Your own code is not contained by default.** Containment applies to installs and
+  ad-hoc tool runners (`npx`, `bunx`). `npm run build`, `npm test` and `node` run
+  uncontained under the default `standard` level, so a compromised dependency your
+  own code imports is not sandboxed. Set `isolation.level: strict` to extend
+  containment to your own code, at the cost of breaking anything that needs
+  unrestricted filesystem or network access.
+- **Windows egress is not allowlisted without an elevated `nvx setup`.** An
+  AppContainer cannot reach the loopback proxy without a loopback exemption, which
+  requires elevation. Without it the sandbox is granted `internetClient` and
+  connects directly. Filesystem containment is unaffected.
+- **The macOS sandbox profile is verified at generation level only.** The Seatbelt
+  profile is asserted by tests; its runtime enforcement has not been re-verified on
+  macOS hardware.
+- **Detection is best-effort.** Typosquat and vulnerability checks reduce risk; they
+  do not certify a package. Containment is the backstop, not the checks.
 
 ## Design DX & Architecture FAQ
 
