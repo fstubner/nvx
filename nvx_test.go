@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnvScriptFrontsShimDir(t *testing.T) {
@@ -529,6 +530,15 @@ func TestParsePackageQuery_EdgeCases(t *testing.T) {
 	}
 }
 
+// TestCleanupStaleSandboxes covers the half of cleanup that must still happen:
+// a genuinely abandoned guest home is removed.
+//
+// It used to create a directory with no owner marker and a current timestamp,
+// then assert it was deleted — which is indistinguishable from a session that
+// started a millisecond ago, and is exactly the shape F35 destroyed in
+// concurrent use. The session here is abandoned in the way a crashed one is:
+// old, with nothing claiming it. See sandbox_session_owner_test.go for the
+// in-use cases this deliberately no longer covers.
 func TestCleanupStaleSandboxes(t *testing.T) {
 	tmpDir := filepath.Join(os.TempDir(), "nvx-test-cleanup")
 	defer os.RemoveAll(tmpDir)
@@ -539,6 +549,10 @@ func TestCleanupStaleSandboxes(t *testing.T) {
 	err := os.MkdirAll(fakeSandboxPath, 0755)
 	if err != nil {
 		t.Fatalf("failed to create fake stale sandbox path: %v", err)
+	}
+	abandoned := time.Now().Add(-unownedGuestHomeGrace - time.Hour)
+	if err := os.Chtimes(fakeSandboxPath, abandoned, abandoned); err != nil {
+		t.Fatalf("failed to back-date the stale sandbox: %v", err)
 	}
 
 	// Verify it exists
