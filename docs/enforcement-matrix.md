@@ -20,7 +20,7 @@ silently.
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
 | Host filesystem write blocked (outside workdir + guest home) | Yes | Yes | Yes |
-| Host filesystem read restricted | Partly⁴ | Yes | No² |
+| Host filesystem read restricted | Yes⁴ | Yes | No² |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress restricted to policy allowlist | Yes³ | Yes | Yes (loopback proxy) |
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes (`deny network*` except loopback) |
@@ -41,31 +41,41 @@ external resolvers cannot leave; on macOS a determined process could still
 attempt DNS via the OS resolver. This is the main per-OS difference and is why
 Linux has the strongest network story.
 
-⁴ **Windows containment is per-machine, not per-session.** The AppContainer
-profile is stable by design — `platformLaunchNative` uses `stableSandboxProfile`
-"so its SID is a durable target for `nvx setup` grants" — so every session on the
-machine runs as the same identity. `prepareAppContainerFilesystem` grants that
-identity `(OI)(CI)(M)` on the working directory and the guest home, and nothing
-ever revokes those ACEs.
+⁴ **Windows containment became per-project in 0.5.0. Before that it was
+per-machine.**
 
-The two facts compose. A grant added while installing in project A is still
-present, and still satisfied by the same SID, when nvx later runs in project B.
-Measured 2026-08-18 with a contained child: it read *and wrote* a second project's
-files, read a concurrent session's guest home, and read a `tool_home` profile's
-credential — the store a trusted tool is granted persistence for. What stays out
-of reach is the real home directory and any project nvx has never run in.
+The AppContainer profile is stable by design — `platformLaunchNative` uses
+`stableSandboxProfile` "so its SID is a durable target for `nvx setup` grants" —
+so every session on the machine runs as the same package identity.
+`prepareAppContainerFilesystem` granted that identity `(OI)(CI)(M)` on the working
+directory and the guest home, and nothing ever revoked those ACEs. The two facts
+composed: a grant added while installing in project A was still present, and still
+satisfied by the same SID, when nvx later ran in project B. Measured 2026-08-18
+with a contained child — it read *and wrote* a second project's files, read a
+concurrent session's guest home, and read a `tool_home` profile's credential, the
+store a trusted tool is granted persistence for.
 
-Linux does not have this shape. Its Landlock rules grant `versions/`, `bin/` and
-`current/` rather than `nvxHome`, and F26 was fixed precisely so `tool_home` and
-other sessions' guest homes are excluded — a containment decision that the
-Windows ACL model, with one shared SID, cannot currently express.
+The writable roots are now granted to a **capability SID derived from the project**
+instead. A Windows token carries capability SIDs alongside the package SID, an ACE
+naming one is honoured for file access, and a process holding a different
+capability is denied — all three measured before the change was built (see
+`sandbox_capability_sid_probe_windows_test.go`). So the package SID stays stable,
+`nvx setup`'s drive-root grants keep working, and the per-project identity carries
+the isolation.
 
-A fix means a distinct identity per session. That is a design change, not a patch,
-and the obvious form has its own cost: a per-session SID leaves a dead ACE on the
-project directory after every run, so it needs a revocation or reaping story to go
-with it. The staged-view prototype (`sandbox_staged_view_probe_windows_test.go`)
-is the other candidate — never granting the project at all removes the ACE
-accumulation along with the `.env` exposure.
+Deriving from the project rather than the session is what makes it affordable. The
+same project derives the same SID every run, so the `icacls` write happens once and
+`appContainerHasGrant` skips it thereafter. A per-session identity would pay that
+write on every launch and leave a dead ACE on the user's project directory after
+each one. Upgrading installs are handled too: a stale package-SID ACE on a path now
+governed by a capability is removed the first time nvx runs there, otherwise every
+already-granted project would keep the old behaviour.
+
+Two things this deliberately does not separate. Sessions in the *same* project
+share one capability, because a project's own tool credentials are in its own trust
+domain. And ancestor directories keep a shared this-folder-only RX grant for
+traverse, which lets a sandbox walk *through* a parent without reading what else is
+inside it.
 
 ³ **Windows egress became enforced in 0.5.0. It was not before, and this table
 claimed otherwise until 2026-08-17.**

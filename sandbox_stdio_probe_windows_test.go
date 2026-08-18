@@ -37,7 +37,8 @@ func TestPipedStdioReachesRealAppContainerChild(t *testing.T) {
 
 	guestHome := t.TempDir()
 	workDir := t.TempDir()
-	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
@@ -73,7 +74,7 @@ func TestPipedStdioReachesRealAppContainerChild(t *testing.T) {
 		workDir,
 		sid,
 		0,
-		[]string{capabilityInternetClientSID},
+		append(scopeCaps, capabilityInternetClientSID),
 	)
 
 	setStd(prevOut)

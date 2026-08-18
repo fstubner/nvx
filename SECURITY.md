@@ -79,17 +79,6 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   Windows, treat egress as unrestricted; filesystem containment, environment
   scrubbing and the pre-install checks were unaffected. See
   `docs/enforcement-matrix.md`.
-- **On Windows, containment is per-machine rather than per-session.** The
-  AppContainer profile is stable by design, so every sandbox session runs as the
-  same identity, and the filesystem permissions nvx grants are never revoked. A
-  permission added while installing in project A therefore still applies when nvx
-  later runs in project B. In practice a sandboxed command can read and write any
-  project nvx has previously run in, read a concurrent session's guest home, and
-  read `tool_home` profiles — the store a trusted tool was granted persistence for,
-  which holds its credentials. The real home directory, and any project nvx has
-  never run in, remain unreachable. Measured 2026-08-18 and pinned by tests; Linux
-  does not share this property. Closing it requires a distinct containment identity
-  per session, which is a design change and is not yet made.
 - **Docker provider allowlist is cooperative.** Under the `docker` isolation
   provider, `network.mode: offline` is enforced via `--network none`, but
   proxy-mode allowlisting is cooperative only and therefore disabled by

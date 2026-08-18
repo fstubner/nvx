@@ -94,7 +94,8 @@ func TestRelayDoesNotExposeHostLoopbackServices(t *testing.T) {
 	}
 	defer os.RemoveAll(guestHome)
 	workDir := t.TempDir()
-	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
@@ -142,7 +143,7 @@ func TestRelayDoesNotExposeHostLoopbackServices(t *testing.T) {
 		targetExe,
 		"-test.run=TestRelayDoesNotExposeHostLoopbackServices",
 	}
-	_, launchErr := launchAppContainerProcess(nvxExe, args, env, workDir, sid, 0, nil)
+	_, launchErr := launchAppContainerProcess(nvxExe, args, env, workDir, sid, 0, scopeCaps)
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
 	syscall.CloseHandle(write)

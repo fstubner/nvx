@@ -73,7 +73,8 @@ func TestDenyACEHidesSecretFromAppContainer(t *testing.T) {
 	}
 
 	// The grant nvx already applies: (M) over the whole working directory.
-	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
@@ -124,7 +125,7 @@ func TestDenyACEHidesSecretFromAppContainer(t *testing.T) {
 	exitCode, launchErr := launchAppContainerProcess(
 		childExe,
 		[]string{"-test.run=TestDenyACEHidesSecretFromAppContainer"},
-		env, workDir, sid, 0, nil,
+		env, workDir, sid, 0, scopeCaps,
 	)
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
@@ -218,7 +219,8 @@ func TestContainedProcessCannotReachTheRealHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
@@ -245,7 +247,7 @@ func TestContainedProcessCannotReachTheRealHome(t *testing.T) {
 	)
 	_, launchErr := launchAppContainerProcess(childExe,
 		[]string{"-test.run=TestContainedProcessCannotReachTheRealHome"},
-		env, workDir, sid, 0, nil)
+		env, workDir, sid, 0, scopeCaps)
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
 	syscall.CloseHandle(write)

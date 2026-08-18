@@ -69,7 +69,8 @@ func TestAppContainerEgressPrimitivesWithoutInternetClient(t *testing.T) {
 	}
 	defer os.RemoveAll(guestHome)
 	workDir := t.TempDir()
-	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
@@ -125,7 +126,7 @@ func TestAppContainerEgressPrimitivesWithoutInternetClient(t *testing.T) {
 		childExe,
 		[]string{"-test.run=TestAppContainerEgressPrimitivesWithoutInternetClient"},
 		env, workDir, sid, 0,
-		nil, // the whole point: NO internetClient
+		scopeCaps, // the whole point: NO internetClient
 	)
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))

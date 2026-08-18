@@ -50,7 +50,8 @@ func TestUnelevatedSandboxRunsPackageManager(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
@@ -87,7 +88,7 @@ func TestUnelevatedSandboxRunsPackageManager(t *testing.T) {
 		env = setNodeOptionsPreserveSymlinks(env)
 
 		code, err := launchAppContainerProcess(usePath, launchArgs, env, workDir, sid, 0,
-			[]string{capabilityInternetClientSID})
+			append(scopeCaps, capabilityInternetClientSID))
 		if err != nil {
 			t.Errorf("%s: launch error: %v", tc.name, err)
 			continue

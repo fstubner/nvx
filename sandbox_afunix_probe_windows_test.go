@@ -63,7 +63,8 @@ func TestAppContainerCanReachAFUnixSocket(t *testing.T) {
 
 	guestHome := t.TempDir()
 	workDir := t.TempDir()
-	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
@@ -120,7 +121,7 @@ func TestAppContainerCanReachAFUnixSocket(t *testing.T) {
 		childExe,
 		[]string{"-test.run=TestAppContainerCanReachAFUnixSocket"},
 		env, workDir, sid, 0,
-		nil, // deliberately NO internetClient: this is about reaching the parent, not the internet
+		scopeCaps, // deliberately NO internetClient: this is about reaching the parent, not the internet
 	)
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
@@ -207,7 +208,8 @@ func TestAppContainerIntraContainerLoopback(t *testing.T) {
 
 	guestHome := t.TempDir()
 	workDir := t.TempDir()
-	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
@@ -235,7 +237,7 @@ func TestAppContainerIntraContainerLoopback(t *testing.T) {
 		childExe,
 		[]string{"-test.run=TestAppContainerIntraContainerLoopback"},
 		env, workDir, sid, 0,
-		[]string{capabilityInternetClientSID},
+		append(scopeCaps, capabilityInternetClientSID),
 	)
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
