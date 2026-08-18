@@ -93,15 +93,18 @@ func TestOneSandboxSessionCannotReadAnother(t *testing.T) {
 	// Session 1: a concurrent sandbox. Session 2: a trusted tool with a
 	// persistent profile, granted exactly as ensurePersistentGuestProfile's
 	// caller would. Both happened before the attacker's session starts.
-	if err := prepareAppContainerFilesystem(sid, victimHome, victimWork); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, victimHome, victimWork)
+	if err != nil {
 		t.Fatalf("victim session prep: %v", err)
 	}
-	if err := prepareAppContainerFilesystem(sid, toolHome, victimWork); err != nil {
+	scopeCaps, err = prepareAppContainerFilesystem(sid, toolHome, victimWork)
+	if err != nil {
 		t.Fatalf("tool session prep: %v", err)
 	}
 
 	// Session 3: an ordinary `npm install` in an unrelated project.
-	if err := prepareAppContainerFilesystem(sid, attackerHome, attackerWork); err != nil {
+	scopeCaps, err = prepareAppContainerFilesystem(sid, attackerHome, attackerWork)
+	if err != nil {
 		t.Fatalf("attacker session prep: %v", err)
 	}
 
@@ -131,7 +134,7 @@ func TestOneSandboxSessionCannotReadAnother(t *testing.T) {
 	)
 	_, launchErr := launchAppContainerProcess(childExe,
 		[]string{"-test.run=TestOneSandboxSessionCannotReadAnother"},
-		env, attackerWork, sid, 0, nil)
+		env, attackerWork, sid, 0, scopeCaps)
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
 	syscall.CloseHandle(write)
@@ -140,29 +143,24 @@ func TestOneSandboxSessionCannotReadAnother(t *testing.T) {
 	requireAppContainerLaunch(t, launchErr)
 	t.Logf("child output:\n%s", got)
 
-	// This pins the CURRENT, UNWANTED state rather than the state we want.
+	// Measured 2026-08-18 BEFORE the per-project identity landed: both were
+	// readable. Each grant named the shared package SID, which every later session
+	// also held, so an ACE added for one session was still satisfied during the
+	// next. The tool credential was the worse half -- that store exists precisely
+	// to hold what a trusted tool authenticated with.
 	//
-	// Measured 2026-08-18: both are readable. Every session shares the stable
-	// AppContainer SID and icacls grants are never revoked, so an ACE added for one
-	// session is still present and still satisfied during the next. The persistent
-	// tool credential is the worse half: that store exists precisely to hold what a
-	// trusted tool authenticated with, and any later `npm install` inherits access.
-	//
-	// Linux does not have this property -- its Landlock rules grant versions/, bin/
-	// and current/ rather than nvxHome, specifically to keep tool_home and other
-	// sessions out of reach. This is a Windows-only gap in the same boundary.
-	//
-	// If this test ever fails because the access is gone, that is good news: update
-	// README.md, SECURITY.md, docs/enforcement-matrix.md and this test together.
-	if !strings.Contains(got, "OTHERSESSION=READ") {
-		t.Error("another session's guest home is no longer readable -- the documented limitation no " +
-			"longer holds, so update README.md, SECURITY.md, docs/enforcement-matrix.md and this test")
+	// The victim session and the tool profile here belong to a different project
+	// than the attacker's, so their capabilities differ. Two sessions in the SAME
+	// project do still share one, which is deliberate: a project's own tool
+	// credentials are in its own trust domain.
+	if strings.Contains(got, "OTHERSESSION=READ") {
+		t.Errorf("a sandboxed process read another project's session guest home.\n%s", got)
 	}
-	if !strings.Contains(got, "TOOLCRED=READ") {
-		t.Error("a persistent tool credential is no longer readable -- update the documents named above and this test")
+	if strings.Contains(got, "TOOLCRED=READ") {
+		t.Errorf("a sandboxed process read another project's persisted tool credential.\n"+
+			"That is the store a trusted tool was granted persistence for.\n%s", got)
 	}
-	if !strings.Contains(got, "OTHERSESSION=") || !strings.Contains(got, "TOOLCRED=") {
+	if !strings.Contains(got, "OTHERSESSION=DENIED") || !strings.Contains(got, "TOOLCRED=DENIED") {
 		t.Errorf("inconclusive result:\n%s", got)
 	}
-	t.Log("CONFIRMED (unwanted): a sandboxed process reads other sessions' guest homes and persisted tool credentials")
 }

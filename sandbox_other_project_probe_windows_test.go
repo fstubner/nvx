@@ -63,7 +63,8 @@ func TestSandboxCannotReachOtherProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(homeA)
-	if err := prepareAppContainerFilesystem(sid, homeA, projectA); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, homeA, projectA)
+	if err != nil {
 		t.Fatalf("project A session: %v", err)
 	}
 
@@ -74,7 +75,8 @@ func TestSandboxCannotReachOtherProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(homeB)
-	if err := prepareAppContainerFilesystem(sid, homeB, projectB); err != nil {
+	scopeCaps, err = prepareAppContainerFilesystem(sid, homeB, projectB)
+	if err != nil {
 		t.Fatalf("project B session: %v", err)
 	}
 
@@ -103,7 +105,7 @@ func TestSandboxCannotReachOtherProjects(t *testing.T) {
 	)
 	_, launchErr := launchAppContainerProcess(childExe,
 		[]string{"-test.run=TestSandboxCannotReachOtherProjects"},
-		env, projectB, sid, 0, nil)
+		env, projectB, sid, 0, scopeCaps)
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
 	syscall.CloseHandle(write)
@@ -112,28 +114,20 @@ func TestSandboxCannotReachOtherProjects(t *testing.T) {
 	requireAppContainerLaunch(t, launchErr)
 	t.Logf("child output:\n%s", got)
 
-	// This pins the CURRENT, UNWANTED state rather than the state we want.
-	//
-	// Measured 2026-08-18: an install in project B both read and wrote project A.
-	// The cause is structural, not a slip -- `prepareAppContainerFilesystem` grants
-	// (M) on the working directory, the AppContainer profile is stable by design so
-	// every session is the same SID, and nothing revokes the ACE. Closing it needs a
-	// different containment identity per session, which is a design change rather
-	// than a patch, and each obvious variant has its own cost (a per-session SID
-	// leaves a dead ACE on the project directory after every run).
-	//
-	// README.md has been corrected to say so. If this test ever fails because the
-	// access is gone, that is good news: update README.md, SECURITY.md,
-	// docs/enforcement-matrix.md and this test together.
-	if !strings.Contains(got, "READ=OK") {
-		t.Error("project A is no longer readable from a project B session -- the documented limitation " +
-			"no longer holds, so update README.md, SECURITY.md, docs/enforcement-matrix.md and this test")
+	// Measured 2026-08-18 BEFORE the per-project identity landed: both READ and
+	// WRITE succeeded. The working directory was granted to the shared package SID,
+	// which every later session also held, so one run in a project opened it to all
+	// of them. It is now granted to a capability derived from the project, and a
+	// session elsewhere does not hold it.
+	if strings.Contains(got, "READ=OK") {
+		t.Errorf("an install in project B read project A's files, contradicting README.md.\n"+
+			"The working directory must be granted to this project's own capability, not to an "+
+			"identity every session shares.\n%s", got)
 	}
-	if !strings.Contains(got, "WRITE=OK") {
-		t.Error("project A is no longer writable from a project B session -- update the documents named above and this test")
+	if strings.Contains(got, "WRITE=OK") {
+		t.Errorf("an install in project B WROTE into project A.\n%s", got)
 	}
-	if !strings.Contains(got, "READ=") || !strings.Contains(got, "WRITE=") {
+	if !strings.Contains(got, "READ=DENIED") || !strings.Contains(got, "WRITE=DENIED") {
 		t.Errorf("inconclusive result:\n%s", got)
 	}
-	t.Log("CONFIRMED (unwanted): a sandboxed install reads and writes other projects nvx has previously run in")
 }

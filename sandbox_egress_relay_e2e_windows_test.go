@@ -106,7 +106,8 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 	}
 	defer os.RemoveAll(guestHome)
 	workDir := t.TempDir()
-	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
@@ -164,7 +165,7 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 	}
 	exitCode, launchErr := launchAppContainerProcess(
 		nvxExe, args, env, workDir, sid, 0,
-		nil, // no internetClient: the relay is the only route out
+		scopeCaps, // no internetClient: the relay is the only route out
 	)
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))

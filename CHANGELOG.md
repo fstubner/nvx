@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+* **A sandboxed command could reach every project nvx had previously run in, and
+  read credentials a trusted tool had persisted.** The AppContainer profile is
+  stable by design, so every session ran as the same identity, and the filesystem
+  permissions nvx grants were never revoked. A permission added while installing
+  in project A was therefore still valid when nvx later ran in project B.
+  Measured: a contained install read *and wrote* a second project's files, read a
+  concurrent session's guest home, and read a `tool_home` profile's credential.
+  This contradicted README.md, which claimed other projects were unreachable.
+
+  Writable roots are now granted to a capability derived from the project rather
+  than to the shared identity, so a session elsewhere does not hold it. Stale
+  permissions from earlier versions are removed the first time nvx runs in an
+  affected project. Sessions in the same project still share one identity, which
+  is deliberate.
+
+* **The new egress relay had opened a route to services on your own machine.**
+  The proxy permitted every loopback destination unconditionally, which was
+  harmless while nothing contained could reach the proxy at all. Relaying to a
+  proxy that runs outside the sandbox changed that: a contained process could
+  reach any local service -- a database, a dev server, another agent -- with an
+  empty allowlist. Loopback is now allowlisted like any other destination.
+  `network.mode: loopback` still permits it; `offline` no longer does.
+
+### Fixed
+
+* **`nvx cleanup` deleted guest homes belonging to sandboxes that were still
+  running**, so running it during a concurrent install destroyed that install's
+  `HOME` mid-run. Sessions now record their owning process and are skipped while
+  it is alive.
+
+
 ## [0.5.0] - 2026-08-18
 
 **0.4.0 was tagged but never published.** The tag was cut, then held back

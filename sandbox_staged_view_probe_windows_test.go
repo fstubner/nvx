@@ -113,7 +113,8 @@ func TestStagedViewHidesProjectButWritesThrough(t *testing.T) {
 
 	// The grant covers the STAGED view and the real node_modules (the junction
 	// target must be granted in its own right -- a junction is not a bypass).
-	if err := prepareAppContainerFilesystem(sid, guestHome, staged); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, staged)
+	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 	if err := grantAppContainerPath(sid, realNodeModules); err != nil {
@@ -143,7 +144,7 @@ func TestStagedViewHidesProjectButWritesThrough(t *testing.T) {
 	)
 	_, launchErr := launchAppContainerProcess(childExe,
 		[]string{"-test.run=TestStagedViewHidesProjectButWritesThrough"},
-		env, staged, sid, 0, nil)
+		env, staged, sid, 0, scopeCaps)
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
 	syscall.CloseHandle(write)

@@ -3,7 +3,7 @@
 Every finding in `docs/assessment-2026-08-16.md` (F1–F68), re-checked against
 `main` at v0.5.0 rather than against the remediation log's own claims.
 
-**26 fixed, 4 partial, 38 open.** The fixed set is almost entirely the Critical
+**29 fixed, 4 partial, 35 open**, plus two findings this pass added and closed (F69, F70). The fixed set is almost entirely the Critical
 and High band; what remains open is almost entirely Medium and Low, plus one
 platform (non-Windows/Linux/macOS Unix) and one provider family (wsl/wslc/nspawn)
 that were never in scope.
@@ -58,9 +58,9 @@ blind spot the original assessment had.
 | F58 | **fixed** | `CLONE_NEWPID` is on the supervisor; `reapUntilChildExits` replaces `cmd.Wait()`. |
 | F34 | open | `--agent-mode`/`NVX_YES` still auto-approves every gate. |
 | F18 | open | `policyLoosens` still has no `MaxDistance` check. |
-| F38 | open | `egress_proxy.go:212` permits every loopback destination unconditionally. |
+| F38 | **fixed** | Loopback is allowlisted like any other destination. `network.mode: loopback` still permits it by definition; `offline` no longer does. Became urgent when the egress relay gave contained processes a route to the parent. |
 | F30 | open | Neither seccomp filter validates `seccomp_data.arch`. |
-| F35 | open | `cleanupStaleSandboxes` (`sandbox.go:483`) deletes every guest home with no liveness check. |
+| F35 | **fixed** | Guest homes record their owning pid; cleanup skips any whose owner is alive, and falls back to age when there is no marker. |
 | F28 | open | `sandbox_native_other.go` runs the command with no isolation at all. |
 | F29 | open | Only native, docker and seatbelt receive `NetCtx` (`fs_provider.go:79,103,122`); wsl/wslc/nspawn do not. |
 | F36 | open | No `--user` anywhere; containers still run as root with the project bind-mounted. |
@@ -96,7 +96,7 @@ blind spot the original assessment had.
 | F45 | open | `min()` still shadows the builtin (`security.go:451`). |
 | F54 | open | `TestParseStartupFlagsQuietAndAgentMode` still leaves `quietFlag` set for later tests. |
 | F55 | open | Follows F18. |
-| F56 | open | Follows F35. |
+| F56 | **fixed** | The test that asserted the old cleanup behaviour now back-dates its directory, so it still covers the abandoned case. |
 | F57 | open | `policyLoosens` still compares trusted packages by length, with nothing pinning the coupling to `MergePolicies`. |
 | F63 | open | No `signal.Notify` anywhere; macOS still has neither graceful nor hard cleanup. |
 
@@ -121,3 +121,22 @@ Grouped by why it is still open, which matters more than the count:
 The severity distribution moved: every Critical and all but two High findings are
 closed, and the two partials (F33, F48) are each blocked on a specific open
 Medium/Low rather than on anything structural.
+
+
+## Added by the adversarial pass, 2026-08-18
+
+Neither is in the original 68. Both were found by probing rather than reading, and
+both are fixed.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| **F69** | High | **A sandboxed command could read and write every project nvx had previously run in, read a concurrent session's guest home, and read a `tool_home` profile's credential.** The AppContainer profile is stable by design so every session shares one identity, and the grants nvx adds are never revoked, so a permission added for project A was still satisfied in project B. This contradicted README.md directly. | **fixed** — writable roots are granted to a capability derived from the project; stale shared-identity ACEs are removed on first run in an affected project |
+| **F70** | High | **The egress relay opened a route to the host's loopback services.** `EgressProxy.allowed` permitted every loopback destination unconditionally (F38), which was inert while nothing contained could reach the proxy. Putting the proxy outside the containment and relaying to it meant a contained process could reach any local service with an empty allowlist. Introduced by the 0.5.0 relay work. | **fixed** — see F38 |
+
+Method note, since it is the reason these were missed for so long: F69 was checked
+against the real home directory earlier in the day and the *other projects* half of
+the same sentence was never exercised. The claim shipped on the strength of a test
+that did not cover it. A control probe was run before diagnosing F69, confirming
+that a directory nvx never grants is unreachable — without it the cause could have
+been an inherited ALL APPLICATION PACKAGES ACE, and the fix would have been aimed
+at the wrong thing.

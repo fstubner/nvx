@@ -45,7 +45,8 @@ func TestContainmentNotDisprovedInsideRealAppContainer(t *testing.T) {
 
 	guestHome := t.TempDir()
 	workDir := t.TempDir()
-	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
@@ -78,7 +79,7 @@ func TestContainmentNotDisprovedInsideRealAppContainer(t *testing.T) {
 		childExe,
 		[]string{"-test.run=TestContainmentNotDisprovedInsideRealAppContainer"},
 		env, workDir, sid, 0,
-		nil,
+		scopeCaps,
 	)
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))

@@ -115,7 +115,8 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		noteMissingElevatedGrants(config.NvxHome, sid, workDir)
 	}
 
-	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
+	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	if err != nil {
 		LogError("AppContainer filesystem setup failed: %v", err)
 		return 1
 	}
@@ -169,10 +170,14 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// container relay -- so the allowlist is enforced by the OS rather than
 	// merely advertised in HTTP_PROXY. offline/loopback also grant nothing and get
 	// no relay. Only network.mode "open" grants internetClient and connects direct.
-	capabilitySIDs, useRelay := windowsSandboxNetwork(netCtx.Mode)
+	networkCaps, useRelay := windowsSandboxNetwork(netCtx.Mode)
 	if !useRelay {
 		cleanEnv = stripProxyEnv(cleanEnv)
 	}
+	// The project capability is what makes this session's writable roots reachable
+	// at all; without it the container holds the package SID only, which no longer
+	// grants the guest home or the working directory.
+	capabilitySIDs := append(scopeCaps, networkCaps...)
 
 	if useRelay {
 		cmdPath, launchArgs, err = wrapWithEgressSupervisor(

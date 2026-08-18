@@ -38,14 +38,33 @@ var (
 // guestHome gets a low mandatory integrity label for compatibility with legacy
 // constrained launches; workDir stays default integrity so a normal AppContainer
 // child can use it as cwd.
-func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) error {
+// It returns the capability SIDs the launch must carry to make use of those
+// grants: the writable roots are granted to a per-project capability rather than
+// to the shared AppContainer SID, so a session in one project cannot reach
+// another's. See sandbox_scope_identity_windows.go for why.
+func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) ([]string, error) {
+	packageSIDStr, err := appContainerSidToString(sid)
+	if err != nil {
+		return nil, err
+	}
+
+	// The identity that owns this session's writable roots. Derived from the
+	// project, so it is the same every run here and different from every other
+	// project.
+	capSID, err := scopeCapabilitySID(sandboxScopeForWorkDir(workDir))
+	if err != nil {
+		return nil, fmt.Errorf("derive this project's sandbox identity: %w", err)
+	}
+	caps := []string{capSID}
+
 	// The guest home must be writable; it is nvx-owned and safe to grant.
 	if guestHome != "" {
-		if err := grantAppContainerPath(sid, guestHome); err != nil {
-			return err
+		if err := grantSandboxModify(capSID, guestHome); err != nil {
+			return nil, err
 		}
+		removeStaleAppContainerGrant(packageSIDStr, guestHome)
 		if err := labelLowIntegrity(guestHome); err != nil {
-			return fmt.Errorf("integrity label for %q: %w", guestHome, err)
+			return nil, fmt.Errorf("integrity label for %q: %w", guestHome, err)
 		}
 	}
 
@@ -55,13 +74,21 @@ func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) error
 	// APPLICATION PACKAGES for stat/traverse. Sandbox writes go to the guest home
 	// regardless, so a failed workdir grant should not abort the run.
 	if workDir != "" && !isProfileRoot(workDir) {
-		if err := grantAppContainerPath(sid, workDir); err != nil {
+		if err := grantSandboxModify(capSID, workDir); err != nil {
 			LogWarn("Could not grant the sandbox write access to %q: %v", workDir, err)
 			LogInfo("Commands that write the current folder may fail here; run from a project subfolder, or use --no-sandbox.")
 		}
+		removeStaleAppContainerGrant(packageSIDStr, workDir)
 	}
 	// Tools stat the ancestors of both the working directory and the guest home
 	// (which is HOME inside the sandbox), so grant traverse on both chains.
+	//
+	// These stay on the shared package SID rather than the per-project capability.
+	// They are this-folder-only RX -- enough to walk through a directory, not to
+	// read what is inside it -- so sharing them leaks nothing: a sibling project's
+	// contents are still gated by its own capability. Keeping them shared also
+	// keeps them idempotent across projects, which is what stops the ancestor walk
+	// from re-granting the same chain for every project on the machine.
 	aWork, eWork := grantWorkdirAncestors(sid, workDir)
 	aHome, eHome := grantWorkdirAncestors(sid, guestHome)
 	if skipped := (eWork + eHome) - (aWork + aHome); skipped > 0 {
@@ -69,6 +96,34 @@ func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) error
 		// them. Silence would hide a genuinely slow filesystem, so report once per
 		// launch rather than once per directory chain.
 		LogInfo("Skipped %d of %d ancestor permission checks to keep startup fast.", skipped, eWork+eHome)
+	}
+	return caps, nil
+}
+
+// sandboxScopeForWorkDir returns the project a working directory belongs to, so
+// every session in the same project shares one identity and a subdirectory does
+// not become its own isolated island. Mirrors projectScopeDir, but as a function
+// of the argument rather than the process's cwd.
+func sandboxScopeForWorkDir(workDir string) string {
+	if workDir == "" {
+		return ""
+	}
+	if root := findProjectRoot(workDir); root != "" {
+		return root
+	}
+	return filepath.Clean(workDir)
+}
+
+// grantSandboxModify gives sidStr modify access to path and its descendants.
+// See grantAppContainerPath for why the ACE is inheritable rather than /t.
+func grantSandboxModify(sidStr, path string) error {
+	if appContainerHasGrant(sidStr, path) {
+		return nil
+	}
+	grantArg := fmt.Sprintf("*%s:(OI)(CI)(M)", sidStr)
+	out, err := runWinCmd(45*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
+	if err != nil {
+		return fmt.Errorf("icacls grant for sandbox identity: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
