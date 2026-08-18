@@ -150,13 +150,19 @@ func setLoopbackExempt(add bool, sidStr string) error {
 	return nil
 }
 
-// runWindowsSetup performs the one-time elevated setup that lets the AppContainer
-// sandbox run real package-manager workflows (npm/npx) and reach the loopback
-// egress proxy. It is idempotent and reversible via --undo.
+// runWindowsSetup performs the optional elevated setup that grants the
+// AppContainer sandbox stat access on drive roots, for tools that resolve paths
+// that far up. It is idempotent and reversible via --undo.
+//
+// It is no longer needed for egress. Until 0.5.0 this was also where the loopback
+// exemption was registered, without which the sandbox could not reach the egress
+// proxy at all -- so allowlisted egress was an elevated opt-in and the default was
+// an unrestricted direct connection. The in-container relay reaches the proxy over
+// a UNIX socket instead, which needs no exemption and no elevation.
 func runWindowsSetup(nvxHome string, undo bool) int {
 	if !isElevated() {
 		LogError("nvx setup must run from an elevated (Administrator) terminal.")
-		LogInfo("It grants the nvx sandbox the OS access needed to run npm/npx and to reach the egress proxy. Undo later with: nvx setup --undo")
+		LogInfo("It grants the nvx sandbox drive-root stat access for tools that need it. Egress is allowlisted either way. Undo later with: nvx setup --undo")
 		return 1
 	}
 
@@ -197,20 +203,29 @@ func runWindowsSetup(nvxHome string, undo bool) int {
 			return 1
 		}
 	}
-	LogInfo("Registering the loopback exemption ...")
-	if err := setLoopbackExempt(true, sidStr); err != nil {
-		LogError("Failed to register the loopback exemption: %v", err)
-		return 1
+	// Setup used to register a loopback exemption here, because reaching the egress
+	// proxy meant dialling a listener OUTSIDE the container -- which Windows blocks
+	// for AppContainers without one. The in-container relay removed that need: the
+	// proxy is reached over a UNIX socket and re-exposed on loopback inside the
+	// container, where no exemption applies.
+	//
+	// So the exemption is now a permission granted for no remaining reason -- it
+	// lets the sandbox reach every other loopback listener on the machine. Remove
+	// it, including for users who ran an earlier setup. Best-effort: on a machine
+	// that never had it, CheckNetIsolation simply reports nothing to delete.
+	if err := setLoopbackExempt(false, sidStr); err != nil {
+		LogInfo("No loopback exemption to remove (the sandbox no longer needs one).")
 	}
 	if err := writeWindowsSetupState(nvxHome, windowsSetupState{
 		AppContainerSID: sidStr,
 		GrantedPaths:    paths,
-		LoopbackExempt:  true,
+		LoopbackExempt:  false,
 	}); err != nil {
 		LogWarn("Setup applied, but recording state failed: %v", err)
 	}
 
 	LogSuccess("nvx sandbox setup complete.")
-	LogInfo("npm/npx now run inside the sandbox with allowlisted egress. Undo with: nvx setup --undo (elevated).")
+	LogInfo("Drive-root access granted, for tools that resolve paths that far. Undo with: nvx setup --undo (elevated).")
+	LogInfo("Egress is allowlisted with or without this step; setup is not required for it.")
 	return 0
 }

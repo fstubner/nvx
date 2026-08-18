@@ -22,9 +22,9 @@ silently.
 | Host filesystem write blocked (outside workdir + guest home) | Yes | Yes | Yes |
 | Host filesystem read restricted | Yes | Yes | No² |
 | Environment secrets scrubbed | Yes | Yes | Yes |
-| Egress restricted to policy allowlist | **No by default**³ | Yes | Yes (loopback proxy) |
-| Non-proxied raw TCP/UDP blocked at OS | **No by default**³ | Yes (loopback-only netns + seccomp) | Yes (`deny network*` except loopback) |
-| Non-proxied DNS blocked | **No by default**³ | Yes (netns) | Partial¹ |
+| Egress restricted to policy allowlist | Yes³ | Yes | Yes (loopback proxy) |
+| Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes (`deny network*` except loopback) |
+| Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes (needs `/usr/bin/sandbox-exec`) |
 
 ² On macOS the Seatbelt profile allows filesystem reads. The dynamic linker must
@@ -41,25 +41,31 @@ external resolvers cannot leave; on macOS a determined process could still
 attempt DNS via the OS resolver. This is the main per-OS difference and is why
 Linux has the strongest network story.
 
-³ **Windows egress is not restricted at all by default, and this table claimed
-otherwise until 2026-08-17.** An AppContainer cannot reach a loopback listener
-without a loopback exemption, which only an elevated `nvx setup` can add. Absent
-that, `windowsSandboxNetwork` grants the `internetClient` capability and
-`stripProxyEnv` removes the proxy variables, so the contained process connects
-directly and the allowlist is never consulted — not even cooperatively. After an
-elevated `nvx setup`, the sandbox is proxied and the allowlist applies as
-described.
+³ **Windows egress became enforced in 0.5.0. It was not before, and this table
+claimed otherwise until 2026-08-17.**
 
-Everything else in the Windows column — filesystem write containment, read
-restriction, environment scrubbing, fail-closed setup — is unaffected, and the
-pre-install supply-chain checks run in the unsandboxed parent either way.
+The old behaviour: an AppContainer cannot reach a loopback listener outside itself
+without a loopback exemption, which only an elevated `nvx setup` could add. Absent
+that, `windowsSandboxNetwork` granted the `internetClient` capability and
+`stripProxyEnv` removed the proxy variables, so the contained process connected
+directly and the allowlist was never consulted — not even cooperatively. Measured
+on 2026-08-18 against the 0.4.0 build: a postinstall script reached both
+`1.1.1.1:443` and `registry.npmjs.org:443` directly.
 
-A no-elevation path does exist and has been measured: an AppContainer can reach an
-AF_UNIX socket held by the parent (verified with no network capability granted at
-all), and intra-container TCP loopback works. Together those allow the same
-parent-side-proxy plus in-container relay design Linux now uses. It needs an
-in-container supervisor process, which does not exist on Windows yet, so it is a
-planned change rather than a current guarantee.
+The current behaviour: no network capability is granted at all, so the OS refuses
+direct connections and DNS does not resolve. The parent's egress proxy is exposed
+on an AF_UNIX socket — a filesystem object, so the AppContainer network
+restriction does not cover it — and `nvx __appcontainer-exec`, a supervisor
+running inside the container, re-exposes it as loopback TCP for tools that only
+understand `host:port`. Intra-container loopback needs no exemption. `HTTP_PROXY`
+points at the relay, but honouring it is no longer the target's choice: it is the
+only route out. The same postinstall script now reports `EACCES` and `ENOTFOUND`
+for both hosts while `npm install` completes normally.
+
+`network.mode: open` is the documented opt-out and is the only mode that grants a
+network capability. Setup no longer registers a loopback exemption, and removes an
+existing one, because the relay makes it an access grant with no remaining
+purpose; `nvx setup` is now only about drive-root stat access.
 
 ## Docker provider
 

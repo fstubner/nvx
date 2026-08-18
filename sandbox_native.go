@@ -48,7 +48,7 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 	// Platforms that place the sandboxed process in a network namespace need the
 	// parent's proxy exposed on a UNIX socket inside the guest home, since a
 	// namespace-local TCP address cannot reach out. No-op elsewhere.
-	if err := prepareEgressForNamespace(egress, guestHome, &netCtx); err != nil {
+	if err := prepareEgressSocket(egress, guestHome, &netCtx); err != nil {
 		LogError("Egress proxy setup for namespace isolation failed: %v", err)
 		return 1
 	}
@@ -101,8 +101,8 @@ func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
 	return preferWindowsRuntimeExe(cmdPath)
 }
 
-// parseLandlockExecArgs parses internal __landlock-exec arguments.
-func parseLandlockExecArgs(argv []string) (guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath string, cmdArgs []string, ok bool) {
+// parseSupervisorExecArgs parses internal __landlock-exec arguments.
+func parseSupervisorExecArgs(argv []string) (guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath string, cmdArgs []string, ok bool) {
 	for i := 0; i < len(argv); i++ {
 		arg := argv[i]
 		switch {

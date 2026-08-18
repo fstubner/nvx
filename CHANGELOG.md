@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+* **Windows egress is now actually restricted to the allowlist.** It was not
+  before, on any released build. The sandbox held the `internetClient`
+  capability, so `HTTP_PROXY` was a request a package could simply decline —
+  measured against 0.4.0, a `postinstall` script opened connections to
+  `1.1.1.1:443` and `registry.npmjs.org:443` with no restriction at all.
+
+  The AppContainer is now granted no network capability, so Windows itself
+  refuses direct connections and DNS does not resolve. The parent's egress proxy
+  is exposed on an AF_UNIX socket — a filesystem object, which the AppContainer
+  network restriction does not cover — and a new in-container supervisor,
+  `nvx __appcontainer-exec`, re-exposes it as loopback TCP for tools that only
+  understand `host:port`. That is the same parent-proxy-plus-relay shape Linux
+  already used, and it needs no elevation.
+
+  The same `postinstall` script now gets `EACCES` and `ENOTFOUND` for both hosts
+  while `npm install` completes normally against the real registry.
+
+* **`nvx setup` no longer registers a loopback exemption, and removes an existing
+  one.** The exemption was how a sandbox reached the proxy before the relay; it
+  also let the sandbox reach every other loopback listener on the machine. With
+  the relay it grants access for no remaining reason. Setup is now only about
+  drive-root stat access, and is no longer needed for allowlisted egress.
+
+### Changed
+
+* `network.mode: open` is now the only mode that grants the Windows sandbox a
+  network capability. An unrecognised mode relays rather than connecting direct,
+  so a typo cannot silently disable the allowlist.
+* Proxied Windows runs fail closed if the egress socket cannot be created, rather
+  than falling back to a direct connection.
+
 ## [0.4.0] - 2026-08-18
 
 **0.3.0 was never published.** It has a dated entry below and `version.go` claims

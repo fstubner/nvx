@@ -391,7 +391,7 @@ func runSandbox(config SandboxConfig) int {
 	// allowlisted host -- so a proxy started *inside* it (as this used to do) could
 	// never forward anything, which made proxy mode non-functional. The parent
 	// keeps real network access and the contained side reaches it over a UNIX
-	// socket (see prepareEgressForNamespace and startProxyRelay).
+	// socket (see prepareEgressSocket and startProxyRelay).
 	{
 		var err error
 		egress, err = startEgressProxy(ctx, policy, rt, config.NvxHome)

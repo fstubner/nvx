@@ -1,5 +1,3 @@
-//go:build linux
-
 package main
 
 import (
@@ -7,17 +5,24 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-// nonLoopbackIPv4 returns an address of this host that is not 127.0.0.0/8, so a
-// test target is subject to the real allowlist decision. EgressProxy.allowed
-// short-circuits every loopback destination to "permitted" (F38), so a loopback
-// target could not distinguish allowlisted from blocked.
-func nonLoopbackIPv4(t *testing.T) string {
+// nonLoopbackListener binds a listener on an address of this host that is not
+// 127.0.0.0/8, so a test target is subject to the real allowlist decision.
+// EgressProxy.allowed short-circuits every loopback destination to "permitted"
+// (F38), so a loopback target could not distinguish allowlisted from blocked.
+//
+// It binds here rather than returning an address for the caller to bind, because
+// having an address is not the same as being able to listen on it: the first
+// non-loopback IPv4 on this Windows host is an unbindable 169.254.0.0/16
+// link-local, so the previous "return the first one" version skipped the entire
+// test rather than running it. Candidates are tried until one accepts a bind.
+func nonLoopbackListener(t *testing.T) net.Listener {
 	t.Helper()
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
@@ -25,15 +30,21 @@ func nonLoopbackIPv4(t *testing.T) string {
 	}
 	for _, a := range addrs {
 		ipnet, ok := a.(*net.IPNet)
-		if !ok || ipnet.IP.IsLoopback() {
+		if !ok || ipnet.IP.IsLoopback() || ipnet.IP.IsLinkLocalUnicast() {
 			continue
 		}
-		if v4 := ipnet.IP.To4(); v4 != nil {
-			return v4.String()
+		v4 := ipnet.IP.To4()
+		if v4 == nil {
+			continue
 		}
+		ln, lerr := net.Listen("tcp", net.JoinHostPort(v4.String(), "0"))
+		if lerr != nil {
+			continue
+		}
+		return ln
 	}
-	t.Skip("no non-loopback IPv4 address available")
-	return ""
+	t.Skip("no bindable non-loopback IPv4 address available")
+	return nil
 }
 
 // connectVia issues an HTTP CONNECT for target through addr and returns the
@@ -64,14 +75,10 @@ func connectVia(t *testing.T, addr, target string) string {
 // only ever checked that blocked traffic fails (F27), which a sandbox that denies
 // everything passes perfectly. That is precisely the state proxy mode was in.
 func TestEgressProxyOverUnixSocketEnforcesAllowlistBothWays(t *testing.T) {
-	host := nonLoopbackIPv4(t)
-
 	// A stand-in "remote host" on a non-loopback address.
-	remote, err := net.Listen("tcp", host+":0")
-	if err != nil {
-		t.Skipf("cannot bind %s: %v", host, err)
-	}
+	remote := nonLoopbackListener(t)
 	defer remote.Close()
+	host, _, _ := net.SplitHostPort(remote.Addr().String())
 	go func() {
 		for {
 			c, err := remote.Accept()
@@ -94,7 +101,16 @@ func TestEgressProxyOverUnixSocketEnforcesAllowlistBothWays(t *testing.T) {
 	}
 	defer proxy.Close()
 
-	sock := filepath.Join(t.TempDir(), "egress.sock")
+	// Not t.TempDir(): it embeds the test name, and sockaddr_un.sun_path caps the
+	// whole path at 108 bytes on Windows exactly as on Unix. This test's name alone
+	// pushes it over, and the bind fails as "invalid argument" -- which reads like a
+	// permissions problem and is not one.
+	sockDir, err := os.MkdirTemp("", "nvxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(sockDir)
+	sock := filepath.Join(sockDir, "egress.sock")
 	if err := proxy.ListenUnix(sock); err != nil {
 		t.Fatalf("ListenUnix: %v", err)
 	}

@@ -4,40 +4,60 @@ package main
 
 import "testing"
 
-// TestWindowsSandboxNetworkDefaultIsUnproxied pins what the documentation now
-// says, so the two cannot drift apart again silently.
+// TestWindowsSandboxNetworkDefaultUsesTheRelay pins the property the egress
+// allowlist depends on: in the default network mode the AppContainer is granted no
+// network capability at all.
 //
-// F2: README.md and enforcement-matrix.md claimed Windows egress was restricted to
-// the policy allowlist. It is not, unless an elevated `nvx setup` has added a
-// loopback exemption -- an AppContainer cannot reach a loopback listener without
-// one. By default nvx grants internetClient and (see the caller) strips the proxy
-// variables, so the contained process connects directly.
+// This assertion is the inverse of the one it replaces. Until 0.5.0 the default
+// granted internetClient and connected directly, so HTTP_PROXY was a request the
+// target could decline and the documented allowlist was not enforced. The old test
+// pinned that, and said in its own comment that a failure caused by the default
+// becoming proxied was good news. This is that change.
 //
-// If this test starts failing because the default became proxied, that is good
-// news -- update the three documents it references rather than the assertion.
-func TestWindowsSandboxNetworkDefaultIsUnproxied(t *testing.T) {
-	nvxHome := t.TempDir() // no setup marker, so no loopback exemption
-
-	caps, useProxy := windowsSandboxNetwork(nvxHome, "proxy")
-	if useProxy {
-		t.Error("default is now proxied; update README.md, SECURITY.md and docs/enforcement-matrix.md, which currently document it as unproxied")
+// The capability is what matters here, not the flag: with internetClient granted,
+// a package that calls connect() directly reaches any host regardless of what the
+// relay does. Measured without it (see the egress primitives probe): direct TCP is
+// refused by the OS and DNS does not resolve.
+func TestWindowsSandboxNetworkDefaultUsesTheRelay(t *testing.T) {
+	caps, useRelay := windowsSandboxNetwork("proxy")
+	if !useRelay {
+		t.Error("the default no longer routes through the egress relay; egress would be unrestricted")
 	}
-	if len(caps) != 1 || caps[0] != capabilityInternetClientSID {
-		t.Errorf("default capabilities = %v, want exactly [internetClient]; the docs describe egress as unrestricted on this basis", caps)
+	if len(caps) != 0 {
+		t.Errorf("default capabilities = %v, want none: any network capability lets the target bypass the relay entirely", caps)
 	}
 }
 
-// TestWindowsSandboxNetworkOfflineGrantsNothing covers the modes that ARE enforced
-// without elevation: with no network capability the container has no network at
-// all, which is a real OS-level guarantee rather than a cooperative one.
+// TestWindowsSandboxNetworkOfflineGrantsNothing covers the modes that were already
+// enforced without elevation: no network capability means no network at all.
 func TestWindowsSandboxNetworkOfflineGrantsNothing(t *testing.T) {
 	for _, mode := range []string{"offline", "loopback", "OFFLINE", " loopback "} {
-		caps, useProxy := windowsSandboxNetwork(t.TempDir(), mode)
+		caps, useRelay := windowsSandboxNetwork(mode)
 		if len(caps) != 0 {
 			t.Errorf("mode %q granted capabilities %v, want none", mode, caps)
 		}
-		if useProxy {
-			t.Errorf("mode %q should not route through the proxy", mode)
+		if useRelay {
+			t.Errorf("mode %q should not start an egress relay; it has no egress", mode)
+		}
+	}
+}
+
+// TestWindowsSandboxNetworkOpenIsTheOnlyDirectMode records the one escape hatch.
+// network.mode "open" is the documented way to opt out of the allowlist, and it is
+// the only mode that may hand the container a network capability -- if any other
+// mode starts doing so, the allowlist stops being enforced for it.
+func TestWindowsSandboxNetworkOpenIsTheOnlyDirectMode(t *testing.T) {
+	caps, useRelay := windowsSandboxNetwork("open")
+	if useRelay {
+		t.Error("network.mode \"open\" should connect directly, not through the relay")
+	}
+	if len(caps) != 1 || caps[0] != capabilityInternetClientSID {
+		t.Errorf("open-mode capabilities = %v, want exactly [internetClient]", caps)
+	}
+
+	for _, mode := range []string{"proxy", "offline", "loopback", "", "  "} {
+		if caps, _ := windowsSandboxNetwork(mode); len(caps) != 0 {
+			t.Errorf("mode %q granted %v; only \"open\" may grant a network capability", mode, caps)
 		}
 	}
 }

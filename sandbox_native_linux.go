@@ -14,13 +14,13 @@ import (
 // read/write rights, so no extra rule is needed to reach it.
 const egressSocketName = ".nvx-egress.sock"
 
-// prepareEgressForNamespace exposes the parent's egress proxy on a UNIX socket so
+// prepareEgressSocket exposes the parent's egress proxy on a UNIX socket so
 // the contained process can reach it from inside its network namespace.
 //
 // A loopback-only netns has no route to any allowlisted host, so the proxy cannot
 // live inside it. UNIX sockets are filesystem objects and are not namespaced by
 // the network namespace, which makes them the one channel that crosses cleanly.
-func prepareEgressForNamespace(egress *EgressProxy, guestHome string, netCtx *NetworkLaunchContext) error {
+func prepareEgressSocket(egress *EgressProxy, guestHome string, netCtx *NetworkLaunchContext) error {
 	if egress == nil || netCtx == nil || guestHome == "" {
 		return nil
 	}
