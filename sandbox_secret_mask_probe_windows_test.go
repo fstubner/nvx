@@ -163,3 +163,105 @@ func TestDenyACEHidesSecretFromAppContainer(t *testing.T) {
 		t.Error("the contained process can no longer write to the project; npm install would fail")
 	}
 }
+
+// TestContainedProcessCannotReachTheRealHome answers the question the .env finding
+// raises: if a contained process can read the project directory, does the sandbox
+// stop it reading anything at all?
+//
+// The classic credential stores -- ~/.ssh/id_rsa, ~/.aws/credentials, ~/.npmrc, the
+// shell profile -- live in the REAL home, which the sandbox redirects away from and
+// never grants. If that holds, the guarantee is "the project it is installing into,
+// and nothing else", which is materially different from "no protection at all".
+func TestContainedProcessCannotReachTheRealHome(t *testing.T) {
+	if os.Getenv("NVX_PROBE") != "1" {
+		t.Skip("set NVX_PROBE=1 to run")
+	}
+
+	if os.Getenv("NVX_HOME_PROBE_CHILD") == "1" {
+		for _, spec := range strings.Split(os.Getenv("NVX_PROBE_TARGETS"), "|") {
+			parts := strings.SplitN(spec, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			if _, err := os.ReadFile(parts[1]); err != nil {
+				fmt.Printf("%s=DENIED\n", parts[0])
+			} else {
+				fmt.Printf("%s=READ\n", parts[0])
+			}
+		}
+		os.Exit(0)
+	}
+
+	const probeProfile = "nvx.sandbox.homeprobe"
+	sid, err := ensureAppContainerSID(probeProfile)
+	if err != nil {
+		t.Fatalf("profile: %v", err)
+	}
+	defer syscall.LocalFree(syscall.Handle(sid))
+	defer deleteAppContainerProfile(probeProfile)
+
+	guestHome := t.TempDir()
+	workDir := t.TempDir()
+
+	// Stand-ins for the real credential stores, placed in the actual user profile.
+	home := os.Getenv("USERPROFILE")
+	sshKey := filepath.Join(home, ".nvx-probe-id_rsa")
+	awsCreds := filepath.Join(home, ".nvx-probe-aws-credentials")
+	for _, p := range []string{sshKey, awsCreds} {
+		if err := os.WriteFile(p, []byte("PRIVATE-KEY-MATERIAL"), 0o600); err != nil {
+			t.Skipf("cannot stage %s: %v", p, err)
+		}
+		defer os.Remove(p)
+	}
+	inProject := filepath.Join(workDir, ".env")
+	if err := os.WriteFile(inProject, []byte("API_KEY=x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := prepareAppContainerFilesystem(sid, guestHome, workDir); err != nil {
+		t.Fatalf("filesystem prep: %v", err)
+	}
+
+	self, _ := os.Executable()
+	data, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childExe := filepath.Join(guestHome, "homeprobe.exe")
+	if err := os.WriteFile(childExe, data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	read, write := makeTestPipe(t)
+	defer syscall.CloseHandle(read)
+	prevOut, _ := syscall.GetStdHandle(syscall.STD_OUTPUT_HANDLE)
+	const stdOutputHandle = uintptr(0xFFFFFFF5)
+	procSetStdHandleTest.Call(stdOutputHandle, uintptr(write))
+
+	targets := "SSHKEY=" + sshKey + "|AWSCREDS=" + awsCreds + "|PROJECTENV=" + inProject
+	env := append(scrubEnvironment(guestHome),
+		"NVX_PROBE=1", "NVX_HOME_PROBE_CHILD=1",
+		"NVX_PROBE_TARGETS="+targets,
+	)
+	_, launchErr := launchAppContainerProcess(childExe,
+		[]string{"-test.run=TestContainedProcessCannotReachTheRealHome"},
+		env, workDir, sid, 0, nil)
+
+	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
+	syscall.CloseHandle(write)
+	got := readWithTimeout(t, read)
+	requireAppContainerLaunch(t, launchErr)
+	t.Logf("child output: %q", got)
+
+	for _, key := range []string{"SSHKEY", "AWSCREDS"} {
+		if contains(got, key+"=READ") {
+			t.Errorf("%s in the real home was READABLE from inside the sandbox; containment provides far less than documented", key)
+		} else if !contains(got, key+"=DENIED") {
+			t.Errorf("inconclusive result for %s in %q", key, got)
+		}
+	}
+	// The known, documented exposure -- pinned here so the contrast is explicit.
+	if !contains(got, "PROJECTENV=READ") {
+		t.Log("note: the project .env was NOT readable here, which would contradict the earlier probe")
+	}
+}
