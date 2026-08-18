@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 	"strings"
 )
 
@@ -144,6 +145,9 @@ func createGuestProfile(nvxHome string, sandboxID string) (string, error) {
 	if err := createProfileSkeleton(guestHome); err != nil {
 		return "", err
 	}
+	// Record the owning process so `nvx cleanup` can tell this session apart from
+	// a crashed one's leftovers. See guestHomeIsInUse.
+	writeSessionOwner(guestHome, time.Now())
 	return guestHome, nil
 }
 
@@ -473,6 +477,12 @@ func execBareCommand(config SandboxConfig) int {
 // previous sessions that failed to clean up (e.g., due to crashes). It
 // deliberately touches only sandbox_home, never tool_home (persistent
 // per-tool profiles), whose whole purpose is to survive across runs.
+//
+// STALE is the operative word, and it did not used to be: this deleted every
+// guest home unconditionally, so running `nvx cleanup` during a concurrent
+// `npm install` destroyed that install's HOME underneath it. npm lifecycles
+// routinely run several nvx processes at once, so the collision needed no
+// unusual usage at all. Sessions in use are now skipped -- see guestHomeIsInUse.
 func cleanupStaleSandboxes(nvxHome string) {
 	sandboxDir := getSandboxHomeDir(nvxHome)
 	entries, err := os.ReadDir(sandboxDir)
@@ -480,12 +490,22 @@ func cleanupStaleSandboxes(nvxHome string) {
 		return // Directory doesn't exist or can't be read
 	}
 
+	now := time.Now()
+	skipped := 0
 	for _, entry := range entries {
-		if entry.IsDir() {
-			fullPath := filepath.Join(sandboxDir, entry.Name())
-			if err := os.RemoveAll(fullPath); err != nil {
-				LogWarn("Failed to clean stale sandbox: %s", entry.Name())
-			}
+		if !entry.IsDir() {
+			continue
 		}
+		fullPath := filepath.Join(sandboxDir, entry.Name())
+		if guestHomeIsInUse(fullPath, now) {
+			skipped++
+			continue
+		}
+		if err := os.RemoveAll(fullPath); err != nil {
+			LogWarn("Failed to clean stale sandbox: %s", entry.Name())
+		}
+	}
+	if skipped > 0 {
+		LogInfo("Left %d sandbox session(s) alone because they are still running.", skipped)
 	}
 }
