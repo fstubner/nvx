@@ -212,6 +212,24 @@ func ensureAppContainerCommand(sid uintptr, nvxHome, cmdPath string) (string, er
 	}
 	cmdPath = filepath.Clean(cmdPath)
 	cmdPath = preferWindowsRuntimeExe(cmdPath)
+	// Resolve links before anything reads this path.
+	//
+	// nvm for Windows -- the usual way node gets installed here -- makes
+	// C:\Program Files\nodejs a LINK to the active version under %APPDATA%\nvm,
+	// and nvx's own ~/.nvx/current is a link into versions/. Both then reach
+	// stageAppContainerExecutable, which walks the containing directory;
+	// filepath.Walk reports the walk root via Lstat, so a linked root arrives with
+	// IsDir() false, gets treated as a file, and the copy dies trying to open the
+	// destination directory for writing. Every sandboxed command failed that way
+	// for anyone without an nvx-managed runtime.
+	//
+	// Resolving here rather than inside the staging helper also fixes the
+	// isNvxManagedRuntimePath check below, which compares against versions/ and so
+	// answered "no" for a path that reached it through ~/.nvx/current -- staging a
+	// copy of a runtime that did not need one.
+	if resolved, err := filepath.EvalSymlinks(cmdPath); err == nil {
+		cmdPath = resolved
+	}
 	usePath := cmdPath
 	if !isNvxManagedRuntimePath(nvxHome, cmdPath) {
 		staged, err := stageAppContainerExecutable(nvxHome, cmdPath)
@@ -276,24 +294,65 @@ func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {
 	return destExe, nil
 }
 
+// maxStageDepth bounds the staging recursion. Directory links are followed, so a
+// link pointing back into its own tree would otherwise recurse forever and hang a
+// sandbox launch with no output. Real runtime trees are nowhere near this deep.
+const maxStageDepth = 64
+
+// copyDirTree copies the directory at src, and everything beneath it, to dst.
+//
+// It recurses with os.ReadDir rather than using filepath.Walk, because Walk
+// inspects each path with Lstat: a directory LINK arrives with IsDir() false, is
+// taken for a file, and the copy then tries to open dst -- a directory -- for
+// writing. That surfaced as "open <nvxHome>\sandbox-exec\<hash>: is a directory"
+// and aborted every sandboxed command for anyone whose node came from nvm for
+// Windows, which makes C:\Program Files\nodejs a link to the active version.
+//
+// Windows has two kinds of directory link and they do not behave alike: a symbolic
+// link sets ModeSymlink and filepath.EvalSymlinks resolves it, while a junction
+// reports ModeIrregular and EvalSymlinks returns it unchanged with no error at all.
+// Resolving the path up front therefore fixes only half the cases. os.ReadDir,
+// os.Stat and os.Open follow both, so routing everything through them handles the
+// pair without having to tell them apart.
+//
+// Links are followed rather than recreated because the sandbox needs real files: a
+// link inside the staged copy would point outside it, where the AppContainer holds
+// no grant.
 func copyDirTree(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+	return copyDirTreeAtDepth(src, dst, 0)
+}
+
+func copyDirTreeAtDepth(src, dst string, depth int) error {
+	if depth > maxStageDepth {
+		return fmt.Errorf("cannot stage %s for the sandbox: nesting passed %d levels, which usually means a directory link points back into its own tree", src, maxStageDepth)
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		// os.Stat, not the DirEntry's own type: the entry describes what the name
+		// IS, and staging needs what it POINTS AT.
+		info, err := os.Stat(srcPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("stage %s for the sandbox: %w", srcPath, err)
 		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
 		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode().Perm()&0750)
+			if err := copyDirTreeAtDepth(srcPath, dstPath, depth+1); err != nil {
+				return err
+			}
+			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+		if err := copyFile(srcPath, dstPath, info.Mode()); err != nil {
 			return err
 		}
-		return copyFile(path, target, info.Mode())
-	})
+	}
+	return nil
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {
