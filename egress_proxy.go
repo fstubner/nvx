@@ -197,34 +197,76 @@ func parseHostPortSpec(host string, port uint16) hostPort {
 	return hostPort{host: host, port: port}
 }
 
-// sessionAllows reports whether this run has already approved key or wild.
+// sessionAllows reports whether this run has already approved any of keys.
 //
 // It exists so the lookup happens under promptMu. allowed() runs on every
 // per-connection goroutine, so reading the map unlocked raced the prompt path's
 // write and could abort the process with a concurrent map read/write.
-func (p *EgressProxy) sessionAllows(key, wild string) bool {
+func (p *EgressProxy) sessionAllows(keys []string) bool {
 	p.promptMu.Lock()
 	defer p.promptMu.Unlock()
-	return p.session[key] || p.session[wild]
+	for _, k := range keys {
+		if p.session[k] {
+			return true
+		}
+	}
+	return false
+}
+
+// allowKeysFor returns every allowlist entry a destination may legitimately
+// match: the exact host:port and the host:* wildcard.
+//
+// Loopback expands to all three spellings, because parseHostPortSpec has already
+// rewritten "localhost" to 127.0.0.1 by this point. Without that, a policy saying
+// allow_hosts: ["localhost:3000"] would silently fail to match a request the user
+// wrote as localhost, which is the shape most people reach for.
+func allowKeysFor(hp hostPort) []string {
+	hosts := []string{hp.host}
+	if isLoopback(hp.host) {
+		hosts = []string{"127.0.0.1", "localhost", "::1"}
+	}
+	keys := make([]string, 0, len(hosts)*2)
+	for _, h := range hosts {
+		keys = append(keys, fmt.Sprintf("%s:%d", h, hp.port), fmt.Sprintf("%s:*", h))
+	}
+	return keys
 }
 
 func (p *EgressProxy) allowed(hp hostPort) bool {
-	if isLoopback(hp.host) {
-		return true
-	}
-	key := fmt.Sprintf("%s:%d", hp.host, hp.port)
-	if p.allow[key] {
-		return true
-	}
-	wild := fmt.Sprintf("%s:*", hp.host)
-	if p.allow[wild] {
-		return true
-	}
-	if p.sessionAllows(key, wild) {
+	mode := strings.ToLower(strings.TrimSpace(p.policy.Isolation.Network.Mode))
+
+	// A loopback destination used to be permitted unconditionally, whatever the
+	// policy said (F38). That was survivable only while the contained process had
+	// no route to this proxy: on Windows an AppContainer with no network
+	// capability reached nothing at all, and on Linux a loopback-only netns has
+	// its own 127.0.0.1, not the host's.
+	//
+	// The egress relay removed that premise on both. The proxy now runs in the
+	// parent, OUTSIDE the containment, and dials on the contained process's
+	// behalf -- so "permit all loopback" started meaning "permit every service on
+	// the developer's machine": databases, dev servers, other agents' MCP
+	// servers. Measured: a contained process read a host loopback service with an
+	// empty allowlist.
+	//
+	// So loopback is now allowlisted like any other destination, which is what
+	// README.md already described ("host services on localhost remain reachable
+	// via allow_hosts"). network.mode "loopback" is the exception, because
+	// permitting exactly these is the entire definition of that mode.
+	if isLoopback(hp.host) && mode == "loopback" {
 		return true
 	}
 
-	mode := strings.ToLower(p.policy.Isolation.Network.Mode)
+	keys := allowKeysFor(hp)
+	for _, k := range keys {
+		if p.allow[k] {
+			return true
+		}
+	}
+	if p.sessionAllows(keys) {
+		return true
+	}
+
+	key := fmt.Sprintf("%s:%d", hp.host, hp.port)
 	if mode == "offline" || mode == "loopback" {
 		LogWarn("Blocked egress (network.mode=%s): %s", mode, key)
 		auditLog(p.nvxHome, "egress_block_mode", map[string]string{"host": key, "mode": mode})

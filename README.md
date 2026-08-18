@@ -26,7 +26,9 @@ Along the way, I wanted to tackle a few other common frustrations:
 
   What a contained install can reach: your `package.json`, your lockfile, `node_modules`, and the rest of the project directory it is installing into. Environment variables are scrubbed and writes cannot leave the project.
 
-  What it cannot reach: your home directory — SSH keys, cloud credentials, `~/.npmrc` and its publish token — along with every other project on disk, and anywhere outside the project for writes. That is the class of attack this is built for: credential theft and persistence.
+  What it cannot reach: your home directory — SSH keys, cloud credentials, `~/.npmrc` and its publish token. That is the class of attack this is built for: credential theft and persistence.
+
+  **On Windows, other projects are not currently out of reach** if nvx has run in them before — see [Known limitations](#known-limitations). Linux and macOS confine reads to the project as documented.
 
   **Two limits worth stating plainly.** A `.env` file *inside the project* is readable by a contained install, because the project directory has to be readable for the install to work at all — see [Known limitations](#known-limitations). And containment covers installs and ad-hoc tools, not your own code: `npm run build` runs uncontained by default, so a dependency your own code imports is not sandboxed. `isolation.level: strict` extends containment to your own code.
 - **Process Isolation**: I wanted a sandbox to run untrusted stuff (like `npx` packages) with a clean slate: a throwaway `HOME`, scrubbed env secrets, and writes locked to the project.
@@ -262,6 +264,16 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   directory must be readable for an install to work, and `.env` lives in it.
   Environment *variables* are scrubbed, but a file is a file. Secrets outside the
   project — `~/.ssh`, `~/.aws`, `~/.npmrc` — are unreachable.
+- **On Windows, a sandboxed command can reach other projects nvx has run in, other
+  concurrent sessions, and persisted tool credentials.** The AppContainer profile is
+  deliberately stable, so every session runs as the same identity, and the
+  permissions nvx grants are never revoked. A grant added while installing in
+  project A is still present, and still matches, when nvx later runs in project B —
+  read *and* write. The same applies to another session's guest home and to
+  `tool_home` profiles, which hold what a trusted tool authenticated with. Measured
+  2026-08-18; pinned by tests. Linux does not share this property: its rules grant
+  the runtime directories rather than all of `~/.nvx`. Closing it needs a different
+  containment identity per session, which is a design change rather than a patch.
 - **Your own code is not contained by default.** Containment applies to installs and
   ad-hoc tool runners (`npx`, `bunx`). `npm run build`, `npm test` and `node` run
   uncontained under the default `standard` level, so a compromised dependency your

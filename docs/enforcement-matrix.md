@@ -20,7 +20,7 @@ silently.
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
 | Host filesystem write blocked (outside workdir + guest home) | Yes | Yes | Yes |
-| Host filesystem read restricted | Yes | Yes | No² |
+| Host filesystem read restricted | Partly⁴ | Yes | No² |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress restricted to policy allowlist | Yes³ | Yes | Yes (loopback proxy) |
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes (`deny network*` except loopback) |
@@ -40,6 +40,32 @@ additionally removes all non-loopback interfaces (network namespace), so DNS to
 external resolvers cannot leave; on macOS a determined process could still
 attempt DNS via the OS resolver. This is the main per-OS difference and is why
 Linux has the strongest network story.
+
+⁴ **Windows containment is per-machine, not per-session.** The AppContainer
+profile is stable by design — `platformLaunchNative` uses `stableSandboxProfile`
+"so its SID is a durable target for `nvx setup` grants" — so every session on the
+machine runs as the same identity. `prepareAppContainerFilesystem` grants that
+identity `(OI)(CI)(M)` on the working directory and the guest home, and nothing
+ever revokes those ACEs.
+
+The two facts compose. A grant added while installing in project A is still
+present, and still satisfied by the same SID, when nvx later runs in project B.
+Measured 2026-08-18 with a contained child: it read *and wrote* a second project's
+files, read a concurrent session's guest home, and read a `tool_home` profile's
+credential — the store a trusted tool is granted persistence for. What stays out
+of reach is the real home directory and any project nvx has never run in.
+
+Linux does not have this shape. Its Landlock rules grant `versions/`, `bin/` and
+`current/` rather than `nvxHome`, and F26 was fixed precisely so `tool_home` and
+other sessions' guest homes are excluded — a containment decision that the
+Windows ACL model, with one shared SID, cannot currently express.
+
+A fix means a distinct identity per session. That is a design change, not a patch,
+and the obvious form has its own cost: a per-session SID leaves a dead ACE on the
+project directory after every run, so it needs a revocation or reaping story to go
+with it. The staged-view prototype (`sandbox_staged_view_probe_windows_test.go`)
+is the other candidate — never granting the project at all removes the ACE
+accumulation along with the `.env` exposure.
 
 ³ **Windows egress became enforced in 0.5.0. It was not before, and this table
 claimed otherwise until 2026-08-17.**
