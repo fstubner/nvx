@@ -215,12 +215,20 @@ func main() {
 		os.Exit(runWindowsSetup(nvxHome, undo))
 
 	case "__landlock-exec":
-		guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath, cmdArgs, ok := parseLandlockExecArgs(os.Args[2:])
+		guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath, cmdArgs, ok := parseSupervisorExecArgs(os.Args[2:])
 		if !ok {
 			LogError("Invalid __landlock-exec arguments")
 			os.Exit(1)
 		}
 		os.Exit(runLandlockExecChild(guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath, cmdArgs))
+
+	case "__appcontainer-exec":
+		_, workDir, _, networkMode, _, egressSocket, cmdPath, cmdArgs, ok := parseSupervisorExecArgs(os.Args[2:])
+		if !ok {
+			LogError("Invalid __appcontainer-exec arguments")
+			os.Exit(1)
+		}
+		os.Exit(runAppContainerExecChild(workDir, networkMode, egressSocket, cmdPath, cmdArgs))
 
 	case "help", "-h", "--help":
 		printHelp()

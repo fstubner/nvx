@@ -237,17 +237,18 @@ When running in the sandbox:
 |-----------|------------------|----------------|----------------|
 | Host profile write blocked | Yes (AppContainer) | Yes (Landlock) | Yes (Seatbelt) |
 | Workdir write allowed | Yes | Yes | Yes |
-| Egress via policy proxy | Only after an elevated `nvx setup`* | Yes (loopback-only netns + parent proxy over a UNIX socket) | Yes (Seatbelt + loopback proxy) |
-| Raw TCP/UDP bypass blocked at OS | Only after an elevated `nvx setup`* | Yes (netns + seccomp UDP deny) | Yes (Seatbelt `(deny network*)`) |
+| Egress via policy proxy | Yes* (AppContainer + parent proxy over a UNIX socket) | Yes (loopback-only netns + parent proxy over a UNIX socket) | Yes (Seatbelt + loopback proxy) |
+| Raw TCP/UDP bypass blocked at OS | Yes* (no network capability granted) | Yes (netns + seccomp UDP deny) | Yes (Seatbelt `(deny network*)`) |
 | Fail-closed if FS/network primitive missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes |
 
-\* **Windows egress is not allowlisted by default.** An AppContainer cannot reach
-a loopback proxy without a loopback exemption, and only an elevated `nvx setup`
-can add one. Without it the sandbox is granted the `internetClient` capability and
-connects directly, so the allowlist is not consulted. Filesystem containment,
-environment scrubbing and the pre-install supply-chain checks are unaffected. See
-`docs/enforcement-matrix.md` for the full picture, including the no-elevation
-design that would close this.
+\* **Windows egress became enforced in 0.5.0 and was not before.** Until then the
+sandbox held the `internetClient` capability and connected directly, so
+`HTTP_PROXY` was a request a package could decline. It now holds no network
+capability at all: the OS refuses direct connections and DNS does not resolve, and
+the only route out is the parent's proxy, reached over a UNIX socket and re-exposed
+inside the container by `nvx __appcontainer-exec`. No elevation is required.
+`network.mode: open` opts out. See `docs/enforcement-matrix.md` for how it was
+measured.
 
 ---
 
@@ -267,10 +268,6 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   own code imports is not sandboxed. Set `isolation.level: strict` to extend
   containment to your own code, at the cost of breaking anything that needs
   unrestricted filesystem or network access.
-- **Windows egress is not allowlisted without an elevated `nvx setup`.** An
-  AppContainer cannot reach the loopback proxy without a loopback exemption, which
-  requires elevation. Without it the sandbox is granted `internetClient` and
-  connects directly. Filesystem containment is unaffected.
 - **The macOS sandbox profile is verified at generation level only.** The Seatbelt
   profile is asserted by tests; its runtime enforcement has not been re-verified on
   macOS hardware.

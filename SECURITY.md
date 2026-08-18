@@ -62,22 +62,22 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   fetched from the same publisher over HTTPS. This detects corruption and
   tampering in transit but is not an independent second-channel signature
   (e.g. GPG). Independent signature verification is on the roadmap.
-- **Network enforcement is strongest on Linux.** On Linux, a loopback-only
-  network namespace plus seccomp genuinely block raw sockets and non-proxied
-  DNS, and the egress proxy runs outside that namespace, reached over a UNIX
-  socket.
+- **Network enforcement is weakest on macOS.** On Linux a loopback-only network
+  namespace plus seccomp genuinely block raw sockets and non-proxied DNS; on
+  Windows the AppContainer holds no network capability, so the OS refuses direct
+  connections and DNS does not resolve. On both, the egress proxy runs outside the
+  containment and is reached over a UNIX socket.
 - **On macOS, egress control is cooperative.** It relies on the child honoring
   the injected proxy environment variables; a process using raw sockets can
   bypass the allowlist.
-- **On Windows, there is no egress restriction by default at all.** An
-  AppContainer cannot reach a loopback proxy without a loopback exemption, which
-  only an elevated `nvx setup` can add. Without that, nvx grants the sandbox the
-  `internetClient` capability *and removes the proxy environment variables*, so
-  the contained process connects directly and the allowlist is never consulted —
-  not even cooperatively. This is weaker than earlier versions of this document
-  claimed. Filesystem write containment, environment scrubbing and the
-  pre-install supply-chain checks are unaffected. After an elevated `nvx setup`
-  the sandbox is proxied and the allowlist applies. See
+- **Windows egress was not restricted at all before 0.5.0.** Earlier versions
+  granted the sandbox the `internetClient` capability *and removed the proxy
+  environment variables*, so a contained process connected directly and the
+  allowlist was never consulted — not even cooperatively. Measured on 2026-08-18
+  against 0.4.0: a postinstall script reached `1.1.1.1:443` and
+  `registry.npmjs.org:443` directly. If you are running 0.4.0 or earlier on
+  Windows, treat egress as unrestricted; filesystem containment, environment
+  scrubbing and the pre-install checks were unaffected. See
   `docs/enforcement-matrix.md`.
 - **Docker provider allowlist is cooperative.** Under the `docker` isolation
   provider, `network.mode: offline` is enforced via `--network none`, but

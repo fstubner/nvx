@@ -37,15 +37,11 @@ func TestNetnsContainedProcessReachesOnlyAllowlistedHosts(t *testing.T) {
 		t.Skip("iproute2 not installed; bringUpLoopback needs `ip`")
 	}
 
-	host := nonLoopbackIPv4(t)
-
 	// Stand-in "remote host" on a non-loopback address, so the allowlist decision
 	// is genuinely exercised (loopback is always permitted -- F38).
-	remote, err := net.Listen("tcp", host+":0")
-	if err != nil {
-		t.Skipf("cannot bind %s: %v", host, err)
-	}
+	remote := nonLoopbackListener(t)
 	defer remote.Close()
+	host, _, _ := net.SplitHostPort(remote.Addr().String())
 	go func() {
 		for {
 			c, err := remote.Accept()

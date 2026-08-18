@@ -6,7 +6,7 @@ import (
 )
 
 func TestParseLandlockExecArgs(t *testing.T) {
-	guest, work, nvx, mode, shimCmd, sock, cmd, args, ok := parseLandlockExecArgs([]string{
+	guest, work, nvx, mode, shimCmd, sock, cmd, args, ok := parseSupervisorExecArgs([]string{
 		"--guest-home=/guest",
 		"--work-dir=/work",
 		"--nvx-home=/nvx",

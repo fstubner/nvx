@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,13 +142,27 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// every child so the realpath walk is skipped there too.
 	cleanEnv = setNodeOptionsPreserveSymlinks(cleanEnv)
 
-	// Network: AppContainers cannot reach the loopback egress proxy, so by
-	// default we grant internetClient and run direct (network works, egress not
-	// OS-allowlisted). The admin loopback-allowlist opt-in flips this to a
-	// proxied, allowlisted path. offline/loopback modes grant nothing.
-	capabilitySIDs, useProxy := windowsSandboxNetwork(config.NvxHome, netCtx.Mode)
-	if !useProxy {
+	// Network. In proxy mode (the default) the container is granted NO network
+	// capability at all, and reaches the parent's egress proxy through an in-
+	// container relay -- so the allowlist is enforced by the OS rather than
+	// merely advertised in HTTP_PROXY. offline/loopback also grant nothing and get
+	// no relay. Only network.mode "open" grants internetClient and connects direct.
+	capabilitySIDs, useRelay := windowsSandboxNetwork(netCtx.Mode)
+	if !useRelay {
 		cleanEnv = stripProxyEnv(cleanEnv)
+	}
+
+	if useRelay {
+		cmdPath, launchArgs, err = wrapWithEgressSupervisor(
+			sid, config.NvxHome, guestHome, workDir, netCtx, cmdPath, launchArgs,
+		)
+		if err != nil {
+			// Fail closed: falling back to a direct connection would silently
+			// restore the unrestricted egress this whole path exists to remove.
+			LogError("Egress relay setup failed (fail-closed): %v", err)
+			LogInfo("To run without the egress allowlist, set network.mode to \"open\" in your nvx policy.")
+			return 1
+		}
 	}
 
 	LogInfo("Windows AppContainer isolation active")
@@ -161,20 +176,56 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	return exitCode
 }
 
-// windowsSandboxNetwork decides AppContainer network capabilities and whether to
-// route through the loopback egress proxy, based on network.mode and whether the
-// admin loopback allowlist is enabled.
-func windowsSandboxNetwork(nvxHome, mode string) (capabilitySIDs []string, useProxy bool) {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "offline", "loopback":
-		return nil, false // no capabilities: sandbox has no network
-	}
-	if windowsLoopbackAllowlistEnabled(nvxHome) {
-		// Stable, loopback-exempted SID can reach the proxy; egress is allowlisted.
+// windowsSandboxNetwork decides the AppContainer's network capabilities and
+// whether the launch goes through the in-container egress relay.
+//
+// Until 0.5.0 the default granted internetClient and connected directly, because
+// an AppContainer cannot reach a loopback listener outside itself without an
+// elevated exemption -- so the egress allowlist was cooperative, and a package
+// that ignored HTTP_PROXY reached anything it wanted. The relay removes that: with
+// no capability granted, direct connections are refused by the OS and DNS does not
+// resolve, and the only route out is the parent's proxy.
+func windowsSandboxNetwork(mode string) (capabilitySIDs []string, useRelay bool) {
+	if windowsEgressNeedsRelay(mode) {
 		return nil, true
 	}
-	// Default: internetClient so network works; direct (egress not allowlisted).
-	return []string{capabilityInternetClientSID}, false
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "offline", "loopback":
+		return nil, false // no capabilities: the sandbox has no network at all
+	}
+	return []string{capabilityInternetClientSID}, false // "open", by request
+}
+
+// wrapWithEgressSupervisor rewrites the launch to run nvx's in-container
+// supervisor, which hosts the egress relay and then spawns the real target. It
+// returns the supervisor's path and argument list.
+func wrapWithEgressSupervisor(
+	sid uintptr, nvxHome, guestHome, workDir string,
+	netCtx NetworkLaunchContext, cmdPath string, args []string,
+) (string, []string, error) {
+	if netCtx.EgressSocketPath == "" {
+		return "", nil, fmt.Errorf("no egress socket was prepared for this session")
+	}
+	supervisor, err := stageAppContainerSupervisor(nvxHome)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := grantAppContainerPathReadExecTree(sid, filepath.Dir(supervisor)); err != nil {
+		return "", nil, fmt.Errorf("grant the supervisor to the sandbox: %w", err)
+	}
+	_, _ = grantWorkdirAncestors(sid, filepath.Dir(supervisor))
+
+	supervisorArgs := []string{
+		"__appcontainer-exec",
+		"--guest-home=" + guestHome,
+		"--work-dir=" + workDir,
+		"--nvx-home=" + nvxHome,
+		"--network-mode=" + netCtx.Mode,
+		"--egress-socket=" + netCtx.EgressSocketPath,
+		"--",
+		cmdPath,
+	}
+	return supervisor, append(supervisorArgs, args...), nil
 }
 
 // prependPath puts dir at the front of the PATH entry in env (case-insensitive
