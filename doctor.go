@@ -162,10 +162,20 @@ func shimPathPrependSnippet(shell, shimDir string) string {
 		`$env:PATH = "$__nvx_bin;$env:PATH"` + "\n"
 }
 
-// runDoctor diagnoses shim interception against the current PATH, regenerates
-// shims, and repairs a shadowed persistent PATH where it can. Returns 0 when
-// interception is healthy after any repair, 1 when the user must act manually.
-func runDoctor(nvxHome string) int {
+// runDoctor diagnoses shim interception against the current PATH and regenerates
+// shims. It repairs a shadowed persistent PATH only when fix is set. Returns 0
+// when interception is healthy after any repair, 1 when the user must act.
+//
+// The repair is opt-in because it edits a persistent, machine-level setting. This
+// used to happen on sight: running `nvx doctor` rewrote the user's real Windows
+// PATH, and because it targets whatever NVX_HOME is currently set, pointing that
+// at a throwaway directory silently fronted the real PATH with it. A command
+// named after diagnosis should not mutate the machine to be useful.
+//
+// A flag rather than a prompt, deliberately. `PromptYesNo` honours NVX_YES, which
+// agents and CI set as a matter of course, so a prompt here would auto-approve a
+// persistent system change for exactly the callers least able to notice it.
+func runDoctor(nvxHome string, fix bool) int {
 	if err := generateShims(nvxHome); err != nil {
 		LogWarn("Could not regenerate shims: %v", err)
 	}
@@ -180,11 +190,14 @@ func runDoctor(nvxHome string) int {
 		return 0
 	}
 
-	// Attempt a persistent-PATH repair (Windows); POSIX is a no-op.
-	if changed, err := repairPersistentPath(nvxHome); err != nil {
+	// Persistent-PATH repair (Windows); POSIX is a no-op. Only applied with --fix.
+	if available, err := repairPersistentPath(nvxHome, fix); err != nil {
 		LogWarn("Could not repair the persistent PATH automatically: %v", err)
-	} else if changed {
+	} else if available && fix {
 		LogSuccess("Repaired your persistent PATH. Open a new terminal for it to take effect.")
+	} else if available {
+		LogInfo("Your persistent PATH can be repaired automatically: run 'nvx doctor --fix'.")
+		LogInfo("It edits your user PATH, so nvx does not do it unless you ask.")
 	}
 
 	LogInfo("To fix the current shell now, run:")
