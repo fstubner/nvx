@@ -119,13 +119,35 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		LogError("AppContainer filesystem setup failed: %v", err)
 		return 1
 	}
-	// Adapt node/npm/npx for AppContainer launch (direct node.exe, realpath-safe).
-	cmdPath, launchArgs := rewriteWindowsNodeCommand(cmdPath, config.Args, resolveSandboxNodeExe(config.NvxHome))
-
+	// Make the command reachable from inside the container BEFORE rewriting it.
+	//
+	// A runtime outside ~/.nvx/versions is copied into nvxHome, because its own
+	// location may not be grantable. The rewrite below then derives npm-cli.js from
+	// the directory it is handed, so it has to be handed the copy: run the other way
+	// round, it produced a launch whose interpreter was the staged node.exe but
+	// whose script argument still pointed into the original directory -- which the
+	// container has no grant on, so node failed with "Cannot find module
+	// C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js".
 	cmdPath, err = ensureAppContainerCommand(sid, config.NvxHome, cmdPath)
 	if err != nil {
 		LogError("AppContainer executable access failed: %v", err)
 		return 1
+	}
+	grantedDir := filepath.Dir(cmdPath)
+
+	// Adapt node/npm/npx for AppContainer launch (direct node.exe, realpath-safe).
+	cmdPath, launchArgs := rewriteWindowsNodeCommand(cmdPath, config.Args, resolveSandboxNodeExe(config.NvxHome))
+
+	// When the resolved npm.cmd has no sibling node.exe -- the normal layout for a
+	// self-updated npm in a version's npm_global prefix -- the rewrite falls back to
+	// the active runtime's interpreter, which sits outside the directory just
+	// granted and needs one of its own.
+	if !strings.EqualFold(filepath.Dir(cmdPath), grantedDir) {
+		cmdPath, err = ensureAppContainerCommand(sid, config.NvxHome, cmdPath)
+		if err != nil {
+			LogError("AppContainer executable access failed: %v", err)
+			return 1
+		}
 	}
 
 	// Put the resolved runtime's directory on PATH so tools spawned inside the

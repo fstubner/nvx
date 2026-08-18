@@ -32,6 +32,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the relay it grants access for no remaining reason. Setup is now only about
   drive-root stat access, and is no longer needed for allowlisted egress.
 
+### Fixed
+
+* **Every sandboxed command failed on Windows without an nvx-managed runtime.**
+  A runtime nvx does not manage is copied somewhere the sandbox can reach, and
+  that copy walked the source with `filepath.Walk` — which inspects each path
+  with `Lstat`, so a directory *link* arrived looking like a file and the copy
+  tried to open its own destination folder for writing. nvm for Windows makes
+  `C:\Program Files\nodejs` exactly such a link, and it is how most Windows
+  developers install node, so the whole sandbox died with
+  `open <nvxHome>\sandbox-exec\<hash>: is a directory` — a message naming
+  neither node nor the link.
+
+  Staging now recurses with `os.ReadDir`/`os.Stat`, which follow both kinds of
+  Windows directory link. Resolving the path up front would have fixed only
+  half: a symbolic link sets `ModeSymlink` and `filepath.EvalSymlinks` resolves
+  it, but a junction reports `ModeIrregular` and `EvalSymlinks` returns it
+  unchanged with no error. Links below the root are followed too; previously
+  they would have been copied as empty folders, leaving a runtime missing files
+  and failing later somewhere unrelated.
+
+* **The same path then launched node against a directory it could not read.**
+  The staged copy was used for the interpreter while `npm-cli.js` still pointed
+  at the original directory, so node failed with `Cannot find module
+  C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js`. The command is now
+  made reachable before it is rewritten, so both come from the copy.
+
 ### Changed
 
 * `network.mode: open` is now the only mode that grants the Windows sandbox a
