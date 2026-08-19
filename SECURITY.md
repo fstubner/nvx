@@ -80,13 +80,16 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   the macOS smoke test only checks that a sandboxed process can write its own
   working directory, so it would pass against a sandbox that blocked nothing. Treat
   macOS as intended-and-untested.
-- **On macOS, contained code can reach every service on your loopback address.**
-  The profile allows outbound traffic to `localhost:*` — necessary to reach the
-  egress proxy, but not narrowed to it — so a local database, daemon port or dev
-  server is reachable without an allowlist entry. This is the same exposure the
-  Windows loopback exemption creates, except here it is by design and permanent
-  rather than a leftover. If any of those services forwards traffic, the egress
-  allowlist can be bypassed entirely.
+- **On macOS, loopback access is now scoped to the mode** (fixed 2026-08-20).
+  `proxy` reaches nvx's egress proxy and nothing else on 127.0.0.1; `offline`
+  reaches nothing; `loopback` reaches all of it, which is what that mode is for.
+
+  Previously every restricted mode granted `localhost:*`, so contained code could
+  reach a local database, daemon port or another project's dev server with no
+  allowlist entry, and `offline` was not offline. Any reachable service that
+  forwards traffic would have made the allowlist meaningless. This was present
+  from the sandbox's first implementation. The fix is to the generated profile and
+  carries the same caveat as everything else on macOS: unverified at runtime.
 - **On Windows, a loopback exemption left by a pre-0.5.0 `nvx setup` opens every
   service on 127.0.0.1** to contained code, whatever the allowlist says — local
   databases, daemon ports, other dev servers. 0.5.0 never registers one and

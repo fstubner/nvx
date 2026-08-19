@@ -369,13 +369,17 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   nothing would also pass. If you are on macOS, treat every containment claim here
   as intended rather than demonstrated. Closing this needs a Mac and a smoke test
   that asserts the blocks, not just that the command ran.
-- **On macOS, contained code can reach every service on 127.0.0.1.** The profile
-  allows outbound traffic to `localhost:*`, because that is how the sandbox reaches
-  the egress proxy, and it is not narrowed to just that port. So a local database,
-  a daemon's TCP port or another dev server is reachable with no `allow_hosts`
-  entry — and if any of them forwards traffic, the egress allowlist can be
-  bypassed entirely. Same exposure as the Windows loopback exemption below, except
-  on macOS it is by design and permanent rather than a leftover to remove.
+- **On macOS, `network.mode: loopback` reaches every service on 127.0.0.1** — that
+  being the mode's entire purpose. The default `proxy` mode reaches only nvx's own
+  egress proxy, and `offline` reaches nothing.
+
+  Until 2026-08-20 that was not true: every restricted mode granted all of
+  loopback, so a contained install could reach your database or another project's
+  dev server with no `allow_hosts` entry, and `offline` was not offline. If any
+  reachable loopback service forwards traffic, the allowlist is bypassable
+  entirely, which is what made it serious. Fixed, and pinned by a test — but note
+  it is a fix to the *generated profile*, which no macOS hardware has ever been
+  observed enforcing (see the entry above).
 - **Detection is best-effort.** Typosquat and vulnerability checks reduce risk; they
   do not certify a package. Containment is the backstop, not the checks.
 
