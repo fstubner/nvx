@@ -20,6 +20,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -136,6 +137,10 @@ func TestRelayDoesNotExposeHostLoopbackServices(t *testing.T) {
 		"NVX_PROBE=1",
 		"NVX_LOOPBACK_TARGET_CHILD=1",
 		"NVX_HOST_SERVICE="+hostTarget,
+		// As applyProxyEnv would set it. Without the credential the child is
+		// refused with 407 before the allowlist is consulted, so this probe would
+		// report "not exposed" without ever testing the exposure it is named for.
+		"HTTP_PROXY="+proxy.HTTProxyURL(),
 	)
 	args := []string{
 		"__appcontainer-exec",
@@ -185,7 +190,13 @@ func runLoopbackTargetChild() {
 		fmt.Printf("DIRECT=OK\n")
 	}
 
+	// HTTP_PROXY carries this session's credential as userinfo; split it off so the
+	// address is dialable and the credential can be sent as a header.
 	proxyAddr := strings.TrimPrefix(os.Getenv("HTTP_PROXY"), "http://")
+	cred := ""
+	if at := strings.LastIndex(proxyAddr, "@"); at != -1 {
+		cred, proxyAddr = proxyAddr[:at+1], proxyAddr[at+1:]
+	}
 	if proxyAddr == "" {
 		fmt.Printf("VIA_PROXY=NO_PROXY_SET\n")
 		os.Exit(0)
@@ -197,7 +208,12 @@ func runLoopbackTargetChild() {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", host, host); err != nil {
+	authHeader := ""
+	if cred != "" {
+		authHeader = "Proxy-Authorization: Basic " +
+			base64.StdEncoding.EncodeToString([]byte(strings.TrimSuffix(cred, "@"))) + "\r\n"
+	}
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n%s\r\n", host, host, authHeader); err != nil {
 		fmt.Printf("VIA_PROXY=BLOCKED write: %v\n", err)
 		os.Exit(0)
 	}

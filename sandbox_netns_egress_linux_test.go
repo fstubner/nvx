@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -76,6 +77,10 @@ func TestNetnsContainedProcessReachesOnlyAllowlistedHosts(t *testing.T) {
 		"NVX_TEST_SOCK="+sock,
 		"NVX_TEST_ALLOWED="+allowed,
 		"NVX_TEST_BLOCKED="+blocked,
+		// The parent proxy authenticates its clients, so the child needs this
+		// session's credential. In production it arrives the same way -- inside
+		// HTTP_PROXY, written by applyRelayProxyEnv.
+		"NVX_TEST_CRED="+proxy.ProxyCredential(),
 	)
 	// Exactly how platformLaunchNative creates the namespace: a clone flag, so the
 	// whole child process is inside it from birth rather than one thread.
@@ -91,6 +96,9 @@ func TestNetnsContainedProcessReachesOnlyAllowlistedHosts(t *testing.T) {
 		{"direct_egress", "blocked", "the network namespace must block egress that bypasses the proxy"},
 		{"via_relay_allowed", "200", "an allowlisted host must tunnel through the relay to the parent proxy"},
 		{"via_relay_blocked", "403", "a non-allowlisted host must still be refused"},
+		// Sandboxes share a machine here too, so a client that reached the relay
+		// without this session's credential must not inherit its allowlist.
+		{"via_relay_anonymous", "407", "a client without this session's credential must be refused before the allowlist"},
 	} {
 		if got[want.key] != want.val {
 			t.Errorf("%s = %q, want %q -- %s\nfull output:\n%s", want.key, got[want.key], want.val, want.why, out)
@@ -126,19 +134,27 @@ func runNetnsEgressChild() {
 	}
 	defer stop()
 
-	fmt.Printf("via_relay_allowed=%s\n", statusCodeVia(relayAddr, allowed))
-	fmt.Printf("via_relay_blocked=%s\n", statusCodeVia(relayAddr, blocked))
+	cred := os.Getenv("NVX_TEST_CRED")
+	fmt.Printf("via_relay_allowed=%s\n", statusCodeVia(relayAddr, allowed, cred))
+	fmt.Printf("via_relay_blocked=%s\n", statusCodeVia(relayAddr, blocked, cred))
+	fmt.Printf("via_relay_anonymous=%s\n", statusCodeVia(relayAddr, allowed, ""))
 }
 
 // statusCodeVia issues a CONNECT through addr and returns just the status code.
-func statusCodeVia(addr, target string) string {
+// cred is a "user:pass@" userinfo prefix; "" sends no credential at all.
+func statusCodeVia(addr, target, cred string) string {
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
 		return "dial-failed"
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target); err != nil {
+	authHeader := ""
+	if cred != "" {
+		authHeader = "Proxy-Authorization: Basic " +
+			base64.StdEncoding.EncodeToString([]byte(strings.TrimSuffix(cred, "@"))) + "\r\n"
+	}
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n%s\r\n", target, target, authHeader); err != nil {
 		return "write-failed"
 	}
 	buf := make([]byte, 128)
