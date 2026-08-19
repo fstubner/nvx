@@ -28,3 +28,7 @@ release-notes.md
 docs/session-history-*.md
 
 
+
+# Stray probe files from acceptance runs, which once reached a release tag.
+ACC_*.tmp
+*.tmp

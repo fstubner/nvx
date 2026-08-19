@@ -1111,3 +1111,34 @@ func TestCheckTyposquattingFallsBackWhenLookupFails(t *testing.T) {
 		t.Errorf("with the registry unreachable, a near-match must still be flagged; got %q", got)
 	}
 }
+
+// TestDefaultShellDetectsGitBashOnWindows covers a silent no-op an independent
+// acceptance pass found: `nvx use 20` in Git Bash emitted PowerShell, which bash
+// cannot evaluate, so nothing applied — while nvx printed "Now using Node.js v20"
+// anyway. Auto-switch on `cd`, an MVP bullet, never fired there either.
+func TestDefaultShellDetectsGitBashOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("shell detection only branches on Windows")
+	}
+	cases := []struct {
+		name    string
+		msystem string
+		shell   string
+		want    string
+	}{
+		{"git bash", "MINGW64", "/usr/bin/bash", "bash"},
+		{"msys2 with no SHELL", "MSYS", "", "bash"},
+		{"zsh under an emulation", "", "/usr/bin/zsh", "zsh"},
+		{"plain powershell", "", "", "powershell"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withEnv(t, "MSYSTEM", tc.msystem)
+			withEnv(t, "SHELL", tc.shell)
+			if got := defaultShell(); got != tc.want {
+				t.Errorf("defaultShell() = %q, want %q; the wrong syntax is emitted and the "+
+					"switch silently does nothing", got, tc.want)
+			}
+		})
+	}
+}

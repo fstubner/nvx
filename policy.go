@@ -63,7 +63,7 @@ type IsolationPolicy struct {
 
 type FilesystemPolicy struct {
 	Provider   string   `json:"provider"`
-	Mode       string   `json:"mode"`
+	Mode       string   `json:"mode,omitempty"`
 	AllowWrite []string `json:"allow_write"`
 }
 
@@ -83,9 +83,9 @@ type RuntimePolicy struct {
 }
 
 type PromptsPolicy struct {
-	Interactive    string `json:"interactive"`
-	NonInteractive string `json:"non_interactive"`
-	NetworkUnknown string `json:"network_unknown"`
+	Interactive    string `json:"interactive,omitempty"`
+	NonInteractive string `json:"non_interactive,omitempty"`
+	NetworkUnknown string `json:"network_unknown,omitempty"`
 }
 
 func DefaultPolicy() Policy {
@@ -120,11 +120,11 @@ func DefaultPolicy() Policy {
 				PromptUnknown: true,
 			},
 		},
-		Prompts: PromptsPolicy{
-			Interactive:    "ask",
-			NonInteractive: "deny",
-			NetworkUnknown: "ask",
-		},
+		// Prompts is parsed and merged but nothing reads it, so it is left empty
+		// rather than defaulted: `nvx policy init` used to scaffold three keys
+		// that look like settings and do nothing, including when tightened.
+		// Prompt behaviour is fixed -- interactive asks, non-interactive denies,
+		// and trust-boundary decisions ignore -y entirely.
 	}
 }
 
@@ -155,9 +155,8 @@ func normalizePolicy(p *Policy) {
 			p.Isolation.Filesystem.Provider = "native"
 		}
 	}
-	if p.Isolation.Filesystem.Mode == "" {
-		p.Isolation.Filesystem.Mode = "strict"
-	}
+	// isolation.filesystem.mode is parsed and merged but never read, so it is
+	// no longer defaulted into every written policy. See PromptsPolicy above.
 	if p.Isolation.Network.Mode == "" {
 		p.Isolation.Network.Mode = "proxy"
 	}

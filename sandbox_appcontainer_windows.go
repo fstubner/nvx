@@ -84,8 +84,8 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	// (which is HOME inside the sandbox), so grant traverse on both chains.
 	//
 	// These stay on the shared package SID rather than the per-project capability.
-	// They are this-folder-only RX -- enough to walk through a directory, not to
-	// read what is inside it -- so sharing them leaks nothing: a sibling project's
+	// They are this-folder-only traverse+stat (X,RA) -- enough to walk through a
+	// directory, not to list it -- so sharing them leaks nothing: a sibling project's
 	// contents are still gated by its own capability. Keeping them shared also
 	// keeps them idempotent across projects, which is what stops the ancestor walk
 	// from re-granting the same chain for every project on the machine.
@@ -133,7 +133,7 @@ func isProfileRoot(dir string) bool {
 	return up != "" && strings.EqualFold(filepath.Clean(dir), filepath.Clean(up))
 }
 
-// grantWorkdirAncestors grants the AppContainer this-folder RX on each ancestor
+// grantWorkdirAncestors grants the AppContainer this-folder traverse+stat on each ancestor
 // directory of workDir that sits strictly below the user profile root, so tools
 // that stat ancestors (npm walking up to find a project root) succeed. It stops
 // at the profile root: that root already grants ALL APPLICATION PACKAGES (and

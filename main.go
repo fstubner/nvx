@@ -28,6 +28,10 @@ func init() {
 	if os.Getenv("NVX_AGENT_MODE") == "1" || strings.EqualFold(os.Getenv("NVX_AGENT_MODE"), "true") {
 		agentModeFlag = true
 		yesFlag = true
+		// Documented as "-y -q"; it only ever did the -y half. quietFlag gates
+		// success and info lines only -- warnings and errors still print, so this
+		// hides progress chatter and not security output.
+		quietFlag = true
 	}
 }
 
@@ -50,6 +54,7 @@ func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
 		case "--agent-mode":
 			agentModeFlag = true
 			yes = true
+			quietFlag = true // documented as "-y -q"
 		case "--no-sandbox":
 			noSandbox = true
 		case "--strict":
@@ -163,7 +168,7 @@ func main() {
 				if err := generateProjectBinShims(root, nvxHome); err != nil {
 					LogWarn("Failed to generate project bin shims: %v", err)
 				} else {
-					LogSuccess("Generated project bin shims in %s", projectBinDir(root))
+					LogSuccess("Generated project bin shims in %s", projectBinDir(root, nvxHome))
 				}
 			}
 		}
@@ -297,11 +302,32 @@ func commandHelpText(command string) string {
 }
 
 // defaultShell returns the shell whose syntax is emitted when none is specified.
+// defaultShell guesses the shell that will evaluate nvx's output.
+//
+// On Windows it used to answer "powershell" unconditionally, so `nvx use 20` in
+// Git Bash emitted PowerShell assignments that bash cannot evaluate. Nothing
+// applied, `node -v` was unchanged, and nvx still printed "Now using Node.js
+// v20" -- a success message for something that did not happen. Auto-switch on
+// `cd` never fired there either.
+//
+// MSYSTEM is set by Git Bash and MSYS2 and by little else; a SHELL naming bash or
+// zsh is the fallback for other POSIX emulations. Both are heuristics, and
+// `--shell=` still overrides, which is what the shell integration snippets pass.
 func defaultShell() string {
-	if runtime.GOOS == "windows" {
-		return "powershell"
+	if runtime.GOOS != "windows" {
+		return "bash"
 	}
-	return "bash"
+	if os.Getenv("MSYSTEM") != "" {
+		return "bash"
+	}
+	sh := strings.ToLower(os.Getenv("SHELL"))
+	if strings.Contains(sh, "bash") {
+		return "bash"
+	}
+	if strings.Contains(sh, "zsh") {
+		return "zsh"
+	}
+	return "powershell"
 }
 
 // parseShellArg extracts the target shell from trailing command arguments.
