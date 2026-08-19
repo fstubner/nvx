@@ -93,17 +93,17 @@ func TestOneSandboxSessionCannotReadAnother(t *testing.T) {
 	// Session 1: a concurrent sandbox. Session 2: a trusted tool with a
 	// persistent profile, granted exactly as ensurePersistentGuestProfile's
 	// caller would. Both happened before the attacker's session starts.
-	scopeCaps, err := prepareAppContainerFilesystem(sid, victimHome, victimWork)
+	scopeCaps, err := prepareAppContainerFilesystem(sid, "", victimHome, victimWork)
 	if err != nil {
 		t.Fatalf("victim session prep: %v", err)
 	}
-	scopeCaps, err = prepareAppContainerFilesystem(sid, toolHome, victimWork)
+	scopeCaps, err = prepareAppContainerFilesystem(sid, "", toolHome, victimWork)
 	if err != nil {
 		t.Fatalf("tool session prep: %v", err)
 	}
 
 	// Session 3: an ordinary `npm install` in an unrelated project.
-	scopeCaps, err = prepareAppContainerFilesystem(sid, attackerHome, attackerWork)
+	scopeCaps, err = prepareAppContainerFilesystem(sid, "", attackerHome, attackerWork)
 	if err != nil {
 		t.Fatalf("attacker session prep: %v", err)
 	}

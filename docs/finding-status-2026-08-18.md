@@ -158,7 +158,7 @@ checklist against the shipped binary. Ordered by severity.
 | **F73** | High | **FIXED.** No interception in Git Bash on Windows, and `nvx doctor` reported the opposite. The shim directory holds only `.cmd`/`.ps1`, which bash will not select for a bare `npm`, so installs run unaudited and unsandboxed. `doctor` checks Windows `PATHEXT` resolution rather than the shell it is running in, and reports healthy. Hits the stated flagship user: agent harnesses on Windows commonly run Git Bash. | **fixed** -- extensionless shims are written on Windows too; doctor reports their absence and no longer calls it healthy |
 | **F74** | High | **FIXED.** Prompts hung instead of failing closed when stdin is not a terminal. `PromptYesNo` opens `CONIN$` and treats "a console exists" as "a human is present", ignoring redirected stdin. README and SECURITY.md both promise the operation is denied in that case; it neither approves nor denies. | **fixed** -- interactivity is decided by GetConsoleMode (Windows) / a TCGETS-TIOCGETA ioctl (Unix), so a redirected stdin denies instead of blocking |
 | **F75** | Medium | **FIXED.** `nvx --strict` was silently discarded in the position `nvx help` implies; only a leading `nvx --strict shim ...` takes effect. The anti-bypass reasoning is right for `--no-sandbox` and backwards for a flag that increases containment. | **fixed** -- honoured wherever it appears; --standard still is not, because it reduces containment |
-| **F76** | Medium | **Sandbox launch costs ~13s per invocation** in steady state, against a published figure of ~38ms for shim dispatch. PRODUCT.md's constraint is that overhead stays invisible. | open |
+| **F76** | Medium | **FIXED.** Sandbox launch cost seconds per invocation in steady state, against a published figure of ~38ms for shim dispatch. PRODUCT.md's constraint is that overhead stays invisible. | **fixed** -- grants that cannot succeed are no longer retried every launch; 5.3s to ~1.05s |
 | **F77** | Medium | **PARTLY FIXED.** A contained process could list the names in `%USERPROFILE%` (`.ssh`, `.aws`, ...) though contents are denied. `docs/enforcement-matrix.md` says the ancestor grant permits walking through a parent "without reading what else is inside it"; listing the names is reading what is inside it. | **partly fixed** -- nvx's own ancestor grants are now traverse+stat (X,RA) rather than (RX), so a directory nvx grants is not listable. The profile root still is, from the ALL APPLICATION PACKAGES ACE Windows ships; nvx never granted it, and deny ACEs were already measured not to override it |
 | **F78** | Low | README's CLI Usage block is stale against `nvx help`; a local tarball path is sent to the registry as if it were a package name. | open |
 
@@ -171,7 +171,7 @@ and was then cited as evidence containment worked. F74 was observed by the build
 the day before, diagnosed as "just an interactive prompt", worked around with
 `NVX_YES`, and not filed.
 
-## F76 measured, 2026-08-19
+## F76 measured and fixed, 2026-08-19
 
 Not yet fixed. Measured first, because the acceptance pass could report the total
 and not where it went, and optimising the wrong phase is the likely outcome of
@@ -236,3 +236,35 @@ the steady-state cost.
 a contained process can traverse the AppData chain with no nvx grant at all. That
 is the same shape as the ungranted-directory control probe, and it should be run
 before any of these is chosen.
+
+### The fix, and the measurement that chose it
+
+The deciding question was whether the ancestor grants are needed at all. Measured
+by preparing a sandbox exactly as a launch does but skipping the ancestor walk
+entirely, then asking a contained child what it could still do:
+
+```
+ancestors deliberately NOT granted: [AppData\Local\Temp, AppData\Local, AppData]
+STAT_WORKDIR=OK   WRITE_WORKDIR=OK
+STAT_ANC0=DENIED  STAT_ANC1=OK  STAT_ANC2=OK
+```
+
+The container launched, statted and wrote its working directory with no ancestor
+grants at all -- and the launch itself had to traverse that chain to read the
+child executable out of the guest home, so reaching the output already proved the
+point. Two of the three ancestors are statable anyway, from ACEs Windows ships.
+The one that is not (`AppData\Local\Temp`) is exactly the grant that never lands,
+so nvx was not providing it before either.
+
+So the failing grants bought nothing and cost 1.5s each, every launch, forever.
+They are now remembered and not retried for seven days -- a limit rather than
+forever, because the cause is environmental (a filter driver, an antivirus policy)
+and a machine that starts working should recover without anyone needing to know a
+cache file exists. A grant that succeeds clears any old record immediately.
+
+Result on the same command that measured 5.3s: **~1.05s steady state**, against
+0.17s for `--no-sandbox`.
+
+Not fixed, and a separate problem: the FIRST run in a fresh nvx home took 64s,
+because with no nvx-managed runtime the whole host node distribution is copied
+into `sandbox-exec`. That is a one-off per runtime rather than per launch.

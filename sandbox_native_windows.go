@@ -115,7 +115,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		noteMissingElevatedGrants(config.NvxHome, sid, workDir)
 	}
 
-	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	scopeCaps, err := prepareAppContainerFilesystem(sid, config.NvxHome, guestHome, workDir)
 	if err != nil {
 		LogError("AppContainer filesystem setup failed: %v", err)
 		return 1
@@ -244,7 +244,7 @@ func wrapWithEgressSupervisor(
 	if err := grantAppContainerPathReadExecTree(sid, filepath.Dir(supervisor)); err != nil {
 		return "", nil, fmt.Errorf("grant the supervisor to the sandbox: %w", err)
 	}
-	_, _ = grantWorkdirAncestors(sid, filepath.Dir(supervisor))
+	_, _ = grantWorkdirAncestors(sid, nvxHome, filepath.Dir(supervisor))
 
 	supervisorArgs := []string{
 		"__appcontainer-exec",

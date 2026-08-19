@@ -94,7 +94,7 @@ func TestRelayDoesNotExposeHostLoopbackServices(t *testing.T) {
 	}
 	defer os.RemoveAll(guestHome)
 	workDir := t.TempDir()
-	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}

@@ -50,7 +50,7 @@ func TestUnelevatedSandboxRunsPackageManager(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	scopeCaps, err := prepareAppContainerFilesystem(sid, guestHome, workDir)
+	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}

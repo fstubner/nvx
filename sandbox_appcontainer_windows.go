@@ -42,7 +42,7 @@ var (
 // grants: the writable roots are granted to a per-project capability rather than
 // to the shared AppContainer SID, so a session in one project cannot reach
 // another's. See sandbox_scope_identity_windows.go for why.
-func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) ([]string, error) {
+func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir string) ([]string, error) {
 	packageSIDStr, err := appContainerSidToString(sid)
 	if err != nil {
 		return nil, err
@@ -89,8 +89,8 @@ func prepareAppContainerFilesystem(sid uintptr, guestHome, workDir string) ([]st
 	// contents are still gated by its own capability. Keeping them shared also
 	// keeps them idempotent across projects, which is what stops the ancestor walk
 	// from re-granting the same chain for every project on the machine.
-	aWork, eWork := grantWorkdirAncestors(sid, workDir)
-	aHome, eHome := grantWorkdirAncestors(sid, guestHome)
+	aWork, eWork := grantWorkdirAncestors(sid, nvxHome, workDir)
+	aHome, eHome := grantWorkdirAncestors(sid, nvxHome, guestHome)
 	if skipped := (eWork + eHome) - (aWork + aHome); skipped > 0 {
 		// Not worth a warning: these grants are advisory and the command runs without
 		// them. Silence would hide a genuinely slow filesystem, so report once per
@@ -142,12 +142,14 @@ func isProfileRoot(dir string) bool {
 // grantWorkdirAncestors returns how many ancestor grants it attempted and how many
 // were eligible, so the caller can report once for the whole launch rather than
 // once per chain.
-func grantWorkdirAncestors(sid uintptr, workDir string) (attempted, eligible int) {
+func grantWorkdirAncestors(sid uintptr, nvxHome, workDir string) (attempted, eligible int) {
 	paths := ancestorGrantPaths(workDir, os.Getenv("USERPROFILE"))
 	if len(paths) == 0 {
 		return 0, 0
 	}
-	attempted = grantAncestorsWithinBudget(paths, ancestorGrantBudget, func(p string) error {
+	// Skip grants already known to fail on this machine. They cost the whole
+	// budget every launch and buy nothing -- see sandbox_ancestor_skip_windows.go.
+	attempted = grantAncestorsSkippingKnownFailures(nvxHome, paths, func(p string) error {
 		return grantAppContainerPathReadExecTimeboxed(sid, p, ancestorGrantPerPath)
 	})
 	return attempted, len(paths)
@@ -308,7 +310,7 @@ func ensureAppContainerCommand(sid uintptr, nvxHome, cmdPath string) (string, er
 	// process can resolve the binary's parent but fails to lstat/traverse its
 	// way there (Node's own realpathSync on argv[0] hits this during startup).
 	// Mirrors the same treatment workDir/guestHome already get.
-	_, _ = grantWorkdirAncestors(sid, dir)
+	_, _ = grantWorkdirAncestors(sid, nvxHome, dir)
 	return usePath, nil
 }
 

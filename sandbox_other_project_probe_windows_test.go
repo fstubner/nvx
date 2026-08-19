@@ -63,7 +63,7 @@ func TestSandboxCannotReachOtherProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(homeA)
-	scopeCaps, err := prepareAppContainerFilesystem(sid, homeA, projectA)
+	scopeCaps, err := prepareAppContainerFilesystem(sid, "", homeA, projectA)
 	if err != nil {
 		t.Fatalf("project A session: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestSandboxCannotReachOtherProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(homeB)
-	scopeCaps, err = prepareAppContainerFilesystem(sid, homeB, projectB)
+	scopeCaps, err = prepareAppContainerFilesystem(sid, "", homeB, projectB)
 	if err != nil {
 		t.Fatalf("project B session: %v", err)
 	}

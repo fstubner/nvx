@@ -100,10 +100,10 @@ func TestMeasureContainedLaunchPhases(t *testing.T) {
 		}
 	})
 	measure("grantWorkdirAncestors(workDir)", func() {
-		grantWorkdirAncestors(sid, project)
+		grantWorkdirAncestors(sid, "", project)
 	})
 	measure("grantWorkdirAncestors(guestHome)", func() {
-		grantWorkdirAncestors(sid, guestHome)
+		grantWorkdirAncestors(sid, "", guestHome)
 	})
 	measure("stageAppContainerSupervisor", func() {
 		if _, err := stageAppContainerSupervisor(nvxHome); err != nil {
