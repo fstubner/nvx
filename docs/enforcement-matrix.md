@@ -119,6 +119,26 @@ network capability. Setup no longer registers a loopback exemption, and removes 
 existing one, because the relay makes it an access grant with no remaining
 purpose; `nvx setup` is now only about drive-root stat access.
 
+**A leftover exemption defeats the loopback half of this, and 0.5.0 shipped
+without saying so.** Everything above rests on Windows refusing an AppContainer's
+connections to loopback addresses outside its own package. An exemption registered
+by a pre-0.5.0 elevated `nvx setup` removes that refusal for every destination on
+127.0.0.1 — a local database, a daemon's TCP port, another project's dev server —
+regardless of `allow_hosts`. Egress to other hosts is unaffected: the capability is
+still absent and DNS still does not resolve. Measured on 2026-08-19 by an
+independent acceptance pass, which read a host listener from inside a contained
+process while `1.1.1.1:443` was refused in the same run.
+
+Removing it needs elevation, so nvx cannot do it on a normal launch. It now
+detects the exemption and warns on every affected contained launch, and `nvx
+doctor` reports it and exits non-zero. Both print the exact `CheckNetIsolation
+LoopbackExempt -d` command. Note what the unit test
+`TestLoopbackIsNotAutomaticallyAllowed` covers and does not: it exercises the
+proxy's allow decision, which cannot see an OS-level exemption, so no test failed
+while the guarantee did. The check is now pinned by
+`TestExemptMachineIsWarnedAbout`, which asserts against the machine's real
+exemption list rather than a model of it.
+
 ## Docker provider
 
 | Guarantee | Behavior |

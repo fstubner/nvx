@@ -17,6 +17,29 @@ see what the build they downloaded actually contains.
 
 ### Security
 
+* **A loopback exemption left by an older `nvx setup` opened every service on
+  127.0.0.1 to contained code, and nothing said so.** The whole Windows egress
+  design rests on Windows refusing an AppContainer's loopback connections. Before
+  0.5.0 the proxy ran on the host's loopback, so an elevated `nvx setup`
+  registered an exemption to reach it -- which also opened local databases,
+  daemon ports and other dev servers. 0.5.0 never registers one and removes it
+  during `nvx setup`, but that command needs an Administrator terminal and this
+  release tells users it is no longer required, so on an upgraded machine the
+  exemption simply stayed: the allowlist looked enforced, other hosts really were
+  blocked, and loopback was wide open.
+
+  nvx cannot remove it unelevated, so it now detects it and warns on every
+  affected contained launch -- every launch, not once, because it is a live
+  weakening of what the command was asked to do. `nvx doctor` reports it and
+  exits non-zero. Both print the exact removal command. A clear result is cached
+  for a day so a healthy machine pays nothing per launch; the exempt result is
+  never cached, so the warning stops the moment the exemption is gone.
+
+  Worth recording why this survived: `TestLoopbackIsNotAutomaticallyAllowed`
+  exercises the proxy's allow decision, which cannot see an OS-level exemption,
+  so no test failed while the guarantee did. The new check is pinned against the
+  machine's real exemption list instead.
+
 * **A contained install could plant a command that ran later, uncontained, as
   you.** `nvx use` puts the project-bin shim directory near the front of PATH,
   ahead of System32. That directory used to live inside the project, so a

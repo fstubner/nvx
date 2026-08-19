@@ -178,6 +178,12 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	if !useRelay {
 		cleanEnv = stripProxyEnv(cleanEnv)
 	}
+	// A leftover exemption from a pre-0.5.0 elevated setup makes every loopback
+	// service on the machine reachable regardless of the allowlist, and nvx cannot
+	// remove it unelevated. Say so rather than let the allowlist look enforced.
+	if sidStr, err := appContainerSidToString(sid); err == nil {
+		warnIfSandboxLoopbackExempt(config.NvxHome, sidStr, netCtx.Mode)
+	}
 	// The project capability is what makes this session's writable roots reachable
 	// at all; without it the container holds the package SID only, which no longer
 	// grants the guest home or the working directory.

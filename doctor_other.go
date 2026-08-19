@@ -8,3 +8,10 @@ package main
 func repairPersistentPath(nvxHome string, apply bool) (bool, error) {
 	return false, nil
 }
+
+// reportSandboxWeakeners is a no-op off Windows. The one weakener it looks for --
+// a leftover AppContainer loopback exemption -- has no equivalent under Landlock
+// or Seatbelt, where network policy is set per launch and nothing persists.
+func reportSandboxWeakeners(nvxHome string) bool {
+	return false
+}

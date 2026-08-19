@@ -70,6 +70,14 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
 - **On macOS, egress control is cooperative.** It relies on the child honoring
   the injected proxy environment variables; a process using raw sockets can
   bypass the allowlist.
+- **On Windows, a loopback exemption left by a pre-0.5.0 `nvx setup` opens every
+  service on 127.0.0.1** to contained code, whatever the allowlist says — local
+  databases, daemon ports, other dev servers. 0.5.0 never registers one and
+  removes it during `nvx setup`, but that command needs an Administrator terminal
+  and is otherwise no longer required, so on an upgraded machine the exemption
+  simply persists. nvx cannot remove it without elevation; it warns on every
+  affected launch and `nvx doctor` reports it, both printing the removal command.
+  Egress to other hosts is not affected.
 - **Windows egress was not restricted at all before 0.5.0.** Earlier versions
   granted the sandbox the `internetClient` capability *and removed the proxy
   environment variables*, so a contained process connected directly and the
