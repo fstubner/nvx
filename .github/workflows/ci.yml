@@ -79,12 +79,20 @@ jobs:
     - name: Linux containment tests (privileged)
       if: matrix.os == 'ubuntu-latest'
       shell: bash
+      # Bounded because this step hung for an hour on three of four runs around
+      # 2026-08-19, consuming the whole job while the other platforms sat green.
+      # A stalled apt mirror is not a product failure and should not look like one.
+      timeout-minutes: 12
       run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq iproute2
+        # iproute2 ships on the hosted runners; only reach for the network when it
+        # genuinely is not there. `apt-get update` was the step that stalled.
+        if ! command -v ip >/dev/null 2>&1; then
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq iproute2
+        fi
         # -run selects only the namespace-gated tests; a skip here means the
         # environment still cannot host them, which is worth seeing in the log.
-        sudo -E env "PATH=$PATH" go test -v -run 'TestNetns|TestReap|TestSupervisorClone' . 2>&1 | tee /tmp/priv.log
+        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone' . 2>&1 | tee /tmp/priv.log
         if grep -q '^--- SKIP' /tmp/priv.log; then
           echo "::warning::a privileged containment test skipped even under sudo; it is verifying nothing"
         fi
