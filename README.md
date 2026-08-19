@@ -238,13 +238,30 @@ When running in the sandbox:
 
 ### Verification matrix
 
+**Read the macOS column as "we believe so", not "we checked".** The three columns
+are not backed by equal evidence, and printing the same "Yes" in each would imply
+they are. What backs each cell is stated in it: **measured** means someone ran the
+attack and watched it fail, **CI** means an automated check would fail if it
+stopped holding, and **profile only** means the generated policy says so and
+nothing has ever tested the running system.
+
 | Guarantee | Windows (native) | Linux (native) | macOS (native) |
 |-----------|------------------|----------------|----------------|
-| Host profile write blocked | Yes (AppContainer) | Yes (Landlock) | Yes (Seatbelt) |
-| Workdir write allowed | Yes | Yes | Yes |
-| Egress via policy proxy | Yes* (AppContainer + parent proxy over a UNIX socket) | Yes (loopback-only netns + parent proxy over a UNIX socket) | Yes (Seatbelt + loopback proxy) |
-| Raw TCP/UDP bypass blocked at OS | Yes* (no network capability granted) | Yes (netns + seccomp UDP deny) | Yes (Seatbelt `(deny network*)`) |
-| Fail-closed if FS/network primitive missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes |
+| Host profile write blocked | Yes — measured | Yes — CI (Landlock) | Profile only (Seatbelt) |
+| Workdir write allowed | Yes — measured | Yes — CI | Yes — CI |
+| Egress via policy proxy | Yes — measured (AppContainer + parent proxy over a UNIX socket) | Yes — CI (loopback-only netns + parent proxy over a UNIX socket) | Profile only (Seatbelt + loopback proxy) |
+| Raw TCP/UDP bypass blocked at OS | Yes — measured (no network capability granted) | Yes — CI (netns + seccomp UDP deny) | Profile only (`(deny default)`, localhost permitted) |
+| Fail-closed if FS/network primitive missing | Yes — measured | Yes — CI (Landlock 5.13+, iproute2 for netns) | Profile only |
+
+**What "profile only" means in practice.** `scripts/sandbox-smoke-macos.sh` runs on
+every CI build, and its single assertion is that a sandboxed `node` can write to
+its own working directory. It does not check that anything is *blocked* — a macOS
+build whose sandbox blocked nothing would pass it. The Seatbelt profile's text is
+asserted by unit tests, so nvx generates what it intends to; whether the kernel
+then enforces it has never been verified on macOS hardware. Treat the macOS rows
+as a design intent with a plausible mechanism behind it, not as a tested result.
+This is being stated rather than quietly carried because every previous
+overstatement in this project shipped ahead of a test that could have failed on it.
 
 \* **Windows egress became enforced in 0.5.0 and was not before.** Until then the
 sandbox held the `internetClient` capability and connected directly, so
@@ -345,9 +362,20 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   output as it is produced still blocks. nvx warns after two minutes naming this as
   a likely cause; install such a package with `nvx --no-sandbox npm install <pkg>`
   and treat it as an uncontained install.
-- **The macOS sandbox profile is verified at generation level only.** The Seatbelt
-  profile is asserted by tests; its runtime enforcement has not been re-verified on
-  macOS hardware.
+- **On macOS, nothing has been verified at runtime.** The Seatbelt profile's text
+  is asserted by unit tests, so nvx generates the policy it intends to — but no
+  test has ever confirmed the kernel enforces it. The macOS smoke check only proves
+  a sandboxed process can write its own working directory, which a sandbox blocking
+  nothing would also pass. If you are on macOS, treat every containment claim here
+  as intended rather than demonstrated. Closing this needs a Mac and a smoke test
+  that asserts the blocks, not just that the command ran.
+- **On macOS, contained code can reach every service on 127.0.0.1.** The profile
+  allows outbound traffic to `localhost:*`, because that is how the sandbox reaches
+  the egress proxy, and it is not narrowed to just that port. So a local database,
+  a daemon's TCP port or another dev server is reachable with no `allow_hosts`
+  entry — and if any of them forwards traffic, the egress allowlist can be
+  bypassed entirely. Same exposure as the Windows loopback exemption below, except
+  on macOS it is by design and permanent rather than a leftover to remove.
 - **Detection is best-effort.** Typosquat and vulnerability checks reduce risk; they
   do not certify a package. Containment is the backstop, not the checks.
 
