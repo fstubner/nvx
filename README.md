@@ -284,6 +284,16 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   `C:\`, `C:\Users` and the profile root *also* carry a read+execute grant that nvx
   added itself — an earlier version of this entry said nvx never adds it, which was
   wrong. `nvx setup --undo` removes those.
+- **A loopback exemption left by a pre-0.5.0 `nvx setup` lets contained code reach
+  every service on 127.0.0.1.** Local databases, daemon ports, another project's
+  dev server — none of them need an `allow_hosts` entry while it is registered.
+  Windows normally refuses an AppContainer's loopback connections, which is what
+  the 0.5.0 egress design depends on; the older setup registered an exemption
+  because the proxy then ran on the host's loopback. 0.5.0 never adds one and
+  removes it during `nvx setup`, but that needs an Administrator terminal and is
+  otherwise no longer required, so on an upgraded machine it persists. Egress to
+  other hosts is unaffected. nvx warns on every affected launch and `nvx doctor`
+  reports it; removing it is one elevated command, which both of them print.
 - **Projects granted by nvx before 0.5.0 stay reachable until nvx runs in them
   again.** Up to 0.5.0 every sandbox shared one identity and the permissions nvx
   granted were never revoked, so any project you used nvx in is readable and

@@ -204,7 +204,11 @@ func runDoctor(nvxHome string, fix bool) int {
 	rep := diagnosePath(os.Getenv("PATH"), nvxHome, cmds)
 	fmt.Print(formatDoctorReport(rep))
 
-	healthy := rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.missingPosixShims) == 0
+	// Machine state that weakens containment without breaking anything visible --
+	// today, a loopback exemption an older `nvx setup` left behind.
+	weakened := reportSandboxWeakeners(nvxHome)
+
+	healthy := rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.missingPosixShims) == 0 && !weakened
 	if healthy {
 		LogSuccess("nvx is intercepting commands correctly.")
 		return 0
@@ -243,7 +247,7 @@ func runDoctor(nvxHome string, fix bool) int {
 
 	// After a --fix pass the shims may now be complete even though PATH still is
 	// not, so report on what is left rather than on what was found first.
-	if rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.missingPosixShims) == 0 {
+	if rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.missingPosixShims) == 0 && !weakened {
 		LogSuccess("nvx is intercepting commands correctly.")
 		return 0
 	}
