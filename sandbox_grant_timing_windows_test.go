@@ -67,11 +67,11 @@ func TestMeasureAppContainerSetupPhases(t *testing.T) {
 		return grantAppContainerPath(sid, workDir)
 	})
 	total += timePhase(t, "ancestors of workdir", func() error {
-		grantWorkdirAncestors(sid, workDir)
+		grantWorkdirAncestors(sid, "", workDir)
 		return nil
 	})
 	total += timePhase(t, "ancestors of guest home", func() error {
-		grantWorkdirAncestors(sid, guestHome)
+		grantWorkdirAncestors(sid, "", guestHome)
 		return nil
 	})
 
@@ -83,7 +83,7 @@ func TestMeasureAppContainerSetupPhases(t *testing.T) {
 		return grantAppContainerPath(sid, guestHome)
 	})
 	repeat += timePhase(t, "ancestors of guest home (repeat)", func() error {
-		grantWorkdirAncestors(sid, guestHome)
+		grantWorkdirAncestors(sid, "", guestHome)
 		return nil
 	})
 

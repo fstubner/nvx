@@ -31,6 +31,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A contained command took seconds to start.** The sandbox grants traverse
+  rights on the directories above your project. On some chains -- `AppData` and
+  below, where a filter driver stalls the ACL write -- that grant never
+  completes, and nvx retried it on every single launch, burning its whole 3s
+  budget each time for something that could not succeed.
+
+  Measured before changing anything: the grants are not needed. With the
+  ancestor walk skipped entirely a contained process still launches, stats and
+  writes its working directory, and most of those directories are reachable
+  anyway from permissions Windows already sets. Failed grants are now remembered
+  and not retried for a week; one that succeeds clears the record. Same command,
+  same machine: **5.3s to ~1.05s**.
+
 * **`nvx node --strict app.js` ran uncontained.** `--strict` was stripped from
   the wrapped command's arguments and then discarded, so you got neither the
   containment you asked for nor an error saying you had not got it -- and
