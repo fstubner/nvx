@@ -76,6 +76,13 @@ see what the build they downloaded actually contains.
   and not retried for a week; one that succeeds clears the record. Same command,
   same machine: **5.3s to ~1.05s**.
 
+  Measure it on your own machine before relying on that figure. An independent
+  review measured **~2.2s** steady state on the same fix, against 0.4s
+  uncontained, and the first contained run after a new runtime is staged costs
+  **45s to 3 minutes** while the runtime is copied. The 1.05s above was one
+  measurement on a warm home with a managed runtime already in place, published
+  as though it were the number; it is the best case, not the typical one.
+
 * **`nvx node --strict app.js` ran uncontained.** `--strict` was stripped from
   the wrapped command's arguments and then discarded, so you got neither the
   containment you asked for nor an error saying you had not got it -- and

@@ -138,7 +138,7 @@ node server.js
 
 Use `nvx --no-sandbox <command>` to bypass isolation for one command — the flag must come *before* the command. Passed after it (`npm --no-sandbox install`) it is stripped and ignored, deliberately: otherwise a package's own arguments could turn the sandbox off around itself. `--strict` is the exception and is honoured in either position, because it only ever adds containment.
 
-After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh **project bin shims** in `.nvx/project-bin/`. These wrap `node_modules/.bin` tools so local CLIs (e.g. `vite`, `eslint`) are sandboxed too.
+After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh **project bin shims** in `.nvx/project-bin/`. These route `node_modules/.bin` tools (e.g. `vite`, `eslint`) through nvx, so they use the pinned runtime and are audited. They are **not** contained at the default `standard` level: a local CLI is code your project chose to install, which nvx classifies the same as your own code. `isolation.level: strict` contains them too.
 
 ### Non-Interactive Use (CI)
 
@@ -270,10 +270,15 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   unrestricted filesystem or network access.
 - **A contained process can see directory NAMES outside the project, though not
   their contents.** On Windows it can list your home directory, `C:\Users` and
-  `C:\` — enough to learn that `.ssh`, `.aws` or `.1password` exist. Windows grants
-  every AppContainer that much itself; nvx does not add it and cannot revoke it
-  (deny rules were measured not to override it). File contents in those places stay
-  unreadable.
+  `C:\` — enough to learn that `.ssh`, `.aws` or `.1password` exist. File contents
+  in those places stay unreadable.
+
+  Two sources, and only one of them is Windows. The profile root carries an ACE for
+  ALL APPLICATION PACKAGES that Windows ships and nvx cannot revoke (deny rules were
+  measured not to override it). On a machine where an elevated `nvx setup` has run,
+  `C:\`, `C:\Users` and the profile root *also* carry a read+execute grant that nvx
+  added itself — an earlier version of this entry said nvx never adds it, which was
+  wrong. `nvx setup --undo` removes those.
 - **Projects granted by nvx before 0.5.0 stay reachable until nvx runs in them
   again.** Up to 0.5.0 every sandbox shared one identity and the permissions nvx
   granted were never revoked, so any project you used nvx in is readable and
@@ -282,6 +287,15 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   revisit stay. To clean one by hand:
   `icacls <project> /remove:g *S-1-15-2-...` for each such entry `icacls <project>`
   lists.
+- **A contained command is roughly 2 seconds, and the first one after a new runtime
+  is staged can be minutes.** The ~38ms dispatch figure above measures the shim, not
+  the sandbox: a contained launch has to prepare an isolated home and check
+  permissions. Steady state has been measured at ~1s and ~2.2s on different
+  machines; the first run after nvx stages a runtime copies the whole distribution
+  and has been measured at 45s to 3 minutes. Uncontained commands are unaffected.
+- **`npm install -g` is refused inside the sandbox**, because a global install
+  writes outside the project. nvx points you at `nvx --no-sandbox npm install -g`,
+  which is an uncontained install — treat it as one.
 - **On Windows, a contained process cannot pipe a child's output.** An AppContainer
   is not allowed to create a named pipe, and that is how Windows builds piped child
   stdio — so a contained program that captures a subprocess's output (`execSync`

@@ -97,3 +97,40 @@ func TestStdinIsInteractiveIsFalseUnderTest(t *testing.T) {
 			"instead of failing closed in CI and agent harnesses")
 	}
 }
+
+// TestProjectBinShimsExistForBashOnWindows covers the directory the first Git
+// Bash fix missed. `~/.nvx/bin` got extensionless shims; `.nvx/project-bin` did
+// not, so a project's own CLI (vite, eslint) still resolved past nvx in Git Bash
+// with "command not found" — same shell, same cause, same release.
+func TestProjectBinShimsExistForBashOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the extensionless shim only differs from the POSIX one on Windows")
+	}
+	project := t.TempDir()
+	binDir := filepath.Join(project, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// What npm leaves behind for a local CLI on Windows.
+	for _, name := range []string{"vite.cmd", "vite.ps1", "vite"} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := generateProjectBinShims(project, t.TempDir()); err != nil {
+		t.Fatalf("generateProjectBinShims: %v", err)
+	}
+
+	shimDir := filepath.Join(project, ".nvx", "project-bin")
+	if _, err := os.Stat(filepath.Join(shimDir, "vite.cmd")); err != nil {
+		t.Errorf("no .cmd shim for a local CLI: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(shimDir, "vite"))
+	if err != nil {
+		t.Fatalf("no extensionless shim for a local CLI: %v\nGit Bash would report command not found.", err)
+	}
+	if !strings.HasPrefix(string(data), "#!") {
+		t.Errorf("the extensionless project-bin shim has no shebang:\n%s", string(data))
+	}
+}

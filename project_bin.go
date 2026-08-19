@@ -76,12 +76,23 @@ func generateProjectBinShims(projectRoot, nvxHome string) error {
 }
 
 func writeProjectBinShim(shimDir, exePath, cmd string) error {
-	if runtime.GOOS == "windows" {
-		content := fmt.Sprintf("@echo off\r\n%s shim %s %%*\r\n", quoteWindowsBatchArg(exePath), quoteWindowsBatchArg(cmd))
-		return writeExecutableFile(filepath.Join(shimDir, cmd+".cmd"), []byte(content))
+	posix := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", quotePOSIXShell(exePath), quotePOSIXShell(cmd))
+	if runtime.GOOS != "windows" {
+		return writeExecutableFile(filepath.Join(shimDir, cmd), []byte(posix))
 	}
-	content := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", quotePOSIXShell(exePath), quotePOSIXShell(cmd))
-	return writeExecutableFile(filepath.Join(shimDir, cmd), []byte(content))
+
+	content := fmt.Sprintf("@echo off\r\n%s shim %s %%*\r\n", quoteWindowsBatchArg(exePath), quoteWindowsBatchArg(cmd))
+	if err := writeExecutableFile(filepath.Join(shimDir, cmd+".cmd"), []byte(content)); err != nil {
+		return err
+	}
+	// And the extensionless one, for bash.
+	//
+	// The same fix landed on ~/.nvx/bin and stopped one directory short of here,
+	// so `vite` or `eslint` from a project's own node_modules still resolved past
+	// nvx in Git Bash with "command not found" — same shell, same cause, same
+	// release. bash does not consult PATHEXT: it looks for a file named exactly
+	// `vite`.
+	return writeExecutableFile(filepath.Join(shimDir, cmd), []byte(posix))
 }
 
 func isProjectBinCommand(cmdName string) bool {
