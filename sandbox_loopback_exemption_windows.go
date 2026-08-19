@@ -134,10 +134,18 @@ func warnIfSandboxLoopbackExempt(nvxHome, sidStr, mode string) {
 		return
 	}
 	LogWarn("This machine still has a loopback exemption for the nvx sandbox, left by an older 'nvx setup'.")
-	LogWarn("Contained code can reach any service on 127.0.0.1 -- databases, daemons, dev servers -- without an allowlist entry. Egress to other hosts is unaffected.")
-	LogInfo("To remove it, from an Administrator terminal:")
-	LogInfo("  CheckNetIsolation LoopbackExempt -d -p=%s", sidStr)
-	LogInfo("Or run 'nvx setup' elevated, which removes it as well.")
+	LogWarn("Contained code can reach any service on 127.0.0.1 -- databases, daemons, dev servers -- without an allowlist entry.")
+	// Not "egress to other hosts is unaffected", which is what this said until an
+	// acceptance pass disproved it by running a CONNECT proxy on loopback and
+	// completing a TLS exchange with an external host from inside the sandbox.
+	// Only DIRECT connections to other hosts are refused. Any reachable loopback
+	// service that forwards traffic -- a debugging proxy, an SSH dynamic forward,
+	// a dev server's proxy route -- turns this into full arbitrary egress, so the
+	// honest statement is that the allowlist cannot be relied on at all here.
+	LogWarn("If any of those forwards traffic (a debugging proxy, 'ssh -D', a dev-server proxy route), the egress allowlist can be bypassed entirely.")
+	// Warn, not Info: this is the actionable half, and under -q/--agent-mode an
+	// Info line is dropped -- which left the warning visible and the fix invisible.
+	LogWarn("To remove it, from an Administrator terminal: CheckNetIsolation LoopbackExempt -d -p=%s", sidStr)
 }
 
 // deriveAppContainerSIDString returns the SID string for a profile name without

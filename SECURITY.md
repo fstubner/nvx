@@ -77,7 +77,10 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   and is otherwise no longer required, so on an upgraded machine the exemption
   simply persists. nvx cannot remove it without elevation; it warns on every
   affected launch and `nvx doctor` reports it, both printing the removal command.
-  Egress to other hosts is not affected.
+  While it is registered, treat the egress allowlist as unenforced: only *direct*
+  connections to other hosts stay blocked, and any reachable loopback service that
+  forwards traffic (a debugging proxy, `ssh -D`, a dev-server proxy route) makes
+  egress arbitrary.
 - **Windows egress was not restricted at all before 0.5.0.** Earlier versions
   granted the sandbox the `internetClient` capability *and removed the proxy
   environment variables*, so a contained process connected directly and the
@@ -105,7 +108,16 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
 - **A contained process cannot capture a child's output on Windows.** An
   AppContainer may not create a named pipe, which is how Windows implements piped
   child stdio, so a contained program that captures a subprocess's output hangs.
-  npm installs are unaffected (lifecycle scripts inherit stdio).
+
+  **This does affect some npm installs, and this document said otherwise until
+  2026-08-19.** nvx makes npm inherit stdio for lifecycle scripts, which fixes
+  npm's own piping — but not a postinstall script that captures a subprocess
+  itself. `esbuild` is the widely-used example: its postinstall calls
+  `execFileSync(..., { stdio: "pipe" })`, and `npm install esbuild` inside the
+  sandbox hangs indefinitely with no error. Measured against `esbuild@0.28.2`;
+  uncontained the same install takes 8 seconds. nvx prints a diagnostic hint when
+  a contained install runs unusually long, but cannot fix the underlying
+  restriction. Workaround: install that package with `--no-sandbox`.
 - **Docker provider allowlist is cooperative.** Under the `docker` isolation
   provider, `network.mode: offline` is enforced via `--network none`, but
   proxy-mode allowlisting is cooperative only and therefore disabled by

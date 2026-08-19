@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"strings"
@@ -46,8 +47,10 @@ func nonLoopbackListener(t *testing.T) net.Listener {
 }
 
 // connectVia issues an HTTP CONNECT for target through addr and returns the
-// status line.
-func connectVia(t *testing.T, addr, target string) string {
+// status line. cred is a "user:pass@" userinfo prefix as EgressProxy.
+// ProxyCredential returns it; "" sends no Proxy-Authorization at all, which is
+// what a sibling sandbox that found the port by scanning would do.
+func connectVia(t *testing.T, addr, target, cred string) string {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
@@ -55,7 +58,13 @@ func connectVia(t *testing.T, addr, target string) string {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target); err != nil {
+	authHeader := ""
+	if cred != "" {
+		userpass := strings.TrimSuffix(cred, "@")
+		authHeader = "Proxy-Authorization: Basic " +
+			base64.StdEncoding.EncodeToString([]byte(userpass)) + "\r\n"
+	}
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n%s\r\n", target, target, authHeader); err != nil {
 		t.Fatalf("write CONNECT: %v", err)
 	}
 	line, err := bufio.NewReader(conn).ReadString('\n')
@@ -112,15 +121,90 @@ func TestEgressProxyOverUnixSocketEnforcesAllowlistBothWays(t *testing.T) {
 	}
 	defer stop()
 
+	cred := proxy.ProxyCredential()
+	if cred == "" {
+		t.Fatal("proxy issued no credential; every sibling sandbox could use this listener")
+	}
+
 	// Allowlisted destination must tunnel.
-	if got := connectVia(t, relayAddr, allowedTarget); !strings.Contains(got, "200") {
+	if got := connectVia(t, relayAddr, allowedTarget, cred); !strings.Contains(got, "200") {
 		t.Errorf("allowlisted %s through relay: got %q, want 200 Connection Established", allowedTarget, got)
 	}
 
 	// A different port on the same host is NOT allowlisted and must be refused,
 	// proving the allowlist is consulted rather than everything being permitted.
 	blockedTarget := net.JoinHostPort(host, "9")
-	if got := connectVia(t, relayAddr, blockedTarget); !strings.Contains(got, "403") {
+	if got := connectVia(t, relayAddr, blockedTarget, cred); !strings.Contains(got, "403") {
 		t.Errorf("non-allowlisted %s through relay: got %q, want 403 Forbidden", blockedTarget, got)
+	}
+}
+
+// TestEgressProxyRefusesClientsWithoutThisSessionsCredential is the F79 proof.
+//
+// Every nvx sandbox on a machine shares one AppContainer package identity, and
+// Windows scopes its loopback restriction to the package -- so two projects
+// running at once sit in the same loopback namespace. An acceptance pass on
+// 2026-08-19 port-scanned loopback from project B, found project A's relay, and
+// tunnelled to a host only A's policy allowed: B's own proxy refused the host in
+// the same run. The host-side TCP listeners have the same exposure to any local
+// process.
+//
+// The allowlist is only meaningful if reaching the enforcement point requires
+// this session's credential, so that is what this asserts -- including that an
+// anonymous client is refused BEFORE the allowlist is consulted, or the 403/200
+// difference would still leak what this session may reach.
+func TestEgressProxyRefusesClientsWithoutThisSessionsCredential(t *testing.T) {
+	remote := nonLoopbackListener(t)
+	defer remote.Close()
+	go func() {
+		for {
+			c, err := remote.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	allowedTarget := remote.Addr().String()
+	host, _, _ := net.SplitHostPort(allowedTarget)
+
+	policy := DefaultPolicy()
+	policy.Isolation.Network.PromptUnknown = false
+	policy.Isolation.Network.AllowHosts = []string{allowedTarget}
+
+	proxy, err := startEgressProxy(context.Background(), policy, Providers["node"], t.TempDir())
+	if err != nil {
+		t.Fatalf("startEgressProxy: %v", err)
+	}
+	defer proxy.Close()
+
+	httpAddr := strings.TrimPrefix(proxy.HTTProxyURL(), "http://")
+	if at := strings.LastIndex(httpAddr, "@"); at != -1 {
+		httpAddr = httpAddr[at+1:]
+	}
+
+	cases := []struct {
+		name   string
+		cred   string
+		target string
+		want   string
+	}{
+		// The sibling's view: it knows the port, not the token.
+		{"no credential, allowlisted host", "", allowedTarget, "407"},
+		// Refused before the allowlist, so 403-vs-407 cannot be used to probe
+		// which hosts this session is permitted to reach.
+		{"no credential, blocked host", "", net.JoinHostPort(host, "9"), "407"},
+		{"wrong token", "nvx:0000000000000000000000000000000@", allowedTarget, "407"},
+		{"wrong user", "root:" + strings.TrimSuffix(strings.TrimPrefix(proxy.ProxyCredential(), "nvx:"), "@") + "@", allowedTarget, "407"},
+		// And the session's own client still works, so this is authentication
+		// rather than a proxy that now refuses everyone.
+		{"this session's credential", proxy.ProxyCredential(), allowedTarget, "200"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := connectVia(t, httpAddr, tc.target, tc.cred); !strings.Contains(got, tc.want) {
+				t.Errorf("CONNECT %s: got %q, want %s", tc.target, got, tc.want)
+			}
+		})
 	}
 }

@@ -203,6 +203,10 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	}
 
 	LogInfo("Windows AppContainer isolation active")
+	// An install that trips the named-pipe restriction blocks forever and prints
+	// nothing; this turns that silence into a diagnosis. See sandbox_hang_hint.
+	stopHint := startHangHint(config.Command, config.Args)
+	defer stopHint()
 	exitCode, err := launchAppContainerProcess(
 		cmdPath, launchArgs, cleanEnv, workDir, sid, 0, capabilitySIDs,
 	)

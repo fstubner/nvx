@@ -50,6 +50,12 @@ func startProxyRelay(ctx context.Context, sockPath string) (addr string, stop fu
 // An empty addr means no relay is in use (network.mode=open), in which case any
 // inherited proxy settings are stripped rather than left to leak host config in.
 func applyRelayProxyEnv(env []string, addr string) []string {
+	// The parent's proxy URL carries this session's credential. Carry it across to
+	// the relay address, or the target would talk to the relay anonymously and the
+	// parent proxy would answer 407. It is read from the environment rather than
+	// passed as an argument on purpose: command lines are readable machine-wide.
+	cred := proxyCredentialFromEnv(env)
+
 	out := make([]string, 0, len(env)+4)
 	for _, e := range env {
 		switch strings.ToUpper(strings.SplitN(e, "=", 2)[0]) {
@@ -61,13 +67,38 @@ func applyRelayProxyEnv(env []string, addr string) []string {
 	if addr == "" {
 		return out
 	}
-	url := "http://" + addr
+	url := "http://" + cred + addr
 	return append(out,
 		"HTTP_PROXY="+url,
 		"HTTPS_PROXY="+url,
 		"http_proxy="+url,
 		"https_proxy="+url,
 	)
+}
+
+// proxyCredentialFromEnv pulls the "user:pass@" userinfo out of whichever proxy
+// variable carries it, returning "" when there is none.
+func proxyCredentialFromEnv(env []string) string {
+	for _, e := range env {
+		key, value, ok := strings.Cut(e, "=")
+		if !ok {
+			continue
+		}
+		switch strings.ToUpper(key) {
+		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY":
+		default:
+			continue
+		}
+		// http://user:pass@host:port -> "user:pass@"
+		_, rest, ok := strings.Cut(value, "://")
+		if !ok {
+			rest = value
+		}
+		if at := strings.LastIndex(rest, "@"); at != -1 {
+			return rest[:at+1]
+		}
+	}
+	return ""
 }
 
 // relayConn splices one contained-side connection to the parent's proxy socket.
