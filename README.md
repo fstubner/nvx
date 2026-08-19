@@ -268,6 +268,14 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   own code imports is not sandboxed. Set `isolation.level: strict` to extend
   containment to your own code, at the cost of breaking anything that needs
   unrestricted filesystem or network access.
+- **On Windows, a contained process cannot pipe a child's output.** An AppContainer
+  is not allowed to create a named pipe, and that is how Windows builds piped child
+  stdio — so a contained program that captures a subprocess's output (`execSync`
+  with default options, `spawn(..., {stdio: 'pipe'})`) hangs rather than failing.
+  npm installs are unaffected: nvx runs lifecycle scripts with inherited stdio, so
+  their output goes to your terminal as it happens. A tool run under `npx` that
+  captures a subprocess is the case to watch for. Inherited and discarded stdio
+  both work normally.
 - **The macOS sandbox profile is verified at generation level only.** The Seatbelt
   profile is asserted by tests; its runtime enforcement has not been re-verified on
   macOS hardware.

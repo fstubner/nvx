@@ -96,7 +96,14 @@ running inside the container, re-exposes it as loopback TCP for tools that only
 understand `host:port`. Intra-container loopback needs no exemption. `HTTP_PROXY`
 points at the relay, but honouring it is no longer the target's choice: it is the
 only route out. The same postinstall script now reports `EACCES` and `ENOTFOUND`
-for both hosts while `npm install` completes normally.
+for both hosts while `npm install` completes normally. An independent acceptance
+pass found the second half of that sentence unbacked and, at the time, false: a
+contained process cannot create a named pipe, Windows builds piped child stdio
+out of named pipes, and npm pipes lifecycle-script output by default, so any
+install of a script-bearing dependency hung inside libuv before the child
+existed. nvx now runs lifecycle scripts with inherited stdio, and
+`scripts/sandbox-smoke.ps1` installs a dependency with a postinstall and fails
+if it does not complete -- the check whose absence let the claim ship.
 
 `network.mode: open` is the documented opt-out and is the only mode that grants a
 network capability. Setup no longer registers a loopback exemption, and removes an

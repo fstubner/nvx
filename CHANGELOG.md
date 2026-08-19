@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+* **Installing any package with a lifecycle script hung forever on Windows.**
+  A process inside an AppContainer is not permitted to create a named pipe, and
+  Windows builds piped child stdio out of named pipes -- so npm's default of
+  piping lifecycle-script output blocked inside libuv before the child process
+  existed. The target's own timeout never fired, because its event loop never
+  got another turn. This affected exactly the class of package the sandbox
+  exists to contain, and `npm install` of anything with a `postinstall` never
+  returned.
+
+  Lifecycle scripts now inherit stdio instead, which npm supports directly.
+  Their output goes to the terminal as it happens rather than being buffered,
+  which for a tool whose job is to show you what a package does during install
+  is not a regression.
+
+  Found by an independent acceptance pass, not by the test suite: every existing
+  test launched contained children *from the parent*, and none had a contained
+  process spawn one. `scripts/sandbox-smoke.ps1` now installs a dependency
+  carrying a postinstall and fails if it does not finish, and that check has been
+  confirmed to fail against the previous behaviour.
+
+  The underlying restriction remains: anything else inside the sandbox that
+  captures a child's output still hangs. That is recorded in README.md under
+  Known limitations and pinned by a probe, so the workaround can be removed if
+  the restriction ever lifts.
+
+
 ### Security
 
 * **A sandboxed command could reach every project nvx had previously run in, and

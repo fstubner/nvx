@@ -84,5 +84,61 @@ if (Test-Path $hostFile) {
     Write-Error "host profile write should be blocked"
 }
 
+# A DEPENDENCY's lifecycle script, which is the thing the sandbox exists to
+# contain and the one shape nothing exercised.
+#
+# A contained process cannot create a named pipe, and libuv builds piped child
+# stdio out of named pipes, so npm's default of piping script output made every
+# install of a script-bearing dependency hang forever -- inside libuv, before the
+# child existed. The suite launched contained children from the parent and never
+# had a contained process spawn one, so it stayed green through the whole failure.
+#
+# It must be a dependency, not this package's own script: a root postinstall runs
+# fine either way, and an earlier version of this check used one and passed
+# happily against a build with the fix reverted.
+Write-Host "Testing a contained dependency lifecycle script..."
+$lifecycle = Join-Path $proj "lifecycle"
+Remove-Item $lifecycle -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path (Join-Path $lifecycle "dep") | Out-Null
+Set-Location $lifecycle
+
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText((Join-Path $lifecycle "package.json"),
+    '{"name":"nvx-smoke-host","version":"1.0.0"}', $utf8)
+[System.IO.File]::WriteAllText((Join-Path $lifecycle "dep\package.json"),
+    '{"name":"nvx-smoke-dep","version":"1.0.0","scripts":{"postinstall":"node postinstall.js"}}', $utf8)
+[System.IO.File]::WriteAllText((Join-Path $lifecycle "dep\postinstall.js"),
+    'require("fs").writeFileSync("POSTINSTALL_RAN.txt","ok")', $utf8)
+
+& npm pack ./dep 2>&1 | Out-Null
+$tgz = Join-Path $lifecycle "nvx-smoke-dep-1.0.0.tgz"
+if (-not (Test-Path $tgz)) {
+    Set-Location $startLocation
+    Write-Error "could not pack the fixture dependency"
+}
+
+# NVX_YES only clears the pre-install verification prompt, which does not
+# recognise a local tarball path as a package. It has no bearing on stdio.
+$env:NVX_YES = "true"
+$job = Start-Job -ScriptBlock {
+    param($nvxPath, $dir, $pkg)
+    Set-Location $dir
+    $env:NVX_YES = "true"
+    & $nvxPath shim npm install $pkg 2>&1 | Out-Null
+} -ArgumentList $nvx, $lifecycle, $tgz
+if (-not (Wait-Job $job -Timeout 240)) {
+    Stop-Job $job -ErrorAction SilentlyContinue
+    Remove-Job $job -Force -ErrorAction SilentlyContinue
+    Set-Location $startLocation
+    Write-Error "a contained npm install of a dependency with a postinstall did not finish within 240s"
+}
+Remove-Job $job -Force -ErrorAction SilentlyContinue
+
+$ran = Join-Path $lifecycle (Join-Path "node_modules" (Join-Path "nvx-smoke-dep" "POSTINSTALL_RAN.txt"))
+if (-not (Test-Path $ran)) {
+    Set-Location $startLocation
+    Write-Error "the dependency postinstall never ran inside the sandbox"
+}
+
 Set-Location $startLocation
 Write-Host "Windows sandbox smoke passed." -ForegroundColor Green

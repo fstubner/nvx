@@ -146,3 +146,27 @@ at the wrong thing.
 | # | Severity | Finding | Status |
 |---|---|---|---|
 | **F71** | Medium | **`nvx doctor` performed an unrequested persistent system change** -- it rewrote the real Windows user PATH on sight, targeting whichever `NVX_HOME` was set, so running it against a throwaway home fronted the real PATH with a temp directory. Found by it happening to the acceptor mid-review. | **fixed** -- diagnosis is read-only; repair moved behind `--fix` |
+
+## Added by independent acceptance, 2026-08-19
+
+Found by a separate context that had not seen the build, running the acceptance
+checklist against the shipped binary. Ordered by severity.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| **F72** | Critical | **Installing any package with a lifecycle script hung forever on Windows.** A contained process cannot create a named pipe; Windows builds piped child stdio out of named pipes; npm pipes lifecycle-script output by default. The hang was inside libuv, before the child existed, so the target's own timeout never fired. | **fixed** -- lifecycle scripts inherit stdio; smoke test added and revert-checked |
+| **F73** | High | **No interception in Git Bash on Windows, and `nvx doctor` reports the opposite.** The shim directory holds only `.cmd`/`.ps1`, which bash will not select for a bare `npm`, so installs run unaudited and unsandboxed. `doctor` checks Windows `PATHEXT` resolution rather than the shell it is running in, and reports healthy. Hits the stated flagship user: agent harnesses on Windows commonly run Git Bash. | open |
+| **F74** | High | **Prompts hang instead of failing closed when stdin is not a terminal.** `PromptYesNo` opens `CONIN$` and treats "a console exists" as "a human is present", ignoring redirected stdin. README and SECURITY.md both promise the operation is denied in that case; it neither approves nor denies. | open |
+| **F75** | Medium | **`nvx --strict` is silently discarded** in the position `nvx help` implies; only a leading `nvx --strict shim ...` takes effect. The anti-bypass reasoning is right for `--no-sandbox` and backwards for a flag that increases containment. | open |
+| **F76** | Medium | **Sandbox launch costs ~13s per invocation** in steady state, against a published figure of ~38ms for shim dispatch. PRODUCT.md's constraint is that overhead stays invisible. | open |
+| **F77** | Medium | **A contained process can list the names in `%USERPROFILE%`** (`.ssh`, `.aws`, ...) though contents are denied. `docs/enforcement-matrix.md` says the ancestor grant permits walking through a parent "without reading what else is inside it"; listing the names is reading what is inside it. | open |
+| **F78** | Low | README's CLI Usage block is stale against `nvx help`; a local tarball path is sent to the registry as if it were a package name. | open |
+
+Method note. F72 is the one that matters most about the method: the suite was
+green, and stayed green, because every test launched contained children *from the
+parent* and none had a contained process spawn one. The builder's single
+postinstall test used `--foreground-scripts`, the one npm flag that switches
+lifecycle scripts from piped to inherited stdio, and so walked around the defect
+and was then cited as evidence containment worked. F74 was observed by the builder
+the day before, diagnosed as "just an interactive prompt", worked around with
+`NVX_YES`, and not filed.
