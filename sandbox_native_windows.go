@@ -169,6 +169,17 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// hang forever. See forceForegroundScripts.
 	cleanEnv = forceForegroundScripts(cleanEnv)
 
+	// That covers npm piping a script's output. It does not cover a script that
+	// captures its OWN child, which is a different process creating a different
+	// pipe -- esbuild's postinstall, and the reason `npm install esbuild` hung.
+	// The preload makes the synchronous capture APIs use file descriptors instead.
+	if shim, err := writeStdioShim(guestHome); err != nil {
+		LogWarn("Could not install the stdio compatibility preload: %v", err)
+		LogInfo("An install script that captures a subprocess's output may hang; run that install with --no-sandbox.")
+	} else {
+		cleanEnv = addNodeOptionsRequire(cleanEnv, shim)
+	}
+
 	// Network. In proxy mode (the default) the container is granted NO network
 	// capability at all, and reaches the parent's egress proxy through an in-
 	// container relay -- so the allowlist is enforced by the OS rather than

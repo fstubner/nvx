@@ -1,0 +1,229 @@
+'use strict';
+// Loaded into every contained node process on Windows via NODE_OPTIONS --require.
+//
+// A process inside an AppContainer cannot create a named pipe: CreateNamedPipeW
+// returns ERROR_ACCESS_DENIED, which libuv reports as EADDRINUSE from uv_pipe_bind.
+// Windows implements piped child stdio with named pipes, so any contained code that
+// captures a subprocess's output blocks forever inside libuv before the child even
+// exists. esbuild's postinstall does exactly that, which is why `npm install
+// esbuild` used to hang indefinitely with no error.
+//
+// File descriptors are not restricted -- only pipes are. So for the synchronous
+// capture APIs, whose entire contract is "run it, give me all the output at the
+// end", a temp file is an exact substitute: the caller cannot observe the
+// difference, because it never sees the stream either way.
+//
+// Only the sync APIs are patched. Async spawn() with stdio:'pipe' is a genuine
+// stream that a file cannot stand in for, and it stays broken -- see the Known
+// limitations entry. Nothing here weakens containment: it changes how a contained
+// process talks to its own children, and the temp files live in the guest home.
+//
+// Every patch falls back to the original function if anything at all goes wrong,
+// because this file is injected into every node process in the sandbox and must
+// never be the reason one fails.
+
+try {
+  const cp = require('child_process');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+
+  const realSpawnSync = cp.spawnSync;
+  const realExecFileSync = cp.execFileSync;
+  const realExecSync = cp.execSync;
+
+  // Slots the caller wants captured. Both the default (undefined) and an explicit
+  // 'pipe' mean capture; 'inherit', 'ignore' and raw fds are left alone, since none
+  // of them create a pipe.
+  function slot(stdio, i) {
+    if (stdio === undefined || stdio === null) return 'pipe';
+    if (typeof stdio === 'string') return stdio;
+    if (Array.isArray(stdio)) {
+      const v = stdio[i];
+      return v === undefined || v === null ? 'pipe' : v;
+    }
+    return stdio;
+  }
+
+  function needsSubstitution(options) {
+    const stdio = options ? options.stdio : undefined;
+    return slot(stdio, 1) === 'pipe' || slot(stdio, 2) === 'pipe';
+  }
+
+  // A scratch directory inside the guest home. os.tmpdir() is the AppContainer's
+  // redirected temp, which nvx creates.
+  function scratch() {
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'nvx-cap-'));
+  }
+
+  function decode(buf, options) {
+    const enc = options && options.encoding;
+    if (!enc || enc === 'buffer') return buf;
+    return buf.toString(enc);
+  }
+
+  // Builds a stdio array of real file descriptors, plus the paths to read back.
+  function openCapture(dir, options) {
+    const stdio = options ? options.stdio : undefined;
+    const outPath = path.join(dir, 'stdout');
+    const errPath = path.join(dir, 'stderr');
+    const fds = [];
+    const close = [];
+
+    // stdin: a file holding options.input, or an empty file so the child reads EOF
+    // rather than inheriting the parent's stdin.
+    const inSlot = slot(stdio, 0);
+    if (inSlot === 'pipe') {
+      const inPath = path.join(dir, 'stdin');
+      let data = options && options.input;
+      if (data === undefined || data === null) data = '';
+      fs.writeFileSync(inPath, data);
+      const fd = fs.openSync(inPath, 'r');
+      fds[0] = fd;
+      close.push(fd);
+    } else {
+      fds[0] = inSlot;
+    }
+
+    for (const [i, p] of [[1, outPath], [2, errPath]]) {
+      if (slot(stdio, i) === 'pipe') {
+        const fd = fs.openSync(p, 'w');
+        fds[i] = fd;
+        close.push(fd);
+      } else {
+        fds[i] = slot(stdio, i);
+      }
+    }
+
+    return { fds, outPath, errPath, close, captured: {
+      stdout: slot(stdio, 1) === 'pipe',
+      stderr: slot(stdio, 2) === 'pipe',
+    } };
+  }
+
+  function readBack(cap, options) {
+    const out = cap.captured.stdout ? fs.readFileSync(cap.outPath) : null;
+    const err = cap.captured.stderr ? fs.readFileSync(cap.errPath) : null;
+    return {
+      stdout: out === null ? null : decode(out, options),
+      stderr: err === null ? null : decode(err, options),
+    };
+  }
+
+  function cleanup(dir, cap) {
+    for (const fd of cap.close) {
+      try { fs.closeSync(fd); } catch (e) { /* already closed by the child */ }
+    }
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* best effort */ }
+  }
+
+  // options.input is consumed by our stdin file; leaving it set would make the real
+  // call try to build a pipe for it anyway.
+  function withCaptureStdio(options, fds) {
+    const next = Object.assign({}, options, { stdio: fds });
+    delete next.input;
+    return next;
+  }
+
+  cp.spawnSync = function spawnSync(file, args, options) {
+    // spawnSync(file, options) is legal too.
+    if (!Array.isArray(args) && args !== undefined && args !== null && options === undefined) {
+      options = args;
+      args = undefined;
+    }
+    if (!needsSubstitution(options)) return realSpawnSync(file, args, options);
+
+    let dir, cap;
+    try {
+      dir = scratch();
+      cap = openCapture(dir, options);
+    } catch (e) {
+      if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e2) {} }
+      return realSpawnSync(file, args, options);
+    }
+    try {
+      const r = realSpawnSync(file, args, withCaptureStdio(options, cap.fds));
+      for (const fd of cap.close) { try { fs.closeSync(fd); } catch (e) {} }
+      cap.close.length = 0;
+      const got = readBack(cap, options);
+      r.stdout = got.stdout;
+      r.stderr = got.stderr;
+      r.output = [null, got.stdout, got.stderr];
+      return r;
+    } finally {
+      cleanup(dir, cap);
+    }
+  };
+
+  // execFileSync and execSync are NOT reimplemented. They call node's internal
+  // spawnSync, not the export patched above, so patching that alone would not reach
+  // them -- but handing them a stdio array of real fds makes that internal call
+  // pipeless, and node's own argument normalization and shell quoting stay in
+  // charge. Only the return value has to be rebuilt, because node reports null for
+  // a slot it did not itself pipe.
+  function patchExec(real, name) {
+    return function (...callArgs) {
+      let optIndex = -1;
+      for (let i = callArgs.length - 1; i >= 0; i--) {
+        const a = callArgs[i];
+        if (a && typeof a === 'object' && !Array.isArray(a)) { optIndex = i; break; }
+      }
+      const options = optIndex === -1 ? undefined : callArgs[optIndex];
+      if (!needsSubstitution(options)) return real.apply(cp, callArgs);
+
+      // execFileSync and execSync echo the child's stderr to the parent when the
+      // caller did not pass stdio of its own -- node checks exactly that, so
+      // injecting stdio below silently turns it off. An install script's warnings
+      // would vanish from the terminal. Reproduce it after reading the files back.
+      const inheritStderr = !(options && options.stdio);
+
+      let dir, cap;
+      try {
+        dir = scratch();
+        cap = openCapture(dir, options);
+      } catch (e) {
+        if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e2) {} }
+        return real.apply(cp, callArgs);
+      }
+
+      const next = callArgs.slice();
+      if (optIndex === -1) next.push(withCaptureStdio(undefined, cap.fds));
+      else next[optIndex] = withCaptureStdio(options, cap.fds);
+
+      try {
+        let thrown = null;
+        let ret;
+        try {
+          ret = real.apply(cp, next);
+        } catch (e) {
+          thrown = e;
+        }
+        for (const fd of cap.close) { try { fs.closeSync(fd); } catch (e) {} }
+        cap.close.length = 0;
+        const got = readBack(cap, options);
+        if (inheritStderr && got.stderr !== null && got.stderr.length) {
+          try { process.stderr.write(got.stderr); } catch (e) { /* closed stderr */ }
+        }
+        if (thrown) {
+          // node builds this error before it can see our files; fill it in so a
+          // caller inspecting err.stderr gets what it would have got with pipes.
+          try {
+            thrown.stdout = got.stdout;
+            thrown.stderr = got.stderr;
+            thrown.output = [null, got.stdout, got.stderr];
+          } catch (e) { /* frozen error object */ }
+          throw thrown;
+        }
+        // execFileSync/execSync return stdout itself.
+        return got.stdout === null ? ret : got.stdout;
+      } finally {
+        cleanup(dir, cap);
+      }
+    };
+  }
+
+  cp.execFileSync = patchExec(realExecFileSync, 'execFileSync');
+  cp.execSync = patchExec(realExecSync, 'execSync');
+} catch (e) {
+  // Never break a contained process because of this shim.
+}

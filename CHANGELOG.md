@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+* **`npm install esbuild` hung forever inside the sandbox, and now does not.**
+  A contained process may not create a named pipe, and Windows implements piped
+  child stdio with named pipes, so a postinstall that captures its own
+  subprocess blocked inside libuv before the child existed. 0.5.0 shipped this
+  as an unfixable limitation. That was half right.
+
+  The restriction really is unliftable, and that is now measured rather than
+  assumed: `CreateNamedPipeW` inside a real AppContainer returns
+  `ERROR_ACCESS_DENIED` for every name shape tried, so it is the NPFS device
+  refusing and no name routes around it. Granting it would mean loosening
+  `\Device\NamedPipe` for every AppContainer on the machine, UWP apps included.
+
+  But file descriptors were never restricted, and synchronous capture does not
+  need a stream -- its whole contract is "run it, give me the output at the
+  end". A preload in every contained node process now routes `spawnSync`,
+  `execSync` and `execFileSync` through temp files in the guest home. esbuild
+  installs in seconds and the resulting binary bundles correctly. The preload
+  falls back to the original function on any error, because it loads into every
+  contained node process and must never be the reason one fails.
+
+  Async `spawn(..., {stdio:"pipe"})` is a real stream a file cannot stand in
+  for and still hangs; it stays under Known limitations with the two-minute
+  hint. Containment is untouched -- this changes how a contained process talks
+  to its own children, not what it can reach.
+
+* **An AppContainer's temp directory never existed.** Windows redirects a
+  sandboxed process's temp to `<LOCALAPPDATA>\Packages\<pkg>\AC\Temp`, ignoring
+  the `TEMP` nvx sets. Nothing created it, so `os.tmpdir()` inside the sandbox
+  pointed at a missing directory and every scratch file failed with ENOENT --
+  which is most tools. Found while diagnosing the above.
+
+* **The lifecycle smoke fixture could not fail on the bug it was written for.**
+  Its postinstall only wrote a file; it never captured a subprocess, so it
+  passed while `npm install esbuild` hung. It now captures a child and asserts
+  the captured text. Verified by disabling the preload and watching the smoke
+  hang.
+
+
 ## [0.5.0] - 2026-08-18
 
 Everything below shipped in the `v0.5.0` tag. Entries that sat under

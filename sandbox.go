@@ -124,6 +124,13 @@ func createProfileSkeleton(guestHome string) error {
 	subdirs := []string{"tmp", ".config", ".cache"}
 	if runtime.GOOS == "windows" {
 		subdirs = append(subdirs, filepath.Join("AppData", "Roaming"), filepath.Join("AppData", "Local"))
+		// Windows ignores the TEMP nvx sets and redirects an AppContainer's temp to
+		// <LOCALAPPDATA>\Packages\<package>\AC\Temp. LOCALAPPDATA points into the
+		// guest home, so that lands here -- but nothing created it, so os.tmpdir()
+		// inside the sandbox was a path that did not exist and every mkdtemp there
+		// failed with ENOENT. That breaks any contained tool that writes a scratch
+		// file, which is most of them; it surfaced while diagnosing something else.
+		subdirs = append(subdirs, filepath.Join("AppData", "Local", "Packages", stableSandboxProfile, "AC", "Temp"))
 	} else {
 		subdirs = append(subdirs, filepath.Join(".local", "share"))
 	}
