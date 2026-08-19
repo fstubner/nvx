@@ -109,15 +109,19 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   AppContainer may not create a named pipe, which is how Windows implements piped
   child stdio, so a contained program that captures a subprocess's output hangs.
 
-  **This does affect some npm installs, and this document said otherwise until
-  2026-08-19.** nvx makes npm inherit stdio for lifecycle scripts, which fixes
-  npm's own piping — but not a postinstall script that captures a subprocess
-  itself. `esbuild` is the widely-used example: its postinstall calls
-  `execFileSync(..., { stdio: "pipe" })`, and `npm install esbuild` inside the
-  sandbox hangs indefinitely with no error. Measured against `esbuild@0.28.2`;
-  uncontained the same install takes 8 seconds. nvx prints a diagnostic hint when
-  a contained install runs unusually long, but cannot fix the underlying
-  restriction. Workaround: install that package with `--no-sandbox`.
+  **Synchronous capture is handled; streaming capture is not.** The restriction is
+  on creating a pipe, not on file descriptors, so a preload loaded into every
+  contained node process redirects `spawnSync`/`execSync`/`execFileSync` through
+  temp files in the guest home. Their contract is "run it, give me the output at
+  the end", which a file satisfies exactly — the caller never sees a stream either
+  way. `npm install esbuild` works as a result; it previously hung forever.
+
+  Asynchronous `spawn(..., { stdio: "pipe" })` is a real stream that a file cannot
+  stand in for, and it still fails. A contained tool that streams a child's output
+  as it is produced will hang. Install such a package with `--no-sandbox`; nvx also
+  prints a diagnostic hint when a contained install runs unusually long. Nothing
+  here affects containment: it changes how a contained process talks to its own
+  children, not what it may reach.
 - **Docker provider allowlist is cooperative.** Under the `docker` isolation
   provider, `network.mode: offline` is enforced via `--network none`, but
   proxy-mode allowlisting is cooperative only and therefore disabled by

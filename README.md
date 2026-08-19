@@ -332,14 +332,19 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   with default options, `spawn(..., {stdio: 'pipe'})`) hangs rather than failing.
   Inherited and discarded stdio both work normally.
 
-  **Some npm installs are affected, and this section claimed otherwise until
-  2026-08-19.** nvx runs lifecycle scripts with inherited stdio, which fixes npm's
-  own piping — but not a postinstall that captures a subprocess *itself*. The
-  common example is **`esbuild`**: its postinstall calls `execFileSync(..., {stdio:
-  "pipe"})`, so `npm install esbuild` inside the sandbox hangs indefinitely with no
-  error, against 8 seconds uncontained. nvx warns after two minutes naming this as
-  a likely cause, but cannot lift the restriction. Install such a package with
-  `nvx --no-sandbox npm install <pkg>` and treat it as an uncontained install.
+  **Synchronous capture is handled.** The restriction is on creating a pipe, not on
+  file descriptors, so a preload in every contained node process routes
+  `spawnSync`, `execSync` and `execFileSync` through temp files in the guest home.
+  Their contract is "run it, give me the output at the end", which a file satisfies
+  exactly. **`esbuild`** is the package this was measured against — its postinstall
+  calls `execFileSync(..., {stdio: "pipe"})` and `npm install esbuild` used to hang
+  forever; it now completes in seconds.
+
+  **Streaming capture is not, and hangs.** Async `spawn(..., {stdio: 'pipe'})` is a
+  real stream that a file cannot stand in for. A contained tool that reads a child's
+  output as it is produced still blocks. nvx warns after two minutes naming this as
+  a likely cause; install such a package with `nvx --no-sandbox npm install <pkg>`
+  and treat it as an uncontained install.
 - **The macOS sandbox profile is verified at generation level only.** The Seatbelt
   profile is asserted by tests; its runtime enforcement has not been re-verified on
   macOS hardware.

@@ -121,12 +121,27 @@ nothing more: a postinstall that captures its OWN child still blocks, because th
 restriction is on the contained process creating the pipe, not on npm. Measured
 2026-08-19 against `esbuild@0.28.2`, whose postinstall calls
 `execFileSync(..., {stdio:"pipe"})`: no completion after 13 minutes contained, 8
-seconds uncontained. This is an OS restriction nvx cannot lift, so it is listed
-under Known limitations in README.md and SECURITY.md rather than claimed as
-fixed, and a contained install that runs past two minutes now prints a hint
-naming it (`sandbox_hang_hint_windows.go`). The honest summary of the guarantee:
-lifecycle scripts run, and their output reaches the terminal; a lifecycle script
-that captures a subprocess does not work at all.
+seconds uncontained.
+
+The restriction itself cannot be lifted, and that was verified rather than assumed:
+`TestAppContainerCannotCreateNamedPipes` calls `CreateNamedPipeW` inside a real
+AppContainer and gets `ERROR_ACCESS_DENIED` (5) for three different name shapes,
+while all three succeed outside. It is the NPFS device refusing, not a name
+collision, so no choice of name routes around it and the only way to grant it
+would be loosening `\Device\NamedPipe` machine-wide for every AppContainer on the
+host, including real UWP apps. That is not a trade worth making.
+
+The symptom is a different question, and it is fixed for the case that matters.
+File descriptors are not restricted, so `sandbox_stdio_shim.js` -- preloaded into
+every contained node process via `NODE_OPTIONS --require` -- routes the
+synchronous capture APIs through temp files in the guest home. `npm install
+esbuild` now completes in seconds and the resulting binary works. Async
+`spawn(..., {stdio:"pipe"})` is a genuine stream a file cannot substitute for and
+still hangs; that remains under Known limitations, with the two-minute hint
+(`sandbox_hang_hint_windows.go`) naming it. The smoke fixture's postinstall now
+captures a subprocess and asserts the captured text, so the case that shipped
+broken is the case it tests -- verified by disabling the preload and watching the
+smoke hang.
 
 `network.mode: open` is the documented opt-out and is the only mode that grants a
 network capability. Setup no longer registers a loopback exemption, and removes an

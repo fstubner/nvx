@@ -107,8 +107,17 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
     '{"name":"nvx-smoke-host","version":"1.0.0"}', $utf8)
 [System.IO.File]::WriteAllText((Join-Path $lifecycle "dep\package.json"),
     '{"name":"nvx-smoke-dep","version":"1.0.0","scripts":{"postinstall":"node postinstall.js"}}', $utf8)
+# The postinstall CAPTURES A SUBPROCESS'S OUTPUT, which is the case this fixture
+# could not previously reach: it only wrote a file, so it passed while
+# `npm install esbuild` hung forever on exactly this. A contained process cannot
+# create a named pipe, and that is how Windows implements piped child stdio, so
+# without the stdio preload the line below blocks inside libuv and the install
+# never returns.
 [System.IO.File]::WriteAllText((Join-Path $lifecycle "dep\postinstall.js"),
-    'require("fs").writeFileSync("POSTINSTALL_RAN.txt","ok")', $utf8)
+    'const cp=require("child_process");' +
+    'const out=cp.execFileSync(process.execPath,["-e","process.stdout.write(\"CAPTURED\")"],{encoding:"utf8"});' +
+    'if(out.trim()!=="CAPTURED"){throw new Error("capture returned "+JSON.stringify(out))}' +
+    'require("fs").writeFileSync("POSTINSTALL_RAN.txt",out)', $utf8)
 
 & npm pack ./dep 2>&1 | Out-Null
 $tgz = Join-Path $lifecycle "nvx-smoke-dep-1.0.0.tgz"
@@ -138,6 +147,14 @@ $ran = Join-Path $lifecycle (Join-Path "node_modules" (Join-Path "nvx-smoke-dep"
 if (-not (Test-Path $ran)) {
     Set-Location $startLocation
     Write-Error "the dependency postinstall never ran inside the sandbox"
+}
+# And it captured its child's output rather than merely surviving. Asserting the
+# content, not just the file, is the difference between this fixture and the one
+# that let "npm installs are unaffected" ship while esbuild hung.
+$captured = (Get-Content $ran -Raw).Trim()
+if ($captured -ne "CAPTURED") {
+    Set-Location $startLocation
+    Write-Error "the postinstall ran but captured '$captured' instead of 'CAPTURED': subprocess output capture is broken inside the sandbox"
 }
 
 Set-Location $startLocation
