@@ -79,6 +79,23 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   Windows, treat egress as unrestricted; filesystem containment, environment
   scrubbing and the pre-install checks were unaffected. See
   `docs/enforcement-matrix.md`.
+- **A `.env` inside the project is readable by a contained install.** The project
+  directory has to be readable for an install to work, and `.env` lives in it.
+  Environment *variables* are scrubbed; a file is a file. Secrets outside the
+  project — `~/.ssh`, `~/.aws`, `~/.npmrc` — stay unreachable.
+- **Directory names outside the project are visible on Windows, contents are not.**
+  A contained process can list your home directory, `C:\Users` and `C:\`, which is
+  enough to learn which credential stores exist. Windows grants every AppContainer
+  that much; nvx neither adds nor can revoke it.
+- **Projects granted by nvx before 0.5.0 remain reachable.** Every sandbox shared
+  one identity until 0.5.0 and the permissions were never revoked, so a project you
+  previously used nvx in is readable and writable from any sandbox until nvx runs
+  there again and cleans it. nvx keeps no record of where it has run, so it cannot
+  sweep them for you. See README.md for the manual command.
+- **A contained process cannot capture a child's output on Windows.** An
+  AppContainer may not create a named pipe, which is how Windows implements piped
+  child stdio, so a contained program that captures a subprocess's output hangs.
+  npm installs are unaffected (lifecycle scripts inherit stdio).
 - **Docker provider allowlist is cooperative.** Under the `docker` isolation
   provider, `network.mode: offline` is enforced via `--network none`, but
   proxy-mode allowlisting is cooperative only and therefore disabled by

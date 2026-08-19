@@ -287,7 +287,7 @@ func (p *EgressProxy) allowed(hp hostPort) bool {
 	p.prompted[key] = true
 
 	msg := fmt.Sprintf("Allow outbound connection to %s?", key)
-	if !PromptYesNo(msg) {
+	if !PromptTrustBoundary(msg) {
 		LogWarn("Blocked egress: %s", key)
 		auditLog(p.nvxHome, "egress_deny", map[string]string{"host": key})
 		return false

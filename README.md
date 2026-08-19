@@ -128,7 +128,7 @@ Shim flags (node, npm, npx, yarn, pnpm, bun, bunx):
 
 ### Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun`, and `bunx` are sandboxed by default** when `isolation.enabled` is true. No separate sandbox subcommand — just run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx` are all intercepted**, and the ones that execute code you did not write — package installs and `npx`-style tool runners — are sandboxed. Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level; `isolation.level: strict` extends containment to it. See [Known limitations](#known-limitations). No separate sandbox subcommand — just run commands normally:
 
 ```bash
 npm install
@@ -136,7 +136,7 @@ npm run dev
 node server.js
 ```
 
-Use `--no-sandbox` on a shim invocation to bypass isolation for one command.
+Use `nvx --no-sandbox <command>` to bypass isolation for one command — the flag must come *before* the command. Passed after it (`npm --no-sandbox install`) it is stripped and ignored, deliberately: otherwise a package's own arguments could turn the sandbox off around itself. `--strict` is the exception and is honoured in either position, because it only ever adds containment.
 
 After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh **project bin shims** in `.nvx/project-bin/`. These wrap `node_modules/.bin` tools so local CLIs (e.g. `vite`, `eslint`) are sandboxed too.
 
@@ -268,6 +268,20 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   own code imports is not sandboxed. Set `isolation.level: strict` to extend
   containment to your own code, at the cost of breaking anything that needs
   unrestricted filesystem or network access.
+- **A contained process can see directory NAMES outside the project, though not
+  their contents.** On Windows it can list your home directory, `C:\Users` and
+  `C:\` — enough to learn that `.ssh`, `.aws` or `.1password` exist. Windows grants
+  every AppContainer that much itself; nvx does not add it and cannot revoke it
+  (deny rules were measured not to override it). File contents in those places stay
+  unreadable.
+- **Projects granted by nvx before 0.5.0 stay reachable until nvx runs in them
+  again.** Up to 0.5.0 every sandbox shared one identity and the permissions nvx
+  granted were never revoked, so any project you used nvx in is readable and
+  writable from any sandbox. The old permissions are removed the first time nvx runs
+  in that project — but nvx has no list of where it has been, so the ones you do not
+  revisit stay. To clean one by hand:
+  `icacls <project> /remove:g *S-1-15-2-...` for each such entry `icacls <project>`
+  lists.
 - **On Windows, a contained process cannot pipe a child's output.** An AppContainer
   is not allowed to create a named pipe, and that is how Windows builds piped child
   stdio — so a contained program that captures a subprocess's output (`execSync`

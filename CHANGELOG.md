@@ -7,7 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-18
+
+Everything below shipped in the `v0.5.0` tag. Entries that sat under
+[Unreleased] while the tag was cut have been folded in: for a security tool
+whose changelog is the disclosure channel, a reader of the 0.5.0 section must
+see what the build they downloaded actually contains.
+
+
 ### Security
+
+* **`--agent-mode` let a repository switch containment off.** The flag exists
+  for AI agents, and it sets the same blanket yes as `-y`/`NVX_YES` -- which
+  covered the two prompts that decide the security model itself: trusting a
+  project's own `.nvx-policy.json` when it loosens settings, and adding a host
+  to the egress allowlist. So an agent cloning a repository it had not read
+  would auto-approve that repository's request to disable the sandbox, and the
+  approval persisted. Measured: a policy carrying
+  `{"isolation":{"enabled":false}}` was refused without the flag and silently
+  trusted with it; arbitrary egress hosts, including an IP on a C2-style port,
+  were approved and written to the grants store.
+
+  Those two prompts no longer accept a blanket yes. They need an interactive
+  answer, or `NVX_TRUST_YES` -- deliberately not `NVX_YES`, because nothing
+  sets it by habit. Ordinary prompts (vulnerability warnings, install-script
+  confirmations) still honour `-y`, so non-interactive installs do not stall.
+
+* **Permissions left by pre-0.5.0 nvx were only partly cleaned.** The cleanup
+  removed one identity, on the project you happened to be standing in --
+  measured at 19 stale entries on a single directory, each still granting
+  modify access to every sandbox. It now removes every AppContainer package
+  identity from the directories it grants. Projects nvx never revisits still
+  keep theirs, which README.md and SECURITY.md now say plainly along with the
+  manual command.
 
 * **Git Bash got no protection at all on Windows, and `nvx doctor` said it was
   fine.** The shim directory held only `npm.cmd`/`npm.ps1`, which bash never
@@ -134,8 +166,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `HOME` mid-run. Sessions now record their owning process and are skipped while
   it is alive.
 
-
-## [0.5.0] - 2026-08-18
 
 **0.4.0 was tagged but never published.** The tag was cut, then held back
 because the README it shipped with made three claims about the sandbox that

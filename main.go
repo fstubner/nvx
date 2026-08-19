@@ -902,6 +902,42 @@ func emitSessionEnv(shell, nvxHome, targetDir string) {
 	}
 }
 
+// PromptTrustBoundary asks a question that WIDENS what nvx allows, and refuses to
+// take -y, --agent-mode or NVX_YES for an answer.
+//
+// Two prompts decide the security model rather than a step inside it: trusting a
+// project's own `.nvx-policy.json` when it loosens settings, and adding a host to
+// the egress allowlist. Both persist. Both were covered by the blanket yes, and
+// --agent-mode sets that yes -- so the mode built for AI agents, which clone
+// repositories they have not read, auto-approved a repository's request to turn
+// containment off. Measured: a `.nvx-policy.json` carrying
+// `{"isolation":{"enabled":false}}` was refused without the flag and silently
+// trusted with it, after which the sandbox was gone for every later command in
+// that project. The same yes approved arbitrary egress hosts, including an IP on
+// a C2-style port, and wrote them to the grants store.
+//
+// This is the reasoning already applied to `nvx doctor --fix`, where a prompt was
+// rejected because "NVX_YES is set as a matter of course by agents and CI, so a
+// prompt would auto-approve a persistent system change for exactly the callers
+// least able to notice it". That argument was made about a PATH edit and not
+// carried to the prompts that gate containment itself.
+//
+// NVX_TRUST_YES exists for the case where someone genuinely means it -- a CI job
+// pinning its own policy. It is deliberately not NVX_YES: nothing sets it by
+// habit, so setting it is a decision rather than an inheritance.
+func PromptTrustBoundary(message string) bool {
+	if os.Getenv("NVX_TRUST_YES") == "true" || os.Getenv("NVX_TRUST_YES") == "1" {
+		LogWarn("NVX_TRUST_YES is set: approving a request that widens nvx's trust boundary. %s", message)
+		return true
+	}
+	if !stdinIsInteractive() {
+		LogWarn("Denying a request that widens nvx's trust boundary, because nobody is here to approve it: %s", message)
+		LogInfo("-y, --agent-mode and NVX_YES deliberately do not approve this. Set NVX_TRUST_YES=true only if you have read what you are trusting.")
+		return false
+	}
+	return promptConsoleYesNo(message)
+}
+
 // PromptYesNo prints a message to the console TTY and reads a Y/N keypress, bypassing standard redirections.
 func PromptYesNo(message string) bool {
 	if yesFlag {
@@ -934,6 +970,12 @@ func PromptYesNo(message string) bool {
 		return false
 	}
 
+	return promptConsoleYesNo(message)
+}
+
+// promptConsoleYesNo does the console interaction itself, shared by PromptYesNo
+// and PromptTrustBoundary so the two cannot drift in how they read an answer.
+func promptConsoleYesNo(message string) bool {
 	var ttyIn, ttyOut *os.File
 	var err error
 
