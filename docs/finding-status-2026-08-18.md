@@ -157,9 +157,9 @@ checklist against the shipped binary. Ordered by severity.
 | **F72** | Critical | **Installing any package with a lifecycle script hung forever on Windows.** A contained process cannot create a named pipe; Windows builds piped child stdio out of named pipes; npm pipes lifecycle-script output by default. The hang was inside libuv, before the child existed, so the target's own timeout never fired. | **fixed** -- lifecycle scripts inherit stdio; smoke test added and revert-checked |
 | **F73** | High | **FIXED.** No interception in Git Bash on Windows, and `nvx doctor` reported the opposite. The shim directory holds only `.cmd`/`.ps1`, which bash will not select for a bare `npm`, so installs run unaudited and unsandboxed. `doctor` checks Windows `PATHEXT` resolution rather than the shell it is running in, and reports healthy. Hits the stated flagship user: agent harnesses on Windows commonly run Git Bash. | **fixed** -- extensionless shims are written on Windows too; doctor reports their absence and no longer calls it healthy |
 | **F74** | High | **FIXED.** Prompts hung instead of failing closed when stdin is not a terminal. `PromptYesNo` opens `CONIN$` and treats "a console exists" as "a human is present", ignoring redirected stdin. README and SECURITY.md both promise the operation is denied in that case; it neither approves nor denies. | **fixed** -- interactivity is decided by GetConsoleMode (Windows) / a TCGETS-TIOCGETA ioctl (Unix), so a redirected stdin denies instead of blocking |
-| **F75** | Medium | **`nvx --strict` is silently discarded** in the position `nvx help` implies; only a leading `nvx --strict shim ...` takes effect. The anti-bypass reasoning is right for `--no-sandbox` and backwards for a flag that increases containment. | open |
+| **F75** | Medium | **FIXED.** `nvx --strict` was silently discarded in the position `nvx help` implies; only a leading `nvx --strict shim ...` takes effect. The anti-bypass reasoning is right for `--no-sandbox` and backwards for a flag that increases containment. | **fixed** -- honoured wherever it appears; --standard still is not, because it reduces containment |
 | **F76** | Medium | **Sandbox launch costs ~13s per invocation** in steady state, against a published figure of ~38ms for shim dispatch. PRODUCT.md's constraint is that overhead stays invisible. | open |
-| **F77** | Medium | **A contained process can list the names in `%USERPROFILE%`** (`.ssh`, `.aws`, ...) though contents are denied. `docs/enforcement-matrix.md` says the ancestor grant permits walking through a parent "without reading what else is inside it"; listing the names is reading what is inside it. | open |
+| **F77** | Medium | **PARTLY FIXED.** A contained process could list the names in `%USERPROFILE%` (`.ssh`, `.aws`, ...) though contents are denied. `docs/enforcement-matrix.md` says the ancestor grant permits walking through a parent "without reading what else is inside it"; listing the names is reading what is inside it. | **partly fixed** -- nvx's own ancestor grants are now traverse+stat (X,RA) rather than (RX), so a directory nvx grants is not listable. The profile root still is, from the ALL APPLICATION PACKAGES ACE Windows ships; nvx never granted it, and deny ACEs were already measured not to override it |
 | **F78** | Low | README's CLI Usage block is stale against `nvx help`; a local tarball path is sent to the registry as if it were a package name. | open |
 
 Method note. F72 is the one that matters most about the method: the suite was
@@ -170,3 +170,69 @@ lifecycle scripts from piped to inherited stdio, and so walked around the defect
 and was then cited as evidence containment worked. F74 was observed by the builder
 the day before, diagnosed as "just an interactive prompt", worked around with
 `NVX_YES`, and not filed.
+
+## F76 measured, 2026-08-19
+
+Not yet fixed. Measured first, because the acceptance pass could report the total
+and not where it went, and optimising the wrong phase is the likely outcome of
+guessing.
+
+Reproduced: `nvx --strict shim node -e "..."` takes 5.3-7.0s against 0.17s for the
+same command with `--no-sandbox`. (The acceptance pass measured 13.2s on a
+different project; same order -- seconds, not milliseconds.)
+
+Per phase, cold and warm:
+
+| Phase | cold | warm |
+|---|---|---|
+| ensureAppContainerSID | 25ms | 15ms |
+| scopeCapabilitySID | 0ms | 0ms |
+| grantSandboxModify(guestHome) | 59ms | 25ms |
+| labelLowIntegrity(guestHome) | 21ms | 21ms |
+| grantSandboxModify(workDir) | 44ms | 23ms |
+| grantWorkdirAncestors(workDir) | 0ms | 0ms |
+| **grantWorkdirAncestors(guestHome)** | **3057ms** | **3054ms** |
+| stageAppContainerSupervisor | 26ms | 8ms |
+| launchAppContainerProcess (no-op child) | 2025ms | 20ms |
+
+One phase is nearly all of it, and it does not improve when warm. Per ancestor:
+
+| Ancestor | has-grant check | grant #1 | grant #2 |
+|---|---|---|---|
+| `AppData\Local\Temp` | 37ms (false) | 1529ms | 1530ms |
+| `AppData\Local` | 27ms (false) | 1529ms | 1527ms |
+| `AppData` | 31ms (false) | 1527ms | 1529ms |
+| `<nvxHome>/sandbox_home` | 22ms (false) | 44ms | 22ms |
+| `<nvxHome>` | 24ms (false) | 43ms | 21ms |
+
+**The cause.** The `icacls` WRITE on the AppData chain hangs and is killed at the
+1500ms per-path timeout, every time. The cheap `appContainerHasGrant` read is not
+the problem -- it answers in ~30ms, and it answers `false` forever, because the
+grant it is checking for never lands. So nvx retries a grant that cannot succeed
+on every launch, burning the whole 3s ancestor budget, for any project whose path
+runs through AppData. This is the OneDrive/Defender filter-driver stall the budget
+was added for; the budget bounded the damage and nothing ever stopped the retry.
+
+Ancestors under `<nvxHome>` are fast, so a project outside AppData pays far less --
+which is why ordinary use never surfaced it, and why the smoke tests, which run
+from a project directly under the user profile, never showed it.
+
+**The other 2s.** The first `launchAppContainerProcess` costs 2025ms cold and 20ms
+warm. That is a one-off per profile rather than per launch, so it is not part of
+the steady-state cost.
+
+**Fix not attempted here**, and the choice is a real one rather than obvious:
+
+1. Remember the failure. Persist which ancestor paths timed out and stop retrying
+   them for a period. Keeps the grant working where it works.
+2. Stop granting them. The evidence says these grants never succeed and the
+   sandbox works anyway -- installs complete, both smoke scripts pass -- so they
+   may simply not be needed on the AppData chain, where ALL APPLICATION PACKAGES
+   already provides traverse.
+3. Drop the per-path timeout to ~200ms. Cheapest, bounds the damage without
+   deciding whether the grants matter at all.
+
+(2) is the most likely to be right, and needs one measurement to confirm: whether
+a contained process can traverse the AppData chain with no nvx grant at all. That
+is the same shape as the ungranted-directory control probe, and it should be run
+before any of these is chosen.

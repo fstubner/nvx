@@ -449,10 +449,21 @@ func grantAppContainerPathReadExecTree(sid uintptr, path string) error {
 	return nil
 }
 
-// grantAppContainerPathReadExec grants this-folder-only read/execute, used for
-// traverse rights on ancestor directories. Skipped when access is already
-// present, so the common case costs one cheap ACL read instead of a write that
-// can stall behind a filter driver.
+// grantAppContainerPathReadExec grants this-folder-only traverse rights on an
+// ancestor directory. Skipped when access is already present, so the common case
+// costs one cheap ACL read instead of a write that can stall behind a filter
+// driver.
+//
+// Traverse and read-attributes only, NOT read. `(RX)` includes RD -- list
+// folder / read data -- so granting it on the ancestors of a project inside the
+// user profile let a contained process enumerate the names in %USERPROFILE%:
+// `.ssh`, `.aws`, `.1password` and the rest. File contents stayed denied, but the
+// listing alone tells an attacker exactly which credential stores exist and what
+// to try next, and docs/enforcement-matrix.md claimed the sandbox could walk
+// through a parent "without reading what else is inside it".
+//
+// (X) is pass-through and (RA) is stat. Together they are what the ancestor walk
+// was always described as granting; the extra read was never intentional.
 func grantAppContainerPathReadExec(sid uintptr, path string) error {
 	return grantAppContainerPathReadExecTimeboxed(sid, path, 15*time.Second)
 }
@@ -468,10 +479,10 @@ func grantAppContainerPathReadExecTimeboxed(sid uintptr, path string, timeout ti
 	if appContainerHasGrant(sidStr, path) {
 		return nil
 	}
-	grantArg := fmt.Sprintf("*%s:(RX)", sidStr)
+	grantArg := fmt.Sprintf("*%s:(X,RA)", sidStr)
 	out, err := runWinCmd(timeout, "icacls", path, "/grant", grantArg, "/c", "/q")
 	if err != nil {
-		return fmt.Errorf("icacls RX grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("icacls traverse grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

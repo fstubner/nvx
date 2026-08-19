@@ -53,3 +53,38 @@ func TestShouldContain(t *testing.T) {
 		})
 	}
 }
+
+// TestStrictIsHonouredInThePayloadPosition covers F75. `nvx node --strict app.js`
+// silently ran uncontained: --strict was stripped from the arguments and then
+// discarded, so the user got neither the containment they asked for nor an error
+// saying they had not got it. `nvx help` shows the flag without saying it must
+// lead.
+//
+// The anti-bypass rule that ignores smuggled flags is right for --no-sandbox and
+// --standard, which REDUCE containment. --strict only ever adds it, so there is
+// nothing to gain by sneaking it in.
+func TestStrictIsHonouredInThePayloadPosition(t *testing.T) {
+	opts := parseShimOptions([]string{"--strict", "app.js"})
+	if !opts.payloadStrict {
+		t.Fatal("--strict was not parsed out of the payload arguments")
+	}
+	if !shouldContain(classYourCode, levelStandard, opts) {
+		t.Error("`nvx node --strict app.js` ran uncontained; --strict in the payload position " +
+			"must raise containment, since it can only ever add it")
+	}
+}
+
+// TestStandardIsStillIgnoredInThePayloadPosition is the other half. --standard
+// lowers containment relative to a strict policy, so honouring it from inside a
+// package's own arguments would let a dependency's script argument weaken the
+// sandbox around itself.
+func TestStandardIsStillIgnoredInThePayloadPosition(t *testing.T) {
+	opts := parseShimOptions([]string{"--standard", "app.js"})
+	if !opts.payloadStandard {
+		t.Fatal("--standard was not parsed out of the payload arguments")
+	}
+	if !shouldContain(classYourCode, levelStrict, opts) {
+		t.Error("--standard in the payload position downgraded a strict policy; a smuggled flag " +
+			"must never reduce containment")
+	}
+}
