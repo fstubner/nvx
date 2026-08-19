@@ -165,6 +165,10 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// every child so the realpath walk is skipped there too.
 	cleanEnv = setNodeOptionsPreserveSymlinks(cleanEnv)
 
+	// Lifecycle scripts must inherit stdio rather than have it piped, or they
+	// hang forever. See forceForegroundScripts.
+	cleanEnv = forceForegroundScripts(cleanEnv)
+
 	// Network. In proxy mode (the default) the container is granted NO network
 	// capability at all, and reaches the parent's egress proxy through an in-
 	// container relay -- so the allowlist is enforced by the OS rather than
@@ -372,6 +376,39 @@ func setNodeOptionsPreserveSymlinks(env []string) []string {
 		}
 	}
 	return append(env, "NODE_OPTIONS="+flags)
+}
+
+// forceForegroundScripts makes npm run lifecycle scripts with inherited stdio
+// instead of piping them.
+//
+// A process inside an AppContainer cannot create a named pipe -- `net.createServer`
+// on a pipe name returns EACCES -- and libuv implements piped child stdio on
+// Windows with exactly that. So `spawn(..., {stdio: 'pipe'})` blocks inside libuv
+// before the child is ever created: the target's own timeout never fires, because
+// the event loop never gets back a turn.
+//
+// npm pipes lifecycle-script output by default, so every `npm install` of a
+// package carrying a postinstall hung indefinitely -- the whole class of package
+// this sandbox exists to contain. Measured inside a real container: stdio
+// 'inherit' returns in 404ms and 'ignore' in 696ms, while 'pipe' never returns.
+//
+// This is a workaround at the npm layer, not a fix for the restriction. Anything
+// else inside the sandbox that pipes a child -- an npx tool shelling out, a script
+// calling execSync with default options -- still hangs, and that is recorded as a
+// known limitation rather than papered over. The npm path is fixed here because it
+// is the primary one and npm hands us the switch.
+//
+// The visible effect is that script output goes to the terminal as it happens
+// instead of being buffered by npm. For a tool whose job is to show you what a
+// package does during install, that is not a regression.
+func forceForegroundScripts(env []string) []string {
+	const key = "npm_config_foreground_scripts"
+	for _, e := range env {
+		if strings.HasPrefix(strings.ToLower(e), key+"=") {
+			return env // an explicit setting wins; don't override the caller
+		}
+	}
+	return append(env, key+"=true")
 }
 
 func stripProxyEnv(env []string) []string {
