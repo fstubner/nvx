@@ -138,7 +138,9 @@ node server.js
 
 Use `nvx --no-sandbox <command>` to bypass isolation for one command — the flag must come *before* the command. Passed after it (`npm --no-sandbox install`) it is stripped and ignored, deliberately: otherwise a package's own arguments could turn the sandbox off around itself. `--strict` is the exception and is honoured in either position, because it only ever adds containment.
 
-After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh **project bin shims** in `.nvx/project-bin/`. These route `node_modules/.bin` tools (e.g. `vite`, `eslint`) through nvx, so they use the pinned runtime and are audited. They are **not** contained at the default `standard` level: a local CLI is code your project chose to install, which nvx classifies the same as your own code. `isolation.level: strict` contains them too.
+After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh **project bin shims**. These route `node_modules/.bin` tools (e.g. `vite`, `eslint`) through nvx, so they use the pinned runtime and are audited. They are **not** contained at the default `standard` level: a local CLI is code your project chose to install, which nvx classifies the same as your own code. `isolation.level: strict` contains them too.
+
+The shims live in `~/.nvx/project-bin/<project hash>`, not inside the project, and a name that already resolves elsewhere on your `PATH` is never shimmed. Both rules exist because this directory sits ahead of System32 on your interactive `PATH`: inside the project, a contained install could write a `git` there and have your next `git` run it uncontained. The cost is that a global tool of the same name now wins over the project-local one through nvx — `npx <tool>` still runs the local one.
 
 ### Non-Interactive Use (CI)
 
