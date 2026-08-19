@@ -48,6 +48,10 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 		return nil, err
 	}
 
+	// Fresh homes get a traverse-only grant; homes created before 0.5.0 carry a
+	// broader one that lets the sandbox list ~/.nvx. Runs once per home.
+	narrowLegacyHomeGrant(packageSIDStr, nvxHome)
+
 	// The identity that owns this session's writable roots. Derived from the
 	// project, so it is the same every run here and different from every other
 	// project.

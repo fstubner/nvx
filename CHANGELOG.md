@@ -17,6 +17,21 @@ see what the build they downloaded actually contains.
 
 ### Security
 
+* **One sandbox could borrow another's egress allowlist.** Every nvx sandbox on
+  a machine shares one AppContainer package identity, and Windows scopes its
+  loopback restriction to the package -- so two projects running at once sat in
+  the same loopback namespace. An acceptance pass port-scanned loopback from
+  project B, found project A's relay, and tunnelled to a host only A's policy
+  allowed, in a run where B's own proxy refused that host. The host-side proxy
+  listeners had the same exposure to any local process.
+
+  Each session now mints a random credential and its proxy requires it, over
+  HTTP and SOCKS alike. It travels as ordinary proxy credentials in HTTP_PROXY,
+  so npm, node and curl send it without knowing anything about nvx, while a
+  sibling that found the port by scanning gets 407. Authentication is checked
+  before the allowlist, so the 403-vs-200 difference cannot be used to probe
+  what another session may reach. Replaying the original attack now yields 407
+  from both the relay and the host proxy.
 * **A loopback exemption left by an older `nvx setup` opened every service on
   127.0.0.1 to contained code, and nothing said so.** The whole Windows egress
   design rests on Windows refusing an AppContainer's loopback connections. Before
@@ -105,6 +120,46 @@ see what the build they downloaded actually contains.
 
 ### Fixed
 
+* **`npm install esbuild` hung forever inside the sandbox, and the docs said it
+  could not.** SECURITY.md and README claimed npm installs were unaffected by
+  the named-pipe restriction because lifecycle scripts inherit stdio. That fixes
+  npm's own piping and nothing else: a postinstall that captures its OWN
+  subprocess still blocks, because the restriction is on the contained process
+  creating the pipe. esbuild's postinstall does exactly that. Measured at no
+  completion after 13 minutes contained, against 8 seconds uncontained.
+
+  This is an OS restriction nvx cannot lift, so it is now stated as a known
+  limitation instead of denied, with the workaround (`--no-sandbox` for that
+  package). A contained install still running after two minutes prints a hint
+  naming this cause, because the failure mode was silence -- and silence reads
+  as "nvx is broken" rather than "this package needs a flag". The smoke test
+  that was supposed to catch this could not: its fixture's postinstall only
+  writes a file, never capturing a subprocess. That is now recorded next to the
+  claim it failed to check.
+
+* **`nvx policy init` still scaffolded a fourth dead key.**
+  `isolation.filesystem.mode` was missed when the other three inert keys were
+  dropped, so every new policy shipped a security-looking key whose value read
+  "strict" and which no decision consulted. It is gone, along with the empty
+  `"prompts": {}` that pointed readers back at the removed keys, and the dead
+  defaulting and merging code behind them.
+
+* **Upgraded machines let the sandbox list `~/.nvx`.** Homes created before
+  0.5.0 carry a read+execute grant where fresh ones get traverse-only, and the
+  "is it already granted" check answered yes to either, so it was never
+  narrowed. nvx now narrows it once per home.
+
+* **Three wording corrections where the text overstated the guarantee.** The
+  loopback-exemption warning said egress to other hosts was unaffected -- an
+  acceptance pass disproved it by completing a TLS exchange with an external
+  host through a CONNECT proxy on loopback, so any forwarding service on
+  127.0.0.1 makes egress arbitrary. `--help` still advertised `nvx setup` as
+  adding allowlisted egress, which 0.5.0 removed. And the install-script prompt
+  asked whether to run scripts "on your host" when they run contained.
+
+* **The removal command was hidden by `-q` and `--agent-mode`,** leaving the
+  loopback warning visible and its fix invisible. It is a warning now, not an
+  info line.
 * **`nvx use` silently did nothing in Git Bash on Windows, and reported
   success.** Shell detection always answered PowerShell there, so nvx emitted
   assignments bash cannot evaluate: nothing applied, `node -v` was unchanged,

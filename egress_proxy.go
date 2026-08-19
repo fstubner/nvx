@@ -3,7 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -27,7 +31,22 @@ type EgressProxy struct {
 	// in a different network namespace can reach this proxy (see ListenUnix).
 	unixLn   net.Listener
 	unixPath string
-	ctx      context.Context
+	// token authenticates this session's clients to this session's proxy.
+	//
+	// Every nvx sandbox on a machine shares one AppContainer package identity, and
+	// Windows scopes its loopback restriction to the package -- so two projects
+	// running at once are in the same loopback namespace and either one can connect
+	// to the other's relay port. Without a credential that meant project B could
+	// borrow project A's allowlist by port-scanning loopback, which an independent
+	// acceptance pass demonstrated on 2026-08-19: B's own proxy refused a host, A's
+	// established the tunnel. The same applies to the host-side TCP listeners, which
+	// any local process can reach.
+	//
+	// The token travels as ordinary proxy credentials in HTTP_PROXY, so npm, node
+	// and curl send it without knowing anything about nvx. A sibling that scans its
+	// way to the port does not have it and gets 407.
+	token string
+	ctx   context.Context
 	// allow is built once before any connection is served and never mutated, so it
 	// needs no lock. session and prompted are written while connections are in
 	// flight; promptMu guards both.
@@ -51,7 +70,15 @@ func startEgressProxy(ctx context.Context, policy Policy, provider RuntimeProvid
 		allow[normalizeAllowEntry(entry)] = true
 	}
 
+	token, err := newProxyToken()
+	if err != nil {
+		// Fail closed: an unauthenticated proxy is reachable by every sibling
+		// sandbox and every local process, which is the hole this exists to close.
+		return nil, fmt.Errorf("egress proxy credential: %w", err)
+	}
+
 	p := &EgressProxy{
+		token:    token,
 		allow:    allow,
 		session:  map[string]bool{},
 		policy:   policy,
@@ -147,18 +174,44 @@ func (p *EgressProxy) Close() {
 	}
 }
 
+// newProxyToken returns a fresh per-session credential. 128 bits: this is guessed
+// online against a listener a sibling can reach, not stored.
+func newProxyToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// proxyCredential is the userinfo prefix for a proxy URL ("nvx:<token>@").
+func (p *EgressProxy) proxyCredential() string {
+	if p == nil || p.token == "" {
+		return ""
+	}
+	return proxyAuthUser + ":" + p.token + "@"
+}
+
+// ProxyCredential exposes the userinfo for callers that build their own proxy URL
+// -- the in-container relay, whose address differs from this proxy's.
+func (p *EgressProxy) ProxyCredential() string {
+	return p.proxyCredential()
+}
+
+const proxyAuthUser = "nvx"
+
 func (p *EgressProxy) HTTProxyURL() string {
 	if p == nil {
 		return ""
 	}
-	return "http://" + p.httpAddr
+	return "http://" + p.proxyCredential() + p.httpAddr
 }
 
 func (p *EgressProxy) SOCKSProxyURL() string {
 	if p == nil {
 		return ""
 	}
-	return "socks5://" + p.socksAddr
+	return "socks5://" + p.proxyCredential() + p.socksAddr
 }
 
 func (p *EgressProxy) HTTPListenHostPort() (string, uint16) {
@@ -344,14 +397,13 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 		}
 		port, _ := strconv.ParseUint(portStr, 10, 16)
 		hp := parseHostPortSpec(host, uint16(port))
-		if !p.allowed(hp) {
-			_, _ = fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
-			return
-		}
-		// Drain the remaining CONNECT request headers up to the blank line.
-		// Otherwise the buffered bytes (Host:, etc.) would be forwarded to the
+
+		// Read the remaining CONNECT request headers up to the blank line, and
+		// keep the credential out of them. They must be consumed either way:
+		// otherwise the buffered bytes (Host:, etc.) would be forwarded to the
 		// remote ahead of the client's TLS ClientHello, corrupting the handshake
 		// (ERR_SSL_PACKET_LENGTH_TOO_LONG).
+		var auth string
 		for {
 			line, lerr := br.ReadString('\n')
 			if lerr != nil {
@@ -360,6 +412,22 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 			if line == "\r\n" || line == "\n" {
 				break
 			}
+			if name, value, ok := strings.Cut(line, ":"); ok &&
+				strings.EqualFold(strings.TrimSpace(name), "Proxy-Authorization") {
+				auth = strings.TrimSpace(value)
+			}
+		}
+
+		// Authenticate before consulting the allowlist, so a sibling sandbox
+		// scanning loopback cannot use the 403/200 difference to learn what this
+		// session is permitted to reach.
+		if !p.authorized(auth) {
+			_, _ = fmt.Fprintf(client, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"nvx\"\r\n\r\n")
+			return
+		}
+		if !p.allowed(hp) {
+			_, _ = fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
+			return
 		}
 		remote, err := net.Dial("tcp", target)
 		if err != nil {
@@ -376,6 +444,86 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 	}
 
 	_, _ = fmt.Fprintf(client, "HTTP/1.1 405 Method Not Allowed\r\n\r\n")
+}
+
+// socksAuthenticate completes SOCKS5 method negotiation, requiring username /
+// password (RFC 1929) whenever this session has a token. Returns false if the
+// client cannot or will not authenticate, having already told it so.
+func (p *EgressProxy) socksAuthenticate(conn net.Conn, offered []byte) bool {
+	const (
+		methodNoAuth   = 0x00
+		methodUserPass = 0x02
+		methodNone     = 0xFF
+	)
+	if p.token == "" {
+		_, _ = conn.Write([]byte{0x05, methodNoAuth})
+		return true
+	}
+	if !bytesContain(offered, methodUserPass) {
+		_, _ = conn.Write([]byte{0x05, methodNone})
+		return false
+	}
+	if _, err := conn.Write([]byte{0x05, methodUserPass}); err != nil {
+		return false
+	}
+
+	// Sub-negotiation: version, ulen, uname, plen, passwd.
+	hdr := make([]byte, 2)
+	if _, err := io.ReadFull(conn, hdr); err != nil || hdr[0] != 0x01 {
+		return false
+	}
+	user := make([]byte, int(hdr[1]))
+	if _, err := io.ReadFull(conn, user); err != nil {
+		return false
+	}
+	plen := make([]byte, 1)
+	if _, err := io.ReadFull(conn, plen); err != nil {
+		return false
+	}
+	pass := make([]byte, int(plen[0]))
+	if _, err := io.ReadFull(conn, pass); err != nil {
+		return false
+	}
+
+	ok := string(user) == proxyAuthUser &&
+		subtle.ConstantTimeCompare(pass, []byte(p.token)) == 1
+	if !ok {
+		_, _ = conn.Write([]byte{0x01, 0x01}) // failure
+		return false
+	}
+	_, _ = conn.Write([]byte{0x01, 0x00}) // success
+	return true
+}
+
+func bytesContain(b []byte, want byte) bool {
+	for _, x := range b {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}
+
+// authorized checks a Proxy-Authorization header value against this session's
+// token. Compared in constant time: the check runs against a listener any local
+// process can talk to as often as it likes.
+func (p *EgressProxy) authorized(header string) bool {
+	if p.token == "" {
+		return true
+	}
+	scheme, encoded, ok := strings.Cut(strings.TrimSpace(header), " ")
+	if !ok || !strings.EqualFold(scheme, "Basic") {
+		return false
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+	if err != nil {
+		return false
+	}
+	user, pass, ok := strings.Cut(string(raw), ":")
+	if !ok || user != proxyAuthUser {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(pass), []byte(p.token)) == 1
 }
 
 func (p *EgressProxy) serveSOCKS(ctx context.Context, ln net.Listener) {
@@ -404,7 +552,12 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 	if _, err := io.ReadFull(conn, buf[:nMethods]); err != nil {
 		return
 	}
-	_, _ = conn.Write([]byte{0x05, 0x00})
+	// Same credential as the HTTP path, over RFC 1929. Leaving SOCKS open while
+	// HTTP is authenticated would just move the sibling-borrows-the-allowlist hole
+	// one port along.
+	if !p.socksAuthenticate(conn, buf[:nMethods]) {
+		return
+	}
 
 	if _, err := io.ReadFull(conn, buf[:4]); err != nil {
 		return

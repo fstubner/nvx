@@ -16,8 +16,11 @@ type Policy struct {
 	ReleaseAge           ReleaseAgePolicy    `json:"release_age"`
 	Runtime              RuntimeConfig       `json:"runtime"`
 	Isolation            IsolationPolicy     `json:"isolation"`
-	Prompts              PromptsPolicy       `json:"prompts"`
-	Environment          EnvironmentPolicy   `json:"environment"`
+	// A pointer so an unset Prompts serializes away entirely rather than as
+	// "prompts": {}, which pointed readers at three keys that were removed for
+	// doing nothing. Kept on the struct so existing policy files still parse.
+	Prompts     *PromptsPolicy    `json:"prompts,omitempty"`
+	Environment EnvironmentPolicy `json:"environment"`
 
 	ProjectDir string `json:"-"`
 }
@@ -107,9 +110,13 @@ func DefaultPolicy() Policy {
 		},
 		Isolation: IsolationPolicy{
 			Enabled: true,
+			// Mode is deliberately unset. It is parsed and merged but read for no
+			// decision, so scaffolding it into every new policy shipped a
+			// security-looking key -- value literally "strict" -- that did
+			// nothing. The other three inert keys were dropped in 0.5.0; this one
+			// was missed, which an acceptance pass caught.
 			Filesystem: FilesystemPolicy{
 				Provider: "native",
-				Mode:     "strict",
 			},
 			Network: NetworkPolicy{
 				Mode: "proxy",
@@ -163,15 +170,9 @@ func normalizePolicy(p *Policy) {
 	if len(p.Isolation.Network.DefaultAllow) == 0 && !p.Isolation.Network.DefaultAllowSet {
 		p.Isolation.Network.DefaultAllow = DefaultPolicy().Isolation.Network.DefaultAllow
 	}
-	if p.Prompts.Interactive == "" {
-		p.Prompts.Interactive = "ask"
-	}
-	if p.Prompts.NonInteractive == "" {
-		p.Prompts.NonInteractive = "deny"
-	}
-	if p.Prompts.NetworkUnknown == "" {
-		p.Prompts.NetworkUnknown = "ask"
-	}
+	// prompts.* is not defaulted either, for the same reason and with a sharper
+	// edge: defaulting it wrote a value that reads as a security decision
+	// ("non_interactive": "deny") into every policy while nothing consulted it.
 	normalizeReleaseAgePolicy(&p.ReleaseAge)
 }
 
@@ -647,15 +648,8 @@ func MergePolicies(global, local Policy) Policy {
 	if local.Runtime.Command != "" {
 		merged.Runtime.Command = local.Runtime.Command
 	}
-	if local.Prompts.Interactive != "" {
-		merged.Prompts.Interactive = local.Prompts.Interactive
-	}
-	if local.Prompts.NonInteractive != "" {
-		merged.Prompts.NonInteractive = local.Prompts.NonInteractive
-	}
-	if local.Prompts.NetworkUnknown != "" {
-		merged.Prompts.NetworkUnknown = local.Prompts.NetworkUnknown
-	}
+	// prompts.* is intentionally not merged: nothing reads it, so merging it was
+	// work that produced a value no decision consulted.
 
 	if local.Environment.IsolatedTools {
 		merged.Environment.IsolatedTools = true

@@ -376,9 +376,9 @@ Commands:
   shim <cmd> [args]        Internal shim router for package managers
   cleanup                  Remove stale sandbox sessions from previous runs
   setup                    (Windows, optional) One-time elevated setup adding
-                           OS-allowlisted egress and drive-root access; the
-                           sandbox runs unelevated without it. 'setup --undo'
-                           reverses it
+                           drive-root access, and removing a loopback exemption
+                           an older nvx left behind. Egress is allowlisted with
+                           or without it. 'setup --undo' reverses it
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
   grants list              Show this project's approved egress hosts, trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)
@@ -1147,7 +1147,10 @@ func runVerifyInstall(args []string, nvxHome string) {
 				LogError("Blocked by security policy: Package scripts are disallowed. Please run with --ignore-scripts.")
 				os.Exit(1)
 			} else {
-				msg := fmt.Sprintf("Package %s@%s contains install scripts. Run these scripts on your host?", pkgName, resolvedVer)
+				// Not "on your host": these run contained, and saying otherwise
+				// overstates the risk of approving while understating what the
+				// sandbox is doing for you.
+				msg := fmt.Sprintf("Package %s@%s contains install scripts. Run them (contained)?", pkgName, resolvedVer)
 				if !PromptYesNo(msg) {
 					LogError("Installation aborted by user due to script execution warning.")
 					os.Exit(1)

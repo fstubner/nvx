@@ -273,6 +273,14 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   own code imports is not sandboxed. Set `isolation.level: strict` to extend
   containment to your own code, at the cost of breaking anything that needs
   unrestricted filesystem or network access.
+
+  Spelled out, because the two halves are usually stated apart: this means **a
+  contained install can decide what a later uncontained command does.**
+  `node_modules/.bin` is writable by an install by design, project-local CLIs
+  there (`eslint`, `tsc`, `vitest`, `prettier`) get a shim on your `PATH`, and at
+  `standard` those shims run uncontained as you. The shim relocation below stops
+  a *system* command being shadowed; it does not make a project-local tool's
+  contents trustworthy. `strict` contains them.
 - **A contained process can see directory NAMES outside the project, though not
   their contents.** On Windows it can list your home directory, `C:\Users` and
   `C:\` — enough to learn that `.ssh`, `.aws` or `.1password` exist. File contents
@@ -291,9 +299,16 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   the 0.5.0 egress design depends on; the older setup registered an exemption
   because the proxy then ran on the host's loopback. 0.5.0 never adds one and
   removes it during `nvx setup`, but that needs an Administrator terminal and is
-  otherwise no longer required, so on an upgraded machine it persists. Egress to
-  other hosts is unaffected. nvx warns on every affected launch and `nvx doctor`
-  reports it; removing it is one elevated command, which both of them print.
+  otherwise no longer required, so on an upgraded machine it persists.
+
+  **Treat the egress allowlist as unenforced while it is registered.** Only
+  *direct* connections to other hosts stay blocked. Any reachable loopback
+  service that forwards traffic — a debugging proxy like mitmproxy or Charles, an
+  `ssh -D` dynamic forward, a dev server's proxy route — turns this into
+  arbitrary egress: measured on 2026-08-19 by completing a TLS exchange with an
+  external host from inside a sandbox, through a CONNECT proxy on 127.0.0.1.
+  nvx warns on every affected launch and `nvx doctor` reports it; removing it is
+  one elevated command, which both of them print.
 - **Projects granted by nvx before 0.5.0 stay reachable until nvx runs in them
   again.** Up to 0.5.0 every sandbox shared one identity and the permissions nvx
   granted were never revoked, so any project you used nvx in is readable and
@@ -315,10 +330,16 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   is not allowed to create a named pipe, and that is how Windows builds piped child
   stdio — so a contained program that captures a subprocess's output (`execSync`
   with default options, `spawn(..., {stdio: 'pipe'})`) hangs rather than failing.
-  npm installs are unaffected: nvx runs lifecycle scripts with inherited stdio, so
-  their output goes to your terminal as it happens. A tool run under `npx` that
-  captures a subprocess is the case to watch for. Inherited and discarded stdio
-  both work normally.
+  Inherited and discarded stdio both work normally.
+
+  **Some npm installs are affected, and this section claimed otherwise until
+  2026-08-19.** nvx runs lifecycle scripts with inherited stdio, which fixes npm's
+  own piping — but not a postinstall that captures a subprocess *itself*. The
+  common example is **`esbuild`**: its postinstall calls `execFileSync(..., {stdio:
+  "pipe"})`, so `npm install esbuild` inside the sandbox hangs indefinitely with no
+  error, against 8 seconds uncontained. nvx warns after two minutes naming this as
+  a likely cause, but cannot lift the restriction. Install such a package with
+  `nvx --no-sandbox npm install <pkg>` and treat it as an uncontained install.
 - **The macOS sandbox profile is verified at generation level only.** The Seatbelt
   profile is asserted by tests; its runtime enforcement has not been re-verified on
   macOS hardware.

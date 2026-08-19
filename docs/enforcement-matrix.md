@@ -114,6 +114,20 @@ existed. nvx now runs lifecycle scripts with inherited stdio, and
 `scripts/sandbox-smoke.ps1` installs a dependency with a postinstall and fails
 if it does not complete -- the check whose absence let the claim ship.
 
+That check was still too weak, and a later pass proved it. Its fixture's
+postinstall only writes a file; it never captures a subprocess, so it cannot fail
+on the case that remains broken. Inherited stdio fixes npm's own piping and
+nothing more: a postinstall that captures its OWN child still blocks, because the
+restriction is on the contained process creating the pipe, not on npm. Measured
+2026-08-19 against `esbuild@0.28.2`, whose postinstall calls
+`execFileSync(..., {stdio:"pipe"})`: no completion after 13 minutes contained, 8
+seconds uncontained. This is an OS restriction nvx cannot lift, so it is listed
+under Known limitations in README.md and SECURITY.md rather than claimed as
+fixed, and a contained install that runs past two minutes now prints a hint
+naming it (`sandbox_hang_hint_windows.go`). The honest summary of the guarantee:
+lifecycle scripts run, and their output reaches the terminal; a lifecycle script
+that captures a subprocess does not work at all.
+
 `network.mode: open` is the documented opt-out and is the only mode that grants a
 network capability. Setup no longer registers a loopback exemption, and removes an
 existing one, because the relay makes it an access grant with no remaining
@@ -124,10 +138,21 @@ without saying so.** Everything above rests on Windows refusing an AppContainer'
 connections to loopback addresses outside its own package. An exemption registered
 by a pre-0.5.0 elevated `nvx setup` removes that refusal for every destination on
 127.0.0.1 — a local database, a daemon's TCP port, another project's dev server —
-regardless of `allow_hosts`. Egress to other hosts is unaffected: the capability is
-still absent and DNS still does not resolve. Measured on 2026-08-19 by an
-independent acceptance pass, which read a host listener from inside a contained
-process while `1.1.1.1:443` was refused in the same run.
+regardless of `allow_hosts`. Measured on 2026-08-19 by an independent acceptance
+pass, which read a host listener from inside a contained process while
+`1.1.1.1:443` was refused in the same run.
+
+This page said "egress to other hosts is unaffected" for one day, and that was
+wrong. A second pass disproved it: with a CONNECT proxy listening on 127.0.0.1 —
+the role played on a real dev machine by mitmproxy, Charles, Burp, a corporate
+agent, `ssh -D`, or a dev server's proxy route — a contained process completed a
+TLS handshake and a full HTTP exchange with an external host, in the same run
+where `1.1.1.1:443` was refused directly. What remains true is narrower and worth
+stating exactly: the AppContainer holds no network capability, so *direct*
+connections and DNS still fail. That is not the same as the allowlist holding.
+Any reachable loopback service that forwards traffic makes egress arbitrary, so
+while an exemption is registered the allowlist should be treated as unenforced
+rather than as covering everything except loopback.
 
 Removing it needs elevation, so nvx cannot do it on a normal launch. It now
 detects the exemption and warns on every affected contained launch, and `nvx
