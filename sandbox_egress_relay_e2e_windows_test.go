@@ -25,6 +25,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -156,6 +157,12 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 		"NVX_RELAY_TARGET_CHILD=1",
 		"NVX_RELAY_ALLOWED="+allowedTarget,
 		"NVX_RELAY_BLOCKED="+blockedTarget,
+		// What applyProxyEnv puts here on a real launch. The supervisor rewrites
+		// the address to its in-container relay but carries the credential across,
+		// so without this the target reaches the relay anonymously and every
+		// destination comes back 407 -- which is a sandbox that blocks everything,
+		// the exact false pass this test exists to rule out.
+		"HTTP_PROXY="+proxy.HTTProxyURL(),
 	)
 	args := []string{
 		"__appcontainer-exec",
@@ -203,6 +210,14 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 		t.Errorf("non-allowlisted %s was not refused; the allowlist is not being consulted:\n%s", blockedTarget, got)
 	}
 
+	// 3b. And a client without this session's credential is refused before the
+	// allowlist is even consulted. Every sandbox on the machine shares one package
+	// identity and therefore one loopback namespace, so reaching this relay is not
+	// evidence of being entitled to its allowlist.
+	if !strings.Contains(got, "PROXY_ANONYMOUS=407") {
+		t.Errorf("a client with no credential was not refused; another session could borrow this allowlist:\n%s", got)
+	}
+
 	// 4. The exit status survived target -> supervisor -> nvx.
 	if exitCode != relayTargetExitCode {
 		t.Errorf("exit code = %d, want %d: a failing command inside the sandbox would be reported as success", exitCode, relayTargetExitCode)
@@ -225,16 +240,28 @@ func runRelayTargetChild() {
 		fmt.Printf("DIRECT=OK\n")
 	}
 
+	// HTTP_PROXY carries this session's credential as userinfo, so split it the way
+	// any HTTP client does: the address is dialled, the credential is sent as a
+	// Proxy-Authorization header. Stripping only the scheme left "nvx:token@host"
+	// as the dial target, which fails.
 	proxyAddr := strings.TrimPrefix(os.Getenv("HTTP_PROXY"), "http://")
+	cred := ""
+	if at := strings.LastIndex(proxyAddr, "@"); at != -1 {
+		cred, proxyAddr = proxyAddr[:at+1], proxyAddr[at+1:]
+	}
 	if proxyAddr == "" {
 		fmt.Printf("PROXY=MISSING\n")
 		os.Exit(relayTargetExitCode)
 	}
-	status, payload := connectAndEcho(proxyAddr, allowed)
+	status, payload := connectAndEcho(proxyAddr, allowed, cred)
 	fmt.Printf("PROXY_ALLOWED=%s\n", status)
 	fmt.Printf("PROXY_PAYLOAD=%s\n", payload)
-	blockedStatus, _ := connectAndEcho(proxyAddr, blocked)
+	blockedStatus, _ := connectAndEcho(proxyAddr, blocked, cred)
 	fmt.Printf("PROXY_BLOCKED=%s\n", blockedStatus)
+	// A client inside the same container that does NOT have the credential must be
+	// refused: the relay is reachable from any sandbox on the machine.
+	anonStatus, _ := connectAndEcho(proxyAddr, allowed, "")
+	fmt.Printf("PROXY_ANONYMOUS=%s\n", anonStatus)
 	os.Exit(relayTargetExitCode)
 }
 
@@ -246,14 +273,19 @@ func runRelayTargetChild() {
 // handshake and still fail to move bytes afterwards, and every layer here --
 // contained loopback TCP, the AF_UNIX hop, the proxy's own splice -- has to keep
 // forwarding for a real request to work.
-func connectAndEcho(proxyAddr, target string) (status, payload string) {
+func connectAndEcho(proxyAddr, target, cred string) (status, payload string) {
 	conn, err := net.DialTimeout("tcp", proxyAddr, 5*time.Second)
 	if err != nil {
 		return "DIAL_FAILED:" + err.Error(), ""
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target); err != nil {
+	authHeader := ""
+	if cred != "" {
+		authHeader = "Proxy-Authorization: Basic " +
+			base64.StdEncoding.EncodeToString([]byte(strings.TrimSuffix(cred, "@"))) + "\r\n"
+	}
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n%s\r\n", target, target, authHeader); err != nil {
 		return "WRITE_FAILED:" + err.Error(), ""
 	}
 	br := bufio.NewReader(conn)
