@@ -107,30 +107,32 @@ func TestProjectBinShimsExistForBashOnWindows(t *testing.T) {
 		t.Skip("the extensionless shim only differs from the POSIX one on Windows")
 	}
 	project := t.TempDir()
+	nvxHome := t.TempDir()
 	binDir := filepath.Join(project, "node_modules", ".bin")
 	if err := os.MkdirAll(binDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// What npm leaves behind for a local CLI on Windows.
-	for _, name := range []string{"vite.cmd", "vite.ps1", "vite"} {
+	// A name that resolves nowhere else, so the anti-shadow rule does not skip it.
+	const cli = "nvx-fixture-vite"
+	for _, name := range []string{cli + ".cmd", cli + ".ps1", cli} {
 		if err := os.WriteFile(filepath.Join(binDir, name), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if err := generateProjectBinShims(project, t.TempDir()); err != nil {
+	if err := generateProjectBinShims(project, nvxHome); err != nil {
 		t.Fatalf("generateProjectBinShims: %v", err)
 	}
 
-	shimDir := filepath.Join(project, ".nvx", "project-bin")
-	if _, err := os.Stat(filepath.Join(shimDir, "vite.cmd")); err != nil {
+	shimDir := projectBinDir(project, nvxHome)
+	if _, err := os.Stat(filepath.Join(shimDir, cli+".cmd")); err != nil {
 		t.Errorf("no .cmd shim for a local CLI: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(shimDir, "vite"))
+	data, err := os.ReadFile(filepath.Join(shimDir, cli))
 	if err != nil {
-		t.Fatalf("no extensionless shim for a local CLI: %v\nGit Bash would report command not found.", err)
+		t.Fatalf("no extensionless shim for a local CLI: %v (Git Bash would report command not found)", err)
 	}
 	if !strings.HasPrefix(string(data), "#!") {
-		t.Errorf("the extensionless project-bin shim has no shebang:\n%s", string(data))
+		t.Errorf("the extensionless project-bin shim has no shebang: %s", string(data))
 	}
 }

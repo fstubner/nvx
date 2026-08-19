@@ -180,7 +180,13 @@ func runWindowsSetup(nvxHome string, undo bool) int {
 	}
 
 	if undo {
-		for _, p := range windowsAncestorGrantPaths() {
+		// The profile root is deliberately excluded from the GRANT sweep (its ACL
+		// write stalls behind the OneDrive/Defender filter driver), but earlier
+		// versions did grant it, and README/SECURITY.md tell users --undo removes
+		// it. Revoking is cheap where nothing was granted, so sweep it here even
+		// though it is not granted here.
+		undoPaths := append(windowsAncestorGrantPaths(), filepath.Clean(os.Getenv("USERPROFILE")))
+		for _, p := range undoPaths {
 			if err := revokeSidGrant(sidStr, p); err != nil {
 				LogWarn("Could not remove grant on %s: %v", p, err)
 			}

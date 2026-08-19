@@ -17,6 +17,25 @@ see what the build they downloaded actually contains.
 
 ### Security
 
+* **A contained install could plant a command that ran later, uncontained, as
+  you.** `nvx use` puts the project-bin shim directory near the front of PATH,
+  ahead of System32. That directory used to live inside the project, so a
+  postinstall could write a file called `git` into it and wait; the next `git`
+  the developer typed ran it with their full user token -- every credential
+  store, every project, unrestricted network. No sandbox bug was involved. The
+  containment held and was routed around by a directory nvx itself put on PATH.
+  Reproduced end to end in PowerShell and Git Bash.
+
+  Two changes, and it needs both. The directory moved under `~/.nvx`, which the
+  sandbox cannot write. And generation now refuses to shim a name that already
+  resolves elsewhere on PATH, because `node_modules/.bin` is itself writable by
+  an install -- so relocating alone would just move the plant one directory
+  back. Stale wrappers are pruned on every regeneration.
+
+  The cost, stated plainly: if you have a global tool of the same name, the
+  project-local one no longer wins through nvx. `npx <tool>` still runs the
+  local one, contained.
+
 * **`--agent-mode` let a repository switch containment off.** The flag exists
   for AI agents, and it sets the same blanket yes as `-y`/`NVX_YES` -- which
   covered the two prompts that decide the security model itself: trusting a
@@ -62,6 +81,30 @@ see what the build they downloaded actually contains.
   install that previously hung past 90s now denies and exits in 2s.
 
 ### Fixed
+
+* **`nvx use` silently did nothing in Git Bash on Windows, and reported
+  success.** Shell detection always answered PowerShell there, so nvx emitted
+  assignments bash cannot evaluate: nothing applied, `node -v` was unchanged,
+  and it still printed "Now using Node.js". Auto-switch on `cd` never fired
+  either. Git Bash and MSYS2 are now detected.
+
+* **`--agent-mode` is documented as `-y -q` and only ever did the `-y` half.**
+  It now sets quiet too. That gates success and info lines only; warnings and
+  errors still print.
+
+* **`nvx setup --undo` could not remove the profile-root grant** that README
+  and SECURITY.md said it removed. It now sweeps that path as well.
+
+* **Four documented policy keys did nothing.** `prompts.interactive`,
+  `prompts.non_interactive`, `prompts.network_unknown` and
+  `isolation.filesystem.mode` were parsed, merged, scaffolded by
+  `nvx policy init` -- and read nowhere, so tightening one was silently
+  ineffective. They are no longer written into new policies and README says
+  they are unimplemented. Existing policies still parse.
+
+* **A stray `ACC_WRITE_PROBE.tmp` shipped inside the v0.5.0 tag** -- a
+  reviewer's escape probe swept in by `git add -A`. Removed, and `*.tmp` is
+  now ignored.
 
 * **A contained command took seconds to start.** The sandbox grants traverse
   rights on the directories above your project. On some chains -- `AppData` and
@@ -124,7 +167,7 @@ see what the build they downloaded actually contains.
   the restriction ever lifts.
 
 
-### Security
+### Security (continued)
 
 * **A sandboxed command could reach every project nvx had previously run in, and
   read credentials a trusted tool had persisted.** The AppContainer profile is
@@ -149,7 +192,7 @@ see what the build they downloaded actually contains.
   empty allowlist. Loopback is now allowlisted like any other destination.
   `network.mode: loopback` still permits it; `offline` no longer does.
 
-### Fixed
+### Fixed (continued)
 
 * **`nvx doctor` rewrote your persistent PATH without being asked.** It repaired
   a shadowed PATH the moment it found one, and because the repair targets

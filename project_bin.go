@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,8 +30,54 @@ func findProjectRoot(startDir string) string {
 	}
 }
 
-func projectBinDir(projectRoot string) string {
-	return filepath.Join(projectRoot, ".nvx", projectBinShimDirName)
+// projectBinDir returns the directory of nvx wrappers for a project's
+// node_modules/.bin, which `nvx use` puts near the front of PATH.
+//
+// It lives under nvxHome, NOT inside the project, and that is the whole point.
+// It used to be <project>/.nvx/project-bin: a directory a contained install can
+// write to, sitting second on the developer's PATH, ahead of System32. A
+// postinstall could drop a file named `git` there and wait. The next `git` the
+// developer typed ran that file with their full user token -- every credential
+// store, every project, unrestricted network -- with no sandbox involved at all.
+// The containment was not broken; it was routed around by a directory nvx itself
+// put on PATH. Measured end to end in both PowerShell and Git Bash.
+//
+// Under nvxHome the sandbox cannot write it: guest homes and the working
+// directory are granted, and nvxHome itself is not.
+//
+// Keyed by a hash of the project path so two projects cannot collide, and so the
+// directory name discloses nothing about where the project is.
+func projectBinDir(projectRoot, nvxHome string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(projectRoot))))
+	return filepath.Join(nvxHome, projectBinShimDirName, hex.EncodeToString(sum[:])[:16])
+}
+
+// shimWouldShadowAnExistingCommand reports whether creating a project-bin shim
+// for name would shadow an executable that already exists outside this project.
+//
+// Relocating the directory is necessary but not sufficient: node_modules/.bin is
+// itself writable by a contained install, so a postinstall can create
+// node_modules/.bin/git and wait for the next regeneration to shim it. Refusing
+// to shadow closes that half.
+//
+// The cost is deliberate and worth stating: if you have a global tool of the same
+// name, the project-local one no longer wins through nvx. `npx <tool>` still runs
+// the local one, contained. Letting an attacker-writable directory take
+// precedence over system commands on an interactive PATH is not a trade worth
+// making for that convenience.
+func shimWouldShadowAnExistingCommand(name, projectRoot, shimDir string) bool {
+	resolved := resolveCommandOnPath(name, os.Getenv("PATH"))
+	if resolved == "" {
+		return false // nothing to shadow: this is the ordinary local-CLI case
+	}
+	dir := filepath.Dir(resolved)
+	if dirWithin(dir, projectRoot) {
+		return false // the project's own copy, which is what we are wrapping
+	}
+	if dirsEqual(dir, shimDir) {
+		return false // a shim we generated on a previous run
+	}
+	return true
 }
 
 func projectNodeModulesBin(projectRoot string) string {
@@ -47,7 +95,7 @@ func generateProjectBinShims(projectRoot, nvxHome string) error {
 		return err
 	}
 
-	shimDir := projectBinDir(projectRoot)
+	shimDir := projectBinDir(projectRoot, nvxHome)
 	if err := os.MkdirAll(shimDir, 0700); err != nil {
 		return err
 	}
@@ -58,6 +106,7 @@ func generateProjectBinShims(projectRoot, nvxHome string) error {
 	}
 
 	seen := map[string]bool{}
+	kept := map[string]bool{}
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() {
@@ -68,11 +117,44 @@ func generateProjectBinShims(projectRoot, nvxHome string) error {
 			continue
 		}
 		seen[base] = true
+		if shimWouldShadowAnExistingCommand(base, projectRoot, shimDir) {
+			// A name that already resolves elsewhere is not a project CLI we can
+			// safely front. Skipping is what stops a planted node_modules/.bin/git
+			// from becoming a PATH entry ahead of the real one.
+			continue
+		}
 		if err := writeProjectBinShim(shimDir, exePath, base); err != nil {
 			return err
 		}
+		kept[base] = true
 	}
+
+	pruneProjectBinShims(shimDir, kept)
 	return nil
+}
+
+// pruneProjectBinShims deletes wrappers that no longer correspond to anything in
+// node_modules/.bin.
+//
+// Generation only ever added files before, so a shim outlived the package that
+// justified it -- and any file that found its way into the directory stayed on
+// PATH indefinitely. Rebuilding the set on every run means the directory holds
+// what the project currently has and nothing else.
+func pruneProjectBinShims(shimDir string, kept map[string]bool) {
+	entries, err := os.ReadDir(shimDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		base := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
+		if kept[base] {
+			continue
+		}
+		_ = os.Remove(filepath.Join(shimDir, e.Name()))
+	}
 }
 
 func writeProjectBinShim(shimDir, exePath, cmd string) error {

@@ -202,7 +202,7 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 	prefix = append(prefix, shimDir)
 	if cwd, err := os.Getwd(); err == nil {
 		if root := findProjectRoot(cwd); root != "" {
-			pb := projectBinDir(root)
+			pb := projectBinDir(root, nvxHome)
 			if _, err := os.Stat(pb); err == nil {
 				prefix = append(prefix, pb)
 			}

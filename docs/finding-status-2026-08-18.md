@@ -56,7 +56,7 @@ blind spot the original assessment had.
 | F51 | **fixed** | `buildSeatbeltProfile` is no longer variadic. |
 | F52 | **fixed** | `TestSeatbeltProfileDoesNotGrantWriteToNvxHome` asserts the negative. |
 | F58 | **fixed** | `CLONE_NEWPID` is on the supervisor; `reapUntilChildExits` replaces `cmd.Wait()`. |
-| F34 | open | `--agent-mode`/`NVX_YES` still auto-approves every gate. |
+| F34 | **fixed** | The two decisions that widen the trust boundary -- trusting a loosening project policy, allowlisting an egress host -- ignore `-y`, `--agent-mode` and `NVX_YES`; they need an interactive answer or `NVX_TRUST_YES`. Ordinary prompts still honour `-y`. |
 | F18 | open | `policyLoosens` still has no `MaxDistance` check. |
 | F38 | **fixed** | Loopback is allowlisted like any other destination. `network.mode: loopback` still permits it by definition; `offline` no longer does. Became urgent when the egress relay gave contained processes a route to the parent. |
 | F30 | open | Neither seccomp filter validates `seccomp_data.arch`. |
