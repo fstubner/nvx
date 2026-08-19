@@ -71,6 +71,15 @@ each one. Upgrading installs are handled too: a stale package-SID ACE on a path 
 governed by a capability is removed the first time nvx runs there, otherwise every
 already-granted project would keep the old behaviour.
 
+Ancestor grants are traverse and read-attributes only, not read. `(RX)` would
+include list-folder, which let a contained process enumerate the names in a
+granted parent -- enough to see which credential stores exist even with their
+contents denied. Note what this does NOT cover: `%USERPROFILE%` itself is
+listable from any AppContainer because Windows ships an ACE for
+ALL APPLICATION PACKAGES on it. nvx does not grant that and cannot revoke it --
+deny ACEs were measured not to override it -- so a contained process can see the
+names of the directories in your home, though not their contents.
+
 Two things this deliberately does not separate. Sessions in the *same* project
 share one capability, because a project's own tool credentials are in its own trust
 domain. And ancestor directories keep a shared this-folder-only RX grant for

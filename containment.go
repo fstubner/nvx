@@ -42,8 +42,22 @@ func shouldContain(class invocationClass, level isolationLevel, opts shimOptions
 	// call only — it is not a blanket bypass. `--standard` downgrades strict to
 	// standard, but standard still contains everything that is not your own
 	// code (installs, ad-hoc tools); it never uncontains an install.
+	// --strict is honoured wherever it appears, including inside the wrapped
+	// command's own arguments (`nvx node --strict app.js`, or a shimmed
+	// `node --strict app.js`). It only ever ADDS containment, so the anti-bypass
+	// rule that ignores smuggled flags does not apply to it: there is nothing to
+	// gain by sneaking in a flag that sandboxes you harder.
+	//
+	// It was previously stripped and discarded in that position, which is the
+	// worst of both -- the flag vanished from the command line, so the user got
+	// neither the containment they asked for nor an error telling them they had
+	// not got it. `nvx help` shows `--strict` without saying it must lead.
+	//
+	// --standard keeps the old treatment: it REDUCES containment relative to a
+	// strict policy, so honouring it from inside a package's own arguments would
+	// let a dependency's script argument weaken the sandbox around it.
 	effectiveLevel := level
-	if opts.strictFlag {
+	if opts.strictFlag || opts.payloadStrict {
 		effectiveLevel = levelStrict
 	} else if opts.standardFlag {
 		effectiveLevel = levelStandard

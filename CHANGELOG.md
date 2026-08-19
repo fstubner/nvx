@@ -31,6 +31,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx node --strict app.js` ran uncontained.** `--strict` was stripped from
+  the wrapped command's arguments and then discarded, so you got neither the
+  containment you asked for nor an error saying you had not got it -- and
+  `nvx help` shows the flag without saying it must come first. It is now
+  honoured wherever it appears. `--standard` deliberately still is not: it
+  reduces containment, so a dependency's own arguments must not be able to
+  weaken the sandbox around it.
+
+* **A contained process could list the names inside directories nvx granted for
+  traverse.** The ancestor grant used `(RX)`, which includes list-folder. It is
+  now traverse and read-attributes only, which is what it was always described
+  as being. Your home directory itself remains listable from any sandbox -- that
+  is an ACE Windows ships, not one nvx adds -- and is now stated in
+  `docs/enforcement-matrix.md` rather than implied away.
+
 * **Installing any package with a lifecycle script hung forever on Windows.**
   A process inside an AppContainer is not permitted to create a named pipe, and
   Windows builds piped child stdio out of named pipes -- so npm's default of
