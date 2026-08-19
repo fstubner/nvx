@@ -915,6 +915,25 @@ func PromptYesNo(message string) bool {
 		return false
 	}
 
+	// A console existing is not the same as a human being present.
+	//
+	// This used to go straight to CONIN$/dev/tty, deliberately bypassing
+	// redirections so a prompt still worked when stdout was piped. But that also
+	// meant a caller with stdin redirected -- a CI step, an agent harness, a
+	// script piping input -- got a prompt read from a console nobody was watching,
+	// and simply stopped. README and SECURITY.md both promise the operation is
+	// denied in that case; instead it neither approved nor denied, and an install
+	// sat at "Verifying package" until it was killed.
+	//
+	// Gate on stdin specifically. A redirected stdin means nobody is there to
+	// answer, whatever the console says. Redirected stdout is still fine: stdin
+	// stays a character device, so an interactive user piping output is unaffected
+	// -- which is the case the CONIN$ path was written for in the first place.
+	if !stdinIsInteractive() {
+		LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
+		return false
+	}
+
 	var ttyIn, ttyOut *os.File
 	var err error
 
