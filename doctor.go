@@ -62,6 +62,11 @@ type doctorReport struct {
 	shimDirIndex  int // index of the shim dir in PATH; -1 if absent
 	shadowedBy    []pathShadow
 	commands      []commandResolution
+	// missingPosixShims lists wrapped commands with no extensionless shim on
+	// Windows. bash does not consult PATHEXT, so without one a bare `npm` in Git
+	// Bash resolves straight past nvx -- while every PATHEXT-based check in this
+	// report happily calls interception healthy.
+	missingPosixShims []string
 }
 
 // dirsEqual reports whether two directory paths are the same after cleaning
@@ -128,6 +133,14 @@ func diagnosePath(pathEnv, nvxHome string, shimCmds []string) doctorReport {
 		}
 	}
 
+	if runtime.GOOS == "windows" {
+		for _, c := range shimCmds {
+			if _, err := os.Stat(filepath.Join(shimDir, c)); err != nil {
+				rep.missingPosixShims = append(rep.missingPosixShims, c)
+			}
+		}
+	}
+
 	for _, c := range shimCmds {
 		resolved := resolveCommandOnPath(c, pathEnv)
 		rep.commands = append(rep.commands, commandResolution{
@@ -184,7 +197,7 @@ func runDoctor(nvxHome string, fix bool) int {
 	rep := diagnosePath(os.Getenv("PATH"), nvxHome, cmds)
 	fmt.Print(formatDoctorReport(rep))
 
-	healthy := rep.shimDirOnPath && len(rep.shadowedBy) == 0
+	healthy := rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.missingPosixShims) == 0
 	if healthy {
 		LogSuccess("nvx is intercepting commands correctly.")
 		return 0
@@ -278,6 +291,12 @@ func formatDoctorReport(rep doctorReport) string {
 		}
 	default:
 		fmt.Fprintf(&b, "  [OK]   shim dir is first on PATH (position %d)\n", rep.shimDirIndex)
+	}
+
+	if len(rep.missingPosixShims) > 0 {
+		b.WriteString("  [FAIL] no bash shim for: " + strings.Join(rep.missingPosixShims, ", ") + "\n")
+		b.WriteString("         Git Bash ignores PATHEXT, so these run unwrapped there.\n")
+		b.WriteString("         Fix: nvx init-shims\n")
 	}
 
 	if len(rep.commands) > 0 {

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+* **Git Bash got no protection at all on Windows, and `nvx doctor` said it was
+  fine.** The shim directory held only `npm.cmd`/`npm.ps1`, which bash never
+  selects: it looks for a file named exactly `npm` and does not consult PATHEXT.
+  A bare `npm install` in Git Bash therefore ran the real npm -- unaudited,
+  unsandboxed -- while `doctor` reported interception as healthy, because it was
+  answering the PATHEXT question rather than the one bash asks. Agent harnesses
+  on Windows commonly run Git Bash, which is the case nvx exists for.
+
+  Extensionless shims are now written alongside the others, and `doctor` reports
+  their absence and no longer calls that state healthy.
+
+* **Security prompts hung instead of failing closed when stdin was not a
+  terminal.** `PromptYesNo` opened the console directly and treated "a console
+  exists" as "a human is present". On Windows `NUL` is itself a character device,
+  so `< /dev/null` -- what CI steps and agent harnesses do -- looked interactive,
+  and an install stopped at a prompt nobody could answer. README and SECURITY.md
+  both promise the operation is denied in that case. Interactivity is now decided
+  by `GetConsoleMode` on Windows and a terminal ioctl on Unix. Measured: an
+  install that previously hung past 90s now denies and exits in 2s.
+
 ### Fixed
 
 * **Installing any package with a lifecycle script hung forever on Windows.**

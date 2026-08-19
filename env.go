@@ -283,6 +283,23 @@ func generateShims(nvxHome string) error {
 			if err := writeExecutableFile(filepath.Join(shimDir, cmd+".ps1"), []byte(contentPs1)); err != nil {
 				return fmt.Errorf("write PowerShell shim for %s: %w", cmd, err)
 			}
+
+			// Also write an extensionless POSIX shim on Windows, for bash.
+			//
+			// cmd.exe and PowerShell find `npm` through PATHEXT and pick up the
+			// .cmd/.ps1 above. bash does not consult PATHEXT: it looks for a file
+			// named exactly `npm`, so with only those two present a bare `npm` in
+			// Git Bash resolved straight past nvx to the real npm -- no audit, no
+			// sandbox, and `nvx doctor` reported interception as healthy because it
+			// was answering the PATHEXT question.
+			//
+			// That is not an edge case on this platform: Git Bash is what most
+			// agent harnesses run on Windows, and agent-driven installs are the
+			// case nvx exists for.
+			contentSh := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", quotePOSIXShell(exePath), quotePOSIXShell(cmd))
+			if err := writeExecutableFile(filepath.Join(shimDir, cmd), []byte(contentSh)); err != nil {
+				return fmt.Errorf("write POSIX shim for %s: %w", cmd, err)
+			}
 		} else {
 			content := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", quotePOSIXShell(exePath), quotePOSIXShell(cmd))
 			shimPath := filepath.Join(shimDir, cmd)
