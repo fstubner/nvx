@@ -30,7 +30,7 @@ system — see ⁵.
 | Egress restricted to policy allowlist | Yes³ | Yes | Profile only⁵ (loopback proxy) |
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Profile only⁵ (`deny default`, localhost permitted) |
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
-| Any loopback service reachable | Only with a leftover exemption³ | No (loopback-only netns) | **Yes, by design**⁶ |
+| Any loopback service reachable | Only with a leftover exemption³ | No (loopback-only netns) | No⁶ (proxy port only) |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Profile only⁵ (needs `/usr/bin/sandbox-exec`) |
 
 ² On macOS the Seatbelt profile allows filesystem reads. The dynamic linker must
@@ -58,15 +58,26 @@ Windows egress, piped-stdio and esbuild claims ship broken. Closing it needs a M
 and a smoke test that asserts the denials. Until then the honest reading of the
 macOS column is "intended", not "enforced".
 
-⁶ **macOS permits outbound traffic to `localhost:*`.** The sandbox reaches the
-egress proxy over loopback, and the rule is not narrowed to that one port, so
-every service on 127.0.0.1 is reachable from contained code with no `allow_hosts`
-entry — a local database, a daemon's TCP port, another project's dev server. If
-any of them forwards traffic (a debugging proxy, `ssh -D`, a dev-server proxy
-route) the allowlist can be bypassed entirely. This is the same exposure as the
-Windows loopback exemption, with the difference that on Windows it is a leftover
-that can be removed and on macOS it is structural. Narrowing it to the proxy's own
-port is the obvious fix and has not been done.
+⁶ **Fixed 2026-08-20; it used to be every loopback service.** Every restricted
+mode emitted `(allow network-outbound (remote tcp "localhost:*"))`, so contained
+code could reach a local database, a daemon's TCP port or another project's dev
+server with no `allow_hosts` entry — and because any of those that forwards
+traffic (a debugging proxy, `ssh -D`, a dev-server proxy route) turns into
+unrestricted egress, the allowlist stopped meaning anything. The per-port rules
+underneath were dead code the wildcard had already subsumed. It had been that way
+since the sandbox was first implemented.
+
+Loopback is now granted per mode: `proxy` reaches the proxy's own ports and
+nothing else, `offline` gets no network rule at all (it previously reached all of
+loopback, so "offline" was not offline), and `loopback` keeps the wildcard because
+that is the entire meaning of that mode. `proxy` with no known proxy port grants
+nothing rather than falling back to the wildcard. Pinned by
+`TestSeatbeltGrantsLoopbackOnlyWhereTheModeMeansIt`, which was confirmed to fail
+against the previous behaviour.
+
+Note what this does and does not change: it removes a real hole in the generated
+profile, but the profile is still "profile only" per ⁵ — no macOS hardware has
+confirmed the kernel enforces any of it.
 
 ⁴ **Windows containment became per-project in 0.5.0. Before that it was
 per-machine.**

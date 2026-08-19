@@ -152,17 +152,38 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	if mode == "open" || mode == "" {
 		b.WriteString("(allow network*)\n")
 	}
-	if mode == "proxy" || mode == "offline" || mode == "loopback" {
-		b.WriteString("(allow network-outbound (remote tcp \"localhost:*\"))\n")
-		b.WriteString("(allow network-outbound (remote udp \"localhost:*\"))\n")
-		b.WriteString("(allow network-bind (local tcp \"localhost:*\"))\n")
-		b.WriteString("(allow network-bind (local udp \"localhost:*\"))\n")
+	// Loopback is granted per mode, narrowly.
+	//
+	// Until 2026-08-20 every restricted mode emitted `(allow network-outbound
+	// (remote tcp "localhost:*"))`, which let contained code reach every service on
+	// the developer's machine -- their database, their other projects' dev servers
+	// -- with no allowlist entry, and made `network.mode: offline` not offline. The
+	// two per-port rules below it were dead: the wildcard already permitted them.
+	//
+	// It is the same exposure as the Windows loopback exemption, and worth being
+	// precise about why it is worse than it sounds: any reachable service that
+	// forwards traffic (a debugging proxy, `ssh -D`, a dev server's proxy route)
+	// turns it into unrestricted egress, so the allowlist stops meaning anything.
+	switch mode {
+	case "proxy":
+		// Only the proxy itself. If its ports are unknown, nothing is allowed and
+		// egress fails closed rather than falling back to all of loopback.
 		if netCtx.HTTPProxyPort > 0 {
 			fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"localhost:%d\"))\n", netCtx.HTTPProxyPort)
 		}
 		if netCtx.SOCKSProxyPort > 0 {
 			fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"localhost:%d\"))\n", netCtx.SOCKSProxyPort)
 		}
+	case "loopback":
+		// This mode's entire meaning is "loopback is reachable", so the wildcard is
+		// correct here and only here. It is not the default.
+		b.WriteString("(allow network-outbound (remote tcp \"localhost:*\"))\n")
+		b.WriteString("(allow network-outbound (remote udp \"localhost:*\"))\n")
+		b.WriteString("(allow network-bind (local tcp \"localhost:*\"))\n")
+		b.WriteString("(allow network-bind (local udp \"localhost:*\"))\n")
+	case "offline":
+		// Nothing. `(deny default)` above already refuses everything; emitting no
+		// network rule at all is what makes offline mean offline.
 	}
 
 	return b.String()

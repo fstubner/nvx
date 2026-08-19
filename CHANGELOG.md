@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+* **On macOS, a contained process could reach every service on your loopback
+  address.** Every restricted mode emitted `(allow network-outbound (remote tcp
+  "localhost:*"))`, so an install could reach a local database, a daemon's TCP
+  port or another project's dev server with no `allow_hosts` entry. Worse than it
+  first sounds: any reachable service that forwards traffic -- a debugging proxy,
+  `ssh -D`, a dev server's proxy route -- turns that into unrestricted egress, so
+  the allowlist stopped meaning anything. `network.mode: offline` was covered by
+  the same rule, so offline was not offline. Present since the sandbox was first
+  implemented.
+
+  Loopback is now granted per mode. `proxy` reaches the proxy's own ports and
+  nothing else; `offline` emits no network rule at all; `loopback` keeps the
+  wildcard, that being the entire meaning of the mode. A `proxy` launch with no
+  known proxy port now grants nothing instead of falling back to the wildcard.
+  The per-port rules that already existed were dead code -- the wildcard above
+  them had subsumed them since the beginning.
+
+  Pinned by `TestSeatbeltGrantsLoopbackOnlyWhereTheModeMeansIt`, confirmed to fail
+  against the previous behaviour. This fixes the generated Seatbelt profile; per
+  the enforcement matrix, no macOS hardware has yet confirmed the kernel enforces
+  any part of that profile.
+
+### Changed
+
+* **The docs stop claiming macOS enforcement nobody has tested.** Three tables
+  printed the same "Yes" for Windows, Linux and macOS on guarantees backed by very
+  different evidence -- measured, CI-tested, and never checked respectively. macOS
+  cells now read "profile only" and say what that means. The one macOS check in CI
+  asserts that a sandboxed process can write its own working directory and nothing
+  about what is blocked, so it would pass against a build whose sandbox blocked
+  nothing.
+
+* **Two documents contradicted each other on a security question.** SECURITY.md
+  said macOS egress control was cooperative and a raw socket could bypass the
+  allowlist; README said macOS blocks raw TCP/UDP at the OS. README was right --
+  the profile is `(deny default)` -- so SECURITY.md understated the design while
+  the matrix overstated the evidence for it. Both corrected.
+
 ## [0.5.1] - 2026-08-19
 
 ### Fixed
