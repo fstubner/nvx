@@ -85,8 +85,10 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   project — `~/.ssh`, `~/.aws`, `~/.npmrc` — stay unreachable.
 - **Directory names outside the project are visible on Windows, contents are not.**
   A contained process can list your home directory, `C:\Users` and `C:\`, which is
-  enough to learn which credential stores exist. Windows grants every AppContainer
-  that much; nvx neither adds nor can revoke it.
+  enough to learn which credential stores exist. The profile root carries an ACE
+  Windows ships for all AppContainers, which nvx cannot revoke. Where an elevated
+  `nvx setup` has run, `C:\`, `C:\Users` and the profile root also carry a
+  read+execute grant nvx added itself; `nvx setup --undo` removes those.
 - **Projects granted by nvx before 0.5.0 remain reachable.** Every sandbox shared
   one identity until 0.5.0 and the permissions were never revoked, so a project you
   previously used nvx in is readable and writable from any sandbox until nvx runs

@@ -189,10 +189,17 @@ func shimPathPrependSnippet(shell, shimDir string) string {
 // agents and CI set as a matter of course, so a prompt here would auto-approve a
 // persistent system change for exactly the callers least able to notice it.
 func runDoctor(nvxHome string, fix bool) int {
-	if err := generateShims(nvxHome); err != nil {
-		LogWarn("Could not regenerate shims: %v", err)
-	}
-
+	// Diagnose BEFORE writing anything.
+	//
+	// This used to regenerate the shims first, which made the missing-shim check
+	// below unreachable: the shims it was looking for had just been recreated, so
+	// it never reported one missing and never counted one against health. Deleting
+	// every extensionless shim and running `nvx doctor` printed "nvx is
+	// intercepting commands correctly" and exit 0, having silently put them back.
+	//
+	// It also meant a command named after diagnosis wrote files on every run, which
+	// is the same objection that moved the PATH repair behind --fix. Regeneration
+	// is now part of the repair, not part of the report.
 	cmds := coreShimCommands()
 	rep := diagnosePath(os.Getenv("PATH"), nvxHome, cmds)
 	fmt.Print(formatDoctorReport(rep))
@@ -201,6 +208,19 @@ func runDoctor(nvxHome string, fix bool) int {
 	if healthy {
 		LogSuccess("nvx is intercepting commands correctly.")
 		return 0
+	}
+
+	if fix {
+		if err := generateShims(nvxHome); err != nil {
+			LogWarn("Could not regenerate shims: %v", err)
+		} else if len(rep.missingPosixShims) > 0 {
+			LogSuccess("Wrote the missing shims.")
+		}
+		// Re-diagnose so the caller is told the state after the repair rather
+		// than the state that prompted it.
+		rep = diagnosePath(os.Getenv("PATH"), nvxHome, cmds)
+	} else if len(rep.missingPosixShims) > 0 {
+		LogInfo("Run 'nvx doctor --fix' (or 'nvx init-shims') to write them.")
 	}
 
 	// Persistent-PATH repair (Windows); POSIX is a no-op. Only applied with --fix.
@@ -220,6 +240,13 @@ func runDoctor(nvxHome string, fix bool) int {
 		LogInfo(`  export PATH="%s:$PATH"`, shimDirPath(nvxHome))
 	}
 	LogInfo("Ensure your shell profile contains:  eval \"$(nvx env)\"  (or the PowerShell equivalent).")
+
+	// After a --fix pass the shims may now be complete even though PATH still is
+	// not, so report on what is left rather than on what was found first.
+	if rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.missingPosixShims) == 0 {
+		LogSuccess("nvx is intercepting commands correctly.")
+		return 0
+	}
 	return 1
 }
 
