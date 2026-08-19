@@ -17,15 +17,21 @@ silently.
 
 ## Native provider
 
+Every macOS cell below carries a silent qualifier, stated once here rather than
+repeated in each: **it describes the generated Seatbelt profile, not observed
+behaviour.** No macOS row in this table has been confirmed against a running
+system — see ⁵.
+
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
-| Host filesystem write blocked (outside workdir + guest home) | Yes | Yes | Yes |
+| Host filesystem write blocked (outside workdir + guest home) | Yes | Yes | Profile only⁵ |
 | Host filesystem read restricted | Yes⁴ | Yes | No² |
 | Environment secrets scrubbed | Yes | Yes | Yes |
-| Egress restricted to policy allowlist | Yes³ | Yes | Yes (loopback proxy) |
-| Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes (`deny network*` except loopback) |
+| Egress restricted to policy allowlist | Yes³ | Yes | Profile only⁵ (loopback proxy) |
+| Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Profile only⁵ (`deny default`, localhost permitted) |
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
-| Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes (needs `/usr/bin/sandbox-exec`) |
+| Any loopback service reachable | Only with a leftover exemption³ | No (loopback-only netns) | **Yes, by design**⁶ |
+| Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Profile only⁵ (needs `/usr/bin/sandbox-exec`) |
 
 ² On macOS the Seatbelt profile allows filesystem reads. The dynamic linker must
 read system libraries and the dyld shared cache, whose locations vary by macOS
@@ -40,6 +46,27 @@ additionally removes all non-loopback interfaces (network namespace), so DNS to
 external resolvers cannot leave; on macOS a determined process could still
 attempt DNS via the OS resolver. This is the main per-OS difference and is why
 Linux has the strongest network story.
+
+⁵ **"Profile only" means nobody has checked.** `sandbox_seatbelt.go` emits
+`(deny default)` and unit tests assert the profile's text, so nvx generates the
+policy it intends to. Whether the kernel enforces it has never been verified on
+macOS hardware. The one macOS check that runs in CI,
+`scripts/sandbox-smoke-macos.sh`, asserts that a sandboxed `node` can write to its
+own working directory and nothing else — it would pass unchanged against a build
+whose sandbox blocked nothing at all, which is the same shape of gap that let the
+Windows egress, piped-stdio and esbuild claims ship broken. Closing it needs a Mac
+and a smoke test that asserts the denials. Until then the honest reading of the
+macOS column is "intended", not "enforced".
+
+⁶ **macOS permits outbound traffic to `localhost:*`.** The sandbox reaches the
+egress proxy over loopback, and the rule is not narrowed to that one port, so
+every service on 127.0.0.1 is reachable from contained code with no `allow_hosts`
+entry — a local database, a daemon's TCP port, another project's dev server. If
+any of them forwards traffic (a debugging proxy, `ssh -D`, a dev-server proxy
+route) the allowlist can be bypassed entirely. This is the same exposure as the
+Windows loopback exemption, with the difference that on Windows it is a leftover
+that can be removed and on macOS it is structural. Narrowing it to the proxy's own
+port is the obvious fix and has not been done.
 
 ⁴ **Windows containment became per-project in 0.5.0. Before that it was
 per-machine.**

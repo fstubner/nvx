@@ -67,9 +67,26 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   Windows the AppContainer holds no network capability, so the OS refuses direct
   connections and DNS does not resolve. On both, the egress proxy runs outside the
   containment and is reached over a UNIX socket.
-- **On macOS, egress control is cooperative.** It relies on the child honoring
-  the injected proxy environment variables; a process using raw sockets can
-  bypass the allowlist.
+- **On macOS, enforcement is unverified rather than cooperative.** This document
+  said until 2026-08-20 that macOS egress control was cooperative and a raw socket
+  could bypass the allowlist. Reading the generator, that is wrong: the profile is
+  `(deny default)` and permits outbound traffic to localhost only, so a raw socket
+  to an external host is refused by the kernel, not merely discouraged. README's
+  matrix said the opposite of this entry, and on a security question two shipped
+  documents disagreeing is its own defect.
+
+  The real limitation is weaker but still worth stating plainly: **none of it has
+  been verified on macOS hardware.** The profile's text is asserted by unit tests;
+  the macOS smoke test only checks that a sandboxed process can write its own
+  working directory, so it would pass against a sandbox that blocked nothing. Treat
+  macOS as intended-and-untested.
+- **On macOS, contained code can reach every service on your loopback address.**
+  The profile allows outbound traffic to `localhost:*` — necessary to reach the
+  egress proxy, but not narrowed to it — so a local database, daemon port or dev
+  server is reachable without an allowlist entry. This is the same exposure the
+  Windows loopback exemption creates, except here it is by design and permanent
+  rather than a leftover. If any of those services forwards traffic, the egress
+  allowlist can be bypassed entirely.
 - **On Windows, a loopback exemption left by a pre-0.5.0 `nvx setup` opens every
   service on 127.0.0.1** to contained code, whatever the allowlist says — local
   databases, daemon ports, other dev servers. 0.5.0 never registers one and
