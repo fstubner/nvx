@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -141,13 +142,59 @@ func scopeCapabilitySID(scopeDir string) (string, error) {
 // Best-effort. Failing to clean an old grant leaves the previous behaviour for
 // that one path, which is worth a log line and not worth refusing to run.
 func removeStaleAppContainerGrant(packageSIDStr, path string) {
-	if path == "" || !appContainerHasGrant(packageSIDStr, path) {
+	if path == "" {
 		return
 	}
-	out, err := runWinCmd(30*time.Second, "icacls", path, "/remove:g", "*"+packageSIDStr, "/c", "/q")
+	for _, sid := range staleAppContainerSIDsOn(path) {
+		out, err := runWinCmd(30*time.Second, "icacls", path, "/remove:g", "*"+sid, "/c", "/q")
+		if err != nil {
+			LogWarn("Could not remove a stale sandbox permission on %q: %v (%s)", path, err, strings.TrimSpace(string(out)))
+			continue
+		}
+		LogInfo("Removed a shared sandbox permission left on %q by an earlier nvx; this project now has its own.", path)
+	}
+}
+
+// appContainerPackageSID matches an AppContainer package SID (S-1-15-2-...), the
+// identity every nvx sandbox used to run as. Capability SIDs are S-1-15-3-... and
+// are deliberately NOT matched: those are the per-project identities this design
+// replaced them with, and removing them would revoke the grant being relied on.
+var appContainerPackageSID = regexp.MustCompile(`S-1-15-2-[0-9]+(?:-[0-9]+)+`)
+
+// staleAppContainerSIDsOn lists the package SIDs holding an ACE on path.
+//
+// Every one is stale by definition now: a current nvx grants the writable roots
+// to a per-project capability (S-1-15-3-...) and never to a package SID. What
+// accumulates otherwise is one dead ACE per profile that ever ran there --
+// measured at 19 on a single project directory, including throwaway profiles from
+// test runs, each of which still granted modify access to anything holding that
+// SID.
+//
+// Removing every package SID rather than only the current profile's is a
+// deliberate widening. In principle another AppContainer application could hold
+// an ACE on a directory nvx is granting; in practice these are nvx's own guest
+// home and the project you are standing in, and an application that needs its ACE
+// back will add it again. Leaving them meant a permission nvx created was never
+// cleaned up by anything.
+func staleAppContainerSIDsOn(path string) []string {
+	out, err := runWinCmd(10*time.Second, "icacls", path)
 	if err != nil {
-		LogWarn("Could not remove a stale sandbox permission on %q: %v (%s)", path, err, strings.TrimSpace(string(out)))
-		return
+		return nil
 	}
-	LogInfo("Removed a shared sandbox permission left on %q by an earlier nvx; this project now has its own.", path)
+	seen := map[string]bool{}
+	var sids []string
+	for _, line := range strings.Split(string(out), "\n") {
+		// An inherited ACE cannot be removed with /remove:g, and trying wastes a
+		// process launch per line.
+		if strings.Contains(line, "(I)") {
+			continue
+		}
+		for _, m := range appContainerPackageSID.FindAllString(line, -1) {
+			if !seen[m] {
+				seen[m] = true
+				sids = append(sids, m)
+			}
+		}
+	}
+	return sids
 }

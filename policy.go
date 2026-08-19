@@ -453,7 +453,7 @@ func ensureProjectPolicyTrust(nvxHome string) error {
 			hash, _ := hashPolicyFile(localPath)
 			cleanPath := filepath.Clean(localPath)
 			if grants.PolicyPins[cleanPath] != hash {
-				if !PromptYesNo("Project policy " + localPath + " loosens nvx security settings. Trust it for this project?") {
+				if !PromptTrustBoundary("Project policy " + localPath + " loosens nvx security settings. Trust it for this project?") {
 					auditLog(nvxHome, "policy_pin_changed_denied", map[string]string{"path": cleanPath})
 					continue
 				}
