@@ -236,7 +236,10 @@ func launchAppContainerProcessOnce(
 	_ = capAttrs
 
 	if createOK == 0 {
-		return 1, fmt.Errorf("CreateProcess(AppContainer) exe=%q cwd=%q: %v", cmdPath, workDir, createErr)
+		// %w, not %v: the caller distinguishes a corrupted staged image from other
+		// launch failures, and must do it by error code. Matching the message text
+		// would work only on an English Windows.
+		return 1, fmt.Errorf("CreateProcess(AppContainer) exe=%q cwd=%q: %w", cmdPath, workDir, createErr)
 	}
 	defer func() {
 		_ = syscall.CloseHandle(pi.hProcess)

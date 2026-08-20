@@ -4,11 +4,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // stageAppContainerSupervisor puts a copy of the running nvx binary somewhere the
@@ -92,6 +94,46 @@ func stageAppContainerSupervisor(nvxHome string) (string, error) {
 	}
 	pruneStaleSupervisors(dir, filepath.Base(dest))
 	return dest, nil
+}
+
+// Windows error codes that mean the executable image itself is unusable, as
+// opposed to the launch being refused. A staged copy in this state is permanent:
+// the name encodes the source's size and timestamp, and the reuse check compares
+// size, so a corruption that preserves size -- an antivirus quarantine stub, a
+// cloud-sync placeholder, a bad sector -- is invisible to it and every later
+// contained launch fails identically with nothing in the product able to clear
+// it. Found by an acceptance pass zeroing 512 bytes in place.
+const (
+	errorBadExeFormat    = 193  // not a valid Win32 application
+	errorInvalidImage    = 577  // image hash could not be verified
+	errorFileCorrupt     = 1392 // the file or directory is corrupted and unreadable
+	errorDiskCorrupt     = 1393 // the disk structure is corrupted and unreadable
+	errorFileInvalidCode = 1006 // the volume for a file has been externally altered
+)
+
+// stagedImageIsUnusable reports whether err says the staged binary itself is
+// broken, which is worth one automatic re-stage. Deliberately narrow: a launch
+// refused for permissions or policy must not trigger a silent retry loop.
+func stagedImageIsUnusable(err error) bool {
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		return false
+	}
+	switch uintptr(errno) {
+	case errorBadExeFormat, errorInvalidImage, errorFileCorrupt, errorDiskCorrupt, errorFileInvalidCode:
+		return true
+	}
+	return false
+}
+
+// restageSupervisor discards a staged copy and writes it again, for use when the
+// copy on disk turned out to be unusable.
+func restageSupervisor(nvxHome, staged string) error {
+	if err := os.Remove(staged); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("discard the unusable supervisor copy: %w", err)
+	}
+	_, err := stageAppContainerSupervisor(nvxHome)
+	return err
 }
 
 // supervisorNameFor derives a per-build filename. Two builds differing in either
