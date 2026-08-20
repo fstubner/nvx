@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.2] - 2026-08-20
 
 ### Security
 
@@ -124,6 +124,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/enforcement-matrix.md` said an unqualified "Yes" for Windows write
   containment, contradicting README's own Known limitations. Corrected.
 
+
+* **On a platform with no sandbox, nvx ran the command unprotected and said it
+  had contained it.** `sandbox_native_other.go` -- the path for any Unix that is
+  not Linux or macOS -- set a process group, logged "using environment isolation
+  only" at info level, and then executed the command. nvx printed "Running in
+  native sandbox" around it. A contained install on FreeBSD therefore had full
+  access to the user's home, their SSH keys and the network.
+
+  This is exactly what SECURITY.md's design stance rules out: if a containment
+  primitive is unavailable, refuse to run rather than run unprotected. Every other
+  platform honoured it. It now refuses, naming `--no-sandbox` as the deliberate
+  opt-out. A scrubbed environment and a redirected HOME are worth having but are
+  conventions the child can ignore, so they do not amount to a sandbox and are no
+  longer presented as one.
+
+  No release binaries are published for these platforms, so this was reachable
+  only by building from source -- which is exactly the person who would trust the
+  word "sandbox" without checking. Closes F28, and with it F33, the last open
+  contradiction of the fail-closed claim. Pinned by
+  `TestUnsupportedPlatformRefusesInsteadOfRunningUnprotected`, which asserts the
+  command left nothing behind rather than trusting its exit code.
+
+* **On macOS, a contained process could reach every service on your loopback
+  address.** Every restricted mode emitted `(allow network-outbound (remote tcp
+  "localhost:*"))`, so an install could reach a local database, a daemon's TCP
+  port or another project's dev server with no `allow_hosts` entry. Worse than it
+  first sounds: any reachable service that forwards traffic -- a debugging proxy,
+  `ssh -D`, a dev server's proxy route -- turns that into unrestricted egress, so
+  the allowlist stopped meaning anything. `network.mode: offline` was covered by
+  the same rule, so offline was not offline. Present since the sandbox was first
+  implemented.
+
+  Loopback is now granted per mode. `proxy` reaches the proxy's own ports and
+  nothing else; `offline` emits no network rule at all; `loopback` keeps the
+  wildcard, that being the entire meaning of the mode. A `proxy` launch with no
+  known proxy port now grants nothing instead of falling back to the wildcard.
+  The per-port rules that already existed were dead code -- the wildcard above
+  them had subsumed them since the beginning.
+
+  Pinned by `TestSeatbeltGrantsLoopbackOnlyWhereTheModeMeansIt`, confirmed to fail
+  against the previous behaviour. This fixes the generated Seatbelt profile; per
+  the enforcement matrix, no macOS hardware has yet confirmed the kernel enforces
+  any part of that profile.
+
 ### Fixed
 
 * **Shims pointed at whichever binary generated them, so a source build broke
@@ -219,7 +263,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   confusing permission error this check exists to prevent. Pinned by
   `TestYarnGlobalSubcommandIsNotYetRecognised` so it stays visible.
 
-### Fixed
 
 * **A hung contained process could block every later contained launch.** The
   sandbox supervisor was staged under one fixed name, and Windows refuses to
@@ -244,51 +287,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Linux and matched no case in the Seatbelt switch, so macOS emitted no network
   rule at all. It failed closed, but it was a silent, platform-divergent
   behaviour change from one trailing space in a config file.
-
-### Security
-
-* **On a platform with no sandbox, nvx ran the command unprotected and said it
-  had contained it.** `sandbox_native_other.go` -- the path for any Unix that is
-  not Linux or macOS -- set a process group, logged "using environment isolation
-  only" at info level, and then executed the command. nvx printed "Running in
-  native sandbox" around it. A contained install on FreeBSD therefore had full
-  access to the user's home, their SSH keys and the network.
-
-  This is exactly what SECURITY.md's design stance rules out: if a containment
-  primitive is unavailable, refuse to run rather than run unprotected. Every other
-  platform honoured it. It now refuses, naming `--no-sandbox` as the deliberate
-  opt-out. A scrubbed environment and a redirected HOME are worth having but are
-  conventions the child can ignore, so they do not amount to a sandbox and are no
-  longer presented as one.
-
-  No release binaries are published for these platforms, so this was reachable
-  only by building from source -- which is exactly the person who would trust the
-  word "sandbox" without checking. Closes F28, and with it F33, the last open
-  contradiction of the fail-closed claim. Pinned by
-  `TestUnsupportedPlatformRefusesInsteadOfRunningUnprotected`, which asserts the
-  command left nothing behind rather than trusting its exit code.
-
-* **On macOS, a contained process could reach every service on your loopback
-  address.** Every restricted mode emitted `(allow network-outbound (remote tcp
-  "localhost:*"))`, so an install could reach a local database, a daemon's TCP
-  port or another project's dev server with no `allow_hosts` entry. Worse than it
-  first sounds: any reachable service that forwards traffic -- a debugging proxy,
-  `ssh -D`, a dev server's proxy route -- turns that into unrestricted egress, so
-  the allowlist stopped meaning anything. `network.mode: offline` was covered by
-  the same rule, so offline was not offline. Present since the sandbox was first
-  implemented.
-
-  Loopback is now granted per mode. `proxy` reaches the proxy's own ports and
-  nothing else; `offline` emits no network rule at all; `loopback` keeps the
-  wildcard, that being the entire meaning of the mode. A `proxy` launch with no
-  known proxy port now grants nothing instead of falling back to the wildcard.
-  The per-port rules that already existed were dead code -- the wildcard above
-  them had subsumed them since the beginning.
-
-  Pinned by `TestSeatbeltGrantsLoopbackOnlyWhereTheModeMeansIt`, confirmed to fail
-  against the previous behaviour. This fixes the generated Seatbelt profile; per
-  the enforcement matrix, no macOS hardware has yet confirmed the kernel enforces
-  any part of that profile.
 
 ### Changed
 
