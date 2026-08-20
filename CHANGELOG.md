@@ -34,6 +34,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A hung contained process could block every later contained launch.** The
+  sandbox supervisor was staged under one fixed name, and Windows refuses to
+  replace a running executable -- so a supervisor still alive from an earlier
+  build held that file and the next launch died at staging with a bare "Access is
+  denied", naming a path inside `~/.nvx` that nobody would connect to their stuck
+  process. The only cure was finding and killing it by hand. Asynchronous piped
+  stdio still hangs, so leaving a supervisor alive is not a rare accident.
+
+  Staged copies are now named per build, so nothing is ever replaced: builds
+  coexist and a leftover copy is inert rather than blocking. Copies from other
+  builds are pruned when they are not in use, failures ignored, because a copy
+  that will not delete is one another sandbox is executing. The legacy fixed-name
+  copy is cleared on the next launch.
+
+  The name is derived from the binary's size and timestamp rather than a content
+  hash: this is a launch path measured in milliseconds and hashing ten megabytes
+  to learn what a stat already tells us would be a poor trade.
+
 * **The macOS network mode was the only reader of that field not trimming
   whitespace.** A policy carrying `"mode": "proxy "` was `proxy` on Windows and
   Linux and matched no case in the Seatbelt switch, so macOS emitted no network
