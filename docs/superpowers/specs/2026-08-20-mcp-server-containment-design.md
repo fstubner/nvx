@@ -127,15 +127,26 @@ access uses the existing policy mechanism rather than a new one.
 
 ### What still needs building
 
-1. **A cold-start note.** The first contained launch after installing a server
-   costs ~6 s while the file cache and AV cache fill. Harmless but surprising, and
-   close enough to some clients' connection timeouts to warrant a documented
-   warm-up step (`nvx npx -y <server> --version` once after install).
-2. **Docs.** README and SECURITY.md gain the supported/unsupported split above.
+1. ~~A cold-start note.~~ **Done 2026-08-20.** README's Known limitations now
+   records the one-off cost and the warm-up advice, written as the general
+   property it is (any first contained run after an install) rather than as an
+   MCP claim, since MCP support is not yet claimed anywhere.
+2. ~~A test.~~ **Done 2026-08-20.** `TestContainedMcpServerCompletesHandshake`
+   drives a real handshake against a contained minimal server through the real
+   binary, and asserts containment was applied. It deliberately does not install
+   from npm: a test needing the network to prove a local property fails for
+   reasons unrelated to the property.
+
+   One negative result recorded with it. The obvious assumption -- that an MCP
+   handshake exercises the F46 stdio machinery (`STARTF_USESTDHANDLES` /
+   `bInheritHandles`) -- was checked and is false on this host. Disabling those
+   flags, then disabling `prepareInheritableStdio` entirely, left both this test
+   and the dedicated `TestPipedStdioReachesRealAppContainerChild` passing. Stdio
+   reaches a contained child here by some other route. **That is a gap in the
+   existing suite, not only in the new test:** F46 is believed to be guarded and
+   is not, at least on this machine. Worth its own investigation.
+3. **Docs.** README and SECURITY.md gain the supported/unsupported split above.
    Not before the rest lands.
-3. **A test.** An MCP handshake probe against a contained server, so "MCP servers
-   work contained" is test-backed rather than measured once by hand — the honesty
-   condition in `PRODUCT.md` requires it.
 
 ## Conflicts with the daemon spec
 
