@@ -148,7 +148,12 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	}
 	b.WriteString(")\n")
 
-	mode := strings.ToLower(netCtx.Mode)
+	// Trimmed, like every other reader of this field (policy.go, egress_proxy.go,
+	// sandbox_native_windows.go, fs_provider.go). Without it a policy carrying
+	// "mode": "proxy " was proxy on Windows and Linux and matched no case here, so
+	// macOS silently emitted no network rule at all -- fail-closed, but a
+	// platform-divergent behaviour change from one trailing space in a config file.
+	mode := strings.ToLower(strings.TrimSpace(netCtx.Mode))
 	if mode == "open" || mode == "" {
 		b.WriteString("(allow network*)\n")
 	}

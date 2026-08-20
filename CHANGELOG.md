@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **`nvx doctor` now finds the pre-0.5.0 grants that leave a project writable by
+  every sandbox on the machine.** Up to 0.5.0 every sandbox ran as one shared
+  package identity and the grants it wrote were never revoked, so a contained
+  install in one project can read and write another. The cleanup only ever ran on
+  the working directory of the session currently running, so a project you do not
+  revisit stays exposed indefinitely.
+
+  README has disclosed this since 0.5.0, and the containment behaviour is
+  unchanged -- what was missing was any way to observe it. The comparable
+  leftover, the loopback exemption, warns on every contained launch and fails
+  `doctor`; this one was silent. An acceptance pass found 19 such grants live on
+  the nvx repository itself while `doctor` reported a healthy install and exited
+  0, and wrote into that repository from a sandbox scoped to a different project.
+
+  `doctor` now reports leftover grants on the project it runs in, counts them
+  against health, and removes them under `--fix`. nvx keeps no record of where it
+  has run, so it cannot sweep the machine; the check answers for the directory you
+  are standing in. It is not a launch-path warning because the launch path already
+  removes them from the working directory before running anything.
+
+  `docs/enforcement-matrix.md` said an unqualified "Yes" for Windows write
+  containment, contradicting README's own Known limitations. Corrected.
+
+### Fixed
+
+* **The macOS network mode was the only reader of that field not trimming
+  whitespace.** A policy carrying `"mode": "proxy "` was `proxy` on Windows and
+  Linux and matched no case in the Seatbelt switch, so macOS emitted no network
+  rule at all. It failed closed, but it was a silent, platform-divergent
+  behaviour change from one trailing space in a config file.
+
+### Security
+
 * **On a platform with no sandbox, nvx ran the command unprotected and said it
   had contained it.** `sandbox_native_other.go` -- the path for any Unix that is
   not Linux or macOS -- set a process group, logged "using environment isolation

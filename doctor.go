@@ -205,8 +205,12 @@ func runDoctor(nvxHome string, fix bool) int {
 	fmt.Print(formatDoctorReport(rep))
 
 	// Machine state that weakens containment without breaking anything visible --
-	// today, a loopback exemption an older `nvx setup` left behind.
+	// a loopback exemption an older `nvx setup` left behind, and grants an older
+	// nvx left on this project that every sandbox on the machine still holds.
 	weakened := reportSandboxWeakeners(nvxHome)
+	if reportStaleProjectGrantsHere(fix) {
+		weakened = true
+	}
 
 	healthy := rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.missingPosixShims) == 0 && !weakened
 	if healthy {

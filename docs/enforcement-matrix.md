@@ -24,7 +24,7 @@ system — see ⁵.
 
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
-| Host filesystem write blocked (outside workdir + guest home) | Yes | Yes | Profile only⁵ |
+| Host filesystem write blocked (outside workdir + guest home) | Yes, except pre-0.5.0 projects⁷ | Yes | Profile only⁵ |
 | Host filesystem read restricted | Yes⁴ | Yes | No² |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress restricted to policy allowlist | Yes³ | Yes | Profile only⁵ (loopback proxy) |
@@ -78,6 +78,30 @@ against the previous behaviour.
 Note what this does and does not change: it removes a real hole in the generated
 profile, but the profile is still "profile only" per ⁵ — no macOS hardware has
 confirmed the kernel enforces any of it.
+
+⁷ **A directory nvx used before 0.5.0 is still writable by every sandbox on the
+machine.** Up to 0.5.0 every sandbox ran as one shared package identity and the
+`(OI)(CI)(M)` grants it wrote were never revoked, so a contained install in
+project A can write into project B. `removeStaleAppContainerGrant` clears them,
+but only for the working directory of the session currently running -- a project
+cleans itself the next time you use nvx there, and a project you never revisit
+stays exposed indefinitely.
+
+README has disclosed this under Known limitations since 0.5.0; this row said an
+unqualified "Yes" until 2026-08-20, which an acceptance pass caught by writing
+into the nvx repository itself from a sandbox scoped to a different project. That
+repository carried 19 such grants at the time.
+
+It is now observable rather than only documented: `nvx doctor` reports leftover
+grants on the project it is run in, counts them against health so the command
+exits non-zero, and removes them under `--fix`. nvx keeps no record of where it
+has run, so it cannot sweep the machine -- the check answers for the directory
+you are standing in, which is the one about to matter. Deliberately not a
+launch-path warning: the launch path already removes them from the working
+directory before running anything, so by then there is nothing left to report.
+Pinned by `TestStaleProjectGrantsAreFoundReportedAndFixed`, with a companion test
+asserting the scan ignores per-project capability SIDs -- removing one of those
+would revoke the running sandbox's own access.
 
 ⁴ **Windows containment became per-project in 0.5.0. Before that it was
 per-machine.**
