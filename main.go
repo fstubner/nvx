@@ -369,7 +369,14 @@ func parseShellArg(args []string) string {
 }
 
 func printHelp() {
-	fmt.Println(`nvx - A modern, secure, cross-platform runtime version manager
+	fmt.Println(helpText())
+}
+
+// helpText is separated from printing so a test can compare it against the same
+// list in README.md. The two are hand-maintained copies and had already drifted:
+// the README was missing doctor, grants, import, setup and shim.
+func helpText() string {
+	return `nvx - A modern, secure, cross-platform runtime version manager
 
 Usage:
   nvx <command> [arguments]
@@ -400,8 +407,9 @@ Commands:
   grants list              Show this project's approved egress hosts, trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)
   audit [--summary]        Review the local record of past runs and security decisions
-  import [nvm|fnm|volta]  Import Node.js versions already installed via nvm, fnm, or volta
+  import [nvm|fnm|volta]   Import Node.js versions already installed via nvm, fnm, or volta
                            (defaults to scanning all three)
+  version, -v              Print version info
 
 Options:
   --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
@@ -418,7 +426,7 @@ Examples:
   nvx install lts
   nvx install bun@1.2
   nvx use 20.11.0
-  nvx use bun@1.2`)
+  nvx use bun@1.2`
 }
 
 // UI Logging helpers (stderr)

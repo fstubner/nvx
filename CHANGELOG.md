@@ -34,6 +34,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The log is now capped at 4 MB with one rotated generation kept; it grew without
   limit before, which was tolerable when only security events went in it.
 
+### Fixed
+
+* **The README's command list was missing five commands**, some for several
+  releases: `doctor`, `grants list`, `grants reset`, `import`, `setup` and
+  `shim`. A reader checking whether nvx could inspect its grants would have
+  concluded it could not. `nvx help` had its own gap in the other direction — it
+  never listed `version`.
+
+  Both lists are now complete, and a test compares them so the next omission
+  fails instead of shipping. Nothing breaks when documentation is wrong, nobody
+  re-reads a list they wrote, and the person who notices is the one who already
+  gave up on the feature.
+
+  The README's flag section was also misleading: it listed `--no-sandbox` under
+  "shim flags", which reads as `npm --no-sandbox install`. In that position the
+  flag is stripped and ignored — deliberately, so nothing escapes the sandbox by
+  appending a flag to npm. It only works as `nvx --no-sandbox npm ...`, and the
+  README now says so. `--strict` and `--standard` were not documented there at
+  all.
+
 ## [0.5.2] - 2026-08-20
 
 ### Security
