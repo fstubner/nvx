@@ -114,18 +114,45 @@ Commands:
   env [--shell=<type>]     Print shell integration script (powershell, bash, zsh)
   auto [--shell=<type>]    Auto-switch based on .nvmrc / .node-version /
                            .bun-version / package.json engines
-  verify-install <pkgs>    Verify package safety before installing (called by wrappers)
-  init-shims               Generate PATH shims in ~/.nvx/bin
+  import [nvm|fnm|volta]   Import Node.js versions already installed via nvm, fnm
+                           or volta (defaults to scanning all three)
+  init-shims               Generate PATH shims in ~/.nvx/bin (and project bin
+                           shims when run inside a project)
   policy init              Create default policy files (--global, --project, --force)
-  cleanup                  Remove stale sandbox sessions from previous runs
+  doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH.
+                           Diagnosis is read-only; --fix repairs a shadowed
+                           persistent PATH
+  grants list              Show this project's approved egress hosts, trusted
+                           tools, and policy pins
+  grants reset [--all]     Forget this project's grants (or every project's)
   audit [--summary]        Review the local record of past runs and the security
                            decisions nvx made (--runs, --failures, --limit=N)
+  cleanup                  Remove stale sandbox sessions from previous runs
+  setup [--undo]           (Windows, optional) One-time elevated setup adding
+                           drive-root access and removing a loopback exemption an
+                           older nvx left behind. Egress is allowlisted either way
+  verify-install <pkgs>    Verify package safety before installing (called by shims)
+  shim <cmd> [args]        Internal shim router (called by generated wrappers)
   version, -v              Print version info
 
-Shim flags (node, npm, npx, yarn, pnpm, bun, bunx):
-  --no-sandbox             Run without sandbox for this invocation
+Isolation flags — these go BEFORE the command, as `nvx --no-sandbox npm ...`.
+Passed to the wrapped command instead (`npm --no-sandbox ...`) they are stripped
+and ignored, so nothing can escape the sandbox by tacking a flag onto npm:
+  --no-sandbox             Run this invocation without the sandbox
+  --strict                 Contain your own code too, not just installs and
+                           ad-hoc tools
+  --standard               Force standard containment, overriding a project
+                           policy that sets strict
   --filesystem-provider=<name>  Override isolation.filesystem.provider
                            (native | docker; experimental: wsl, wslc, systemd-nspawn)
+
+Options:
+  --shell=<type>           Shell syntax to emit: powershell, bash, zsh
+  -y, --yes                Auto-approve all prompts
+  -q, --quiet              Suppress success/info messages (errors and warnings
+                           still print)
+  --agent-mode             Equivalent to -y -q; also settable with
+                           NVX_AGENT_MODE=1
 ```
 
 ### Zero-config sandbox
