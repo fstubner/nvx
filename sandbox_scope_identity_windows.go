@@ -184,13 +184,25 @@ func staleAppContainerSIDsOn(path string) []string {
 	seen := map[string]bool{}
 	var sids []string
 	for _, line := range strings.Split(string(out), "\n") {
-		// An inherited ACE cannot be removed with /remove:g, and trying wastes a
-		// process launch per line.
-		if strings.Contains(line, "(I)") {
-			continue
-		}
 		for _, m := range appContainerPackageSID.FindAllString(line, -1) {
 			if seen[m] {
+				continue
+			}
+			rights := rightsAfterSID(line, m)
+			// An inherited ACE cannot be removed with /remove:g, so skip it --
+			// but decide that from the rights this SID carries, not from the
+			// whole line.
+			//
+			// icacls prints the directory's path on the same line as its first
+			// ACE, so testing the line meant a project whose PATH contained the
+			// literal "(I)" hid its own first entry from both this scan and the
+			// launch-path cleanup. Such a project stayed writable by every
+			// sandbox on the machine while doctor reported it healthy and --fix
+			// did nothing. Found by an acceptance pass with a directory named
+			// with "(I)" in it; the same class of mistake as the one this
+			// function was fixed for a commit ago -- matching on text shape
+			// rather than on meaning.
+			if strings.HasPrefix(rights, "(I)") {
 				continue
 			}
 			// Match on what the ACE GRANTS, not merely on the SID being present.
@@ -208,7 +220,7 @@ func staleAppContainerSIDsOn(path string) []string {
 			// offering to remove it. The same scan drives the launch-path cleanup,
 			// so the bad match would also have revoked a grant nvx had just
 			// written. Legacy grants are (OI)(CI)(M) and still match.
-			if !aceGrantsMoreThanTraverse(rightsAfterSID(line, m)) {
+			if !aceGrantsMoreThanTraverse(rights) {
 				continue
 			}
 			seen[m] = true

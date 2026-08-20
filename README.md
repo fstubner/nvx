@@ -367,6 +367,14 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   that has not finished in two minutes is anomalous; an `npx`-launched dev server
   running for hours is doing its job, and a hint firing on it would be noise. So
   for tool runners the hang is documented rather than detected.
+- **On Windows, a server started inside the sandbox is unreachable from the host.**
+  The bind succeeds and the tool prints that it is listening, but Windows refuses
+  connections into an AppContainer from outside it — the same restriction the
+  egress relay exists to work around, and unaffected by the loopback exemption. So
+  `nvx npx vite`, `npx serve` and similar appear to start and then serve nobody.
+  Your own `npm run dev` is uncontained at the default `standard` level and is
+  unaffected; for a contained tool runner use `nvx --no-sandbox npx <tool>`.
+  Measured 2026-08-20; the FAQ had claimed loopback worked for dev servers.
 - **On macOS, nothing has been verified at runtime.** The Seatbelt profile's text
   is asserted by unit tests, so nvx generates the policy it intends to — but no
   test has ever confirmed the kernel enforces it. The macOS smoke check only proves
@@ -395,7 +403,9 @@ Traditional managers change system-wide paths or symbolic links, which can disru
 
 ### How do sandboxed containers handle local servers, ports, and networking?
 Web development requires running local dev servers (e.g. listening on port `3000`) and calling external backend APIs or databases:
-* **Native Sandbox**: Loopback bind/connect works for dev servers. With `network.mode: proxy`, outbound TCP goes through the nvx allowlist proxy (HTTP_PROXY / SOCKS5). Host services on `localhost` remain reachable via `allow_hosts`.
+* **Native Sandbox**: outbound TCP goes through the nvx allowlist proxy (HTTP_PROXY / SOCKS5) under `network.mode: proxy`, and host services on `localhost` are reachable via `allow_hosts`.
+
+  **On Windows, a dev server started inside the sandbox is not reachable from your browser.** The bind succeeds and the server reports itself listening, but Windows blocks connections into an AppContainer from outside it — the same restriction the egress relay exists to work around. This affects `nvx npx vite`, `npx serve` and anything else that serves a port. It is not affected by the loopback exemption. Run dev servers uncontained: `npm run dev` is uncontained at the default `standard` level anyway, and `nvx --no-sandbox npx <tool>` covers the tool-runner case. This entry claimed the opposite, with no platform qualifier, until 2026-08-20.
 * **Docker Sandbox**: With `network.mode: open`, the container can reach host services via the standard Docker host gateway. With `offline`/`loopback` the container runs with `--network none` (no network at all). Allowlisted `proxy` mode is not supported under Docker — use the native provider when you need per-host egress control.
 
 ### What if a project needs both Node and Bun?
