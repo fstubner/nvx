@@ -360,18 +360,76 @@ func ScanVulnerabilitiesBatch(packages []OSVQuery) (map[string][]OSVVuln, error)
 			vulns := batchResp.Results[i].Vulns
 			if len(vulns) > 0 {
 				key := fmt.Sprintf("%s@%s", query.Package.Name, query.Version)
-				results[key] = vulns
+				results[key] = fillVulnSummaries(client, vulns)
 			}
 		}
 	}
 	return results, nil
 }
 
+// fillVulnSummaries fetches the one-line description for each advisory.
+//
+// /v1/querybatch answers with ids and modification times only -- no summary --
+// so every advisory printed as "GHSA-xxxx-xxxx-xxxx: " with nothing after the
+// colon. A wall of bare identifiers is not something a developer can act on, and
+// it reads like the tool is broken. Reported from real use 2026-08-20.
+//
+// Best-effort by construction: a failed lookup leaves the summary empty, which is
+// exactly today's output, so this can only improve the message and never block an
+// install on a second network call. Bounded to a handful of lookups because the
+// list is what one install matched, not the whole database.
+func fillVulnSummaries(client *http.Client, vulns []OSVVuln) []OSVVuln {
+	const maxDetailLookups = 10
+	for i := range vulns {
+		if i >= maxDetailLookups || vulns[i].Summary != "" || vulns[i].ID == "" {
+			continue
+		}
+		if s := fetchVulnSummary(client, vulns[i].ID); s != "" {
+			vulns[i].Summary = s
+		}
+	}
+	return vulns
+}
+
+func fetchVulnSummary(client *http.Client, id string) string {
+	// url.PathEscape on the id: it comes from a network response, and it is
+	// interpolated into a request path.
+	resp, err := client.Get("https://api.osv.dev/v1/vulns/" + url.PathEscape(id))
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var detail struct {
+		Summary string `json:"summary"`
+		Details string `json:"details"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&detail); err != nil {
+		return ""
+	}
+	if detail.Summary != "" {
+		return detail.Summary
+	}
+	// Some advisories carry only the long form. One line of it beats nothing.
+	if detail.Details != "" {
+		first := strings.TrimSpace(strings.SplitN(detail.Details, "\n", 2)[0])
+		if len(first) > 160 {
+			first = first[:157] + "..."
+		}
+		return first
+	}
+	return ""
+}
+
 // NpmRegistryMetadata represents minimal package info from registry
 type NpmRegistryMetadata struct {
-	DistTags struct {
-		Latest string `json:"latest"`
-	} `json:"dist-tags"`
+	// Every dist-tag, not just latest. A registry serves `next`, `beta`,
+	// `canary` and whatever else a publisher defines, and resolving only
+	// `latest` left the rest to fall through as literal strings -- see
+	// resolveVersionQuery.
+	DistTags map[string]string            `json:"dist-tags"`
 	Time     map[string]string            `json:"time"`
 	Versions map[string]NpmVersionDetails `json:"versions"`
 }
@@ -405,13 +463,9 @@ func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, pub
 		return "", time.Time{}, false, err
 	}
 
-	resolvedVer := versionQuery
-	if resolvedVer == "" {
-		resolvedVer = meta.DistTags.Latest
-	}
-
-	if resolvedVer == "" {
-		return "", time.Time{}, false, fmt.Errorf("could not determine latest version")
+	resolvedVer, err := resolveVersionQuery(versionQuery, meta)
+	if err != nil {
+		return "", time.Time{}, false, err
 	}
 
 	// Check for installation scripts
@@ -453,4 +507,56 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// resolveVersionQuery turns whatever followed the "@" into a concrete version
+// present in the registry metadata, or reports that it could not.
+//
+// It used to be `resolvedVer := versionQuery`, replaced by the latest tag only
+// when the query was empty. So `npm install npm@latest` carried the literal
+// string "latest" forward, and every lookup keyed on it missed:
+//
+//   - meta.Versions["latest"] misses, so hasInstallScripts stayed false and the
+//     install-script prompt never appeared;
+//   - meta.Time["latest"] misses, so the release-age check compared against a
+//     zero time and never fired;
+//   - the OSV query carried version "latest", so the vulnerability scan was not
+//     about the version being installed.
+//
+// Two security checks silently did nothing for the single most common way to
+// install a package, and the third reported against a version that does not
+// exist. Reported from real use 2026-08-20 as a scary, detail-free advisory list
+// for `npm@latest`; the noisy output was the symptom, this is the cause.
+//
+// Anything that is neither a dist-tag nor an exact published version -- a semver
+// range like ^4.17.0, or a typo -- is an error rather than a pass-through. The
+// caller turns that into "could not verify registry metadata ... proceed?", which
+// is honest: nvx cannot check a version it cannot name. Silently continuing with
+// every check disabled is what this replaces.
+func resolveVersionQuery(versionQuery string, meta NpmRegistryMetadata) (string, error) {
+	q := strings.TrimSpace(versionQuery)
+
+	if q == "" {
+		if latest := meta.DistTags["latest"]; latest != "" {
+			return latest, nil
+		}
+		return "", fmt.Errorf("could not determine latest version")
+	}
+
+	// An exact published version needs no resolution. Checked before the tag map
+	// so a version that happens to share a tag's name cannot be redirected.
+	if _, ok := meta.Versions[q]; ok {
+		return q, nil
+	}
+
+	if tagged, ok := meta.DistTags[q]; ok && tagged != "" {
+		if _, known := meta.Versions[tagged]; known {
+			return tagged, nil
+		}
+		// The registry named a version for this tag that it did not publish
+		// details for. Better to say so than to check nothing.
+		return "", fmt.Errorf("dist-tag %q points at version %q, which the registry did not describe", q, tagged)
+	}
+
+	return "", fmt.Errorf("%q is not an exact version or a dist-tag; nvx cannot check a version it cannot resolve", q)
 }

@@ -126,6 +126,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`@latest` silently skipped two security checks, and scanned the wrong
+  thing.** Reported from real use: `npm install -g npm@latest` produced a
+  vulnerability alert listing seven advisories with no descriptions. The noisy
+  output was the symptom. The cause was that version resolution replaced the
+  query only when it was *empty*, so the literal string `"latest"` was carried
+  forward -- and every lookup keyed on it missed:
+
+  - `meta.Versions["latest"]` misses, so **the install-script prompt never
+    appeared** for any `@latest` install;
+  - `meta.Time["latest"]` misses, so **the release-age check never fired**;
+  - OSV was queried for version `"latest"`, so the scan was not about the version
+    being installed.
+
+  Every dist-tag now resolves -- `latest`, `next`, `beta`, whatever a publisher
+  defines -- and an exact version wins over a same-named tag. Verified against the
+  live registry: `npm@latest` now scans clean, and `esbuild@latest` correctly
+  warns about install scripts naming the resolved `esbuild@0.28.2`, which it
+  previously did not warn about at all.
+
+  **Behaviour change worth knowing:** a semver range (`lodash@^4.17.0`) is now an
+  explicit "could not verify registry metadata ... proceed?" rather than a silent
+  pass. nvx cannot check a version it cannot name, and quietly running no checks
+  is what this replaces. Resolving ranges properly would remove the prompt and is
+  not done here.
+
+* **Advisories printed as bare identifiers with no description.** OSV's
+  `querybatch` returns ids and modification times only, so every finding rendered
+  as `GHSA-xxxx-xxxx-xxxx: ` with nothing after the colon -- unactionable, and it
+  reads like the tool is broken. Summaries are now fetched per advisory,
+  best-effort and bounded: a failed lookup leaves the line exactly as it was
+  before, so this can only improve the message and never blocks an install on a
+  second network call.
+
 * **A refused global install still ran a vulnerability scan and asked you to
   approve it first.** Reported from real use. `npm install -g npm@latest` printed
   a scan, listed advisories, asked "Proceed with installation despite active
