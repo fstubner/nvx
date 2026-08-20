@@ -633,6 +633,22 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 		return 1
 	}
 
+	// Refuse a contained global install BEFORE verifying anything.
+	//
+	// The refusal is deterministic -- it depends only on the flags -- while
+	// verification hits the network, can take seconds, and can stop to ask whether
+	// to proceed despite known vulnerabilities. Running it first meant a user was
+	// shown a vulnerability prompt, answered it, and only then learned the command
+	// could never have run. Reported from real use 2026-08-20.
+	//
+	// Ordered before verification rather than merged into the block below because
+	// that block is inside shouldSandbox, which is where the refusal belongs: a
+	// global install is fine when isolation is off.
+	if shouldSandbox(cmdName, args, policy, opts) && isGlobalInstall(cmdName, args) {
+		refuseContainedGlobalInstall(cmdName)
+		return 1
+	}
+
 	switch cmdName {
 	case "npm", "yarn", "pnpm", "npx", "bun", "bunx":
 		if pkgs := detectShimPackagesForVerification(cmdName, args); len(pkgs) > 0 {
@@ -654,9 +670,9 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 			LogInfo("--no-sandbox is ignored when passed to a wrapped command. To run without isolation, use: nvx --no-sandbox %s ...", cmdName)
 		}
 		if isGlobalInstall(cmdName, args) {
-			LogError("Global installs (-g) can't run inside the sandbox.")
-			LogInfo("They need write access to a location every future nvx invocation trusts, which the sandbox deliberately never grants — a contained install must not be able to plant something that later runs un-contained.")
-			LogInfo("Run it without OS isolation instead:  nvx --no-sandbox %s ...", cmdName)
+			// Normally unreachable: the same check runs before verification above.
+			// Kept so the rule holds if that early return is ever moved.
+			refuseContainedGlobalInstall(cmdName)
 			return 1
 		}
 		toolName := ""
@@ -858,4 +874,42 @@ func DetectVersionConfig(startDir string) (version string, sourceFile string, er
 	}
 
 	return "", "", nil
+}
+
+// refuseContainedGlobalInstall explains why -g cannot run contained, and how to
+// run it deliberately.
+//
+// The suggested command names nvx itself, which is only useful if `nvx` is on
+// PATH. The installer puts nvx.exe in ~/.nvx/bin alongside the shims, so it
+// normally is -- but a source build that ran `init-shims` leaves shims pointing at
+// the build tree with no nvx.exe installed, and then this advice cannot be
+// followed. See installedNvxHint.
+func refuseContainedGlobalInstall(cmdName string) {
+	LogError("Global installs (-g) can't run inside the sandbox.")
+	LogInfo("They need write access to a location every future nvx invocation trusts, which the sandbox deliberately never grants — a contained install must not be able to plant something that later runs un-contained.")
+	LogInfo("Run it without OS isolation instead:  %s --no-sandbox %s ...", installedNvxHint(), cmdName)
+}
+
+// installedNvxHint returns how to invoke nvx in a message the user will retype.
+//
+// "nvx" is right when it is on PATH. When it is not -- a source build, or an
+// install whose bin directory is not on PATH -- printing "nvx" tells the user to
+// run a command their shell cannot find, which is what happened in the report this
+// came from. Fall back to the absolute path of the running binary, which is always
+// correct even if it is less pretty.
+func installedNvxHint() string {
+	if _, err := exec.LookPath("nvx"); err == nil {
+		return "nvx"
+	}
+	if self, err := os.Executable(); err == nil {
+		return quoteForShellHint(self)
+	}
+	return "nvx"
+}
+
+func quoteForShellHint(path string) string {
+	if strings.ContainsAny(path, " \t") {
+		return `"` + path + `"`
+	}
+	return path
 }

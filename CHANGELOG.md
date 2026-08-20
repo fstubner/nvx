@@ -126,6 +126,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A refused global install still ran a vulnerability scan and asked you to
+  approve it first.** Reported from real use. `npm install -g npm@latest` printed
+  a scan, listed advisories, asked "Proceed with installation despite active
+  vulnerabilities?", took the yes -- and then refused, because `-g` cannot run
+  contained. The refusal depends only on the flags, so it was knowable before any
+  of it. The delay is the smaller half: approving a security prompt for a command
+  that could never run trains people to click through the prompt that matters.
+  The check now runs before verification.
+
+* **The refusal told you to run a command your shell could not find.** It suggests
+  `nvx --no-sandbox ...`, which needs `nvx` on PATH. The installer puts it in
+  `~/.nvx/bin` beside the shims, but a source build that runs `init-shims` leaves
+  shims pointing into the build tree with no `nvx` installed -- and then the advice
+  produces "The term 'nvx' is not recognized", which reads as the user's mistake.
+  The hint now falls back to the running binary's absolute path when `nvx` does not
+  resolve.
+
+  Two related hazards were found and are recorded, not fixed: shims embed the
+  absolute path of whichever binary generated them, so running `init-shims` from a
+  build tree makes every shim depend on a file that may be rebuilt, moved or
+  deleted; and `yarn global add` is not recognised as a global install at all
+  (`globalInstallFlags` is `-g`/`--global`), so it is contained and fails with the
+  confusing permission error this check exists to prevent. Pinned by
+  `TestYarnGlobalSubcommandIsNotYetRecognised` so it stays visible.
+
+### Fixed
+
 * **A hung contained process could block every later contained launch.** The
   sandbox supervisor was staged under one fixed name, and Windows refuses to
   replace a running executable -- so a supervisor still alive from an earlier
