@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **A typo in `isolation.network.mode` silently gave you more network than you
+  asked for.** An unrecognised value fell through to proxy in every reader, so a
+  policy saying `"offlin"` got a live egress proxy while its author believed they
+  had asked for no network at all. Nothing warned. The neighbouring
+  `isolation.level` already reported an unrecognised value, and this is the field
+  where being wrong grants more access rather than less.
+
+  Unrecognised modes now warn once, name the valid values, and are rewritten to
+  proxy so no downstream reader falls into its own default arm -- which is also
+  where the platforms diverged: the same typo produced proxy on Windows and Linux
+  and no network rule at all on macOS. Warned rather than refused, matching
+  `isolation.level`, and because proxy is the restrictive default: you asked for
+  stricter than the default and get the default, loudly.
+
+* **A corrupted staged supervisor bricked every contained launch, permanently.**
+  The staged copy's name encodes the source binary's size and timestamp and the
+  reuse check compares size, so a corruption preserving size -- an antivirus
+  quarantine stub, a cloud-sync placeholder, a bad sector -- was invisible to it.
+  Every later launch failed identically, and neither `cleanup` nor `doctor` could
+  clear it. Found by an acceptance pass zeroing 512 bytes in place; it is the
+  failure the previous commit set out to eliminate, reached by another route.
+
+  An image error from `CreateProcess` now discards the staged copy and retries
+  once. The trigger is narrow -- five image-specific Windows codes, matched by
+  code rather than message text so it works on a localised Windows -- because a
+  launch refused for permissions must not spin. The launch error is wrapped with
+  `%w` for the same reason; it was `%v`, which stringified the code away.
+
 * **The stale-grant check reported live grants as leftovers, and `--fix` deleted
   them.** The scan matched any AppContainer package SID on a directory, ignoring
   what the entry actually granted. But the current design writes `(X,RA)` --

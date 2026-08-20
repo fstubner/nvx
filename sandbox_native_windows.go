@@ -221,6 +221,21 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	exitCode, err := launchAppContainerProcess(
 		cmdPath, launchArgs, cleanEnv, workDir, sid, 0, capabilitySIDs,
 	)
+	// A staged supervisor can be corrupted in place without changing its size --
+	// an antivirus quarantine stub, a cloud-sync placeholder, a bad sector. The
+	// reuse check compares size, so it would never notice, and every later
+	// contained launch would fail the same way with nothing able to clear it.
+	// Discard it and try once more; a second failure is reported as it stands.
+	if err != nil && useRelay && stagedImageIsUnusable(err) {
+		LogWarn("The staged sandbox supervisor is unusable; replacing it and retrying once.")
+		if rerr := restageSupervisor(config.NvxHome, cmdPath); rerr != nil {
+			LogError("Could not replace the sandbox supervisor: %v", rerr)
+			return 1
+		}
+		exitCode, err = launchAppContainerProcess(
+			cmdPath, launchArgs, cleanEnv, workDir, sid, 0, capabilitySIDs,
+		)
+	}
 	if err != nil {
 		LogError("AppContainer launch failed: %v", err)
 		return 1

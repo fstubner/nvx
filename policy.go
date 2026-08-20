@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // Policy defines corporate rules for package manager operations and sandboxing.
@@ -166,6 +167,20 @@ func normalizePolicy(p *Policy) {
 	// no longer defaulted into every written policy. See PromptsPolicy above.
 	if p.Isolation.Network.Mode == "" {
 		p.Isolation.Network.Mode = "proxy"
+	} else if mode, ok := parseNetworkMode(p.Isolation.Network.Mode); !ok {
+		// A typo in this field used to pass silently and bucket as proxy, so a
+		// policy asking for "offlin" got a live egress proxy while the user
+		// believed they had asked for no network at all. The neighbouring
+		// isolation.level already warns on an unrecognised value; this is the same
+		// treatment for the field where getting it wrong hands out more access.
+		//
+		// Normalised rather than refused, matching isolation.level, and because
+		// proxy is the restrictive default rather than an open one -- the user
+		// asked for stricter than the default and gets the default, loudly. The
+		// value is rewritten so every downstream reader sees something valid
+		// instead of falling into its own default arm.
+		warnUnknownNetworkModeOnce(p.Isolation.Network.Mode)
+		p.Isolation.Network.Mode = mode
 	}
 	if len(p.Isolation.Network.DefaultAllow) == 0 && !p.Isolation.Network.DefaultAllowSet {
 		p.Isolation.Network.DefaultAllow = DefaultPolicy().Isolation.Network.DefaultAllow
@@ -656,4 +671,38 @@ func MergePolicies(global, local Policy) Policy {
 	}
 
 	return merged
+}
+
+// parseNetworkMode canonicalises isolation.network.mode, reporting whether the
+// value was recognised. An unrecognised mode normalises to "proxy" -- the
+// restrictive default -- so callers never have to guess at a typo's intent.
+func parseNetworkMode(mode string) (string, bool) {
+	switch m := strings.ToLower(strings.TrimSpace(mode)); m {
+	case "proxy", "offline", "loopback", "open":
+		return m, true
+	case "":
+		return "proxy", true
+	default:
+		return "proxy", false
+	}
+}
+
+// warnUnknownNetworkModeOnce reports a bad mode a single time per value.
+// normalizePolicy runs more than once per invocation, and repeating a security
+// warning verbatim trains people to skim past it.
+var (
+	warnedNetworkModesMu sync.Mutex
+	warnedNetworkModes   = map[string]bool{}
+)
+
+func warnUnknownNetworkModeOnce(mode string) {
+	warnedNetworkModesMu.Lock()
+	seen := warnedNetworkModes[mode]
+	warnedNetworkModes[mode] = true
+	warnedNetworkModesMu.Unlock()
+	if seen {
+		return
+	}
+	LogWarn("Unrecognized isolation.network.mode %q in policy; using proxy (allowlisted egress).", mode)
+	LogInfo("Valid modes: proxy, offline, loopback, open.")
 }
