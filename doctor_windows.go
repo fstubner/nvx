@@ -12,7 +12,7 @@ import (
 // repairPersistentPath rewrites the User PATH environment variable so the shim
 // dir leads and raw-runtime dirs no longer shadow it. Returns true if it made a
 // change. New shells pick up the updated value.
-func repairPersistentPath(nvxHome string, apply bool) (bool, error) {
+func repairPersistentPathImpl(nvxHome string, apply bool) (bool, error) {
 	shimDir := shimDirPath(nvxHome)
 	out, err := runWinCmd(15*time.Second, "reg", "query", `HKCU\Environment`, "/v", "Path")
 	if err != nil {
