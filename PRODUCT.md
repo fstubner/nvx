@@ -85,9 +85,14 @@ Deferred with intent, not built:
   measured dispatch overhead is ~3 ms Linux, ~4 ms macOS, ~38 ms Windows.
 - **Pre-1.0.** Breaking changes are acceptable between minor versions; silently
   weakening a documented security guarantee is not.
-- **Three platforms are not equal, and the differences are published.** macOS
-  egress is cooperative and its Seatbelt profile is verified only at generation
-  level. `docs/enforcement-matrix.md` is the authority; where it and this
+- **Three platforms are not equal, and the differences are published.** Windows
+  containment is measured by replaying the attacks; Linux is covered by
+  privileged CI tests and smoke scripts; **macOS is unverified at runtime** — its
+  Seatbelt profile's text is asserted by unit tests, and no macOS hardware has
+  been observed enforcing it. (This constraint said until 2026-08-20 that macOS
+  egress was "cooperative", which was wrong in the other direction: the profile is
+  `(deny default)`. It was both overstating the evidence and understating the
+  design.) `docs/enforcement-matrix.md` is the authority; where it and this
   document disagree, that matrix is right and this file is stale.
 
 ## Anti-goals
