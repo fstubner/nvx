@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **The stale-grant check reported live grants as leftovers, and `--fix` deleted
+  them.** The scan matched any AppContainer package SID on a directory, ignoring
+  what the entry actually granted. But the current design writes `(X,RA)` --
+  traverse and read-attributes, non-inheritable -- on the directories above a
+  sandbox so it can walk through them without listing them. Run nvx from a
+  subdirectory and the project root carries one, so on a healthy machine `doctor`
+  announced it as a pre-0.5.0 leftover letting "any nvx sandbox read and write
+  this project", exited non-zero, and offered to remove it. False in every clause
+  for a traverse-only entry, and the removal took out a grant nvx had just
+  written. The regex also matched entries belonging to unrelated AppContainer
+  applications.
+
+  The scan now matches on what an entry grants, not on the SID being present.
+  Anything beyond the traverse pair is stale, a strict subset of it is not, and
+  unreadable rights stay quiet -- this drives both a security claim shown to the
+  user and a removal, so asserting either from an entry that could not be parsed
+  is what caused the false positive. Legacy `(OI)(CI)(M)` grants still match.
+  Introduced in the previous commit and caught by the next acceptance pass.
+
 * **`nvx doctor` now finds the pre-0.5.0 grants that leave a project writable by
   every sandbox on the machine.** Up to 0.5.0 every sandbox ran as one shared
   package identity and the grants it wrote were never revoked, so a contained

@@ -41,6 +41,16 @@ func TestDoctorDoesNotWriteShimsWithoutFix(t *testing.T) {
 func TestDoctorFixWritesShims(t *testing.T) {
 	nvxHome := tempDir(t)
 
+	// runDoctor(_, true) reaches repairPersistentPath, which on Windows writes the
+	// developer's real HKCU\Environment\Path. A throwaway NVX_HOME does not make
+	// that write throwaway: every `go test` prepended a dead temp directory to the
+	// actual user PATH, and 38 had accumulated on the machine an acceptance pass
+	// measured. Stub the machine-wide write; everything this test asserts -- shim
+	// generation -- still runs for real.
+	restore := repairPersistentPath
+	repairPersistentPath = func(string, bool) (bool, error) { return false, nil }
+	t.Cleanup(func() { repairPersistentPath = restore })
+
 	runDoctor(nvxHome, true)
 
 	shimDir := filepath.Join(nvxHome, "bin")

@@ -190,11 +190,76 @@ func staleAppContainerSIDsOn(path string) []string {
 			continue
 		}
 		for _, m := range appContainerPackageSID.FindAllString(line, -1) {
-			if !seen[m] {
-				seen[m] = true
-				sids = append(sids, m)
+			if seen[m] {
+				continue
 			}
+			// Match on what the ACE GRANTS, not merely on the SID being present.
+			//
+			// Matching the SID alone reported the current design's own ancestor
+			// grant as a leftover. `grantAppContainerPathReadExec` writes (X,RA) --
+			// traverse and read-attributes, non-inheritable -- on the directories
+			// above a sandbox so it can walk through them without listing them.
+			// Run nvx from a subdirectory and the project root carries one; nothing
+			// about it is stale, and it is required for the next launch.
+			//
+			// An acceptance pass caught doctor announcing that live grant as a
+			// pre-0.5.0 leftover letting "any nvx sandbox read and write this
+			// project" -- false in every clause for a traverse-only ACE -- and
+			// offering to remove it. The same scan drives the launch-path cleanup,
+			// so the bad match would also have revoked a grant nvx had just
+			// written. Legacy grants are (OI)(CI)(M) and still match.
+			if !aceGrantsMoreThanTraverse(rightsAfterSID(line, m)) {
+				continue
+			}
+			seen[m] = true
+			sids = append(sids, m)
 		}
 	}
 	return sids
+}
+
+// rightsAfterSID returns the parenthesised groups icacls prints after "<sid>:",
+// e.g. "(OI)(CI)(M)" or "(X,RA)". Empty when the line has no rights to read.
+func rightsAfterSID(line, sid string) string {
+	_, rest, ok := strings.Cut(line, sid+":")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(rest)
+}
+
+// aceGrantsMoreThanTraverse reports whether an ACE grants anything beyond the
+// traverse+read-attributes pair the current design uses.
+//
+// Unreadable rights count as NOT stale on purpose. This drives both a security
+// claim shown to the user and a removal; asserting either from an ACE we could
+// not parse is how the false positive above happened, and staying quiet is the
+// safer failure -- the legacy grants this looks for print their mask plainly.
+func aceGrantsMoreThanTraverse(rights string) bool {
+	var tokens []string
+	for _, group := range strings.Split(rights, ")") {
+		group = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(group), "("))
+		if group == "" {
+			continue
+		}
+		for _, tok := range strings.Split(group, ",") {
+			switch tok = strings.ToUpper(strings.TrimSpace(tok)); tok {
+			case "":
+				// nothing
+			case "OI", "CI", "IO", "NP", "I":
+				// Inheritance flags, not access rights.
+			default:
+				tokens = append(tokens, tok)
+			}
+		}
+	}
+	if len(tokens) == 0 {
+		return false
+	}
+	for _, tok := range tokens {
+		if tok != "X" && tok != "RA" {
+			return true
+		}
+	}
+	return false
 }

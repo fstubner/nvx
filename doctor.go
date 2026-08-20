@@ -384,3 +384,18 @@ func hintIfShadowed(nvxHome string) {
 	LogWarn("A runtime dir is ahead of nvx's shim dir on PATH; some commands may bypass nvx. Run: nvx doctor")
 	_ = os.WriteFile(marker, nil, 0o600)
 }
+
+// repairPersistentPath is a variable so tests can stop it touching the real
+// machine.
+//
+// It writes HKCU\Environment\Path on Windows. A test called runDoctor(home,
+// true), which reaches it, so every `go test` on a developer's Windows box
+// prepended a dead temp directory to their actual user PATH -- 38 of them had
+// accumulated on the machine an acceptance pass measured, in a registry value
+// with a hard practical size limit. The test's throwaway NVX_HOME did not make
+// the write throwaway.
+//
+// The seam is deliberately at this boundary: everything above it, including the
+// decision of whether a repair is available and the report the user reads, still
+// runs for real in tests. Only the machine-wide write is replaceable.
+var repairPersistentPath = repairPersistentPathImpl
