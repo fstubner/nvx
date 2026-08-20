@@ -6,6 +6,8 @@ review). Quoted where it matters so this stands alone.
 **Verdict:** Do not execute as written. Two components are sound and separable,
 one is architecturally impossible as described, and the headline component would
 silently remove the two security properties 0.5.0 and 0.5.2 exist to provide.
+That last point was the review's one unmeasured claim; it has since been measured
+and holds — see *The experiment* below.
 
 ## How to read the claims below
 
@@ -28,14 +30,51 @@ Measured on this machine during review, and reproducible:
   (`TestReverseRelayReachesAServerInsideTheContainer`, written during this
   review).
 
-Reasoned from mechanism, **not** measured — flagged because the plan's fate turns
-on the first one:
+- Restricted tokens do not restrict the network. Measured after this review was
+  first written, by the experiment it recommended
+  (`TestRestrictedTokenNetworkBehaviour`) — see below.
 
-- Restricted tokens gate access checks on securable objects (files, registry,
-  named objects). Outbound sockets are not gated that way, so a restricted-token
-  process has no equivalent of AppContainer's network-capability model.
+Reasoned from mechanism, **not** measured:
+
 - `CreateRestrictedToken`'s restricting-SID list might reproduce per-project
   identity. Unproven.
+
+## The experiment: restricted tokens and egress
+
+The review's closing recommendation was one experiment. It has now been run, on
+this machine, in four token shapes. In each, the child dials `1.1.1.1:443`
+directly — a literal address, so nothing depends on name resolution.
+
+| Token | Outbound TCP | DNS | Read `~/.npmrc` |
+|---|---|---|---|
+| `DISABLE_MAX_PRIVILEGE` (the plan's proposal) | **connected** | blocked | allowed |
+| `LUA_TOKEN` | **connected** | blocked | allowed |
+| `WRITE_RESTRICTED` + restricting SID `S-1-5-12` | **connected** | blocked | allowed |
+| restricting SID `S-1-5-12` alone | failed | failed | — |
+
+The baseline for comparison, already in this suite: inside an AppContainer with
+no network capability, the same dial gives `EACCES`.
+
+**Three of four shapes reach the internet, including the one the plan proposes.**
+The mechanism reasoning was right: an outbound socket is not a securable object,
+so a token that narrows access checks has nothing to deny.
+
+The fourth is not the exception it looks like. It did not block the connection —
+it broke the process: `winapi error #10093` (Winsock never initialised) and a
+panic loading `iphlpapi.dll`. A token that cannot load a system DLL cannot run
+npm either. The probe classifies that case separately for exactly this reason;
+counting it as "blocked" is how this experiment would have produced the opposite
+answer.
+
+**The lost DNS is worse than no containment, not partial containment.** Under
+every working shape, name resolution fails while raw connectivity survives.
+Legitimate tooling breaks (npm resolves registry hostnames) and an attacker does
+not (hard-code an address). Enforcement that stops the honest caller and not the
+dishonest one is the shape of a security claim that is not one.
+
+**Conclusion: Component 1 cannot deliver unprivileged egress enforcement.** The
+question the recommendation held it on — *what enforces egress after the swap?* —
+has an answer, and it is "nothing".
 
 ## Component 1 — Restricted Tokens + Job Objects
 
@@ -172,13 +211,11 @@ include Windows and scoped honestly.
 **Reframe:** Component 3, around what nvx can actually observe — it holds the
 registry metadata already and never touches the tarball.
 
-**Hold Component 1** until this is answered: *after the swap, what enforces egress
-and per-project identity, without administrator rights?* If there is a good
-answer, this becomes a serious proposal and the dev-server and async-pipe wins are
-real. If there is not, it trades the product's central security claim for a
-convenience that — for dev servers — has now been shown obtainable without it.
+**Drop Component 1.** It was held on one question — *after the swap, what enforces
+egress, without administrator rights?* — and the experiment above answers it:
+nothing. A process under the token shape the plan proposes reaches the internet
+directly. The swap would trade the product's central security claim for a
+convenience that, for dev servers, has been shown obtainable without it.
 
-The cheapest next step is one experiment: launch a process under a restricted
-token and attempt an outbound connection. That settles the question in an
-afternoon and is worth doing before either committing to or discarding the
-approach.
+The async-pipe half of the motivation stays unsolved, and is now the honest
+statement of the limitation rather than a problem waiting on this plan.
