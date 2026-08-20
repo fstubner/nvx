@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // stageAppContainerSupervisor puts a copy of the running nvx binary somewhere the
@@ -43,8 +44,26 @@ func stageAppContainerSupervisor(nvxHome string) (string, error) {
 	}
 
 	dir := filepath.Join(nvxHome, "sandbox-exec", "supervisor")
-	dest := filepath.Join(dir, "nvx.exe")
-	if supervisorIsCurrent(dest, src) {
+
+	// The staged copy is named after the build it came from, rather than a fixed
+	// "nvx.exe" that each new build has to replace in place.
+	//
+	// Windows refuses to replace a running executable. With one fixed name, a
+	// supervisor still alive from an earlier build -- which happens whenever a
+	// contained process hangs, and asynchronous piped stdio still hangs -- made
+	// every later contained launch fail at staging with a bare "Access is denied",
+	// naming a path the user had no reason to connect to their stuck process. The
+	// only cure was finding and killing it by hand. Observed on this machine after
+	// a rebuild left a supervisor holding the old copy.
+	//
+	// Distinct names remove the conflict rather than handling it: builds coexist,
+	// nothing is ever replaced, and a leftover copy is inert rather than blocking.
+	// Size and modification time identify the build, matching what the previous
+	// staleness check compared -- and deliberately not a content hash, which would
+	// mean reading ten megabytes on a launch path measured in milliseconds.
+	dest := filepath.Join(dir, supervisorNameFor(src))
+	if staged, serr := os.Stat(dest); serr == nil && staged.Size() == src.Size() {
+		pruneStaleSupervisors(dir, filepath.Base(dest))
 		return dest, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -52,35 +71,60 @@ func stageAppContainerSupervisor(nvxHome string) (string, error) {
 	}
 
 	// Stage via a per-process temporary name so a concurrent nvx run cannot
-	// observe a half-written binary, and so replacing it never has to write
-	// through a copy another sandbox is currently executing.
+	// observe a half-written binary.
 	tmp := fmt.Sprintf("%s.%d.tmp", dest, os.Getpid())
 	if err := copyFile(self, tmp, 0o700); err != nil {
 		return "", fmt.Errorf("stage the sandbox supervisor: %w", err)
 	}
-	// Carry the source's timestamp across so the staleness check above is exact.
+	// Carry the source's timestamp across so the name stays stable across runs.
 	if err := os.Chtimes(tmp, src.ModTime(), src.ModTime()); err != nil {
 		_ = os.Remove(tmp)
 		return "", fmt.Errorf("stage the sandbox supervisor: %w", err)
 	}
 	if err := os.Rename(tmp, dest); err != nil {
 		_ = os.Remove(tmp)
-		// A concurrent run may have staged the same binary and be executing it,
-		// which on Windows blocks the replace. That copy is as good as this one.
-		if supervisorIsCurrent(dest, src) {
+		// A concurrent run staging the identical build can win the race; its copy
+		// is byte-for-byte this one. Any other failure is real.
+		if staged, serr := os.Stat(dest); serr == nil && staged.Size() == src.Size() {
 			return dest, nil
 		}
 		return "", fmt.Errorf("stage the sandbox supervisor: %w", err)
 	}
+	pruneStaleSupervisors(dir, filepath.Base(dest))
 	return dest, nil
 }
 
-func supervisorIsCurrent(dest string, src os.FileInfo) bool {
-	staged, err := os.Stat(dest)
+// supervisorNameFor derives a per-build filename. Two builds differing in either
+// size or timestamp get different names, which is the point.
+func supervisorNameFor(src os.FileInfo) string {
+	return fmt.Sprintf("nvx-%d-%d.exe", src.Size(), src.ModTime().UnixNano())
+}
+
+// pruneStaleSupervisors deletes staged copies from other builds, keeping the one
+// in use. Failures are ignored on purpose: the usual reason a copy will not
+// delete is that another sandbox is executing it, which is exactly when it must
+// be left alone. Leaving it costs disk; removing it is impossible and blocking on
+// it is what this whole change exists to stop.
+//
+// It also clears the legacy fixed-name "nvx.exe" from before per-build naming.
+func pruneStaleSupervisors(dir, keep string) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return false
+		return
 	}
-	return staged.Size() == src.Size() && staged.ModTime().Equal(src.ModTime())
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || name == keep {
+			continue
+		}
+		if !strings.HasPrefix(name, "nvx") {
+			continue
+		}
+		if !strings.HasSuffix(name, ".exe") && !strings.HasSuffix(name, ".tmp") {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, name))
+	}
 }
 
 // runAppContainerExecChild is the supervisor nvx runs INSIDE the AppContainer,
