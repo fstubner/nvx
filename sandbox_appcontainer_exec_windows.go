@@ -65,7 +65,7 @@ func stageAppContainerSupervisor(nvxHome string) (string, error) {
 	// mean reading ten megabytes on a launch path measured in milliseconds.
 	dest := filepath.Join(dir, supervisorNameFor(src))
 	if staged, serr := os.Stat(dest); serr == nil && staged.Size() == src.Size() {
-		pruneStaleSupervisors(dir, filepath.Base(dest))
+		clearLegacySupervisorArtifacts(dir)
 		return dest, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -92,7 +92,7 @@ func stageAppContainerSupervisor(nvxHome string) (string, error) {
 		}
 		return "", fmt.Errorf("stage the sandbox supervisor: %w", err)
 	}
-	pruneStaleSupervisors(dir, filepath.Base(dest))
+	clearLegacySupervisorArtifacts(dir)
 	return dest, nil
 }
 
@@ -142,30 +142,79 @@ func supervisorNameFor(src os.FileInfo) string {
 	return fmt.Sprintf("nvx-%d-%d.exe", src.Size(), src.ModTime().UnixNano())
 }
 
-// pruneStaleSupervisors deletes staged copies from other builds, keeping the one
-// in use. Failures are ignored on purpose: the usual reason a copy will not
-// delete is that another sandbox is executing it, which is exactly when it must
-// be left alone. Leaving it costs disk; removing it is impossible and blocking on
-// it is what this whole change exists to stop.
+// clearLegacySupervisorArtifacts removes what per-build naming replaced: the old
+// fixed-name copy, and temporary files a killed run left behind. It deliberately
+// does NOT touch other builds' copies.
 //
-// It also clears the legacy fixed-name "nvx.exe" from before per-build naming.
-func pruneStaleSupervisors(dir, keep string) {
+// Pruning other builds used to happen here, on every launch, which made the
+// "builds coexist" claim false: it kept exactly the copy the running process
+// wanted and deleted the rest, so alternating a release and a dev build re-copied
+// ten megabytes each time. Worse, it reintroduced a narrower version of the race
+// this naming scheme exists to remove -- a second nvx of a different build could
+// delete the first's copy in the window between staging it and executing it.
+//
+// Reclaiming that disk is `nvx cleanup`'s job, where nothing is mid-launch.
+func clearLegacySupervisorArtifacts(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || name == keep {
+		if e.IsDir() {
 			continue
 		}
-		if !strings.HasPrefix(name, "nvx") {
+		isLegacyFixedName := strings.EqualFold(name, "nvx.exe")
+		isLeftoverTemp := strings.HasPrefix(name, "nvx") && strings.HasSuffix(name, ".tmp")
+		if !isLegacyFixedName && !isLeftoverTemp {
+			continue
+		}
+		// Failures ignored: a copy that will not delete is one something is still
+		// using, which is exactly when it must be left alone.
+		_ = os.Remove(filepath.Join(dir, name))
+	}
+}
+
+// pruneUnusedSupervisors reclaims staged copies from builds other than the one
+// running now. Called from `nvx cleanup`, never from a launch, so it cannot race
+// a sandbox that is about to execute one.
+func pruneUnusedSupervisors(nvxHome string) {
+	if nvxHome == "" {
+		return
+	}
+	dir := filepath.Join(nvxHome, "sandbox-exec", "supervisor")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	keep := ""
+	if self, serr := os.Executable(); serr == nil {
+		if resolved, rerr := filepath.EvalSymlinks(self); rerr == nil {
+			self = resolved
+		}
+		if src, sterr := os.Stat(self); sterr == nil {
+			keep = supervisorNameFor(src)
+		}
+	}
+
+	removed := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || name == keep || !strings.HasPrefix(name, "nvx") {
 			continue
 		}
 		if !strings.HasSuffix(name, ".exe") && !strings.HasSuffix(name, ".tmp") {
 			continue
 		}
-		_ = os.Remove(filepath.Join(dir, name))
+		// A copy another nvx is executing will refuse to delete. That is the
+		// correct outcome, not an error worth reporting.
+		if err := os.Remove(filepath.Join(dir, name)); err == nil {
+			removed++
+		}
+	}
+	if removed > 0 {
+		LogInfo("Removed %d unused sandbox supervisor copy(ies).", removed)
 	}
 }
 

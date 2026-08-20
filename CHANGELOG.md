@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **"Builds coexist" was not true, and the prune that made it untrue could race a
+  launch.** Staged supervisor copies were pruned on every launch, keeping only the
+  copy the running process wanted -- so alternating a release and a dev build
+  re-copied ten megabytes each time, and a second nvx could delete the first's
+  copy in the window between staging it and executing it. That is a narrower
+  version of the race per-build naming exists to remove.
+
+  Launches no longer prune other builds; they only clear the legacy fixed-name
+  copy and leftover temporary files. Reclaiming disk moved to `nvx cleanup`, where
+  nothing is mid-launch. Verified by alternating two builds and watching both
+  copies survive, then reclaiming them with `cleanup`.
+
+* **The async-pipe limitation is documented for tool runners, not only installs.**
+  `npx`/`bunx` tools that stream a child's output hang exactly as an install does,
+  which README and SECURITY.md now say. The two-minute hint still covers installs
+  only, deliberately: an install running that long is anomalous, an `npx`-launched
+  dev server running for hours is working, and a timer cannot tell them apart. A
+  hint that fired on the second would be noise, and a hint people learn to ignore
+  is worse than none.
+
 * **A typo in `isolation.network.mode` silently gave you more network than you
   asked for.** An unrecognised value fell through to proxy in every reader, so a
   policy saying `"offlin"` got a live egress proxy while its author believed they
