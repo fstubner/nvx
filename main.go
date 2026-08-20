@@ -220,6 +220,9 @@ func main() {
 		}
 		os.Exit(runGrants(os.Args[2:], nvxHome))
 
+	case "audit":
+		os.Exit(runAuditCommand(os.Args[2:], nvxHome))
+
 	case "setup":
 		undo := false
 		for _, a := range os.Args[2:] {
@@ -299,6 +302,16 @@ func commandHelpText(command string) string {
 		return "nvx cleanup\n\nRemove stale sandbox guest profiles from previous interrupted runs.\n"
 	case "doctor":
 		return "nvx doctor [--fix]\n\nCheck that ~/.nvx/bin is first on PATH so nvx intercepts node/npm/npx/bun.\nRegenerates shims and reports what is wrong.\n\n--fix  Also repair a shadowed persistent PATH (Windows). That edits your\n       user PATH, so nvx does not do it unless you ask.\n"
+	case "audit":
+		return `nvx audit [--runs] [--failures] [--summary] [--limit=N] [--all]
+
+Show what nvx has recorded locally: one line per command run (contained or
+not, exit code, duration, warnings) interleaved with the security decisions
+it made. Nothing is ever sent anywhere; the log is ~/.nvx/audit.log.
+
+--summary   Counts instead of lines: how often runs were contained, why not
+            when they were not, and which warnings keep firing.
+`
 	case "grants":
 		return "nvx grants list\nnvx grants reset [--all]\n\nInspect or forget the approve-once grants recorded for the current project\n(or every project, with --all): egress hosts, trusted tools, and trusted\nproject policy files. Grants live under ~/.nvx/grants, never in the project.\n"
 	}
@@ -386,6 +399,7 @@ Commands:
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
   grants list              Show this project's approved egress hosts, trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)
+  audit [--summary]        Review the local record of past runs and security decisions
   import [nvm|fnm|volta]  Import Node.js versions already installed via nvm, fnm, or volta
                            (defaults to scanning all three)
 
@@ -423,7 +437,12 @@ func LogInfo(format string, a ...interface{}) {
 }
 
 func LogWarn(format string, a ...interface{}) {
-	fmt.Fprintf(os.Stderr, "\x1b[33m⚠\x1b[0m "+format+"\n", a...)
+	text := fmt.Sprintf(format, a...)
+	// Collected as well as printed: a warning is the one thing nvx prints that
+	// asks the user to act later, which makes it the thing most often scrolled
+	// past and most worth reviewing across runs. See run_trace.go.
+	recordWarning(text)
+	fmt.Fprintf(os.Stderr, "\x1b[33m⚠\x1b[0m %s\n", text)
 }
 
 func LogError(format string, a ...interface{}) {

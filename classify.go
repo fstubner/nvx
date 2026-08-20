@@ -14,6 +14,19 @@ const (
 	classAdHocTool
 )
 
+// String names the class for humans. Used in run traces, where "why was this not
+// contained" is answered with the class and level that decided it.
+func (c invocationClass) String() string {
+	switch c {
+	case classInstall:
+		return "install"
+	case classAdHocTool:
+		return "ad-hoc tool"
+	default:
+		return "your code"
+	}
+}
+
 // executorCommands are ad-hoc tool runners: they fetch and execute a package
 // that was not explicitly installed into the project, so every invocation is
 // untrusted-code-by-default regardless of subcommand.
