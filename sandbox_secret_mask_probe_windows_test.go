@@ -96,18 +96,7 @@ func TestDenyACEHidesSecretFromAppContainer(t *testing.T) {
 	}
 	t.Logf("applied deny ACEs for %s and ALL APPLICATION PACKAGES on .env", sidStr)
 
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	childExe := filepath.Join(guestHome, "secretprobe.exe")
-	if err := os.WriteFile(childExe, data, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	childExe := stageProbeChild(t, guestHome, "secretprobe.exe")
 
 	read, write := makeTestPipe(t)
 	defer syscall.CloseHandle(read)

@@ -90,18 +90,7 @@ func TestCapabilitySidGatesFileAccess(t *testing.T) {
 		t.Skipf("cannot grant a capability SID with icacls: %v (%s)", gerr, strings.TrimSpace(string(out)))
 	}
 
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	childExe := filepath.Join(guestHome, "probe.exe")
-	if err := os.WriteFile(childExe, data, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	childExe := stageProbeChild(t, guestHome, "probe.exe")
 
 	run := func(caps []string) string {
 		read, write := makeTestPipe(t)

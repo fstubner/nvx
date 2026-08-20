@@ -92,18 +92,7 @@ func TestAncestorGrantsAreNotNeededForContainment(t *testing.T) {
 		t.Fatalf("grant workdir: %v", err)
 	}
 
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	childExe := filepath.Join(guestHome, "ancprobe.exe")
-	if err := os.WriteFile(childExe, data, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	childExe := stageProbeChild(t, guestHome, "ancprobe.exe")
 
 	ancestors := ancestorGrantPaths(workDir, os.Getenv("USERPROFILE"))
 	t.Logf("ancestors deliberately NOT granted: %v", ancestors)

@@ -114,18 +114,7 @@ func TestRelayDoesNotExposeHostLoopbackServices(t *testing.T) {
 	if out, berr := exec.Command("go", "build", "-o", nvxExe, ".").CombinedOutput(); berr != nil {
 		t.Fatalf("build nvx: %v\n%s", berr, out)
 	}
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	targetExe := filepath.Join(guestHome, "target.exe")
-	if err := os.WriteFile(targetExe, data, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	targetExe := stageProbeChild(t, guestHome, "target.exe")
 
 	read, write := makeTestPipe(t)
 	defer syscall.CloseHandle(read)
