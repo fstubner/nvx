@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -111,18 +110,7 @@ func TestContainedProcessCannotCreateANamedPipe(t *testing.T) {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	childExe := filepath.Join(guestHome, "pipeprobe.exe")
-	if err := os.WriteFile(childExe, data, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	childExe := stageProbeChild(t, guestHome, "pipeprobe.exe")
 
 	read, write := makeTestPipe(t)
 	defer syscall.CloseHandle(read)

@@ -15,7 +15,6 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 	"syscall"
 	"testing"
 )
@@ -50,18 +49,7 @@ func TestContainmentNotDisprovedInsideRealAppContainer(t *testing.T) {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	childExe := filepath.Join(guestHome, "markerprobe.exe")
-	if err := os.WriteFile(childExe, data, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	childExe := stageProbeChild(t, guestHome, "markerprobe.exe")
 
 	read, write := makeTestPipe(t)
 	defer syscall.CloseHandle(read)

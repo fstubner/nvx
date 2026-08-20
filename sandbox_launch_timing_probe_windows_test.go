@@ -16,7 +16,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -113,18 +112,7 @@ func TestMeasureContainedLaunchPhases(t *testing.T) {
 
 	// A launch of a trivial contained process, which is the floor: whatever this
 	// costs is CreateProcess plus the container, and no grant work at all.
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	childExe := filepath.Join(guestHome, "timingprobe.exe")
-	if err := os.WriteFile(childExe, data, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	childExe := stageProbeChild(t, guestHome, "timingprobe.exe")
 	measure("launchAppContainerProcess(no-op child)", func() {
 		env := append(scrubEnvironment(guestHome), "NVX_TIMING_CHILD=1")
 		_, _ = launchAppContainerProcess(childExe,

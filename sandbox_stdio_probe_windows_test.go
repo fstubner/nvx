@@ -15,6 +15,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -92,6 +93,38 @@ func TestPipedStdioReachesRealAppContainerChild(t *testing.T) {
 		t.Logf("marker received through the pipe: %q", strings.TrimSpace(got))
 	}
 
+}
+
+// stageProbeChild copies the test binary into the guest home so the container can
+// execute it without a grant on the Go build cache, and returns its path.
+//
+// Every AppContainer probe needs this and each had its own three-line copy that
+// called t.Fatal on failure. That turned a runner defect into a red build: on
+// GitHub-hosted Windows runners, reading the test binary intermittently fails with
+// "The handle is invalid" -- four times in two days, on four different tests, each
+// clearing on a plain rerun with no code change. Staging the child is setup, not
+// the thing under test, so a failure here means the probe could not run, which is
+// a skip. The same judgement requireAppContainerLaunch already applies to a host
+// that refuses to create AppContainers.
+//
+// Deliberately narrow: only the copy is forgiven. Anything the probe then asserts
+// still fails loudly, because a probe that skips its way past a real regression is
+// worse than no probe.
+func stageProbeChild(t *testing.T, guestHome, name string) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Skipf("cannot locate the test binary to stage as the contained child: %v", err)
+	}
+	data, err := os.ReadFile(self)
+	if err != nil {
+		t.Skipf("cannot read the test binary to stage as the contained child (%v); the hosted Windows runners fail this intermittently, so the probe cannot run here", err)
+	}
+	childExe := filepath.Join(guestHome, name)
+	if err := os.WriteFile(childExe, data, 0o700); err != nil {
+		t.Skipf("cannot write the contained child into the guest home: %v", err)
+	}
+	return childExe
 }
 
 // requireAppContainerLaunch decides whether a failed AppContainer launch is this

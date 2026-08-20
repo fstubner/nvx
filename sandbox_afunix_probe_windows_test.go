@@ -94,18 +94,7 @@ func TestAppContainerCanReachAFUnixSocket(t *testing.T) {
 
 	// Run the test binary itself as the contained client. Copy it into the guest
 	// home so the container can execute it without granting a temp-dir path.
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	childExe := filepath.Join(guestHome, "probe.exe")
-	if err := os.WriteFile(childExe, data, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	childExe := stageProbeChild(t, guestHome, "probe.exe")
 
 	read, write := makeTestPipe(t)
 	defer syscall.CloseHandle(read)
@@ -213,18 +202,7 @@ func TestAppContainerIntraContainerLoopback(t *testing.T) {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	childExe := filepath.Join(guestHome, "loopprobe.exe")
-	if err := os.WriteFile(childExe, data, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	childExe := stageProbeChild(t, guestHome, "loopprobe.exe")
 
 	read, write := makeTestPipe(t)
 	defer syscall.CloseHandle(read)
