@@ -133,19 +133,21 @@ func warnIfSandboxLoopbackExempt(nvxHome, sidStr, mode string) {
 		// on some SKUs, and an unreadable list says nothing about what is in it.
 		return
 	}
-	LogWarn("This machine still has a loopback exemption for the nvx sandbox, left by an older 'nvx setup'.")
-	LogWarn("Contained code can reach any service on 127.0.0.1 -- databases, daemons, dev servers -- without an allowlist entry.")
-	// Not "egress to other hosts is unaffected", which is what this said until an
-	// acceptance pass disproved it by running a CONNECT proxy on loopback and
-	// completing a TLS exchange with an external host from inside the sandbox.
-	// Only DIRECT connections to other hosts are refused. Any reachable loopback
-	// service that forwards traffic -- a debugging proxy, an SSH dynamic forward,
-	// a dev server's proxy route -- turns this into full arbitrary egress, so the
-	// honest statement is that the allowlist cannot be relied on at all here.
-	LogWarn("If any of those forwards traffic (a debugging proxy, 'ssh -D', a dev-server proxy route), the egress allowlist can be bypassed entirely.")
-	// Warn, not Info: this is the actionable half, and under -q/--agent-mode an
-	// Info line is dropped -- which left the warning visible and the fix invisible.
-	LogWarn("To remove it, from an Administrator terminal: CheckNetIsolation LoopbackExempt -d -p=%s", sidStr)
+	// One line, not four.
+	//
+	// This printed four lines on every contained command: what the exemption is,
+	// what it exposes, that the egress allowlist is bypassable through it, and the
+	// removal command. Every clause was true and worth saying once -- but seen in
+	// a real transcript it was most of the output of an ordinary npm invocation,
+	// and a warning that dominates every command is one people stop reading. That
+	// costs more than the detail buys.
+	//
+	// Still every launch rather than once a day: it is a live weakening of the
+	// containment being asked for, and a warning shown once is a warning missed.
+	// The detail moved to `nvx doctor`, which reports the full explanation and the
+	// exact removal command, and which exits non-zero so it cannot be mistaken for
+	// a clean bill of health.
+	LogWarn("Sandbox loopback exemption active: contained code can reach any service on 127.0.0.1, and the egress allowlist can be bypassed through one. Run 'nvx doctor' to see how to remove it.")
 }
 
 // deriveAppContainerSIDString returns the SID string for a profile name without

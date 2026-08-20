@@ -126,6 +126,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A failed contained install pointed at a debug log that had already been
+  deleted.** Reported from real use. npm writes its log into the cache, which nvx
+  redirects into the guest home, and the guest home is removed when the run ends
+  -- so the path npm printed was dead before the user finished reading it, on
+  exactly the occasion the log is wanted. The logs are now copied to
+  `~/.nvx/logs/<session>` first, and only when the command failed; a successful
+  run leaves nothing behind, not even an empty directory. The guest home stays
+  ephemeral.
+
+* **The loopback-exemption warning was four lines on every contained command.**
+  Every clause was true and worth saying once, but in a real transcript it was
+  most of the output of an ordinary `npm` invocation, and a warning that dominates
+  every command is one people stop reading. It is now a single line pointing at
+  `nvx doctor`, which still reports the full explanation and the exact removal
+  command and still exits non-zero. Still shown on every launch rather than once a
+  day: it is a live weakening of the containment being asked for.
+
 * **`@latest` silently skipped two security checks, and scanned the wrong
   thing.** Reported from real use: `npm install -g npm@latest` produced a
   vulnerability alert listing seven advisories with no descriptions. The noisy

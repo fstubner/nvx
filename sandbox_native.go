@@ -16,7 +16,9 @@ func usePersistentProfile(toolName string) bool {
 // runNativeSandbox is the hardened default sandbox: platform-specific OS
 // primitives (AppContainer on Windows, Landlock on Linux, Seatbelt on macOS)
 // layered on env scrubbing and an ephemeral guest profile.
-func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, netCtx NetworkLaunchContext) int {
+// exitCode is named so the deferred log rescue can see whether the command
+// failed; a successful run's debug logs are noise nobody asks for.
+func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, netCtx NetworkLaunchContext) (exitCode int) {
 	sandboxID, err := generateSandboxID()
 	if err != nil {
 		LogError("Sandbox initialization failed: %v", err)
@@ -42,7 +44,21 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 			LogError("Failed to create sandbox guest profile: %v", err)
 			return 1
 		}
+		// Rescue debug logs before the guest home goes, and only on failure.
+		//
+		// npm writes its debug log into the cache, which lives in the guest home,
+		// so a failed install printed a path that was deleted moments later --
+		// exactly when the user wanted to read it. Ordered before the cleanup
+		// defer so it runs first: defers run last-in-first-out.
 		defer cleanupGuestProfile(config.NvxHome, sandboxID)
+		defer func() {
+			if exitCode == 0 {
+				return
+			}
+			if dest := rescueSandboxLogs(config.NvxHome, guestHome, sandboxID); dest != "" {
+				LogInfo("The sandbox's debug logs were copied out before its home was removed: %s", dest)
+			}
+		}()
 	}
 
 	// Platforms that place the sandboxed process in a network namespace need the
