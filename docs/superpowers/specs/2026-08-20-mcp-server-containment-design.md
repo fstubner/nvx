@@ -137,16 +137,49 @@ access uses the existing policy mechanism rather than a new one.
    from npm: a test needing the network to prove a local property fails for
    reasons unrelated to the property.
 
-   One negative result recorded with it. The obvious assumption -- that an MCP
-   handshake exercises the F46 stdio machinery (`STARTF_USESTDHANDLES` /
-   `bInheritHandles`) -- was checked and is false on this host. Disabling those
-   flags, then disabling `prepareInheritableStdio` entirely, left both this test
-   and the dedicated `TestPipedStdioReachesRealAppContainerChild` passing. Stdio
-   reaches a contained child here by some other route. **That is a gap in the
-   existing suite, not only in the new test:** F46 is believed to be guarded and
-   is not, at least on this machine. Worth its own investigation.
+   One negative result came with it, and was then investigated -- see below.
 3. **Docs.** README and SECURITY.md gain the supported/unsupported split above.
    Not before the rest lands.
+
+## The F46 stdio guard, investigated
+
+Trying to prove the new test caught the F46 regression showed it did not, and the
+investigation found the gap is older and wider than the new test.
+
+**Neither existing test guards nvx's actual use of the fix.**
+
+- `TestPipedStdioReachesChildOnlyWhenBothFlagsSet` proves the Win32 semantics --
+  `STARTF_USESTDHANDLES` and `bInheritHandles` are both required -- but builds its
+  own `STARTUPINFO` from test parameters via `spawnWithStdout`. It never calls
+  production code, so it cannot fail if nvx stops setting the flags.
+- `TestPipedStdioReachesRealAppContainerChild` does drive the real launcher but
+  cannot detect their absence.
+
+**On this host the machinery is not load-bearing.** With the flags disabled, and
+then with `prepareInheritableStdio` short-circuited entirely, a contained child
+still received piped stdio -- verified in proxy mode (supervisor in the path) and
+open mode (nvx launching the child directly), with `AppContainer isolation active`
+confirmed in both, and the marker arriving through a real pipe each time.
+
+Two consequences, one of them a user-visible defect:
+
+1. The fallback branch warned *"will not receive stdio"*. That prediction was
+   measurably wrong here, so it now says *"may not"*. It is kept as a warning
+   rather than deleted: F46 was a real measured failure where every MCP server
+   broke, so the honest statement is that it might break, not that it has.
+2. `TestPrepareInheritableStdioReportsSuccessInANormalEnvironment` now guards the
+   part that *is* guardable -- that nvx still tries. It fails if the decision
+   function is deleted or short-circuited, which is the realistic regression and
+   exactly what was simulated to expose this gap.
+
+**Not removed.** The machinery being inert on one Windows 11 build is not evidence
+it is inert everywhere, and F46 came from a measured failure. Removing it on this
+evidence would be trading a real guard for a small simplification.
+
+**Still open:** why a contained child receives piped stdio with `bInheritHandles`
+false and no `STARTF_USESTDHANDLES`. Console inheritance is the likely candidate
+and is unconfirmed; establishing it would say whether the machinery is dead weight
+on modern Windows or load-bearing in configurations not reproduced here.
 
 ## Conflicts with the daemon spec
 
