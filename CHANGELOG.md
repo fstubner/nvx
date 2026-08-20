@@ -126,6 +126,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Shims pointed at whichever binary generated them, so a source build broke
+  them.** `generateShims` embedded `os.Executable()`. Run `init-shims` from a
+  build tree -- which the smoke scripts do -- and every shim depended on a file
+  that gets rebuilt, moved or deleted, after which `npm` failed with a
+  missing-file error naming a path in someone's source directory. It happened
+  three times in one session on the machine this was found on, and left that
+  machine with no working `nvx` on PATH at all, which is why the `-g` refusal's
+  advice could not be followed. Shims now point at `<nvxHome>/bin/nvx`, where the
+  installer puts nvx, and a copy is installed there if missing. Verified by
+  running the smoke script and deleting the repo build: the shims kept working.
+
+* **`yarn global add` was not recognised as a global install.** Only `-g` and
+  `--global` were matched, and yarn spells it as a subcommand -- so it fell
+  through to the sandbox and failed partway with the confusing permission error
+  that check exists to replace. `yarn global add/remove/upgrade` are now caught,
+  by position rather than by containment, so `yarn add global` still installs a
+  package called "global".
+
 * **A failed contained install pointed at a debug log that had already been
   deleted.** Reported from real use. npm writes its log into the cache, which nvx
   redirects into the guest home, and the guest home is removed when the run ends

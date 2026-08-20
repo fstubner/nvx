@@ -32,6 +32,11 @@ func TestGlobalInstallIsDetectedWithoutRunningAnything(t *testing.T) {
 		{"npm", []string{"install", "-g", "npm@latest"}, true},
 		{"npm", []string{"install", "--global", "typescript"}, true},
 		{"npm", []string{"i", "-g", "eslint"}, true},
+		{"yarn", []string{"global", "add", "typescript"}, true},
+		{"yarn", []string{"global", "remove", "typescript"}, true},
+		{"yarn", []string{"--silent", "global", "add", "typescript"}, true},
+		// A package literally named "global" is not a global install.
+		{"yarn", []string{"add", "global"}, false},
 		{"npm", []string{"install", "lodash"}, false},
 		{"npm", []string{"install"}, false},
 		{"npm", []string{"run", "build"}, false},
@@ -80,23 +85,17 @@ func TestNvxHintNamesSomethingRunnable(t *testing.T) {
 	}
 }
 
-// A gap found while writing the test above, recorded rather than fixed because
-// the report was about npm and widening the change would bury it.
-//
-// globalInstallFlags is {-g, --global}, so `yarn global add <pkg>` -- yarn's own
-// spelling, a subcommand rather than a flag -- is not recognised. It is therefore
-// contained, and then fails partway through with the confusing permission error
-// that isGlobalInstall's doc comment says the check exists to avoid. `pnpm add
-// --global` is covered because pnpm uses the flag.
-//
-// This asserts today's behaviour so the gap is visible and the next change to
-// isGlobalInstall has to decide about it deliberately. If someone fixes yarn,
-// this test fails and the comment tells them why it was written that way.
-func TestYarnGlobalSubcommandIsNotYetRecognised(t *testing.T) {
-	if isGlobalInstall("yarn", []string{"global", "add", "typescript"}) {
-		t.Skip("yarn's `global add` is now recognised -- delete this test and add the case " +
-			"to TestGlobalInstallIsDetectedWithoutRunningAnything")
+// yarn's `global add` writes to the same shared prefix as npm's -g, and was not
+// recognised until 2026-08-20 because only the flags were matched. It fell
+// through to the sandbox and failed partway with the confusing permission error
+// isGlobalInstall exists to replace.
+func TestYarnGlobalSubcommandIsRecognised(t *testing.T) {
+	if !isGlobalInstall("yarn", []string{"global", "add", "typescript"}) {
+		t.Error("`yarn global add` is not treated as a global install; it will be contained " +
+			"and then fail with a permission error instead of the clear refusal npm -g gets")
 	}
-	t.Log("known gap: `yarn global add` is contained and fails with a permission error " +
-		"instead of the clear refusal npm -g gets")
+	// Position matters: this installs a package called "global".
+	if isGlobalInstall("yarn", []string{"add", "global"}) {
+		t.Error("`yarn add global` was refused; a package named \"global\" is not a global install")
+	}
 }

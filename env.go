@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -267,10 +268,7 @@ func generateShims(nvxHome string) error {
 		return fmt.Errorf("create shim directory: %w", err)
 	}
 
-	exePath, err := os.Executable()
-	if err != nil {
-		exePath = "nvx"
-	}
+	exePath := stableShimTarget(nvxHome)
 	for _, cmd := range allShimCommands() {
 		if runtime.GOOS == "windows" {
 			exeCmd := quoteWindowsBatchArg(exePath)
@@ -420,6 +418,17 @@ func isGlobalInstall(cmdName string, args []string) bool {
 	default:
 		return false
 	}
+	// yarn spells it as a subcommand, not a flag: `yarn global add <pkg>`.
+	//
+	// Only the flags were matched, so this fell straight through to the sandbox
+	// and then failed partway with the confusing permission error the check exists
+	// to replace -- the exact outcome this function's doc comment promises not to
+	// produce. Checked before the install-verb test because `global` precedes the
+	// verb, and `yarn global remove`/`upgrade` write to the same shared prefix.
+	if strings.EqualFold(cmdName, "yarn") && hasLeadingSubcommand(args, "global") {
+		return true
+	}
+
 	if !hasInstallVerb(args, "ci") {
 		return false
 	}
@@ -430,6 +439,24 @@ func isGlobalInstall(cmdName string, args []string) bool {
 		if globalInstallFlags[arg] {
 			return true
 		}
+	}
+	return false
+}
+
+// hasLeadingSubcommand reports whether name is the first non-flag token in args.
+//
+// Position matters: `yarn global add foo` is a global install, while
+// `yarn add global` installs a package that happens to be called "global". A
+// contains-check would conflate them and refuse a legitimate install.
+func hasLeadingSubcommand(args []string, name string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue // a flag before the subcommand, e.g. `yarn --silent global add`
+		}
+		return strings.EqualFold(arg, name)
 	}
 	return false
 }
@@ -912,4 +939,135 @@ func quoteForShellHint(path string) string {
 		return `"` + path + `"`
 	}
 	return path
+}
+
+// stableShimTarget returns the nvx path shims should invoke, installing a copy at
+// that path when needed.
+//
+// Shims used to embed os.Executable() -- whichever binary happened to run
+// `init-shims`. Do that from a build tree and every shim depends on a file that
+// gets rebuilt, moved or deleted, so `npm` starts failing with a missing-file
+// error that names a path in someone's source directory. Observed three times in
+// one session on the machine this was written on: each smoke-test run repointed
+// the real ~/.nvx/bin shims at a repo build, which was then deleted.
+//
+// The installer already places nvx beside the shims, so that path is the stable
+// one and shims point there instead. Copying self into it also repairs an install
+// whose nvx.exe is missing -- the state that made `nvx --no-sandbox ...` advice
+// unfollowable, because `nvx` was not on PATH at all.
+func stableShimTarget(nvxHome string) string {
+	self, err := os.Executable()
+	if err != nil {
+		// Nothing better to offer: a bare name at least works wherever nvx is on
+		// PATH, which is the normal installed case.
+		return "nvx"
+	}
+	if resolved, rerr := filepath.EvalSymlinks(self); rerr == nil {
+		self = resolved
+	}
+
+	target := filepath.Join(nvxHome, "bin", nvxExecutableName())
+	if sameExistingFile(self, target) {
+		return target // already running from the stable location
+	}
+
+	if err := installNvxCopy(self, target); err != nil {
+		if _, statErr := os.Stat(target); statErr == nil {
+			// A usable nvx is already there and could not be replaced -- typically
+			// because another nvx is running it. Pointing at it keeps the shims
+			// stable, which matters more than it being this exact build.
+			LogWarn("Could not update %s (%v); shims will use the copy already there.", target, err)
+			return target
+		}
+		// No stable copy and none could be made. Fall back to the running binary
+		// so shims work now, and say why they may not later.
+		LogWarn("Could not install nvx at %s (%v); shims will point at %s instead.", target, err, self)
+		LogInfo("If that file moves or is deleted, the shims stop working. Re-run 'nvx init-shims' from an installed nvx to repair them.")
+		return self
+	}
+	return target
+}
+
+func nvxExecutableName() string {
+	if runtime.GOOS == "windows" {
+		return "nvx.exe"
+	}
+	return "nvx"
+}
+
+// sameExistingFile reports whether two paths are the same file on disk.
+func sameExistingFile(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(ai, bi)
+}
+
+// installNvxCopy places a copy of src at dst, via a temporary name so a
+// concurrent run never observes a half-written binary and so replacing one that
+// is in use fails cleanly rather than truncating it.
+func installNvxCopy(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return err
+	}
+	tmp := fmt.Sprintf("%s.%d.tmp", dst, os.Getpid())
+	// NOT copyLogFile: that caps at 8 MB to stop a contained process filling the
+	// disk with a "log". nvx is larger than that, so reusing it silently installed
+	// a truncated, unrunnable binary -- caught only by checking the copy's size
+	// was exactly the cap. A binary copy must be complete or fail.
+	if err := copyWholeFile(src, tmp); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Chmod(tmp, 0o700); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// copyWholeFile copies src to dst in full, and verifies the result matches the
+// source size before reporting success.
+//
+// The size check is not belt-and-braces: the first version of installNvxCopy
+// reused a size-capped log copier and produced a silently truncated nvx.exe that
+// would have failed at exec time, far from the cause. A partial binary must be an
+// error here, not a surprise later.
+func copyWholeFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	srcInfo, err := in.Stat()
+	if err != nil {
+		return err
+	}
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o700)
+	if err != nil {
+		return err
+	}
+	written, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if written != srcInfo.Size() {
+		return fmt.Errorf("copied %d of %d bytes", written, srcInfo.Size())
+	}
+	return nil
 }
