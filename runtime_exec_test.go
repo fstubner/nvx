@@ -39,7 +39,7 @@ func bundledBinPath(versionDir, cmd string) string {
 }
 
 func TestResolveBinaryPrefersNpmGlobalOverBundled(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	versionDir := filepath.Join(nvxHome, "versions", "node", "v20.0.0")
 
 	// Bundled npm (ships with every Node download) — always present.
@@ -67,7 +67,7 @@ func TestResolveBinaryPrefersNpmGlobalOverBundled(t *testing.T) {
 }
 
 func TestResolveBinaryNpxAlsoPrefersNpmGlobal(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	versionDir := filepath.Join(nvxHome, "versions", "node", "v20.0.0")
 	writeStubBinary(t, bundledBinPath(versionDir, "npx"))
 
@@ -85,7 +85,7 @@ func TestResolveBinaryNodeNeverChecksNpmGlobal(t *testing.T) {
 	// node itself is never replaced by `npm install -g` — a stray npm_global
 	// entry named "node" (shouldn't normally exist, but be defensive) must
 	// never be preferred over the real bundled node binary.
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	versionDir := filepath.Join(nvxHome, "versions", "node", "v20.0.0")
 	writeStubBinary(t, bundledBinPath(versionDir, "node"))
 
@@ -103,7 +103,7 @@ func TestResolveBinaryNodeNeverChecksNpmGlobal(t *testing.T) {
 func TestResolveBinaryFallsBackWhenNoOverrideExists(t *testing.T) {
 	// No npm_global at all (npm_global directory doesn't exist) — must not
 	// error or panic, just fall through to the bundled path.
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	versionDir := filepath.Join(nvxHome, "versions", "node", "v20.0.0")
 	writeStubBinary(t, bundledBinPath(versionDir, "npm"))
 

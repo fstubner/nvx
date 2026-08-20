@@ -104,7 +104,7 @@ func TestContainedProcessCannotCreateANamedPipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(guestHome)
-	workDir := t.TempDir()
+	workDir := tempDir(t)
 	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)

@@ -7,7 +7,7 @@ import (
 )
 
 func TestScanVersionDirs(t *testing.T) {
-	tempDir := t.TempDir()
+	tempDir := tempDir(t)
 
 	// Create dummy version directories
 	os.MkdirAll(filepath.Join(tempDir, "v20.11.0"), 0755)

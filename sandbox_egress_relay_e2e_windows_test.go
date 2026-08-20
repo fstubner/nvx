@@ -84,7 +84,7 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 	policy.Isolation.Network.PromptUnknown = false // deny unknown without prompting
 	policy.Isolation.Network.AllowHosts = []string{allowedTarget}
 
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	proxy, err := startEgressProxy(context.Background(), policy, Providers["node"], nvxHome)
 	if err != nil {
 		t.Fatalf("startEgressProxy: %v", err)
@@ -100,13 +100,13 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 	defer deleteAppContainerProfile(probeProfile)
 
 	// Short path: the guest home holds the AF_UNIX socket, which is capped at 108
-	// bytes, and t.TempDir() spends most of that on this test's name.
+	// bytes, and tempDir(t) spends most of that on this test's name.
 	guestHome, err := os.MkdirTemp("", "nvxg")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(guestHome)
-	workDir := t.TempDir()
+	workDir := tempDir(t)
 	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)

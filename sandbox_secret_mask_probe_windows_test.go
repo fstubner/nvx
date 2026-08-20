@@ -60,8 +60,8 @@ func TestDenyACEHidesSecretFromAppContainer(t *testing.T) {
 	defer syscall.LocalFree(syscall.Handle(sid))
 	defer deleteAppContainerProfile(probeProfile)
 
-	guestHome := t.TempDir()
-	workDir := t.TempDir()
+	guestHome := tempDir(t)
+	workDir := tempDir(t)
 
 	secret := filepath.Join(workDir, ".env")
 	normal := filepath.Join(workDir, "package.json")
@@ -190,8 +190,8 @@ func TestContainedProcessCannotReachTheRealHome(t *testing.T) {
 	defer syscall.LocalFree(syscall.Handle(sid))
 	defer deleteAppContainerProfile(probeProfile)
 
-	guestHome := t.TempDir()
-	workDir := t.TempDir()
+	guestHome := tempDir(t)
+	workDir := tempDir(t)
 
 	// Stand-ins for the real credential stores, placed in the actual user profile.
 	home := os.Getenv("USERPROFILE")

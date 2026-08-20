@@ -25,7 +25,7 @@ func newTestProxy(t *testing.T, mode string, allowHosts []string) *EgressProxy {
 		session:  map[string]bool{},
 		prompted: map[string]bool{},
 		policy:   policy,
-		nvxHome:  t.TempDir(),
+		nvxHome:  tempDir(t),
 		ctx:      context.Background(),
 	}
 }

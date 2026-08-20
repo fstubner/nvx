@@ -55,7 +55,7 @@ func deadPID(t *testing.T) int {
 // npm lifecycles routinely run several nvx processes at once, so this needed no
 // unusual usage to hit.
 func TestCleanupLeavesRunningSandboxesAlone(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 
 	// Owned by this very process, which is by definition running.
 	live := makeGuestHome(t, nvxHome, "live-session", os.Getpid(), 0)
@@ -79,7 +79,7 @@ func TestCleanupLeavesRunningSandboxesAlone(t *testing.T) {
 // so a fix for either cannot silently become "delete everything" or "delete
 // nothing".
 func TestCleanupHandlesGuestHomesWithNoOwnerMarker(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 
 	fresh := makeGuestHome(t, nvxHome, "fresh-unowned", 0, 0)
 	old := makeGuestHome(t, nvxHome, "old-unowned", 0, unownedGuestHomeGrace+time.Hour)
@@ -98,7 +98,7 @@ func TestCleanupHandlesGuestHomesWithNoOwnerMarker(t *testing.T) {
 // TestGuestHomeIsInUseReadsTheMarker pins the decision function directly, so a
 // failure says which rule broke rather than only that cleanup misbehaved.
 func TestGuestHomeIsInUseReadsTheMarker(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	now := time.Now()
 
 	if !guestHomeIsInUse(makeGuestHome(t, nvxHome, "a", os.Getpid(), 0), now) {
@@ -120,7 +120,7 @@ func TestGuestHomeIsInUseReadsTheMarker(t *testing.T) {
 // format change that broke this would show up only as cleanup silently sparing
 // or deleting everything.
 func TestSessionOwnerRoundTrips(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	guestHome, err := createGuestProfile(nvxHome, "abc123")
 	if err != nil {
 		t.Fatalf("createGuestProfile: %v", err)

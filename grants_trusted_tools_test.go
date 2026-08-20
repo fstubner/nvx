@@ -54,7 +54,7 @@ func TestStripVersionSuffix(t *testing.T) {
 }
 
 func TestEnsureTrustedToolGrantReturnsTrueWhenAlreadyGranted(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	projectDir := filepath.Join(tmp, "project")
 	nvxHome := filepath.Join(tmp, ".nvx")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -89,7 +89,7 @@ func TestEnsureTrustedToolGrantReturnsTrueWhenAlreadyGranted(t *testing.T) {
 }
 
 func TestEnsureTrustedToolGrantEmptyToolName(t *testing.T) {
-	if ensureTrustedToolGrant(t.TempDir(), "") {
+	if ensureTrustedToolGrant(tempDir(t), "") {
 		t.Fatal("empty tool name must never be granted")
 	}
 }

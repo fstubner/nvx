@@ -73,14 +73,14 @@ func TestCapabilitySidGatesFileAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(guestHome)
-	workDir := t.TempDir()
+	workDir := tempDir(t)
 	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
 	// A "project" granted ONLY to the first capability, never to the package SID.
-	project := t.TempDir()
+	project := tempDir(t)
 	secret := filepath.Join(project, "project-file.txt")
 	if err := os.WriteFile(secret, []byte("PROJECT-CONTENT"), 0o600); err != nil {
 		t.Fatal(err)

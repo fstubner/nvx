@@ -16,18 +16,18 @@ import (
 // evidence behind -- if the file exists afterwards, the command ran, whatever the
 // return code said.
 func TestUnsupportedPlatformRefusesInsteadOfRunningUnprotected(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	marker := filepath.Join(dir, "it-ran")
 
 	// /bin/sh exists on every Unix this build tag covers.
 	config := SandboxConfig{
 		Command: "sh",
 		Args:    []string{"-c", "touch " + marker},
-		NvxHome: t.TempDir(),
+		NvxHome: tempDir(t),
 		WorkDir: dir,
 	}
 
-	code := platformLaunchNative(config, t.TempDir(), dir, "/bin/sh", os.Environ(), NetworkLaunchContext{})
+	code := platformLaunchNative(config, tempDir(t), dir, "/bin/sh", os.Environ(), NetworkLaunchContext{})
 
 	if code == 0 {
 		t.Errorf("unsupported platform returned success; it must fail closed (got %d)", code)

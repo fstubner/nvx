@@ -104,7 +104,7 @@ func TestSupervisorCloneFlagsCarryPidAndNetNamespaces(t *testing.T) {
 // its own, and the supervisor's teardown guarantee would not reach it.
 func TestTargetNamespacesNoLongerCreatePidNamespace(t *testing.T) {
 	cmd := exec.Command("/bin/true")
-	applyLinuxNamespaces(cmd, t.TempDir())
+	applyLinuxNamespaces(cmd, tempDir(t))
 	if cmd.SysProcAttr == nil {
 		t.Fatal("applyLinuxNamespaces set no SysProcAttr")
 	}
@@ -136,7 +136,7 @@ func TestSupervisorDeathTearsDownDescendants(t *testing.T) {
 	}
 	requireNamespaceSupport(t, supervisorCloneFlags("proxy"))
 
-	hb := filepath.Join(t.TempDir(), "heartbeat")
+	hb := filepath.Join(tempDir(t), "heartbeat")
 	cmd := exec.Command(os.Args[0], "-test.run=TestSupervisorDeathTearsDownDescendants")
 	cmd.Env = append(os.Environ(), "NVX_TEST_REAP_CHILD=1", "NVX_TEST_HEARTBEAT="+hb)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: supervisorCloneFlags("proxy")}

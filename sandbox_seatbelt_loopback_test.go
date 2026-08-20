@@ -23,7 +23,7 @@ func TestSeatbeltGrantsLoopbackOnlyWhereTheModeMeansIt(t *testing.T) {
 			Mode:           mode,
 			HTTPProxyPort:  8080,
 			SOCKSProxyPort: 1080,
-		}, t.TempDir(), t.TempDir())
+		}, tempDir(t), tempDir(t))
 	}
 
 	t.Run("proxy reaches the proxy and nothing else on loopback", func(t *testing.T) {
@@ -69,7 +69,7 @@ func TestSeatbeltGrantsLoopbackOnlyWhereTheModeMeansIt(t *testing.T) {
 	// With no proxy port known there is nothing legitimate to reach, and the old
 	// code's wildcard would have quietly opened all of loopback instead.
 	t.Run("proxy with no known port fails closed", func(t *testing.T) {
-		p := buildSeatbeltProfile(NetworkLaunchContext{Mode: "proxy"}, t.TempDir(), t.TempDir())
+		p := buildSeatbeltProfile(NetworkLaunchContext{Mode: "proxy"}, tempDir(t), tempDir(t))
 		if strings.Contains(p, "network-outbound") {
 			t.Errorf("proxy mode with no proxy port should grant no egress:\n%s", p)
 		}

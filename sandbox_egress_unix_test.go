@@ -102,7 +102,7 @@ func TestEgressProxyOverUnixSocketEnforcesAllowlistBothWays(t *testing.T) {
 	policy.Isolation.Network.PromptUnknown = false // deny unknown without prompting
 	policy.Isolation.Network.AllowHosts = []string{allowedTarget}
 
-	proxy, err := startEgressProxy(context.Background(), policy, Providers["node"], t.TempDir())
+	proxy, err := startEgressProxy(context.Background(), policy, Providers["node"], tempDir(t))
 	if err != nil {
 		t.Fatalf("startEgressProxy: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestEgressProxyRefusesClientsWithoutThisSessionsCredential(t *testing.T) {
 	policy.Isolation.Network.PromptUnknown = false
 	policy.Isolation.Network.AllowHosts = []string{allowedTarget}
 
-	proxy, err := startEgressProxy(context.Background(), policy, Providers["node"], t.TempDir())
+	proxy, err := startEgressProxy(context.Background(), policy, Providers["node"], tempDir(t))
 	if err != nil {
 		t.Fatalf("startEgressProxy: %v", err)
 	}

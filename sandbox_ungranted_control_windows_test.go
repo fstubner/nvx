@@ -6,7 +6,7 @@ package main
 // has NEVER granted reachable from inside the sandbox anyway?
 //
 // This has to be settled before anything is designed around it. The cross-project
-// probe used t.TempDir(), which lives under %LOCALAPPDATA%\Temp, and the deny-ACE
+// probe used tempDir(t), which lives under %LOCALAPPDATA%\Temp, and the deny-ACE
 // probe already established that parts of the user profile tree carry an ACE for
 // ALL APPLICATION PACKAGES (S-1-15-2-1) -- a group every AppContainer process is
 // in. If that ACE is what granted the access, then the cause is not nvx's own
@@ -60,7 +60,7 @@ func TestUngrantedDirectoriesAreUnreachable(t *testing.T) {
 	defer deleteAppContainerProfile(probeProfile)
 
 	// Two locations a project realistically lives in, neither ever granted.
-	underTemp := t.TempDir() // %LOCALAPPDATA%\Temp\...
+	underTemp := tempDir(t) // %LOCALAPPDATA%\Temp\...
 	underProfile, err := os.MkdirTemp(os.Getenv("USERPROFILE"), "nvx-ungranted")
 	if err != nil {
 		t.Skipf("cannot create a directory under the user profile: %v", err)
@@ -86,7 +86,7 @@ func TestUngrantedDirectoriesAreUnreachable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(guestHome)
-	workDir := t.TempDir()
+	workDir := tempDir(t)
 	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)

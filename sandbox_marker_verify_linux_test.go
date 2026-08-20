@@ -45,9 +45,9 @@ func TestContainmentNotDisprovedUnderLandlock(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=TestContainmentNotDisprovedUnderLandlock")
 	cmd.Env = append(os.Environ(),
 		"NVX_TEST_MARKER_CHILD=1",
-		"NVX_TEST_GUEST="+t.TempDir(),
-		"NVX_TEST_WORK="+t.TempDir(),
-		"NVX_TEST_NVXHOME="+t.TempDir(),
+		"NVX_TEST_GUEST="+tempDir(t),
+		"NVX_TEST_WORK="+tempDir(t),
+		"NVX_TEST_NVXHOME="+tempDir(t),
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

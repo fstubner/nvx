@@ -59,7 +59,7 @@ func (e *linkError) Error() string { return e.kind + ": " + e.err.Error() + " ("
 func TestStageAppContainerExecutableThroughALinkedDirectory(t *testing.T) {
 	for _, kind := range dirLinkKinds {
 		t.Run(kind.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := tempDir(t)
 
 			realDir := filepath.Join(root, "v24.14.1")
 			if err := os.MkdirAll(filepath.Join(realDir, "node_modules", "npm", "bin"), 0o700); err != nil {
@@ -77,7 +77,7 @@ func TestStageAppContainerExecutableThroughALinkedDirectory(t *testing.T) {
 				t.Skipf("this host cannot create a %s: %v", kind.name, err)
 			}
 
-			nvxHome := t.TempDir()
+			nvxHome := tempDir(t)
 			staged, err := stageAppContainerExecutable(nvxHome, filepath.Join(linked, "node.exe"))
 			if err != nil {
 				t.Fatalf("staging an executable whose directory is a %s failed: %v\n"+
@@ -107,7 +107,7 @@ func TestStageAppContainerExecutableThroughALinkedDirectory(t *testing.T) {
 // old code would have created an empty directory in the staged copy and reported
 // success -- a runtime missing half its files, failing later and elsewhere.
 func TestStageAppContainerExecutableFollowsANestedLinkedDirectory(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	srcDir := filepath.Join(root, "runtime")
 	if err := os.MkdirAll(srcDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestStageAppContainerExecutableFollowsANestedLinkedDirectory(t *testing.T) 
 		t.Skipf("this host cannot create a junction: %v", err)
 	}
 
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	staged, err := stageAppContainerExecutable(nvxHome, filepath.Join(srcDir, "tool.exe"))
 	if err != nil {
 		t.Fatalf("staging with a nested linked directory failed: %v", err)
@@ -144,13 +144,13 @@ func TestStageAppContainerExecutableFollowsANestedLinkedDirectory(t *testing.T) 
 // on every sandboxed launch, and re-copying a whole node distribution each time
 // would be a per-command cost measured in tens of megabytes.
 func TestStageAppContainerExecutableIsIdempotent(t *testing.T) {
-	srcDir := t.TempDir()
+	srcDir := tempDir(t)
 	exe := filepath.Join(srcDir, "tool.exe")
 	if err := os.WriteFile(exe, []byte("MZ-fake"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	first, err := stageAppContainerExecutable(nvxHome, exe)
 	if err != nil {
 		t.Fatalf("first stage: %v", err)

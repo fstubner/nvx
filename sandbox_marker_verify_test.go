@@ -36,7 +36,7 @@ func TestRealHomeDirIgnoresEnvironmentOverrides(t *testing.T) {
 		t.Skip("no resolvable home directory on this host")
 	}
 
-	fake := t.TempDir()
+	fake := tempDir(t)
 	t.Setenv("HOME", fake)
 	t.Setenv("USERPROFILE", fake)
 

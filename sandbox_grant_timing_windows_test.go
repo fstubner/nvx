@@ -54,7 +54,7 @@ func TestMeasureAppContainerSetupPhases(t *testing.T) {
 	}
 	defer os.RemoveAll(nvxHome)
 
-	workDir := t.TempDir()
+	workDir := tempDir(t)
 
 	var total time.Duration
 	total += timePhase(t, "grant guest home (M)", func() error {

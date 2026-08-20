@@ -18,7 +18,7 @@ import (
 // Windows it is a no-op either way, so the test states the contract on both and
 // is meaningful on the platform that has the setting.
 func TestDoctorDoesNotRepairWithoutFix(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 
 	// apply=false must never write, whatever it finds. It may report that a
 	// repair is available (true) or that none is needed (false); either is fine.

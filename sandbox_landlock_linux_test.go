@@ -53,9 +53,9 @@ func TestLandlockSandboxCanStartACommand(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=TestLandlockSandboxCanStartACommand")
 	cmd.Env = append(os.Environ(),
 		"NVX_TEST_LANDLOCK_CHILD=1",
-		"NVX_TEST_GUEST="+t.TempDir(),
-		"NVX_TEST_WORK="+t.TempDir(),
-		"NVX_TEST_NVXHOME="+t.TempDir(),
+		"NVX_TEST_GUEST="+tempDir(t),
+		"NVX_TEST_WORK="+tempDir(t),
+		"NVX_TEST_NVXHOME="+tempDir(t),
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -82,9 +82,9 @@ func TestLandlockAcceptsEveryConfiguredReadRoot(t *testing.T) {
 	}
 	defer syscall.Close(fd)
 
-	guestHome := t.TempDir()
-	workDir := t.TempDir()
-	nvxHome := t.TempDir()
+	guestHome := tempDir(t)
+	workDir := tempDir(t)
+	nvxHome := tempDir(t)
 
 	for _, rule := range landlockReadOnlyRules(nvxHome) {
 		if err := landlockAddRule(fd, rule.access, rule.path); err != nil {

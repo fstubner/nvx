@@ -18,7 +18,7 @@ import (
 // `node` that is not on PATH inside the container -- surfacing as
 // '"node"' is not recognized.
 func TestRewriteWindowsNodeCommandUsesFallbackNodeExe(t *testing.T) {
-	versionDir := t.TempDir()
+	versionDir := tempDir(t)
 	nodeExe := filepath.Join(versionDir, "node.exe")
 	if err := os.WriteFile(nodeExe, []byte("stub"), 0o600); err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestFixedDriveRootsIncludesSystemDrive(t *testing.T) {
 // When node.exe does sit beside npm.cmd (the bundled layout), that one wins and
 // the fallback is not needed.
 func TestRewriteWindowsNodeCommandPrefersSiblingNodeExe(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	sibling := filepath.Join(dir, "node.exe")
 	if err := os.WriteFile(sibling, []byte("stub"), 0o600); err != nil {
 		t.Fatal(err)

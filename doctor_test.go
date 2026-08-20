@@ -9,8 +9,8 @@ import (
 )
 
 func TestResolveCommandOnPath(t *testing.T) {
-	dirA := t.TempDir()
-	dirB := t.TempDir()
+	dirA := tempDir(t)
+	dirB := tempDir(t)
 
 	// Command name differs by platform: on Windows shims are "<cmd>.cmd".
 	shimName := "npm"
@@ -33,7 +33,7 @@ func TestResolveCommandOnPath(t *testing.T) {
 
 	// Unix: a non-executable file (0644) must not resolve as a command.
 	if runtime.GOOS != "windows" {
-		dirC := t.TempDir()
+		dirC := tempDir(t)
 		if err := os.WriteFile(filepath.Join(dirC, "tool"), []byte("data\n"), 0644); err != nil { // #nosec G306 -- test fixture
 			t.Fatal(err)
 		}
@@ -44,7 +44,7 @@ func TestResolveCommandOnPath(t *testing.T) {
 }
 
 func TestDiagnosePath(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	shimDir := filepath.Join(nvxHome, "bin")
 	current := filepath.Join(nvxHome, "current")
 	if err := os.MkdirAll(shimDir, 0755); err != nil { // #nosec G301 -- test fixture
@@ -82,7 +82,7 @@ func TestDiagnosePath(t *testing.T) {
 }
 
 func TestDiagnosePathCommands(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	shimDir := filepath.Join(nvxHome, "bin")
 	current := filepath.Join(nvxHome, "current")
 	if err := os.MkdirAll(shimDir, 0755); err != nil { // #nosec G301 -- test fixture
@@ -193,7 +193,7 @@ func TestRebuildUserPath(t *testing.T) {
 }
 
 func TestPathIsShadowed(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	shimDir := filepath.Join(nvxHome, "bin")
 	current := filepath.Join(nvxHome, "current")
 	sep := string(os.PathListSeparator)
@@ -221,7 +221,7 @@ func TestPathIsShadowed(t *testing.T) {
 // rather than once overall. It must also re-arm once the condition clears, so
 // a later recurrence is not silently suppressed forever.
 func TestHintIfShadowedPersistsAcrossProcessesAndRearms(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	shimDir := filepath.Join(nvxHome, "bin")
 	current := filepath.Join(nvxHome, "current")
 	sep := string(os.PathListSeparator)

@@ -52,7 +52,7 @@ func socksProxyForTest(t *testing.T) (proxy *EgressProxy, addr, user, token, all
 	policy.Isolation.Network.PromptUnknown = false
 	policy.Isolation.Network.AllowHosts = []string{allowed}
 
-	p, err := startEgressProxy(context.Background(), policy, Providers["node"], t.TempDir())
+	p, err := startEgressProxy(context.Background(), policy, Providers["node"], tempDir(t))
 	if err != nil {
 		t.Fatalf("startEgressProxy: %v", err)
 	}

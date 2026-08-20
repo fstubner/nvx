@@ -39,7 +39,7 @@ func writeTempFile(t *testing.T, dir, name string, data []byte) string {
 // --- hashing -----------------------------------------------------------------
 
 func TestComputeSHA256MatchesKnownDigest(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	content := []byte("nvx checksum fixture\n")
 	path := writeTempFile(t, dir, "blob.bin", content)
 
@@ -54,13 +54,13 @@ func TestComputeSHA256MatchesKnownDigest(t *testing.T) {
 }
 
 func TestComputeSHA256ReportsMissingFile(t *testing.T) {
-	if _, err := ComputeSHA256(filepath.Join(t.TempDir(), "absent.bin")); err == nil {
+	if _, err := ComputeSHA256(filepath.Join(tempDir(t), "absent.bin")); err == nil {
 		t.Error("hashing a missing file must fail rather than return an empty digest")
 	}
 }
 
 func TestVerifyExpectedSHA256(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	content := []byte("payload")
 	path := writeTempFile(t, dir, "payload.bin", content)
 	sum := sha256.Sum256(content)
@@ -107,7 +107,7 @@ func TestVerifyExpectedSHA256(t *testing.T) {
 // --- manifest verification ----------------------------------------------------
 
 func TestVerifyChecksumFromShasums(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	content := []byte("node binary stand-in")
 	archive := writeTempFile(t, dir, "node-v20.0.0-linux-x64.tar.gz", content)
 	sum := sha256.Sum256(content)
@@ -271,7 +271,7 @@ func buildTarGz(t *testing.T, dir, name string, entries []tarEntry) string {
 }
 
 func TestExtractTarGzExtractsAndStripsWrapperDir(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	archive := buildTarGz(t, dir, "node.tar.gz", []tarEntry{
 		{name: "node-v20.0.0/", typeflag: tar.TypeDir},
 		{name: "node-v20.0.0/bin/", typeflag: tar.TypeDir},
@@ -298,7 +298,7 @@ func TestExtractTarGzExtractsAndStripsWrapperDir(t *testing.T) {
 }
 
 func TestExtractTarGzRejectsPathTraversal(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	// After the wrapper segment is stripped this still climbs out of destDir.
 	archive := buildTarGz(t, dir, "evil.tar.gz", []tarEntry{
 		{name: "pkg/../../escaped.txt", typeflag: tar.TypeReg, body: "owned"},
@@ -322,7 +322,7 @@ func TestExtractTarGzRejectsPathTraversal(t *testing.T) {
 // link target escapes. This runs everywhere because the guard rejects before any
 // symlink is created, so it needs no symlink privilege.
 func TestExtractTarGzRejectsEscapingSymlink(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	dest := filepath.Join(dir, "out")
 
 	for _, tc := range []struct {
@@ -348,7 +348,7 @@ func TestExtractTarGzRejectsEscapingSymlink(t *testing.T) {
 }
 
 func TestExtractTarGzAllowsInternalSymlink(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	archive := buildTarGz(t, dir, "ok-link.tar.gz", []tarEntry{
 		{name: "pkg/bin/", typeflag: tar.TypeDir},
 		{name: "pkg/bin/node", typeflag: tar.TypeReg, body: "real"},
@@ -390,7 +390,7 @@ func buildZip(t *testing.T, dir, name string, files map[string]string) string {
 }
 
 func TestExtractZipStripsWrapperAndFlatDoesNot(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	archive := buildZip(t, dir, "tool.zip", map[string]string{
 		"tool-v1/bin/tool": "binary",
 	})
@@ -413,7 +413,7 @@ func TestExtractZipStripsWrapperAndFlatDoesNot(t *testing.T) {
 }
 
 func TestExtractZipRejectsPathTraversal(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	archive := buildZip(t, dir, "evil.zip", map[string]string{
 		"pkg/../../escaped.txt": "owned",
 	})

@@ -23,7 +23,7 @@ func TestShimsExistForBashOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("the extensionless shim only differs from the POSIX one on Windows")
 	}
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	if err := generateShims(nvxHome); err != nil {
 		t.Fatalf("generateShims: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestDoctorReportsMissingBashShims(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("bash shims are only separately reported on Windows")
 	}
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	shimDir := filepath.Join(nvxHome, "bin")
 	if err := os.MkdirAll(shimDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -106,8 +106,8 @@ func TestProjectBinShimsExistForBashOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("the extensionless shim only differs from the POSIX one on Windows")
 	}
-	project := t.TempDir()
-	nvxHome := t.TempDir()
+	project := tempDir(t)
+	nvxHome := tempDir(t)
 	binDir := filepath.Join(project, "node_modules", ".bin")
 	if err := os.MkdirAll(binDir, 0o700); err != nil {
 		t.Fatal(err)

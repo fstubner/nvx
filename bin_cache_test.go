@@ -58,9 +58,9 @@ func exeName(base string) string {
 // could have produced, so the invariant is: the target's directory must be a
 // directory that resolver would search.
 func TestLookupBinCacheRejectsPathsOffPATH(t *testing.T) {
-	nvxHome := t.TempDir()
-	pathDir := t.TempDir()
-	elsewhere := t.TempDir() // deliberately NOT on PATH
+	nvxHome := tempDir(t)
+	pathDir := tempDir(t)
+	elsewhere := tempDir(t) // deliberately NOT on PATH
 
 	legit := filepath.Join(pathDir, exeName("node"))
 	touchExecutable(t, legit)
@@ -91,7 +91,7 @@ func TestLookupBinCacheRejectsPathsOffPATH(t *testing.T) {
 // instead of the real runtime), so a real entry can never point there. It is also
 // the one PATH directory a contained process may be able to write to.
 func TestLookupBinCacheRejectsShimDir(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	shimDir := filepath.Join(nvxHome, "bin")
 	planted := filepath.Join(shimDir, exeName("node"))
 	touchExecutable(t, planted)
@@ -107,8 +107,8 @@ func TestLookupBinCacheRejectsShimDir(t *testing.T) {
 // TestLookupBinCacheStillRoundTrips guards the cache's actual purpose: the
 // validation must not break a normal store-then-load cycle.
 func TestLookupBinCacheStillRoundTrips(t *testing.T) {
-	nvxHome := t.TempDir()
-	pathDir := t.TempDir()
+	nvxHome := tempDir(t)
+	pathDir := tempDir(t)
 	bin := filepath.Join(pathDir, exeName("npm"))
 	touchExecutable(t, bin)
 	t.Setenv("PATH", pathDir)

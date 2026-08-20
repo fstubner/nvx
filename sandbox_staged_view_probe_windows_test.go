@@ -71,10 +71,10 @@ func TestStagedViewHidesProjectButWritesThrough(t *testing.T) {
 	defer syscall.LocalFree(syscall.Handle(sid))
 	defer deleteAppContainerProfile(probeProfile)
 
-	guestHome := t.TempDir()
+	guestHome := tempDir(t)
 
 	// --- the real project, which the sandbox must NOT see ---
-	project := t.TempDir()
+	project := tempDir(t)
 	writeFile := func(p, s string) {
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 			t.Fatal(err)

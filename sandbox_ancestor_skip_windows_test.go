@@ -15,7 +15,7 @@ import (
 // timeout: measured at 3054ms warm, against tens of milliseconds for every other
 // phase of a contained launch.
 func TestFailedAncestorGrantIsNotRetried(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	paths := []string{`C:\Users\x\AppData\Local\Temp`, `C:\Users\x\AppData\Local`}
 
 	attempts := 0
@@ -41,7 +41,7 @@ func TestFailedAncestorGrantIsNotRetried(t *testing.T) {
 // wrong: a cache that suppresses grants which would have worked would quietly
 // remove the traverse rights the walk exists to add.
 func TestSucceedingAncestorGrantIsNotSkipped(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	paths := []string{`C:\Users\x\projects\app`}
 
 	attempts := 0
@@ -59,7 +59,7 @@ func TestSucceedingAncestorGrantIsNotSkipped(t *testing.T) {
 // environmental -- a filter driver, an antivirus policy -- so a machine that
 // starts working must stop being penalised without anyone knowing a cache exists.
 func TestAncestorSkipClearsWhenTheGrantStartsWorking(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	paths := []string{`C:\Users\x\AppData\Local`}
 
 	grantAncestorsSkippingKnownFailures(nvxHome, paths, func(string) error {
@@ -88,7 +88,7 @@ func TestAncestorSkipClearsWhenTheGrantStartsWorking(t *testing.T) {
 // the grants silently. Unreadable means "nothing is skipped", which costs a retry
 // rather than removing traverse rights nobody notices are gone.
 func TestAncestorSkipSurvivesACorruptCacheFile(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	if err := os.WriteFile(filepath.Join(nvxHome, "ancestor-grant-skip.json"), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}

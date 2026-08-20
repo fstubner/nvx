@@ -23,8 +23,8 @@ func TestToolHomeKeyIsStableAndScoped(t *testing.T) {
 }
 
 func TestEnsurePersistentGuestProfileCreatesAndReuses(t *testing.T) {
-	nvxHome := t.TempDir()
-	scope := filepath.Join(t.TempDir(), "project")
+	nvxHome := tempDir(t)
+	scope := filepath.Join(tempDir(t), "project")
 
 	p1, err := ensurePersistentGuestProfile(nvxHome, scope, "wrangler")
 	if err != nil {

@@ -36,7 +36,7 @@ func TestStaleProjectGrantsAreFoundReportedAndFixed(t *testing.T) {
 	}
 	defer deleteAppContainerProfile("nvx.sandbox.staleprobe")
 
-	project := t.TempDir()
+	project := tempDir(t)
 	// package.json so findProjectRoot treats this as the project root, which is
 	// what the check reports on.
 	if err := os.WriteFile(filepath.Join(project, "package.json"), []byte(`{"name":"p"}`), 0o600); err != nil {
@@ -87,7 +87,7 @@ func TestStaleGrantScanIgnoresPerProjectCapabilitySIDs(t *testing.T) {
 		t.Skip("set NVX_PROBE=1 to run (writes and removes real ACEs)")
 	}
 
-	project := t.TempDir()
+	project := tempDir(t)
 	capSID, err := scopeCapabilitySID(project)
 	if err != nil {
 		t.Skipf("cannot derive a capability SID here: %v", err)

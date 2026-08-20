@@ -48,7 +48,7 @@ func TestLandlockDoesNotExposeNvxHomeSecrets(t *testing.T) {
 		_ = syscall.Close(fd)
 	}
 
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	for _, p := range nvxHomeProbePaths {
 		full := filepath.Join(nvxHome, p.rel)
 		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
@@ -74,7 +74,7 @@ func TestLandlockDoesNotExposeNvxHomeSecrets(t *testing.T) {
 		"NVX_TEST_NVXHOME_CHILD=1",
 		"NVX_TEST_NVXHOME="+nvxHome,
 		"NVX_TEST_GUEST="+guestHome,
-		"NVX_TEST_WORK="+t.TempDir(),
+		"NVX_TEST_WORK="+tempDir(t),
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

@@ -40,7 +40,7 @@ func TestAppContainerAceRightsReadsTheRightsNotJustPresence(t *testing.T) {
 	// A real `icacls` listing: the target SID, a similar capability SID, an
 	// inherited ACE, and a deny.
 	const sid = "S-1-15-2-125897231-4118270468-3890225265-1944594370-665964903-770884402-3722446281"
-	dir := t.TempDir()
+	dir := tempDir(t)
 
 	// Nothing granted yet: no ACE for this SID.
 	rights, err := appContainerAceRights(sid, dir)
@@ -84,7 +84,7 @@ func TestAppContainerAceRightsReadsTheRightsNotJustPresence(t *testing.T) {
 // every launch to re-answer a question whose answer cannot change.
 func TestHomeGrantMigrationRunsOnce(t *testing.T) {
 	const sid = "S-1-15-2-1-2-3-4-5-6-7"
-	home := t.TempDir()
+	home := tempDir(t)
 	marker := homeGrantMigrationMarker(home)
 
 	if _, err := os.Stat(marker); err == nil {
