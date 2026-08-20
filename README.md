@@ -340,6 +340,17 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   permissions. Steady state has been measured at ~1s and ~2.2s on different
   machines; the first run after nvx stages a runtime copies the whole distribution
   and has been measured at 45s to 3 minutes. Uncontained commands are unaffected.
+- **The first contained run after an install is slow, once, in proportion to the
+  dependency tree.** Measured 2026-08-20: loading a freshly installed 2,552-file
+  package inside the sandbox took 5.8s the first time and 461ms every time after.
+  The same load uncontained is ~500ms, so **steady-state containment costs
+  essentially nothing here** — the one-off is the filesystem and antivirus caches
+  filling while a sandboxed process reads thousands of files for the first time,
+  not work nvx is doing. nvx's own setup is ~370ms, measured separately.
+
+  It matters only where something is waiting with a timeout. If you are wiring a
+  contained command into a tool that gives up after a few seconds, run it once by
+  hand after installing to absorb the cost.
 - **`npm install -g` is refused inside the sandbox**, because a global install
   writes outside the project. nvx points you at `nvx --no-sandbox npm install -g`,
   which is an uncontained install — treat it as one.
