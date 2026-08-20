@@ -71,7 +71,7 @@ func TestStdioShimIsAFaithfulSubstituteForPipedCapture(t *testing.T) {
 	if err != nil {
 		t.Skip("node is not on PATH")
 	}
-	dir := t.TempDir()
+	dir := tempDir(t)
 	shim, err := writeStdioShim(dir)
 	if err != nil {
 		t.Fatalf("writeStdioShim: %v", err)

@@ -28,7 +28,7 @@ func TestMeasureContainedLaunchPhases(t *testing.T) {
 	}
 
 	const probeProfile = "nvx.sandbox.timingprobe"
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 
 	// A project under the user profile, which is the layout the ancestor walk
 	// actually runs over.

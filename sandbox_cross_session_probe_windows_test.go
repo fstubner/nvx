@@ -87,8 +87,8 @@ func TestOneSandboxSessionCannotReadAnother(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	victimWork := t.TempDir()
-	attackerWork := t.TempDir()
+	victimWork := tempDir(t)
+	attackerWork := tempDir(t)
 
 	// Session 1: a concurrent sandbox. Session 2: a trusted tool with a
 	// persistent profile, granted exactly as ensurePersistentGuestProfile's

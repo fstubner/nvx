@@ -58,7 +58,7 @@ func TestAppContainerEgressPrimitivesWithoutInternetClient(t *testing.T) {
 	defer syscall.LocalFree(syscall.Handle(sid))
 	defer deleteAppContainerProfile(probeProfile)
 
-	// Deliberately NOT t.TempDir(): it embeds the test name, and an AF_UNIX path is
+	// Deliberately NOT tempDir(t): it embeds the test name, and an AF_UNIX path is
 	// capped at 108 bytes (sun_path) on Windows as on Unix. With this test's name in
 	// it the socket path came to 116 and bind failed with "invalid argument", which
 	// looks exactly like a capability denial and is not one. The real guest home has
@@ -68,7 +68,7 @@ func TestAppContainerEgressPrimitivesWithoutInternetClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(guestHome)
-	workDir := t.TempDir()
+	workDir := tempDir(t)
 	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)

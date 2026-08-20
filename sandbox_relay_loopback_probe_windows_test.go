@@ -74,7 +74,7 @@ func TestRelayDoesNotExposeHostLoopbackServices(t *testing.T) {
 	policy.Isolation.Network.DefaultAllow = nil
 	policy.Isolation.Network.DefaultAllowSet = true
 
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	proxy, err := startEgressProxy(context.Background(), policy, Providers["node"], nvxHome)
 	if err != nil {
 		t.Fatalf("startEgressProxy: %v", err)
@@ -94,7 +94,7 @@ func TestRelayDoesNotExposeHostLoopbackServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(guestHome)
-	workDir := t.TempDir()
+	workDir := tempDir(t)
 	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)

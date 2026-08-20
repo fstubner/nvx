@@ -12,8 +12,8 @@ import (
 
 // unixSocketTempPath returns a path a test can bind as an AF_UNIX socket.
 //
-// It exists because t.TempDir() cannot be used for one. sockaddr_un.sun_path is a
-// fixed 104 bytes on macOS and 108 on Linux and Windows, t.TempDir() embeds the
+// It exists because tempDir(t) cannot be used for one. sockaddr_un.sun_path is a
+// fixed 104 bytes on macOS and 108 on Linux and Windows, tempDir(t) embeds the
 // test's name, and macOS runners put $TMPDIR at
 // /var/folders/<2>/<26>/T/ before any of that -- so an ordinarily-named test
 // overflows. The bind then fails with "invalid argument", which reads as a

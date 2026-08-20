@@ -20,8 +20,8 @@ import (
 // TestProjectBinDirIsNotInsideTheProject is the first half. A directory a
 // contained process can write to must not be on the developer's PATH.
 func TestProjectBinDirIsNotInsideTheProject(t *testing.T) {
-	project := t.TempDir()
-	nvxHome := t.TempDir()
+	project := tempDir(t)
+	nvxHome := tempDir(t)
 
 	dir := projectBinDir(project, nvxHome)
 
@@ -34,7 +34,7 @@ func TestProjectBinDirIsNotInsideTheProject(t *testing.T) {
 			"cannot write", dir)
 	}
 	// Two projects must not collide, or one project could plant for another.
-	other := t.TempDir()
+	other := tempDir(t)
 	if projectBinDir(other, nvxHome) == dir {
 		t.Error("two different projects share one project-bin directory")
 	}
@@ -45,8 +45,8 @@ func TestProjectBinDirIsNotInsideTheProject(t *testing.T) {
 // enough on its own: a postinstall can create node_modules/.bin/git and wait for
 // the next regeneration to shim it onto PATH.
 func TestPlantedBinaryDoesNotBecomeAShim(t *testing.T) {
-	project := t.TempDir()
-	nvxHome := t.TempDir()
+	project := tempDir(t)
+	nvxHome := tempDir(t)
 	binDir := filepath.Join(project, "node_modules", ".bin")
 	if err := os.MkdirAll(binDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -88,8 +88,8 @@ func TestPlantedBinaryDoesNotBecomeAShim(t *testing.T) {
 // reaches that directory: generation only ever added, so anything that got in
 // stayed on PATH forever, including entries from a package since removed.
 func TestProjectBinPruningRemovesWhatIsNoLongerThere(t *testing.T) {
-	project := t.TempDir()
-	nvxHome := t.TempDir()
+	project := tempDir(t)
+	nvxHome := tempDir(t)
 	binDir := filepath.Join(project, "node_modules", ".bin")
 	if err := os.MkdirAll(binDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -121,8 +121,8 @@ func TestProjectBinPruningRemovesWhatIsNoLongerThere(t *testing.T) {
 // TestCleanAndBuildPathUsesTheRelocatedDir pins the wiring. If PATH still pointed
 // at the in-project directory, relocating would have achieved nothing.
 func TestCleanAndBuildPathUsesTheRelocatedDir(t *testing.T) {
-	project := t.TempDir()
-	nvxHome := t.TempDir()
+	project := tempDir(t)
+	nvxHome := tempDir(t)
 	if err := os.WriteFile(filepath.Join(project, "package.json"), []byte(`{"name":"p"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}

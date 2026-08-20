@@ -53,7 +53,7 @@ func TestSandboxCannotReachOtherProjects(t *testing.T) {
 	defer deleteAppContainerProfile(probeProfile)
 
 	// Project A: nvx ran here once, at some point in the past.
-	projectA := t.TempDir()
+	projectA := tempDir(t)
 	secretA := filepath.Join(projectA, "src-and-secrets.txt")
 	if err := os.WriteFile(secretA, []byte("OTHER-PROJECT-SOURCE"), 0o600); err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestSandboxCannotReachOtherProjects(t *testing.T) {
 	}
 
 	// Project B: an unrelated project, where the user now runs `npm install`.
-	projectB := t.TempDir()
+	projectB := tempDir(t)
 	homeB, err := os.MkdirTemp("", "nvxb")
 	if err != nil {
 		t.Fatal(err)

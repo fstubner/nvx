@@ -61,7 +61,7 @@ func TestSafeVersionComponentRejectsOddInput(t *testing.T) {
 // check to the property it exists to guarantee, rather than trusting that the
 // allowlist implies containment.
 func TestSafeVersionComponentActuallyKeepsPathsInsideVersionsDir(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	versionsRoot := filepath.Clean(filepath.Join(nvxHome, "versions", "node"))
 
 	for _, v := range []string{"v20.0.0", "1.0.0-rc.1", "1.0.0+build.5", "v22.11.0"} {
@@ -80,7 +80,7 @@ func TestSafeVersionComponentActuallyKeepsPathsInsideVersionsDir(t *testing.T) {
 // string that was previously accepted, and shows it resolves onto a directory
 // outside the versions tree -- the directory os.RemoveAll is then called on.
 func TestUnguardedVersionEscapesToADeletableDirectory(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 
 	// A sentinel standing in for whatever the traversal would land on.
 	sentinel := filepath.Join(nvxHome, "grants")

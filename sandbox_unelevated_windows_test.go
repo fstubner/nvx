@@ -42,8 +42,8 @@ func TestUnelevatedSandboxRunsPackageManager(t *testing.T) {
 	t.Logf("confirmed: probe SID has NO grant on %s\\ (unelevated-equivalent state)", sysDrive)
 
 	nvxHome := GetHomeDir()
-	guestHome := t.TempDir()
-	workDir := t.TempDir()
+	guestHome := tempDir(t)
+	workDir := tempDir(t)
 
 	if err := os.WriteFile(filepath.Join(workDir, "package.json"),
 		[]byte(`{"name":"probe","version":"1.0.0","private":true,"scripts":{"hi":"node -e \"console.log('SCRIPT_OK')\""}}`), 0o600); err != nil {

@@ -57,7 +57,7 @@ func TestParseLoopbackExemptSIDsFindsTheSandbox(t *testing.T) {
 // exempt answer must never be, or the warning would keep firing for a day after
 // the user ran the elevated command it told them to run.
 func TestOnlyTheClearLoopbackResultIsCached(t *testing.T) {
-	home := t.TempDir()
+	home := tempDir(t)
 
 	if loopbackExemptRecentlyClear(home, nvxSandboxSampleSID) {
 		t.Fatal("a machine with no cache file must not read as recently clear")
@@ -76,7 +76,7 @@ func TestOnlyTheClearLoopbackResultIsCached(t *testing.T) {
 }
 
 func TestLoopbackClearCacheExpiresAndIsSIDScoped(t *testing.T) {
-	home := t.TempDir()
+	home := tempDir(t)
 	write := func(sid string, at time.Time) {
 		data, err := json.Marshal(loopbackExemptCheck{SID: sid, CheckedAt: at})
 		if err != nil {
@@ -128,7 +128,7 @@ func TestExemptMachineIsWarnedAbout(t *testing.T) {
 	}
 
 	out := captureStderr(t, func() {
-		warnIfSandboxLoopbackExempt(t.TempDir(), sidStr, "proxy")
+		warnIfSandboxLoopbackExempt(tempDir(t), sidStr, "proxy")
 	})
 	if !strings.Contains(out, "loopback exemption") {
 		t.Errorf("an exempt machine was not warned; stderr was:\n%s", out)
@@ -140,7 +140,7 @@ func TestExemptMachineIsWarnedAbout(t *testing.T) {
 	// network.mode "open" asks for no egress restriction, so there is nothing to
 	// warn about weakening.
 	if quiet := captureStderr(t, func() {
-		warnIfSandboxLoopbackExempt(t.TempDir(), sidStr, "open")
+		warnIfSandboxLoopbackExempt(tempDir(t), sidStr, "open")
 	}); strings.TrimSpace(quiet) != "" {
 		t.Errorf("expected no warning under network.mode open, got:\n%s", quiet)
 	}
@@ -148,7 +148,7 @@ func TestExemptMachineIsWarnedAbout(t *testing.T) {
 
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
-	f, err := os.CreateTemp(t.TempDir(), "stderr")
+	f, err := os.CreateTemp(tempDir(t), "stderr")
 	if err != nil {
 		t.Fatal(err)
 	}

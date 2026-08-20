@@ -60,13 +60,13 @@ func TestNetnsContainedProcessReachesOnlyAllowlistedHosts(t *testing.T) {
 	policy.Isolation.Network.AllowHosts = []string{allowed}
 
 	// The proxy lives HERE, in the parent, outside the namespace the child gets.
-	proxy, err := startEgressProxy(context.Background(), policy, Providers["node"], t.TempDir())
+	proxy, err := startEgressProxy(context.Background(), policy, Providers["node"], tempDir(t))
 	if err != nil {
 		t.Fatalf("startEgressProxy: %v", err)
 	}
 	defer proxy.Close()
 
-	sock := filepath.Join(t.TempDir(), "egress.sock")
+	sock := filepath.Join(tempDir(t), "egress.sock")
 	if err := proxy.ListenUnix(sock); err != nil {
 		t.Fatalf("ListenUnix: %v", err)
 	}

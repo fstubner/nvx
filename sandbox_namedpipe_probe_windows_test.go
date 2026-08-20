@@ -41,8 +41,8 @@ func TestAppContainerCannotCreateNamedPipes(t *testing.T) {
 	defer syscall.LocalFree(syscall.Handle(sid))
 	defer deleteAppContainerProfile(probeProfile)
 
-	guestHome := t.TempDir()
-	workDir := t.TempDir()
+	guestHome := tempDir(t)
+	workDir := tempDir(t)
 	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)

@@ -7,7 +7,7 @@ import (
 )
 
 func TestRunGrantsListShowsCurrentProjectGrants(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	projectDir := filepath.Join(tmp, "project")
 	nvxHome := filepath.Join(tmp, ".nvx")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -42,7 +42,7 @@ func TestRunGrantsListShowsCurrentProjectGrants(t *testing.T) {
 }
 
 func TestRunGrantsResetRemovesGrantFile(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	projectDir := filepath.Join(tmp, "project")
 	nvxHome := filepath.Join(tmp, ".nvx")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {

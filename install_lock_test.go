@@ -14,7 +14,7 @@ import (
 // "already in progress", which sends the user looking for a process that does not
 // exist.
 func TestAbandonedInstallLockDoesNotBlockForever(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	lockDir := filepath.Join(nvxHome, "versions", "node")
 	if err := os.MkdirAll(lockDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestAbandonedInstallLockDoesNotBlockForever(t *testing.T) {
 // same directory at once. The bias is deliberate — only a provably dead owner
 // releases it.
 func TestLiveInstallLockIsRespected(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 
 	release, err := acquireRuntimeInstallLock(nvxHome, "node", "v22.11.0")
 	if err != nil {
@@ -66,7 +66,7 @@ func TestLiveInstallLockIsRespected(t *testing.T) {
 // with no parseable pid could belong to a running install written by a different
 // version of nvx; "I cannot tell who owns this" is not evidence that nobody does.
 func TestUnreadableInstallLockIsLeftAlone(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	lockDir := filepath.Join(nvxHome, "versions", "node")
 	if err := os.MkdirAll(lockDir, 0o700); err != nil {
 		t.Fatal(err)

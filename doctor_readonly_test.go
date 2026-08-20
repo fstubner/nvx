@@ -22,7 +22,7 @@ import (
 // TestDoctorDoesNotWriteShimsWithoutFix pins the read-only contract for the whole
 // command, not for one function inside it.
 func TestDoctorDoesNotWriteShimsWithoutFix(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	shimDir := filepath.Join(nvxHome, "bin")
 
 	if code := runDoctor(nvxHome, false); code == 0 {
@@ -39,7 +39,7 @@ func TestDoctorDoesNotWriteShimsWithoutFix(t *testing.T) {
 // TestDoctorFixWritesShims is the other half: the repair has to actually repair,
 // or moving it behind the flag would just remove the behaviour.
 func TestDoctorFixWritesShims(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 
 	runDoctor(nvxHome, true)
 
@@ -68,7 +68,7 @@ func TestDoctorReportsMissingShimsRatherThanSilentlyFixingThem(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("extensionless shims only differ from the POSIX ones on Windows")
 	}
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	if err := generateShims(nvxHome); err != nil {
 		t.Fatal(err)
 	}

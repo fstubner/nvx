@@ -47,7 +47,7 @@ func TestLegacyPackageSidGrantsAreRemoved(t *testing.T) {
 		defer deleteAppContainerProfile(name)
 	}
 
-	project := t.TempDir()
+	project := tempDir(t)
 	for _, sid := range legacySIDs {
 		grantArg := fmt.Sprintf("*%s:(OI)(CI)(M)", sid)
 		if out, err := runWinCmd(30*time.Second, "icacls", project, "/grant", grantArg, "/c", "/q"); err != nil {
@@ -79,7 +79,7 @@ func TestCleanupLeavesTheProjectCapabilityAlone(t *testing.T) {
 		t.Skip("set NVX_PROBE=1 to run (writes and removes real ACEs)")
 	}
 
-	project := t.TempDir()
+	project := tempDir(t)
 	capSID, err := scopeCapabilitySID(sandboxScopeForWorkDir(project))
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestStaleSidScanIgnoresCapabilitySids(t *testing.T) {
 // costs a process launch and achieves nothing -- and the drive-root grants
 // `nvx setup` adds arrive inherited.
 func TestStaleSidScanSkipsInheritedAces(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	// No ACEs of interest here, so the scan must come back empty rather than
 	// reporting whatever inherited entries the temp directory carries.
 	if sids := staleAppContainerSIDsOn(filepath.Clean(dir)); len(sids) != 0 {

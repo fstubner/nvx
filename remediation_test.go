@@ -41,8 +41,8 @@ func TestParseRuntimeSpecDefaultsBareVersionsToNode(t *testing.T) {
 }
 
 func TestBinResolveCacheHitAndInvalidation(t *testing.T) {
-	nvxHome := t.TempDir()
-	binDir := t.TempDir()
+	nvxHome := tempDir(t)
+	binDir := tempDir(t)
 	bin := filepath.Join(binDir, "node.exe")
 	if err := os.WriteFile(bin, []byte("x"), 0755); err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestBinResolveCacheHitAndInvalidation(t *testing.T) {
 	}
 
 	// A changed PATH must invalidate the cache (different hash).
-	t.Setenv("PATH", filepath.Join(t.TempDir(), "other"))
+	t.Setenv("PATH", filepath.Join(tempDir(t), "other"))
 	if got := lookupBinCache(nvxHome, "node"); got != "" {
 		t.Fatalf("changed PATH must invalidate cache, got %q", got)
 	}
@@ -213,7 +213,7 @@ func TestIsFullBunVersionAndMatch(t *testing.T) {
 }
 
 func TestBunProviderDetectConfig(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	if err := os.WriteFile(filepath.Join(tmp, ".bun-version"), []byte("1.2.19\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestBunProviderDetectConfig(t *testing.T) {
 		t.Fatalf("DetectConfig(.bun-version) = (%q, %q, %v), want 1.2.19", ver, src, err)
 	}
 
-	tmp2 := t.TempDir()
+	tmp2 := tempDir(t)
 	if err := os.WriteFile(filepath.Join(tmp2, "package.json"), []byte(`{"engines":{"bun":">=1.1.0"}}`), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestFindShasumEntryFormats(t *testing.T) {
 }
 
 func TestWindowsSetupStateRoundTrip(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	if _, ok := readWindowsSetupState(nvxHome); ok {
 		t.Fatal("no marker should exist initially")
 	}
@@ -384,7 +384,7 @@ func TestShellEnvAssignmentEscapesPowerShellValues(t *testing.T) {
 }
 
 func TestPersistNetworkAllowHostDoesNotDisableDefaultProtections(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	projectDir := filepath.Join(tmp, "project")
 	nvxHome := filepath.Join(tmp, ".nvx")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -436,7 +436,7 @@ func TestPersistNetworkAllowHostDoesNotDisableDefaultProtections(t *testing.T) {
 }
 
 func TestLoadPolicyIgnoresUntrustedLooseningProjectPolicy(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	projectDir := filepath.Join(tmp, "project")
 	nvxHome := filepath.Join(tmp, ".nvx")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -481,7 +481,7 @@ func TestLoadPolicyIgnoresUntrustedLooseningProjectPolicy(t *testing.T) {
 }
 
 func TestLoadPolicyHonorsTrustedLooseningProjectPolicy(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	projectDir := filepath.Join(tmp, "project")
 	nvxHome := filepath.Join(tmp, ".nvx")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -542,7 +542,7 @@ func TestLoadPolicyHonorsTrustedLooseningProjectPolicy(t *testing.T) {
 }
 
 func TestLoadPolicyReturnsErrorForMalformedPolicy(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	nvxHome := filepath.Join(tmp, ".nvx")
 	if err := os.MkdirAll(nvxHome, 0755); err != nil {
 		t.Fatal(err)
@@ -557,7 +557,7 @@ func TestLoadPolicyReturnsErrorForMalformedPolicy(t *testing.T) {
 }
 
 func TestDetectShimPackagesForVerificationUsesPackageLockForPlainInstall(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	origWd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -587,7 +587,7 @@ func TestDetectShimPackagesForVerificationUsesPackageLockForPlainInstall(t *test
 }
 
 func TestDetectShimPackagesForVerificationFallsBackToPackageJSON(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	origWd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -670,7 +670,7 @@ func TestRunVerifyInstallFailsClosedOnOSVFailure(t *testing.T) {
 
 func testNvxHomeWithTyposquattingDisabled(t *testing.T) string {
 	t.Helper()
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	policy := `{"typosquatting":{"enabled":false}}`
 	if err := os.WriteFile(filepath.Join(nvxHome, "policy.json"), []byte(policy), 0644); err != nil {
 		t.Fatal(err)
@@ -746,7 +746,7 @@ func TestProviderSupportsNetworkModeFailsClosedForUnenforcedProviders(t *testing
 }
 
 func TestPolicyExplicitEmptyDefaultAllowRemovesProviderDefaults(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	projectDir := filepath.Join(tmp, "project")
 	nvxHome := filepath.Join(tmp, ".nvx")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -782,7 +782,7 @@ func TestPolicyExplicitEmptyDefaultAllowRemovesProviderDefaults(t *testing.T) {
 }
 
 func TestPolicyExplicitFalseCanOverridePromptUnknown(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	projectDir := filepath.Join(tmp, "project")
 	nvxHome := filepath.Join(tmp, ".nvx")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -815,7 +815,7 @@ func TestPolicyExplicitFalseCanOverridePromptUnknown(t *testing.T) {
 }
 
 func TestIsNodeVersionInstalledRequiresRuntimeBinary(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	version := "v20.0.0"
 	versionDir := filepath.Join(nvxHome, "versions", "node", version)
 	if err := os.MkdirAll(versionDir, 0755); err != nil {
@@ -843,7 +843,7 @@ func TestIsNodeVersionInstalledRequiresRuntimeBinary(t *testing.T) {
 }
 
 func TestAcquireInstallLockPreventsConcurrentInstall(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	release, err := acquireInstallLock(nvxHome, "v20.0.0")
 	if err != nil {
 		t.Fatalf("first lock failed: %v", err)
@@ -860,13 +860,13 @@ func TestAcquireInstallLockPreventsConcurrentInstall(t *testing.T) {
 }
 
 func TestAcquireInstallLockRejectsUnsafeVersionName(t *testing.T) {
-	if _, err := acquireInstallLock(t.TempDir(), `..\outside`); err == nil {
+	if _, err := acquireInstallLock(tempDir(t), `..\outside`); err == nil {
 		t.Fatal("install lock should reject path-like version names")
 	}
 }
 
 func TestGetGlobalDefaultVersionUsesProvidedHome(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	target := filepath.Join(nvxHome, "versions", "node", "v20.0.0")
 	if err := os.MkdirAll(target, 0755); err != nil {
 		t.Fatal(err)
@@ -880,7 +880,7 @@ func TestGetGlobalDefaultVersionUsesProvidedHome(t *testing.T) {
 }
 
 func TestNodeUninstallRefusesGlobalDefaultVersion(t *testing.T) {
-	nvxHome := t.TempDir()
+	nvxHome := tempDir(t)
 	target := filepath.Join(nvxHome, "versions", "node", "v20.0.0")
 	if err := os.MkdirAll(target, 0755); err != nil {
 		t.Fatal(err)
@@ -929,7 +929,7 @@ func TestAppVersionMatchesNewestChangelogEntry(t *testing.T) {
 }
 
 func TestEgressProxyCloseClosesListeners(t *testing.T) {
-	proxy, err := startEgressProxy(context.Background(), DefaultPolicy(), Providers["node"], t.TempDir())
+	proxy, err := startEgressProxy(context.Background(), DefaultPolicy(), Providers["node"], tempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -955,7 +955,7 @@ func TestCommandHelpTextExistsForPrimaryCommands(t *testing.T) {
 }
 
 func TestSafeArchiveTargetRejectsEscapes(t *testing.T) {
-	dest := t.TempDir()
+	dest := tempDir(t)
 	for _, name := range []string{
 		"node-v20/../evil.txt",
 		`node-v20/..\evil.txt`,
@@ -979,7 +979,7 @@ func TestSafeArchiveTargetRejectsEscapes(t *testing.T) {
 }
 
 func TestProjectBinShimQuotesCommandNames(t *testing.T) {
-	shimDir := t.TempDir()
+	shimDir := tempDir(t)
 	cmdName := "bad %PATH% & name"
 	if runtime.GOOS != "windows" {
 		cmdName = "bad name'; touch nope; #"
@@ -1008,7 +1008,7 @@ func TestProjectBinShimQuotesCommandNames(t *testing.T) {
 }
 
 func TestTrustedToolGrantPersistsUnderNvxHome(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := tempDir(t)
 	projectDir := filepath.Join(tmp, "project")
 	nvxHome := filepath.Join(tmp, ".nvx")
 	if err := os.MkdirAll(projectDir, 0755); err != nil {

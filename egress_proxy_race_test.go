@@ -21,7 +21,7 @@ func TestEgressProxyAllowedIsRaceFreeAgainstSessionWrites(t *testing.T) {
 		allow:    map[string]bool{},
 		session:  map[string]bool{},
 		prompted: map[string]bool{},
-		nvxHome:  t.TempDir(),
+		nvxHome:  tempDir(t),
 	}
 	// proxy mode with prompting off: allowed() reaches the session lookup and then
 	// returns without needing a terminal.
