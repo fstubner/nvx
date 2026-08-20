@@ -80,21 +80,30 @@ func shouldSandbox(cmdName string, args []string, policy Policy, opts shimOption
 	if !policy.Isolation.Enabled {
 		return false
 	}
-	provider := runtimeForShim(cmdName)
-	isWrapped := isProjectBinCommand(cmdName)
-	for _, c := range provider.ShimCommands() {
-		if strings.EqualFold(c, cmdName) {
-			isWrapped = true
-			break
-		}
-	}
-	if !isWrapped {
+	if !isWrappedCommand(cmdName) {
 		return false
 	}
 
 	class := classifyInvocation(cmdName, args)
 	level := policy.IsolationLevel()
 	return shouldContain(class, level, opts)
+}
+
+// isWrappedCommand reports whether nvx wraps this command name -- a runtime's
+// own shim (npm, npx, node, bun) or a project-bin command routed through one.
+//
+// Split out of shouldSandbox so a run trace can report "not a wrapped command"
+// as the reason an invocation was not contained, without restating the test.
+func isWrappedCommand(cmdName string) bool {
+	if isProjectBinCommand(cmdName) {
+		return true
+	}
+	for _, c := range runtimeForShim(cmdName).ShimCommands() {
+		if strings.EqualFold(c, cmdName) {
+			return true
+		}
+	}
+	return false
 }
 
 func allShimCommands() []string {

@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+* **`nvx audit` — a local record of what nvx did, for reviewing later rather than
+  in the moment.** `~/.nvx/audit.log` already held security decisions (egress
+  allow/deny, grants, policy pins) but nothing recorded that a command ran at
+  all, so questions that only show up across many runs had no evidence behind
+  them: how often something falls out of the sandbox and why, which warnings fire
+  repeatedly and get scrolled past, what is slow.
+
+  Each top-level invocation now appends one record: command, subcommand, whether
+  it was contained, why not when it was not, exit code, duration, and the
+  warnings it printed. Nested invocations are not recorded — one typed `npm`
+  command can spawn a tree of lifecycle scripts, and counting each would make
+  every total wrong.
+
+  `nvx audit` prints them interleaved with the security decisions they caused;
+  `--summary` gives counts, `--failures` narrows to non-zero exits.
+
+  **Nothing is sent anywhere.** The file is on local disk and there is no
+  uploader. Arguments are not recorded either — only the subcommand, and only
+  when it can be identified without stepping over a flag that might take a value,
+  because `npm config set //registry/:_authToken=…` and `node -e '<script>'` put
+  secrets in argv and this is the file a user would paste into a bug report.
+
+  The log is now capped at 4 MB with one rotated generation kept; it grew without
+  limit before, which was tolerable when only security events went in it.
+
 ## [0.5.2] - 2026-08-20
 
 ### Security

@@ -642,7 +642,16 @@ func dedupeStrings(values []string) []string {
 	return out
 }
 
+// runShim runs a wrapped command, contained or not. It wraps runShimTraced so
+// that every exit path -- refusal, sandbox, direct -- lands in one run record.
 func runShim(cmdName string, args []string, nvxHome string) int {
+	trace := beginRunTrace(nvxHome, cmdName, args)
+	code := runShimTraced(trace, cmdName, args, nvxHome)
+	trace.finish(code)
+	return code
+}
+
+func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome string) int {
 	opts := parseShimOptions(args)
 	args = opts.args
 	opts.strictFlag = strictFlag
@@ -671,7 +680,9 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 	// Ordered before verification rather than merged into the block below because
 	// that block is inside shouldSandbox, which is where the refusal belongs: a
 	// global install is fine when isolation is off.
-	if shouldSandbox(cmdName, args, policy, opts) && isGlobalInstall(cmdName, args) {
+	contain := shouldSandbox(cmdName, args, policy, opts)
+	if contain && isGlobalInstall(cmdName, args) {
+		trace.note(runModeRefused, "global install cannot be contained")
 		refuseContainedGlobalInstall(cmdName)
 		return 1
 	}
@@ -692,7 +703,8 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 		}
 	}
 
-	if shouldSandbox(cmdName, args, policy, opts) {
+	if contain {
+		trace.note(runModeSandboxed, "")
 		if opts.payloadNoSandbox {
 			LogInfo("--no-sandbox is ignored when passed to a wrapped command. To run without isolation, use: nvx --no-sandbox %s ...", cmdName)
 		}
@@ -726,7 +738,12 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 	// path, whose guest PATH never includes nvx's own shim dir, so nothing it
 	// spawns re-enters nvx's classification at all. Only the outermost
 	// invocation in that tree should report its own status.
-	if isTopLevelShimInvocation() {
+	//
+	// trace.top rather than a fresh isTopLevelShimInvocation(): that call marks
+	// the process tree as claimed, so asking twice in one invocation answers
+	// "no" the second time and the status line disappears.
+	trace.note(runModeDirect, describeSandboxSkip(cmdName, args, policy, opts))
+	if trace.isTop() {
 		LogInfo("Running directly (not sandboxed): %s %s", cmdName, strings.Join(args, " "))
 	}
 

@@ -118,6 +118,8 @@ Commands:
   init-shims               Generate PATH shims in ~/.nvx/bin
   policy init              Create default policy files (--global, --project, --force)
   cleanup                  Remove stale sandbox sessions from previous runs
+  audit [--summary]        Review the local record of past runs and the security
+                           decisions nvx made (--runs, --failures, --limit=N)
   version, -v              Print version info
 
 Shim flags (node, npm, npx, yarn, pnpm, bun, bunx):
