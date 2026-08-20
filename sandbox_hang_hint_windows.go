@@ -67,6 +67,14 @@ func startHangHint(command string, args []string) (stop func()) {
 // commandCanTripNamedPipeLimit reports whether this invocation runs third-party
 // install scripts, which is the only situation the hint is about. A long-running
 // dev server or test run is not a symptom of anything.
+//
+// `npx`/`bunx` tools hit the same restriction and are deliberately NOT covered.
+// An acceptance pass noted the gap, and the honest answer is that a timer cannot
+// distinguish the two cases there: an install still running after two minutes is
+// anomalous, while an npx-launched dev server running for hours is doing exactly
+// what was asked. Hinting on those would be noise, and a hint people learn to
+// ignore is worse than none. The limitation is documented for tool runners in
+// README.md and SECURITY.md instead of guessed at here.
 // It deliberately does not reuse isPackageManagerCommand: that answers "does this
 // walk to the drive root", feeds the elevation advisory, and omits bun. The
 // question here is "does this run third-party install scripts", which is a

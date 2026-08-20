@@ -137,11 +137,16 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   way. `npm install esbuild` works as a result; it previously hung forever.
 
   Asynchronous `spawn(..., { stdio: "pipe" })` is a real stream that a file cannot
-  stand in for, and it still fails. A contained tool that streams a child's output
-  as it is produced will hang. Install such a package with `--no-sandbox`; nvx also
-  prints a diagnostic hint when a contained install runs unusually long. Nothing
-  here affects containment: it changes how a contained process talks to its own
-  children, not what it may reach.
+  stand in for, and it still fails. This affects **any** contained command, not
+  only installs — an `npx` or `bunx` tool that streams a child's output as it is
+  produced hangs identically. Run it with `--no-sandbox` and treat it as
+  uncontained.
+
+  nvx's diagnostic hint covers installs only, on purpose: an install still running
+  after two minutes is anomalous, while an `npx`-launched dev server running for
+  hours is working correctly, so a timer cannot tell the second case from a hang.
+  Nothing here affects containment: it changes how a contained process talks to
+  its own children, not what it may reach.
 - **Docker provider allowlist is cooperative.** Under the `docker` isolation
   provider, `network.mode: offline` is enforced via `--network none`, but
   proxy-mode allowlisting is cooperative only and therefore disabled by

@@ -198,6 +198,10 @@ func main() {
 	case "cleanup":
 		LogInfo("Cleaning up stale sandbox sessions...")
 		cleanupStaleSandboxes(nvxHome)
+		// Staged supervisor copies from other nvx builds. Reclaimed here rather
+		// than on the launch path, where deleting one could race a sandbox about
+		// to execute it.
+		pruneUnusedSupervisors(nvxHome)
 		LogSuccess("Sandbox cleanup complete.")
 
 	case "doctor":

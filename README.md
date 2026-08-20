@@ -358,10 +358,15 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   forever; it now completes in seconds.
 
   **Streaming capture is not, and hangs.** Async `spawn(..., {stdio: 'pipe'})` is a
-  real stream that a file cannot stand in for. A contained tool that reads a child's
-  output as it is produced still blocks. nvx warns after two minutes naming this as
-  a likely cause; install such a package with `nvx --no-sandbox npm install <pkg>`
-  and treat it as an uncontained install.
+  real stream that a file cannot stand in for. This affects **any** contained
+  command, not only installs: an `npx`/`bunx` tool that reads a child's output as
+  it is produced blocks the same way. Run such a command with `nvx --no-sandbox`
+  and treat it as uncontained.
+
+  The two-minute diagnostic hint deliberately covers installs only. An install
+  that has not finished in two minutes is anomalous; an `npx`-launched dev server
+  running for hours is doing its job, and a hint firing on it would be noise. So
+  for tool runners the hang is documented rather than detected.
 - **On macOS, nothing has been verified at runtime.** The Seatbelt profile's text
   is asserted by unit tests, so nvx generates the policy it intends to — but no
   test has ever confirmed the kernel enforces it. The macOS smoke check only proves
