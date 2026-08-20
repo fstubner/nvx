@@ -164,9 +164,16 @@ func launchAppContainerProcessOnce(
 	} else {
 		// Some console handles cannot be made inheritable (the original reason this
 		// code passed FALSE). A console-attached child still inherits the console,
-		// so interactive use works -- but a piped child gets nothing, so say so
+		// so interactive use works -- but a piped child may get nothing, so say so
 		// rather than letting an MCP server fail mysteriously.
-		LogWarn("Standard handles are not inheritable here; a sandboxed process that communicates over pipes (e.g. an MCP server) will not receive stdio.")
+		//
+		// "may not" rather than "will not": measured 2026-08-20 on Windows 11, a
+		// contained child still received piped stdio with this fallback taken, in
+		// both proxy and open mode. So the flat prediction was wrong on at least
+		// one build. It is kept as a warning because F46 was a real measured
+		// failure elsewhere -- the honest statement is that it might break, not
+		// that it has.
+		LogWarn("Standard handles are not inheritable here; a sandboxed process that communicates over pipes (e.g. an MCP server) may not receive stdio.")
 	}
 
 	cmdLine := buildWindowsCommandLine(cmdPath, args)
