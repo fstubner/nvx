@@ -41,7 +41,7 @@ blind spot the original assessment had.
 | F47 | **fixed** | v0.5.0. Staging recurses with `os.ReadDir`/`os.Stat`, which follow both junctions and symlinks. |
 | F26 | **fixed** | Landlock grants `versions/`, `bin/`, `current/` — not all of `nvxHome`. |
 | F65 | **fixed** | Follows from F22: the pin store is no longer writable by a contained process. |
-| F33 | **partial** | Three of the four contradictions are resolved (F22, F2/F31, F23). The fail-closed claim is still contradicted by **F28**, which is open. |
+| F33 | **fixed 2026-08-20** | All four contradictions resolved (F22, F2/F31, F23, and now F28). The fail-closed claim holds on every platform: the last exception ran commands unprotected where no sandbox exists. |
 | F48 | **partial** | Fix B ✅, Fix C ✅, Linux `CLONE_NEWPID` + reaper ✅. Still missing: Part 1 project-dir gating (no `.git` check exists), macOS signal handler (F63), Part 4 automatic Tier 2 (F59). Fix A was *bounded* rather than removed — the ancestor walk still runs, now within a budget. |
 
 ## Medium
@@ -61,7 +61,7 @@ blind spot the original assessment had.
 | F38 | **fixed** | Loopback is allowlisted like any other destination. `network.mode: loopback` still permits it by definition; `offline` no longer does. Became urgent when the egress relay gave contained processes a route to the parent. |
 | F30 | open | Neither seccomp filter validates `seccomp_data.arch`. |
 | F35 | **fixed** | Guest homes record their owning pid; cleanup skips any whose owner is alive, and falls back to age when there is no marker. |
-| F28 | open | `sandbox_native_other.go` runs the command with no isolation at all. |
+| F28 | **fixed 2026-08-20** | `sandbox_native_other.go` refused to run instead. It used to execute the command with no isolation while nvx printed "Running in native sandbox", so a contained install on FreeBSD or any other unlisted Unix got full access to the home directory, SSH keys and network. Now it fails closed and names `--no-sandbox` as the deliberate opt-out. The dead `sandbox_unix.go` helper that logged "using environment isolation only" is deleted. Pinned by `TestUnsupportedPlatformRefusesInsteadOfRunningUnprotected`, which asserts the command left no trace behind rather than trusting the exit code. |
 | F29 | open | Only native, docker and seatbelt receive `NetCtx` (`fs_provider.go:79,103,122`); wsl/wslc/nspawn do not. |
 | F36 | open | No `--user` anywhere; containers still run as root with the project bind-mounted. |
 | F37 | open | A checksum **mismatch** is still reported as "Checksum file not available" (`install.ps1:113`). It fails closed, but the message misdescribes a tampering signal. |
@@ -107,9 +107,12 @@ Grouped by why it is still open, which matters more than the count:
 - **Deliberate scope** (F34, F53, F59, F49, F17, F16, F60, F61, F62) — agent-mode
   semantics, daemon auth persistence, and the plan/spec documents. Each needs a
   product decision, not a patch.
-- **Providers never in scope** (F28, F29, F32, F36, F40) — wsl, wslc, nspawn,
-  docker-as-root, and Unix platforms that are none of the big three. The native
-  provider on the three supported platforms is where all the work went.
+- **Providers never in scope** (F29, F32, F36, F40) — wsl, wslc, nspawn and
+  docker-as-root. The native provider on the three supported platforms is where
+  all the work went. F28 was in this group and has since been fixed: "out of
+  scope" was the wrong call for it, because the platform did not decline to
+  contain, it ran the command unprotected while reporting that it had contained
+  it.
 - **Real bugs, small blast radius** (F35, F15, F8, F6, F21, F44, F54) — each is a
   contained defect with a clear fix. F35 is the one I would take first: it deletes
   a live concurrent sandbox's home.
@@ -119,8 +122,8 @@ Grouped by why it is still open, which matters more than the count:
 - **Cosmetic / hygiene** (F10, F11, F45, F20, F55, F56, F57, F63, F66).
 
 The severity distribution moved: every Critical and all but two High findings are
-closed, and the two partials (F33, F48) are each blocked on a specific open
-Medium/Low rather than on anything structural.
+closed. F33 has since closed too, when its blocking finding (F28) was fixed on
+2026-08-20, leaving F48 as the only partial.
 
 
 ## Added by the adversarial pass, 2026-08-18

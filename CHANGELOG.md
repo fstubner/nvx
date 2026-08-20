@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+* **On a platform with no sandbox, nvx ran the command unprotected and said it
+  had contained it.** `sandbox_native_other.go` -- the path for any Unix that is
+  not Linux or macOS -- set a process group, logged "using environment isolation
+  only" at info level, and then executed the command. nvx printed "Running in
+  native sandbox" around it. A contained install on FreeBSD therefore had full
+  access to the user's home, their SSH keys and the network.
+
+  This is exactly what SECURITY.md's design stance rules out: if a containment
+  primitive is unavailable, refuse to run rather than run unprotected. Every other
+  platform honoured it. It now refuses, naming `--no-sandbox` as the deliberate
+  opt-out. A scrubbed environment and a redirected HOME are worth having but are
+  conventions the child can ignore, so they do not amount to a sandbox and are no
+  longer presented as one.
+
+  No release binaries are published for these platforms, so this was reachable
+  only by building from source -- which is exactly the person who would trust the
+  word "sandbox" without checking. Closes F28, and with it F33, the last open
+  contradiction of the fail-closed claim. Pinned by
+  `TestUnsupportedPlatformRefusesInsteadOfRunningUnprotected`, which asserts the
+  command left nothing behind rather than trusting its exit code.
+
 * **On macOS, a contained process could reach every service on your loopback
   address.** Every restricted mode emitted `(allow network-outbound (remote tcp
   "localhost:*"))`, so an install could reach a local database, a daemon's TCP
