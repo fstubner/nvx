@@ -57,6 +57,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   launch refused for permissions must not spin. The launch error is wrapped with
   `%w` for the same reason; it was `%v`, which stringified the code away.
 
+* **A project whose path contained "(I)" hid its own pre-0.5.0 grant.** icacls
+  prints a directory's path on the same line as its first entry, and the scan
+  skipped any line containing "(I)" in order to skip inherited entries. For such a
+  path the skip swallowed that first entry instead, so a dangerous `(OI)(CI)(M)`
+  grant was invisible to both `doctor` and the launch-path cleanup: the project
+  stayed writable by every sandbox on the machine while `doctor` called the
+  install healthy and `--fix` did nothing.
+
+  Inheritance is now read from the rights the SID carries rather than from the
+  line, so the path cannot influence it. Same class of mistake as the one this
+  function was corrected for one commit earlier -- matching on the shape of text
+  instead of on its meaning. Pinned by a test using directories named `proj(I)x`
+  and `(I)`, confirmed to fail against the previous filter, with a companion test
+  that inherited entries are still skipped.
+
+* **README claimed contained dev servers work; on Windows they do not.** The FAQ
+  said loopback bind/connect works for dev servers, with no platform qualifier. A
+  server started inside the sandbox binds and reports itself listening, but
+  Windows refuses connections into an AppContainer from outside it -- the same
+  restriction the egress relay exists to work around, and unaffected by the
+  loopback exemption. `nvx npx vite`, `npx serve` and anything else serving a port
+  appear to start and then serve nobody. Corrected in the FAQ and added to Known
+  limitations, with the workaround: `npm run dev` is uncontained at the default
+  level anyway, and `nvx --no-sandbox npx <tool>` covers the tool-runner case.
+
 * **The stale-grant check reported live grants as leftovers, and `--fix` deleted
   them.** The scan matched any AppContainer package SID on a directory, ignoring
   what the entry actually granted. But the current design writes `(X,RA)` --
