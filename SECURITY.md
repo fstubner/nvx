@@ -26,9 +26,11 @@ Please include:
 - any relevant policy files (`.nvx-policy.json`) or `~/.nvx/audit.log` excerpts.
 
 `audit.log` records the working directory of each entry, and the hostnames of
-egress decisions. Of a command it records the name, and for `npm`, `yarn` and
-`pnpm` the subcommand — `install`, `run`. It does not record arguments: not
-package names, not script paths, not flag values.
+egress decisions. Of a command it records the name, plus its subcommand when
+that word is one nvx recognises — `install`, `run`, `publish` and similar. It
+records no other argument: not package names, not script paths, not your
+project's own script names, not flag values. Anything nvx does not recognise is
+dropped rather than guessed at.
 
 Read an excerpt before sending it and redact what you would rather not share: a
 working directory or a hostname can name a client or an unannounced product.

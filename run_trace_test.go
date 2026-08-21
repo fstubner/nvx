@@ -47,6 +47,14 @@ func TestFirstActionOmitsSecretBearingArguments(t *testing.T) {
 		{"bun is ambiguous, so records nothing", "bun", []string{"install"}, ""},
 		{"an unknown command records nothing", "some-future-tool", []string{"build"}, ""},
 
+		// yarn and pnpm treat a bare positional as an implicit `run <script>`,
+		// so choosing by command name was never enough: this recorded a
+		// project's own deploy script. Only recognised verbs are written now.
+		{"yarn implicit run script is not an action", "yarn", []string{"deploy-acme-prod"}, ""},
+		{"pnpm implicit run script is not an action", "pnpm", []string{"release-internal"}, ""},
+		{"an unrecognised npm verb records nothing", "npm", []string{"acme-secret-task"}, ""},
+		{"run is a verb; the script after it is not", "npm", []string{"run", "deploy-acme-prod"}, "run"},
+
 		// Flags are case-sensitive to the tools themselves. Lowercasing before
 		// the lookup made -F match the -f entry, so pnpm's filter VALUE was
 		// recorded as the subcommand.

@@ -133,8 +133,14 @@ func TestExemptMachineIsWarnedAbout(t *testing.T) {
 	if !strings.Contains(out, "loopback exemption") {
 		t.Errorf("an exempt machine was not warned; stderr was:\n%s", out)
 	}
-	if !strings.Contains(out, sidStr) {
-		t.Errorf("the warning must print the SID the removal command needs; stderr was:\n%s", out)
+	// The SID used to be required here. It moved to `nvx doctor` deliberately,
+	// to keep a warning shown on every launch short enough to read, and this
+	// assertion was not updated -- so v0.5.2 shipped with a red test that only
+	// appears under NVX_PROBE=1 and nobody saw. What still has to hold is that
+	// the warning names where the removal instructions are; without that it
+	// reports a problem and offers no way out.
+	if !strings.Contains(out, "nvx doctor") {
+		t.Errorf("the warning must point at where the removal command is; stderr was:\n%s", out)
 	}
 
 	// network.mode "open" asks for no egress restriction, so there is nothing to
