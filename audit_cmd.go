@@ -57,7 +57,10 @@ func runAuditCommand(args []string, nvxHome string) int {
 		return 1
 	}
 	if len(entries) == 0 {
-		LogInfo("No audit records yet. They are written as you use nvx.")
+		LogInfo("No audit records yet. Security decisions are recorded as you use nvx.")
+		if !runTraceEnabled() {
+			LogInfo("Per-run records are off. Set %s=1 to record what each command did.", nvxTraceEnvVar)
+		}
 		return 0
 	}
 
@@ -73,6 +76,11 @@ func runAuditCommand(args []string, nvxHome string) int {
 	}
 	if len(filtered) == 0 {
 		LogInfo("Nothing matched.")
+		// Otherwise `nvx audit --runs` on a machine that never enabled tracing
+		// reads as "you have run nothing", which is the wrong conclusion.
+		if onlyRuns && !runTraceEnabled() {
+			LogInfo("Per-run records are off. Set %s=1 to record what each command did.", nvxTraceEnvVar)
+		}
 		return 0
 	}
 

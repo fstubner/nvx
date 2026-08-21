@@ -305,9 +305,13 @@ func commandHelpText(command string) string {
 	case "audit":
 		return `nvx audit [--runs] [--failures] [--summary] [--limit=N] [--all]
 
-Show what nvx has recorded locally: one line per command run (contained or
-not, exit code, duration, warnings) interleaved with the security decisions
-it made. Nothing is ever sent anywhere; the log is ~/.nvx/audit.log.
+Show what nvx has recorded locally in ~/.nvx/audit.log. Nothing is ever sent
+anywhere.
+
+Security decisions -- egress denials, grants, policy pins -- are always
+recorded. Per-run records (what ran, whether it was contained, why not, exit
+code, duration, warnings) are a debugging aid and are OFF by default. Turn them
+on for a session with NVX_TRACE=1.
 
 --summary   Counts instead of lines: how often runs were contained, why not
             when they were not, and which warnings keep firing.

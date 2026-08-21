@@ -16,8 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them: how often something falls out of the sandbox and why, which warnings fire
   repeatedly and get scrolled past, what is slow.
 
-  Each top-level invocation now appends one record: command, subcommand, whether
-  it was contained, why not when it was not, exit code, duration, and the
+  **Per-run records are off by default.** Set `NVX_TRACE=1` to turn them on for a
+  session. Recording every command a developer runs is a debugging aid, not
+  something to switch on for people who did not ask for it, however local the
+  file stays. Security decisions remain unconditional — those are a record of
+  what nvx refused, which is the point of running it.
+
+  With it on, each top-level invocation appends one record: command, subcommand,
+  whether it was contained, why not when it was not, exit code, duration, and the
   warnings it printed. Nested invocations are not recorded — one typed `npm`
   command can spawn a tree of lifecycle scripts, and counting each would make
   every total wrong.
