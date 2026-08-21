@@ -115,8 +115,6 @@ func (t *runTrace) finish(exitCode int) {
 	if t == nil || !t.record || !t.top || t.nvxHome == "" {
 		return
 	}
-	rotateAuditLog(t.nvxHome)
-
 	fields := map[string]string{
 		"command":     t.command,
 		"mode":        t.mode,

@@ -13,6 +13,7 @@ var (
 	procSetInformationJobObject = modKernel32.NewProc("SetInformationJobObject")
 	procAssignProcessToJobObj   = modKernel32.NewProc("AssignProcessToJobObject")
 	procOpenProcessForJob       = modKernel32.NewProc("OpenProcess")
+	procTerminateProcess        = modKernel32.NewProc("TerminateProcess")
 )
 
 const (

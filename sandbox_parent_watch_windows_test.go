@@ -50,6 +50,65 @@ func TestStdinPipeIsBrokenOnlyAfterTheWriterCloses(t *testing.T) {
 	}
 }
 
+// A finished pipeline must survive.
+//
+// This is the failure direction the watchdog's own comment called severe and
+// that the first version shipped with anyway: `echo hi | nvx node -e "<long
+// work>"` where the child drains stdin. The producer exits, the buffer empties,
+// the pipe reads as broken, and a healthy command was killed at 15 seconds with
+// exit 129. The pipe alone cannot tell that from an abandoned client -- the
+// parent still being alive is what separates them, and that is asserted here.
+func TestAFinishedPipelineIsNotTreatedAsAHangup(t *testing.T) {
+	read, write := makeTestPipe(t)
+	defer syscall.CloseHandle(read)
+
+	// Exactly the state of `echo hi | nvx ...` once the child has consumed the
+	// input: writer closed, nothing buffered.
+	var wrote uint32
+	if err := syscall.WriteFile(write, []byte("hi\n"), &wrote, nil); err != nil {
+		t.Fatal(err)
+	}
+	syscall.CloseHandle(write)
+	buf := make([]byte, 8)
+	var got uint32
+	_ = syscall.ReadFile(read, buf, &got, nil)
+
+	if !stdinPipeIsBroken(read) {
+		t.Fatal("the setup is wrong: a drained, writer-closed pipe should read as broken, " +
+			"which is precisely why the pipe alone cannot be the whole signal")
+	}
+
+	// The second signal is what saves the pipeline: the shell that built it is
+	// still running, and this process stands in for it.
+	self, err := syscall.GetCurrentProcess()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processHasExited(self) {
+		t.Fatal("a running process was reported as exited; the hangup check would fire on every pipeline")
+	}
+}
+
+// The parent lookup has to actually find a parent, or the watchdog silently
+// never arms and the orphan leak comes back with nothing to show for it.
+func TestParentProcessIsIdentifiable(t *testing.T) {
+	ppid, ok := parentProcessID()
+	if !ok {
+		t.Fatal("could not determine the parent process; the hangup watchdog would never arm")
+	}
+	if ppid == 0 || ppid == uint32(syscall.Getpid()) {
+		t.Fatalf("implausible parent pid %d for self %d", ppid, syscall.Getpid())
+	}
+	h, ok := openParentProcess()
+	if !ok {
+		t.Fatal("could not open a handle to the parent process")
+	}
+	defer syscall.CloseHandle(h)
+	if processHasExited(h) {
+		t.Error("the live parent of this test was reported as exited")
+	}
+}
+
 // A console or a file is not evidence that anyone is waiting on us, so the
 // watchdog must not arm there -- otherwise an interactive `nvx npm test` could
 // be killed by a check that was never meaningful for that handle shape.

@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // nvxActiveEnvVar marks that the current process tree already reported its
@@ -642,16 +644,56 @@ func dedupeStrings(values []string) []string {
 	return out
 }
 
-// exitParentHungUp is the code nvx exits with when its stdin pipe lost its
-// writer. Distinct from 1 so an abandoned run stays distinguishable from a
-// command that genuinely failed, in the trace and anywhere else it lands.
+// exitParentHungUp is the code nvx exits with when its client has gone. Distinct
+// from 1 so an abandoned run stays distinguishable from a command that genuinely
+// failed, in the trace and anywhere else it lands.
 const exitParentHungUp = 129
+
+// The hangup watchdog ends the running child rather than calling os.Exit.
+//
+// os.Exit from the watchdog goroutine skipped every deferred cleanup on the way
+// out: the guest profile was never removed, so each abandoned run left a
+// directory under ~/.nvx/sandbox_home (67 of them on the machine where this was
+// found), and the run never reached trace.finish, so the one abort nvx now
+// causes itself was the one abort `nvx audit --failures` could not show. Killing
+// the child instead unblocks the ordinary wait and lets all of that run.
+var (
+	activeChildMu     sync.Mutex
+	activeChildKiller func()
+	clientHungUp      atomic.Bool
+)
+
+// setActiveChildKiller records how to stop the process nvx is currently waiting
+// on. Called by each launch path once its child exists.
+func setActiveChildKiller(kill func()) {
+	activeChildMu.Lock()
+	defer activeChildMu.Unlock()
+	activeChildKiller = kill
+}
+
+// endActiveChild stops the running child, reporting whether there was one.
+func endActiveChild() bool {
+	activeChildMu.Lock()
+	kill := activeChildKiller
+	activeChildMu.Unlock()
+	if kill == nil {
+		return false
+	}
+	kill()
+	return true
+}
 
 // runShim runs a wrapped command, contained or not. It wraps runShimTraced so
 // that every exit path -- refusal, sandbox, direct -- lands in one run record.
 func runShim(cmdName string, args []string, nvxHome string) int {
 	trace := beginRunTrace(nvxHome, cmdName, args)
 	code := runShimTraced(trace, cmdName, args, nvxHome)
+	// A child killed because the client went away did not fail on its own terms;
+	// reporting whatever exit code a terminated process happens to carry would
+	// record it as an ordinary failure.
+	if clientHungUp.Load() {
+		code = exitParentHungUp
+	}
 	trace.finish(code)
 	return code
 }
@@ -664,7 +706,11 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	// reaping that already exists, so this one call reclaims the whole tree.
 	watchStdinForHangup(func() {
 		LogWarn("The process that started nvx has gone away; stopping %s and its sandbox.", cmdName)
-		os.Exit(exitParentHungUp)
+		clientHungUp.Store(true)
+		if !endActiveChild() {
+			// Nothing launched yet, so there are no defers to preserve.
+			os.Exit(exitParentHungUp)
+		}
 	})
 
 	opts := parseShimOptions(args)
@@ -795,7 +841,15 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
+	// Start/Wait rather than Run, so the hangup watchdog has something to stop.
+	if err := cmd.Start(); err != nil {
+		LogError("Failed to execute %s: %v", cmdName, err)
+		return 1
+	}
+	setActiveChildKiller(func() { _ = cmd.Process.Kill() })
+	defer setActiveChildKiller(nil)
+
+	if err := cmd.Wait(); err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
 			return exitError.ExitCode()
 		}

@@ -104,9 +104,24 @@ func TestEveryLogWarnUsesALiteralFormat(t *testing.T) {
 			if strings.HasPrefix(strings.TrimSpace(line), "//") {
 				continue // prose about LogWarn, including this file's own
 			}
-			if rest := line[idx+len("LogWarn("):]; !strings.HasPrefix(rest, `"`) {
+			rest := line[idx+len("LogWarn("):]
+			if !strings.HasPrefix(rest, `"`) {
 				t.Errorf("%s:%d passes a non-literal format to LogWarn, which would put "+
 					"runtime data into audit.log: %s", file, i+1, strings.TrimSpace(line))
+				continue
+			}
+			// A leading quote is not enough: LogWarn("host " + h + " denied")
+			// starts with one and still builds the format from runtime data,
+			// which is the exact leak this guard exists to prevent. The literal
+			// has to END the format argument.
+			end := strings.Index(rest[1:], `"`)
+			if end < 0 {
+				continue // a string spanning lines; not something in this tree
+			}
+			after := strings.TrimSpace(rest[1+end+1:])
+			if !strings.HasPrefix(after, ",") && !strings.HasPrefix(after, ")") {
+				t.Errorf("%s:%d builds LogWarn's format from runtime data, which would put it "+
+					"into audit.log: %s", file, i+1, strings.TrimSpace(line))
 			}
 		}
 	}
@@ -379,4 +394,45 @@ func resetTracedWarnings() {
 	warningsMu.Lock()
 	defer warningsMu.Unlock()
 	seenWarnings = nil
+}
+
+// A record must not be able to forge another record.
+//
+// Several audit fields carry values chosen by the contained process -- a SOCKS5
+// request names an arbitrary destination host, and that host is what an
+// egress_deny record stores. A newline in one produced a complete extra row in
+// `nvx audit` output, so a tool whose only job is reporting which runs were
+// contained could be made to report that an uncontained one was. An escape
+// sequence could clear the screen above a denial.
+//
+// The earlier fix covered the warnings field alone; host, tool, project, path
+// and action all reach the same renderer. Found by acceptance review.
+func TestAuditFieldsCannotForgeRowsOrDriveTheTerminal(t *testing.T) {
+	home := tempDir(t)
+
+	auditLog(home, "egress_deny", map[string]string{
+		"host": "evil.example\n2026-01-01 00:00  egress_allow_prompted     host=totally.safe\x1b[2J",
+	})
+
+	entries, err := readAuditEntries(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 record, got %d", len(entries))
+	}
+	if strings.ContainsAny(entries[0]["host"], "\n\r\x1b") {
+		t.Errorf("control characters were stored verbatim: %q", entries[0]["host"])
+	}
+
+	// And the renderer must not trust the file either, since it is editable and
+	// may hold records from a version that did not sanitise.
+	rendered := formatAuditEntry(map[string]string{
+		"event": "egress_deny",
+		"time":  "2026-08-21T11:00:00Z",
+		"host":  "evil.example\nFORGED  sandboxed  npm install\x1b[31m",
+	})
+	if strings.ContainsAny(rendered, "\n\x1b") {
+		t.Errorf("a crafted record forged output: %q", rendered)
+	}
 }
