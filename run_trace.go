@@ -43,6 +43,9 @@ type runTrace struct {
 	mode    string
 	reason  string
 	top     bool
+	// record is the opt-in gate. The trace is still built and still answers
+	// isTop() when this is false; it simply never writes anything.
+	record bool
 }
 
 // runModeRefused and friends name how the invocation was handled. Recorded as
@@ -66,8 +69,31 @@ func beginRunTrace(nvxHome, command string, args []string) *runTrace {
 		started: time.Now(),
 		command: command,
 		action:  firstAction(command, args),
-		top:     isTopLevelShimInvocation(),
+		// Asked unconditionally, and NOT gated behind runTraceEnabled: it marks
+		// the process tree as claimed, and it decides whether this invocation
+		// prints "Running directly (not sandboxed)". Skipping it when tracing is
+		// off would silently drop that line for everyone.
+		top:    isTopLevelShimInvocation(),
+		record: runTraceEnabled(),
 	}
+}
+
+// nvxTraceEnvVar turns run recording on. Off by default, deliberately.
+//
+// Recording every command a developer runs is not something to switch on for
+// people who did not ask for it, however local the file stays. The security
+// decisions in audit.log -- egress denials, grants, policy pins -- are a
+// different thing and remain unconditional: those are a record of what nvx
+// refused, which is the point of running it.
+//
+// An environment variable rather than a policy key, because the thing being
+// debugged is often the policy machinery itself, and because a session-scoped
+// `NVX_TRACE=1` is easy to turn off again and leaves nothing behind.
+const nvxTraceEnvVar = "NVX_TRACE"
+
+func runTraceEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(nvxTraceEnvVar)))
+	return v == "1" || v == "true"
 }
 
 // isTop reports whether this is the outermost nvx in the process tree, nil-safe
@@ -86,7 +112,7 @@ func (t *runTrace) note(mode, reason string) {
 // finish writes the record. Best-effort, like every other audit write: a run
 // that already succeeded must not fail because its trace could not be stored.
 func (t *runTrace) finish(exitCode int) {
-	if t == nil || !t.top || t.nvxHome == "" {
+	if t == nil || !t.record || !t.top || t.nvxHome == "" {
 		return
 	}
 	rotateAuditLog(t.nvxHome)

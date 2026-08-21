@@ -141,6 +141,7 @@ func TestRunTraceRecordsContainmentAndWarnings(t *testing.T) {
 
 	LogWarn("a runtime dir is ahead of nvx's shim dir on PATH")
 
+	t.Setenv(nvxTraceEnvVar, "1")
 	tr := beginRunTrace(home, "npx", []string{"-y", "trust", "github"})
 	tr.top = true // the process running the tests is not itself a shim invocation
 	tr.note(runModeDirect, "--no-sandbox")
@@ -185,6 +186,7 @@ func TestRunTraceSkipsNestedInvocations(t *testing.T) {
 	home := tempDir(t)
 	resetTracedWarnings()
 
+	t.Setenv(nvxTraceEnvVar, "1")
 	tr := beginRunTrace(home, "node", []string{"build.js"})
 	tr.top = false
 	tr.note(runModeDirect, "your code at standard isolation")
@@ -196,6 +198,50 @@ func TestRunTraceSkipsNestedInvocations(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("a nested invocation was recorded: %v", entries)
+	}
+}
+
+// Run recording is off unless asked for.
+//
+// It is a debugging aid, not a feature everyone gets: recording every command a
+// developer runs is not something to switch on for people who did not ask,
+// however local the file stays. Security decisions are the separate, always-on
+// half -- those record what nvx refused, which is the reason to run it.
+func TestRunRecordingIsOffUnlessEnabled(t *testing.T) {
+	home := tempDir(t)
+	resetTracedWarnings()
+	t.Setenv(nvxTraceEnvVar, "")
+
+	tr := beginRunTrace(home, "npm", []string{"install"})
+	tr.top = true
+	tr.note(runModeSandboxed, "")
+	tr.finish(0)
+
+	entries, err := readAuditEntries(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e["event"] == "run" {
+			t.Fatalf("a run was recorded without %s being set: %v", nvxTraceEnvVar, e)
+		}
+	}
+
+	// The status line is not part of the opt-in: it must still print, so tracing
+	// being off cannot quietly change what the user sees.
+	if !tr.isTop() {
+		t.Error("the invocation stopped reporting itself as top-level when tracing was off, " +
+			"which would drop the \"Running directly (not sandboxed)\" line")
+	}
+
+	// And a security decision still lands, because that half is unconditional.
+	auditLog(home, "egress_deny", map[string]string{"host": "evil.example.com:443"})
+	entries, err = readAuditEntries(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0]["event"] != "egress_deny" {
+		t.Fatalf("security decisions must be recorded regardless of %s: %v", nvxTraceEnvVar, entries)
 	}
 }
 

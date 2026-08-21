@@ -125,8 +125,9 @@ Commands:
   grants list              Show this project's approved egress hosts, trusted
                            tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's)
-  audit [--summary]        Review the local record of past runs and the security
-                           decisions nvx made (--runs, --failures, --limit=N)
+  audit [--summary]        Review the local record of security decisions, and of
+                           past runs when NVX_TRACE=1 (--runs, --failures,
+                           --limit=N)
   cleanup                  Remove stale sandbox sessions from previous runs
   setup [--undo]           (Windows, optional) One-time elevated setup adding
                            drive-root access and removing a loopback exemption an
@@ -151,6 +152,8 @@ Options:
   -y, --yes                Auto-approve all prompts
   -q, --quiet              Suppress success/info messages (errors and warnings
                            still print)
+  NVX_TRACE=1              (env) Record one line per run in ~/.nvx/audit.log for
+                           `nvx audit`. Off by default; a local debugging aid
   --agent-mode             Equivalent to -y -q; also settable with
                            NVX_AGENT_MODE=1
 ```
