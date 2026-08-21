@@ -25,6 +25,11 @@ Please include:
 - reproduction steps or a proof of concept,
 - any relevant policy files (`.nvx-policy.json`) or `~/.nvx/audit.log` excerpts.
 
+`audit.log` records the working directory of each entry, and the hostnames of
+egress decisions. It does not record command arguments. Read an excerpt before
+sending it, and redact what you would rather not share — a project path can name
+a client or an unannounced product.
+
 We aim to acknowledge reports within 5 business days and to provide a
 remediation timeline after triage. Coordinated disclosure is appreciated;
 we will credit reporters who wish to be named once a fix ships.

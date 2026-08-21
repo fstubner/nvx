@@ -32,3 +32,11 @@ docs/session-history-*.md
 # Stray probe files from acceptance runs, which once reached a release tag.
 ACC_*.tmp
 *.tmp
+
+# Agent and review scratch output. These are working notes, not part of the
+# product, and a `git add -A` swept them into a commit once already (a255d15
+# undid it). Ignored so that cannot happen again.
+.agent-evidence/
+IMPLEMENTATION_PLAN.md
+docs/assessment-*.md
+docs/product-review-*.md

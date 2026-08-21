@@ -84,14 +84,21 @@ func runAuditCommand(args []string, nvxHome string) int {
 		return 0
 	}
 
-	if summarize {
-		printAuditSummary(filtered)
-		return 0
-	}
-
 	shown := filtered
 	if limit > 0 && len(shown) > limit {
 		shown = shown[len(shown)-limit:]
+	}
+
+	if summarize {
+		// Summarise what --limit selected rather than ignoring it. Counting the
+		// whole log while the flag said otherwise is a wrong answer given
+		// confidently, which is worse here than in the list view: a summary is
+		// read as a total.
+		printAuditSummary(shown)
+		if len(shown) < len(filtered) {
+			LogInfo("Summarising the last %d of %d records. Use --all for everything.", len(shown), len(filtered))
+		}
+		return 0
 	}
 	for _, e := range shown {
 		fmt.Println(formatAuditEntry(e))
@@ -304,6 +311,15 @@ func printAuditSummary(entries []map[string]string) {
 	runs := 0
 
 	for _, e := range entries {
+		// Sanitised here too, not only in formatAuditEntry. The list view was
+		// fixed and this one was not, so a crafted record still reached the
+		// terminal raw: an ESC[2J in a `mode` value clears the screen and homes
+		// the cursor, wiping the real counts printed above it and leaving a
+		// forged "sandboxed 9999" as the whole visible output. Reachable at
+		// default settings, because `node` and `npm run build` are uncontained at
+		// standard isolation and can append to the log. Found by acceptance
+		// review, after two earlier passes at this same class of bug.
+		e = flattenAuditEntry(e)
 		if e["event"] != "run" {
 			continue
 		}
