@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -62,7 +63,7 @@ func TestCleanupLeavesRunningSandboxesAlone(t *testing.T) {
 	// Owned by a process that has exited.
 	dead := makeGuestHome(t, nvxHome, "dead-session", deadPID(t), 0)
 
-	cleanupStaleSandboxes(nvxHome)
+	cleanupStaleSandboxes(nvxHome, 0)
 
 	if _, err := os.Stat(live); err != nil {
 		t.Errorf("cleanup deleted a live session's guest home: %v\n"+
@@ -84,7 +85,7 @@ func TestCleanupHandlesGuestHomesWithNoOwnerMarker(t *testing.T) {
 	fresh := makeGuestHome(t, nvxHome, "fresh-unowned", 0, 0)
 	old := makeGuestHome(t, nvxHome, "old-unowned", 0, unownedGuestHomeGrace+time.Hour)
 
-	cleanupStaleSandboxes(nvxHome)
+	cleanupStaleSandboxes(nvxHome, 0)
 
 	if _, err := os.Stat(fresh); err != nil {
 		t.Errorf("cleanup deleted an unowned guest home created moments ago: %v\n"+
@@ -150,5 +151,51 @@ func TestProcessIsRunningAgreesWithReality(t *testing.T) {
 	}
 	if processIsRunning(0) || processIsRunning(-1) {
 		t.Error("processIsRunning must reject non-positive pids rather than guessing")
+	}
+}
+
+// Reclamation must happen without anyone asking for it.
+//
+// A process killed outright cannot clean up after itself, so leftovers are
+// unavoidable; what was avoidable is requiring a command nobody runs. 91 guest
+// homes had accumulated on the development machine before `nvx cleanup` was
+// typed for the first time.
+func TestStaleSandboxesAreReclaimedWithoutTheCleanupCommand(t *testing.T) {
+	nvxHome := tempDir(t)
+
+	// One abandoned session, and one standing in for a concurrent npm install.
+	// Deleting the second is the bug that made reclamation explicit-only.
+	dead := makeGuestHome(t, nvxHome, "dead-session", deadPID(t), 0)
+	live := makeGuestHome(t, nvxHome, "live-session", os.Getpid(), 0)
+
+	reclaimStaleSandboxes(nvxHome)
+
+	if _, err := os.Stat(dead); !os.IsNotExist(err) {
+		t.Error("an abandoned sandbox home survived the automatic sweep; disk accumulates " +
+			"until someone happens to run nvx cleanup, which is the thing being removed")
+	}
+	if _, err := os.Stat(live); err != nil {
+		t.Errorf("the automatic sweep removed a session that is still running: %v", err)
+	}
+}
+
+// One command must not pay for a whole backlog.
+func TestAutomaticReclamationIsBounded(t *testing.T) {
+	nvxHome := tempDir(t)
+	stale := deadPID(t)
+	const total = reclaimBudgetPerRun + 5
+	for i := 0; i < total; i++ {
+		makeGuestHome(t, nvxHome, fmt.Sprintf("stale-%d", i), stale, 0)
+	}
+
+	reclaimStaleSandboxes(nvxHome)
+
+	left, err := os.ReadDir(getSandboxHomeDir(nvxHome))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != total-reclaimBudgetPerRun {
+		t.Errorf("the sweep removed %d of %d in one run; it should stop at %d and let the next "+
+			"run continue", total-len(left), total, reclaimBudgetPerRun)
 	}
 }

@@ -48,6 +48,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to about 8 MB on disk. It grew without limit before, which was tolerable when
   only security events went in it.
 
+* **Abandoned sandbox profiles are reclaimed automatically.** They used to wait
+  for someone to run `nvx cleanup`, and nobody did — 91 had accumulated on the
+  development machine. Each run now reclaims a few after the command finishes,
+  skipping any whose owning process is still alive, so a concurrent install
+  cannot lose its home. Bounded per run, so one command never pays for a whole
+  backlog.
+
+  A process killed outright cannot clean up after itself, so leftovers are
+  unavoidable; needing a command to deal with them was not. `nvx cleanup` still
+  reclaims everything at once, and still prunes staged supervisors from other
+  builds — that part stays manual, because a supervisor another nvx has staged
+  but not yet run cannot be told apart from an unused one.
+
 ### Fixed
 
 * **nvx processes piled up forever once the program that started them exited.**

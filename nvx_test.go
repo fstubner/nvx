@@ -561,7 +561,7 @@ func TestCleanupStaleSandboxes(t *testing.T) {
 	}
 
 	// Run cleanup
-	cleanupStaleSandboxes(tmpDir)
+	cleanupStaleSandboxes(tmpDir, 0)
 
 	// Verify it is gone
 	if _, err := os.Stat(fakeSandboxPath); !os.IsNotExist(err) {

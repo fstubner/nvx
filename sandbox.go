@@ -490,18 +490,23 @@ func execBareCommand(config SandboxConfig) int {
 // `npm install` destroyed that install's HOME underneath it. npm lifecycles
 // routinely run several nvx processes at once, so the collision needed no
 // unusual usage at all. Sessions in use are now skipped -- see guestHomeIsInUse.
-func cleanupStaleSandboxes(nvxHome string) {
+// budget caps how many homes one call removes; zero or less means all of them.
+// Callers report what happened -- this returns counts rather than logging, so
+// the automatic caller can stay silent while `nvx cleanup` speaks.
+func cleanupStaleSandboxes(nvxHome string, budget int) (removed, skipped int) {
 	sandboxDir := getSandboxHomeDir(nvxHome)
 	entries, err := os.ReadDir(sandboxDir)
 	if err != nil {
-		return // Directory doesn't exist or can't be read
+		return 0, 0 // Directory doesn't exist or can't be read
 	}
 
 	now := time.Now()
-	skipped := 0
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
+		}
+		if budget > 0 && removed >= budget {
+			break
 		}
 		fullPath := filepath.Join(sandboxDir, entry.Name())
 		if guestHomeIsInUse(fullPath, now) {
@@ -510,9 +515,39 @@ func cleanupStaleSandboxes(nvxHome string) {
 		}
 		if err := os.RemoveAll(fullPath); err != nil {
 			LogWarn("Failed to clean stale sandbox: %s", entry.Name())
+			continue
 		}
+		removed++
 	}
-	if skipped > 0 {
-		LogInfo("Left %d sandbox session(s) alone because they are still running.", skipped)
+	return removed, skipped
+}
+
+// reclaimBudgetPerRun bounds the automatic sweep so one command never pays for a
+// whole backlog. Whatever is left waits for the next run; there is no deadline
+// on reclaiming disk nobody is using.
+const reclaimBudgetPerRun = 8
+
+// reclaimStaleSandboxes is the automatic sweep, run after a command finishes.
+//
+// A process killed outright cannot run its own cleanup -- defer does not survive
+// TerminateProcess or a power cut -- so leftovers are unavoidable and something
+// has to reclaim them later. That something should not be a command the user has
+// to know about: 91 guest homes had accumulated on the development machine
+// before anyone ran `nvx cleanup`, because nothing ever ran it.
+//
+// Safe to do unprompted because each guest home records its owning PID and
+// anything whose owner is alive is skipped -- the check added after an
+// unconditional version deleted a concurrent install's HOME out from under it.
+//
+// Deliberately NOT extended to supervisor copies. Those have no equivalent
+// liveness check, and pruning one that another nvx has staged but not yet
+// executed is exactly the race that made pruning explicit in the first place.
+// `nvx cleanup` still does that, where nothing is mid-launch.
+//
+// Runs after the command rather than before, so it never delays what was typed.
+func reclaimStaleSandboxes(nvxHome string) {
+	if nvxHome == "" {
+		return
 	}
+	cleanupStaleSandboxes(nvxHome, reclaimBudgetPerRun)
 }
