@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -435,4 +436,58 @@ func TestAuditFieldsCannotForgeRowsOrDriveTheTerminal(t *testing.T) {
 	if strings.ContainsAny(rendered, "\n\x1b") {
 		t.Errorf("a crafted record forged output: %q", rendered)
 	}
+}
+
+// EVERY render path, not just the one that was fixed.
+//
+// This test previously covered formatAuditEntry alone, so printAuditSummary kept
+// printing raw values and a crafted `mode` could clear the screen -- wiping the
+// real counts and leaving a forged one as the only visible output. That is the
+// third time this class of bug survived a fix aimed at one field or one path, so
+// the test now names the paths rather than a field.
+func TestEveryAuditRenderPathNeutralisesCraftedRecords(t *testing.T) {
+	const clearScreen = "\x1b[2J\x1b[H"
+	crafted := []map[string]string{{
+		"event":       "run",
+		"time":        "2026-08-21T10:01:00Z",
+		"command":     "npm",
+		"mode":        clearScreen + "sandboxed",
+		"reason":      clearScreen + "contained",
+		"warnings":    clearScreen + "all clear",
+		"exit":        "0",
+		"duration_ms": "10",
+	}}
+
+	// Newlines are legitimate in a summary, so only the escape is asserted on.
+	summary := captureStdout(t, func() { printAuditSummary(crafted) })
+	if strings.Contains(summary, "\x1b") {
+		t.Errorf("nvx audit --summary passed a terminal escape through: %q", summary)
+	}
+
+	listed := formatAuditEntry(crafted[0])
+	if strings.Contains(listed, "\x1b") {
+		t.Errorf("nvx audit passed a terminal escape through: %q", listed)
+	}
+}
+
+// captureStdout collects what fn prints.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := os.Stdout
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+	fn()
+	os.Stdout = prev
+	_ = w.Close()
+	out := <-done
+	_ = r.Close()
+	return out
 }

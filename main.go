@@ -426,6 +426,12 @@ Options:
   --agent-mode           Auto-approve all prompts and suppress success/info messages
                          (equivalent to -y -q; also settable via NVX_AGENT_MODE=1)
 
+Environment:
+  NVX_TRACE=1            Record one line per run in ~/.nvx/audit.log for
+                         'nvx audit'. Off by default; a local debugging aid
+  NVX_YES=true           Auto-approve prompts (same as -y)
+  NVX_HOME=<dir>         Use a different nvx home instead of ~/.nvx
+
 Examples:
   nvx install lts
   nvx install bun@1.2

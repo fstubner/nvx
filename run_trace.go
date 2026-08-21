@@ -91,9 +91,30 @@ func beginRunTrace(nvxHome, command string, args []string) *runTrace {
 // `NVX_TRACE=1` is easy to turn off again and leaves nothing behind.
 const nvxTraceEnvVar = "NVX_TRACE"
 
+var badTraceValueOnce sync.Once
+
 func runTraceEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv(nvxTraceEnvVar)))
-	return v == "1" || v == "true"
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(nvxTraceEnvVar))) {
+	case "":
+		return false
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		// Anything else is a mistake, and silence would look identical to
+		// working: the user sets the variable, sees no error, and finds an empty
+		// log later. nvx already learned this from `isolation.network.mode`,
+		// where a typo quietly granted more network than asked for.
+		//
+		// Once per process: this is asked several times per run, and repeating
+		// the same line is how a useful warning becomes noise to scroll past.
+		badTraceValueOnce.Do(func() {
+			LogWarn("%s=%q is not a value nvx understands; per-run records stay off. Use %s=1.",
+				nvxTraceEnvVar, os.Getenv(nvxTraceEnvVar), nvxTraceEnvVar)
+		})
+		return false
+	}
 }
 
 // isTop reports whether this is the outermost nvx in the process tree, nil-safe
