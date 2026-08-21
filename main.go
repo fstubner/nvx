@@ -156,7 +156,7 @@ func main() {
 			LogError("Usage: nvx verify-install <package> [package...]")
 			os.Exit(1)
 		}
-		runVerifyInstall(os.Args[2:], nvxHome)
+		os.Exit(runVerifyInstall(os.Args[2:], nvxHome))
 
 	case "init-shims":
 		if err := generateShims(nvxHome); err != nil {
@@ -445,12 +445,20 @@ func LogInfo(format string, a ...interface{}) {
 }
 
 func LogWarn(format string, a ...interface{}) {
-	text := fmt.Sprintf(format, a...)
-	// Collected as well as printed: a warning is the one thing nvx prints that
-	// asks the user to act later, which makes it the thing most often scrolled
-	// past and most worth reviewing across runs. See run_trace.go.
-	recordWarning(text)
-	fmt.Fprintf(os.Stderr, "\x1b[33m⚠\x1b[0m %s\n", text)
+	// The FORMAT STRING is recorded, never the rendered text.
+	//
+	// Recording the rendered text put a live password in ~/.nvx/audit.log:
+	// `nvx npm install https://deploy:s3cr3t@git.internal/pkg.git` reaches
+	// LogWarn("Proceeding without registry metadata checks for %s.", pkgName),
+	// and %s is the URL. run_trace.go goes to some trouble to keep argv out of
+	// the log and this was the back door straight past it.
+	//
+	// The template is developer-authored and fixed at compile time, so it cannot
+	// carry runtime data -- which is also what aggregation wants, since the same
+	// warning about different packages is one recurring warning.
+	// TestEveryLogWarnUsesALiteralFormat pins the invariant this relies on.
+	recordWarning(format)
+	fmt.Fprintf(os.Stderr, "\x1b[33m⚠\x1b[0m "+format+"\n", a...)
 }
 
 func LogError(format string, a ...interface{}) {
@@ -1107,11 +1115,19 @@ func parsePackageQuery(query string) (string, string) {
 }
 
 // runVerifyInstall verifies packages against policy blocklists, typosquatting, and the real-time OSV CVE database.
-func runVerifyInstall(args []string, nvxHome string) {
+// runVerifyInstall runs the pre-install security checks and returns the exit
+// code the caller should use: 0 to proceed, 1 to abort.
+//
+// It used to call os.Exit itself. That skipped runShim's run trace on every
+// abort path, so the runs that never got recorded were exactly the ones worth
+// recording -- policy blocks, typosquat aborts, CVE aborts, script refusals --
+// and `nvx audit --failures` could not see a single one of them. Returning the
+// code means the caller's bookkeeping runs.
+func runVerifyInstall(args []string, nvxHome string) int {
 	policy, err := LoadPolicy(nvxHome)
 	if err != nil {
 		LogError("Failed to load security policy: %v", err)
-		os.Exit(1)
+		return 1
 	}
 
 	popularList := LoadPopularPackages(nvxHome)
@@ -1126,7 +1142,7 @@ func runVerifyInstall(args []string, nvxHome string) {
 		// 1. Policy Blocklist Check
 		if policy.IsBlocked(pkgName) {
 			LogError("Blocked by security policy: Package %q is blacklisted.", pkgName)
-			os.Exit(1)
+			return 1
 		}
 
 		// 2. Typosquatting Check
@@ -1153,7 +1169,7 @@ func runVerifyInstall(args []string, nvxHome string) {
 
 				if !PromptYesNo(msg) {
 					LogError("Installation aborted by user due to typosquatting risk.")
-					os.Exit(1)
+					return 1
 				}
 			}
 		}
@@ -1164,7 +1180,7 @@ func runVerifyInstall(args []string, nvxHome string) {
 			msg := fmt.Sprintf("Could not verify registry metadata for %s: %v. Proceed without metadata checks?", pkgName, err)
 			if !PromptYesNo(msg) {
 				LogError("Installation aborted because registry metadata could not be verified.")
-				os.Exit(1)
+				return 1
 			}
 			LogWarn("Proceeding without registry metadata checks for %s.", pkgName)
 			continue
@@ -1176,7 +1192,7 @@ func runVerifyInstall(args []string, nvxHome string) {
 			LogWarn("Malicious packages often execute rogue code during the install phase.")
 			if policy.EnforceIgnoreScripts {
 				LogError("Blocked by security policy: Package scripts are disallowed. Please run with --ignore-scripts.")
-				os.Exit(1)
+				return 1
 			} else {
 				// Not "on your host": these run contained, and saying otherwise
 				// overstates the risk of approving while understating what the
@@ -1184,7 +1200,7 @@ func runVerifyInstall(args []string, nvxHome string) {
 				msg := fmt.Sprintf("Package %s@%s contains install scripts. Run them (contained)?", pkgName, resolvedVer)
 				if !PromptYesNo(msg) {
 					LogError("Installation aborted by user due to script execution warning.")
-					os.Exit(1)
+					return 1
 				}
 			}
 		}
@@ -1197,7 +1213,7 @@ func runVerifyInstall(args []string, nvxHome string) {
 				pkgName, resolvedVer, age.Hours(), pubTime.Format("2006-01-02 15:04:05"), windowHours)
 			if !PromptYesNo(msg) {
 				LogError("Installation aborted by user due to release age warning.")
-				os.Exit(1)
+				return 1
 			}
 		}
 
@@ -1215,7 +1231,7 @@ func runVerifyInstall(args []string, nvxHome string) {
 			msg := fmt.Sprintf("Vulnerability database scan failed: %v. Proceed without CVE checks?", err)
 			if !PromptYesNo(msg) {
 				LogError("Installation aborted because vulnerability checks could not be completed.")
-				os.Exit(1)
+				return 1
 			}
 			LogWarn("Proceeding without vulnerability database results.")
 		} else if len(vulns) > 0 {
@@ -1229,10 +1245,11 @@ func runVerifyInstall(args []string, nvxHome string) {
 			fmt.Fprintln(os.Stderr)
 			if !PromptYesNo("Proceed with installation despite active vulnerabilities?") {
 				LogError("Installation aborted due to active package vulnerabilities.")
-				os.Exit(1)
+				return 1
 			}
 		} else {
 			LogSuccess("Vulnerability scan clean. No active CVEs found.")
 		}
 	}
+	return 0
 }

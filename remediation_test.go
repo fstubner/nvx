@@ -638,8 +638,10 @@ func TestRunVerifyInstallFailsClosedOnMetadataFailure(t *testing.T) {
 		resolveNpmPackageDetailsForVerify = func(pkgName, versionQuery string) (string, time.Time, bool, error) {
 			return "", time.Time{}, false, fmt.Errorf("metadata unavailable")
 		}
-		runVerifyInstall([]string{"not-a-typo-risk"}, testNvxHomeWithTyposquattingDisabled(t))
-		return
+		// os.Exit here, not inside runVerifyInstall: the function returns its
+		// exit code now so that callers can record the run before exiting. What
+		// this test asserts is unchanged -- the child must still exit non-zero.
+		os.Exit(runVerifyInstall([]string{"not-a-typo-risk"}, testNvxHomeWithTyposquattingDisabled(t)))
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=TestRunVerifyInstallFailsClosedOnMetadataFailure")
@@ -657,8 +659,10 @@ func TestRunVerifyInstallFailsClosedOnOSVFailure(t *testing.T) {
 		scanVulnerabilitiesBatchForVerify = func(packages []OSVQuery) (map[string][]OSVVuln, error) {
 			return nil, fmt.Errorf("osv unavailable")
 		}
-		runVerifyInstall([]string{"not-a-typo-risk"}, testNvxHomeWithTyposquattingDisabled(t))
-		return
+		// os.Exit here, not inside runVerifyInstall: the function returns its
+		// exit code now so that callers can record the run before exiting. What
+		// this test asserts is unchanged -- the child must still exit non-zero.
+		os.Exit(runVerifyInstall([]string{"not-a-typo-risk"}, testNvxHomeWithTyposquattingDisabled(t)))
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=TestRunVerifyInstallFailsClosedOnOSVFailure")

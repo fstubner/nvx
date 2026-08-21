@@ -26,18 +26,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--summary` gives counts, `--failures` narrows to non-zero exits.
 
   **Nothing is sent anywhere.** The file is on local disk and there is no
-  uploader. Arguments are not recorded either — only the subcommand, and only
-  when it can be identified without stepping over a flag that might take a value,
-  because `npm config set //registry/:_authToken=…` and `node -e '<script>'` put
-  secrets in argv and this is the file a user would paste into a bug report.
+  uploader.
 
-  The log is now capped at 4 MB with one rotated generation kept; it grew without
-  limit before, which was tolerable when only security events went in it.
+  **Arguments are not recorded.** Only the subcommand, and only when it can be
+  identified without stepping over a flag that might take a value — because `npm
+  config set //registry/:_authToken=…` and `node -e '<script>'` put secrets in
+  argv, and this is the file a user would paste into a bug report. For `npx` and
+  `bunx` nothing is recorded at all beyond the command, since their first
+  argument is the package rather than a verb. Warnings are recorded as their
+  message template, never as the rendered text, so a warning that quotes a
+  package URL stores `…checks for %s.` and not the credentials in it.
+
+  The live log is capped at 4 MB and one rotated generation is kept, so expect up
+  to about 8 MB on disk. It grew without limit before, which was tolerable when
+  only security events went in it.
 
 ### Fixed
 
 * **The README's command list was missing five commands**, some for several
-  releases: `doctor`, `grants list`, `grants reset`, `import`, `setup` and
+  releases: `doctor`, `grants` (both `list` and `reset`), `import`, `setup` and
   `shim`. A reader checking whether nvx could inspect its grants would have
   concluded it could not. `nvx help` had its own gap in the other direction — it
   never listed `version`.

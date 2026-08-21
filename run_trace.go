@@ -65,7 +65,7 @@ func beginRunTrace(nvxHome, command string, args []string) *runTrace {
 		nvxHome: nvxHome,
 		started: time.Now(),
 		command: command,
-		action:  firstAction(args),
+		action:  firstAction(command, args),
 		top:     isTopLevelShimInvocation(),
 	}
 }
@@ -117,7 +117,14 @@ func (t *runTrace) finish(exitCode int) {
 // and this file is exactly the thing a user would paste into a bug report. The
 // subcommand answers what a review needs -- which kinds of command misbehave --
 // without turning a log into a place secrets accumulate.
-func firstAction(args []string) string {
+func firstAction(cmd string, args []string) string {
+	// An ad-hoc tool runner has no subcommand -- its first positional IS the
+	// package. `nvx npx -y acme-internal-deploy-2024` was recording a private
+	// tool name as if it were a verb, which is the thing this function refuses
+	// to do everywhere else.
+	if executorCommands[strings.ToLower(cmd)] {
+		return ""
+	}
 	for _, a := range args {
 		if a == "" {
 			continue
@@ -129,7 +136,13 @@ func firstAction(args []string) string {
 			// records that value as if it were a subcommand, which is how the
 			// secret this function exists to avoid gets in anyway. Unknown flag
 			// means stop.
-			if valuelessFlags[strings.ToLower(a)] || strings.Contains(a, "=") {
+			// Matched case-sensitively. Lowercasing first made `-D` (the map's
+			// only uppercase key) never match, while making `-F`, `-G`, `-Q` and
+			// `-Y` match their lowercase entries -- so `pnpm -F mypkg build`
+			// stepped over -F and recorded the filter value as the subcommand.
+			// Flags are case-sensitive to the tools themselves; -D and -d are
+			// different flags.
+			if valuelessFlags[a] || strings.Contains(a, "=") {
 				continue
 			}
 			return ""
@@ -179,7 +192,7 @@ const maxTracedWarnings = 10
 const maxWarningChars = 200
 
 func recordWarning(text string) {
-	text = strings.TrimSpace(text)
+	text = flattenForLog(strings.TrimSpace(text))
 	if text == "" {
 		return
 	}
@@ -199,6 +212,40 @@ func recordWarning(text string) {
 	seenWarnings = append(seenWarnings, text)
 }
 
+// flattenForLog collapses newlines, control characters and the field separator
+// into spaces.
+//
+// `nvx audit` prints a warning on its own indented line, so a warning containing
+// a newline forges a complete extra row -- a fabricated "sandboxed" run in a
+// listing whose entire purpose is telling you which runs were contained.
+// Multi-line warnings are real (the typosquat prompt is built with embedded
+// newlines), so this is not hypothetical.
+//
+// Fixed on write rather than on print: the log is read by other tools too, and a
+// record that cannot be misread is worth more than a printer that copes.
+func flattenForLog(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	lastSpace := false
+	for _, r := range s {
+		// The reader splits the warnings field on " | ", so a warning containing
+		// that sequence would otherwise count as two in the summary.
+		if r < 0x20 || r == 0x7f || r == '|' {
+			r = ' '
+		}
+		if r == ' ' {
+			if lastSpace {
+				continue
+			}
+			lastSpace = true
+		} else {
+			lastSpace = false
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
+}
+
 func collectedWarnings() []string {
 	warningsMu.Lock()
 	defer warningsMu.Unlock()
@@ -216,13 +263,23 @@ const maxAuditBytes = 4 << 20
 //
 // One generation, not many: this is a dogfooding trace, and the value is in
 // recent history. Someone who needs more can copy the file.
+//
+// The remove-then-rename it used to do could lose EVERYTHING when two nvx
+// processes rotated at once: A removes .1, A renames log to .1, B removes .1
+// (deleting the history A just rotated), B's rename fails silently because the
+// source is gone. Both generations destroyed, no error, and nothing to notice it
+// by.
+//
+// A single rename onto the destination is atomic on POSIX and, via
+// MoveFileEx with MOVEFILE_REPLACE_EXISTING, on Windows too -- so the worst a
+// concurrent pair can now do is rotate twice, which costs one generation rather
+// than all of it. Go's os.Rename uses MoveFileEx with that flag on Windows.
 func rotateAuditLog(nvxHome string) {
 	path := filepath.Join(nvxHome, "audit.log")
 	info, err := os.Stat(path)
 	if err != nil || info.Size() < maxAuditBytes {
 		return
 	}
-	_ = os.Remove(path + ".1")
 	_ = os.Rename(path, path+".1")
 }
 
@@ -240,7 +297,13 @@ func describeSandboxSkip(cmdName string, args []string, policy Policy, opts shim
 		return "--no-sandbox"
 	case inSandboxSession():
 		return "already inside a sandbox"
-	case os.Getenv("NVX_SANDBOX") == "1" || os.Getenv("NVX_SANDBOX") == "true":
+	// Only when it was actually honoured. shouldSandbox ignores NVX_SANDBOX when
+	// it can prove the process is not inside a sandbox, so reporting it as the
+	// cause named a reason nvx had explicitly rejected -- and let anything that
+	// can set an environment variable, a postinstall script included, write a
+	// false cause into the summary whose entire job is "why was this not
+	// contained".
+	case (os.Getenv("NVX_SANDBOX") == "1" || os.Getenv("NVX_SANDBOX") == "true") && !containmentDisproved():
 		return "NVX_SANDBOX set"
 	case !policy.Isolation.Enabled:
 		return "isolation disabled by policy"
