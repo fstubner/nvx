@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"syscall"
 	"time"
 	"unsafe"
@@ -69,12 +70,14 @@ const stdinBrokenPipeInterval = 15 * time.Second
 //
 // A no-op unless stdin is a pipe. A console or a redirected file is not evidence
 // of anyone waiting on us, and the check would be meaningless there.
-func watchStdinForHangup(onHangup func()) {
+func watchStdinForHangup(nvxHome string, onHangup func()) {
 	stdin, err := syscall.GetStdHandle(syscall.STD_INPUT_HANDLE)
 	if err != nil || stdin == 0 || stdin == syscall.InvalidHandle {
+		noteHangupWatch(nvxHome, "not-armed", "nvx has no usable stdin handle")
 		return
 	}
 	if fileType, _, _ := procGetFileType.Call(uintptr(stdin)); fileType != fileTypePipe {
+		noteHangupWatch(nvxHome, "not-armed", fmt.Sprintf("stdin is not a pipe (file type %d)", fileType))
 		return
 	}
 
@@ -84,19 +87,65 @@ func watchStdinForHangup(onHangup func()) {
 	// mistaken for ours.
 	parent, ok := openParentProcess()
 	if !ok {
-		return // cannot tell a finished pipeline from a departed client; do nothing
+		// Cannot tell a finished pipeline from a departed client; do nothing.
+		noteHangupWatch(nvxHome, "not-armed", "the parent process could not be identified or opened")
+		return
 	}
+
+	ppid, _ := parentProcessID()
+	noteHangupWatch(nvxHome, "armed", fmt.Sprintf("watching stdin pipe against parent pid %d", ppid))
 
 	go func() {
 		defer syscall.CloseHandle(parent)
+		lastReason := ""
 		for {
 			time.Sleep(stdinBrokenPipeInterval)
-			if stdinPipeIsBroken(stdin) && processHasExited(parent) {
+
+			broken := stdinPipeIsBroken(stdin)
+			gone := processHasExited(parent)
+			if broken && gone {
+				noteHangupWatch(nvxHome, "fired", "input hung up and the parent has exited")
 				onHangup()
 				return
 			}
+
+			// Why it declined, recorded on CHANGE only. Polling every 15s for
+			// hours would otherwise bury the log in identical lines, and the
+			// interesting thing is the transition -- the moment the pipe breaks
+			// while the parent lives, or the reverse, is what distinguishes an
+			// abandoned server from a finished pipeline.
+			reason := "input pipe still has a writer, and the parent is still running"
+			switch {
+			case broken && !gone:
+				reason = "input hung up, but the process that started nvx is still running"
+			case !broken && gone:
+				reason = "the parent has exited, but something still holds the input pipe open"
+			}
+			if reason != lastReason {
+				noteHangupWatch(nvxHome, "waiting", reason)
+				lastReason = reason
+			}
 		}
 	}()
+}
+
+// noteHangupWatch records what the watchdog decided.
+//
+// It exists because the watchdog was silent except when it fired, so "declined"
+// and "never armed" looked identical from outside -- which left 15 processes
+// that outlived their client unexplainable without guessing. Written to
+// audit.log rather than stderr: this is for reading afterwards, not during.
+//
+// Behind NVX_TRACE like every other per-run record, so it costs nothing unless
+// someone is investigating.
+func noteHangupWatch(nvxHome, state, reason string) {
+	if nvxHome == "" || !runTraceEnabled() {
+		return
+	}
+	auditLog(nvxHome, "hangup_watch", map[string]string{
+		"state":  state,
+		"reason": reason,
+	})
 }
 
 // openParentProcess returns a handle to the process that started this one.

@@ -736,7 +736,7 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	// outlive the client it was speaking to, leaving nvx blocked forever holding
 	// a supervisor and an AppContainer. Exiting is what triggers the Job Object
 	// reaping that already exists, so this one call reclaims the whole tree.
-	watchStdinForHangup(func() {
+	watchStdinForHangup(nvxHome, func() {
 		LogWarn("The process that started nvx has gone away; stopping %s and its sandbox.", cmdName)
 		clientHungUp.Store(true)
 		if !endActiveChild() {
