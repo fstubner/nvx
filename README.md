@@ -128,7 +128,8 @@ Commands:
   audit [--summary]        Review the local record of security decisions, and of
                            past runs when NVX_TRACE=1 (--runs, --failures,
                            --limit=N, --all)
-  cleanup                  Remove stale sandbox sessions from previous runs
+  cleanup                  Reclaim disk from interrupted runs now (rarely needed;
+                           every run reclaims some automatically)
   setup [--undo]           (Windows, optional) One-time elevated setup adding
                            drive-root access and removing a loopback exemption an
                            older nvx left behind. Egress is allowlisted either way

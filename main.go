@@ -197,7 +197,13 @@ func main() {
 
 	case "cleanup":
 		LogInfo("Cleaning up stale sandbox sessions...")
-		cleanupStaleSandboxes(nvxHome)
+		removed, skipped := cleanupStaleSandboxes(nvxHome, 0)
+		if skipped > 0 {
+			LogInfo("Left %d sandbox session(s) alone because they are still running.", skipped)
+		}
+		if removed > 0 {
+			LogInfo("Removed %d stale sandbox session(s).", removed)
+		}
 		// Staged supervisor copies from other nvx builds. Reclaimed here rather
 		// than on the launch path, where deleting one could race a sandbox about
 		// to execute it.
@@ -299,7 +305,17 @@ func commandHelpText(command string) string {
 	case "shim":
 		return "nvx shim <cmd> [args...]\n\nInternal shim router used by generated command wrappers.\n"
 	case "cleanup":
-		return "nvx cleanup\n\nRemove stale sandbox guest profiles from previous interrupted runs.\n"
+		return `nvx cleanup
+
+Reclaim disk from interrupted runs now, rather than waiting.
+
+You should not need this. Every nvx run already reclaims a few abandoned
+sandbox profiles after the command finishes, skipping any whose owning process
+is still alive. This does the same thing without a limit, and additionally
+prunes staged sandbox supervisors from other nvx builds -- which is not done
+automatically, because a supervisor another nvx has staged but not yet executed
+cannot be told apart from an unused one.
+`
 	case "doctor":
 		return "nvx doctor [--fix]\n\nCheck that ~/.nvx/bin is first on PATH so nvx intercepts node/npm/npx/bun.\nRegenerates shims and reports what is wrong.\n\n--fix  Also repair a shadowed persistent PATH (Windows). That edits your\n       user PATH, so nvx does not do it unless you ask.\n"
 	case "audit":
@@ -402,7 +418,8 @@ Commands:
   init-shims               Generate PATH shims in ~/.nvx/bin (and project bin shims in a project)
   policy init              Scaffold ~/.nvx/policy.json and/or .nvx-policy.json
   shim <cmd> [args]        Internal shim router for package managers
-  cleanup                  Remove stale sandbox sessions from previous runs
+  cleanup                  Reclaim disk from interrupted runs now (rarely needed;
+                           every run reclaims some automatically)
   setup                    (Windows, optional) One-time elevated setup adding
                            drive-root access, and removing a loopback exemption
                            an older nvx left behind. Egress is allowlisted with

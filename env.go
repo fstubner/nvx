@@ -722,6 +722,11 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 		code = exitParentHungUp
 	}
 	trace.finish(code)
+	// Housekeeping after the command, never before it: leftovers from processes
+	// that were killed cannot clean up after themselves, and waiting for someone
+	// to type `nvx cleanup` meant 91 guest homes on the machine this was found
+	// on. Bounded and silent -- see reclaimStaleSandboxes.
+	reclaimStaleSandboxes(nvxHome)
 	return code
 }
 
