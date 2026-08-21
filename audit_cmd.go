@@ -136,25 +136,19 @@ func readAuditFile(path string) ([]map[string]string, error) {
 	// the history after it is a worse outcome than losing the line.
 	reader := bufio.NewReader(f)
 	for {
-		line, err := reader.ReadString('\n')
+		line, err := readBoundedLine(reader)
 		if line == "" && err != nil {
 			break
 		}
-		// A real record is a few hundred bytes. Anything vastly larger is
-		// damage, not data.
-		const maxRecordBytes = 1 << 20
-		if len(line) > maxRecordBytes {
+		var raw map[string]any
+		if jerr := json.Unmarshal([]byte(strings.TrimSpace(line)), &raw); jerr != nil || raw == nil {
+			// A torn line from a crashed write is not a reason to fail. `null`
+			// parses cleanly into a nil map, which would otherwise become an
+			// empty record printing as a blank row.
 			if err != nil {
 				break
 			}
 			continue
-		}
-		var raw map[string]any
-		if jerr := json.Unmarshal([]byte(strings.TrimSpace(line)), &raw); jerr != nil {
-			if err != nil {
-				break
-			}
-			continue // a torn line from a crashed write is not a reason to fail
 		}
 		entry := make(map[string]string, len(raw))
 		for k, v := range raw {
@@ -173,6 +167,43 @@ func readAuditFile(path string) ([]map[string]string, error) {
 		}
 	}
 	return entries, nil
+}
+
+// maxRecordBytes bounds one record. A real one is a few hundred bytes; anything
+// vastly larger is damage, not data.
+const maxRecordBytes = 1 << 20
+
+// readBoundedLine reads one line without ever holding more than maxRecordBytes
+// of it, discarding the remainder of an over-long line as it goes.
+//
+// ReadSlice rather than ReadString: ReadString assembles the entire line before
+// returning, so a 300 MB line allocated 300 MB before any length check could
+// reject it -- the check read as a bound but only ever acted as a filter.
+// ReadSlice hands back at most one buffer at a time and reports ErrBufferFull,
+// which is what makes discarding possible at all.
+//
+// An over-long line returns "" so the caller skips it, having consumed it.
+func readBoundedLine(r *bufio.Reader) (string, error) {
+	var b strings.Builder
+	overLong := false
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if !overLong {
+			if b.Len()+len(chunk) > maxRecordBytes {
+				overLong = true
+				b.Reset()
+			} else {
+				b.Write(chunk)
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue // more of this same line to come; keep consuming it
+		}
+		if overLong {
+			return "", err
+		}
+		return b.String(), err
+	}
 }
 
 func formatAuditEntry(e map[string]string) string {

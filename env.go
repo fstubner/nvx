@@ -690,7 +690,13 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	switch cmdName {
 	case "npm", "yarn", "pnpm", "npx", "bun", "bunx":
 		if pkgs := detectShimPackagesForVerification(cmdName, args); len(pkgs) > 0 {
-			runVerifyInstall(pkgs, nvxHome)
+			// Returning rather than exiting here is what lets runShim record the
+			// abort. A blocked or refused install is a run, and the one a later
+			// review most wants to find.
+			if code := runVerifyInstall(pkgs, nvxHome); code != 0 {
+				trace.note(runModeRefused, "blocked by pre-install verification")
+				return code
+			}
 		}
 	}
 	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" {
