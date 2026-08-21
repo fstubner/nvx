@@ -163,11 +163,16 @@ func (t *runTrace) finish(exitCode int) {
 // subcommand answers what a review needs -- which kinds of command misbehave --
 // without turning a log into a place secrets accumulate.
 func firstAction(cmd string, args []string) string {
-	// An ad-hoc tool runner has no subcommand -- its first positional IS the
-	// package. `nvx npx -y acme-internal-deploy-2024` was recording a private
-	// tool name as if it were a verb, which is the thing this function refuses
-	// to do everywhere else.
-	if executorCommands[strings.ToLower(cmd)] {
+	// Only commands whose first positional is genuinely a VERB.
+	//
+	// The rule used to be "anything except npx/bunx", which quietly recorded a
+	// filename for everything else: `nvx node acme-client-secret.js` stored
+	// `acme-client-secret.js`, in the file SECURITY.md invites people to paste
+	// into bug reports, while SECURITY.md said arguments were not recorded. An
+	// ad-hoc runner's first positional is a package and `node`'s is a script --
+	// neither is a subcommand, and guessing which commands are safe by exclusion
+	// gets the default wrong for every command nobody thought about.
+	if !subcommandGrammar[strings.ToLower(cmd)] {
 		return ""
 	}
 	for _, a := range args {
@@ -203,6 +208,19 @@ func firstAction(cmd string, args []string) string {
 		return a
 	}
 	return ""
+}
+
+// subcommandGrammar lists the wrapped commands whose first positional argument
+// is a verb rather than a path or a package name.
+//
+// An allowlist, so a command nobody has thought about records nothing rather
+// than recording whatever its first argument happens to be. `bun` is absent
+// deliberately: `bun install` is a subcommand but `bun script.ts` is a file, and
+// the two are not distinguishable here without tracking bun's verb list.
+var subcommandGrammar = map[string]bool{
+	"npm":  true,
+	"yarn": true,
+	"pnpm": true,
 }
 
 // valuelessFlags are boolean flags common enough to sit before a subcommand.

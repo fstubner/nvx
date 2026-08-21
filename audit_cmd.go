@@ -23,6 +23,7 @@ import (
 
 func runAuditCommand(args []string, nvxHome string) int {
 	limit := 25
+	limitGiven := false
 	onlyRuns := false
 	onlyFailures := false
 	summarize := false
@@ -45,6 +46,7 @@ func runAuditCommand(args []string, nvxHome string) int {
 				return 1
 			}
 			limit = n
+			limitGiven = true
 		default:
 			LogError("Unknown option for nvx audit: %s", arg)
 			return 1
@@ -82,6 +84,15 @@ func runAuditCommand(args []string, nvxHome string) int {
 			LogInfo("Per-run records are off. Set %s=1 to record what each command did.", nvxTraceEnvVar)
 		}
 		return 0
+	}
+
+	// A summary counts everything unless a limit was actually asked for. The
+	// list's default of 25 is a display convenience; applied to a summary it
+	// silently turned "how often was this contained" into "of the last 25
+	// entries, most of which may be security decisions rather than runs" -- a
+	// total that reads as complete and is not.
+	if summarize && !limitGiven {
+		limit = 0
 	}
 
 	shown := filtered

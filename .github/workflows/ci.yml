@@ -50,7 +50,11 @@ jobs:
       shell: pwsh
       env:
         NVX_PROBE: '1'
-      run: go test -v -run 'TestPipedStdio|TestAppContainer|TestUnelevatedSandbox' .
+      # TestRestrictedToken and TestReverseRelay named explicitly: the earlier
+      # pattern matched neither, so both probes ran nowhere -- they skip without
+      # NVX_PROBE=1 locally and CI never set it for them. A measurement nothing
+      # runs stops being a measurement the moment the code around it changes.
+      run: go test -v -run 'TestPipedStdio|TestAppContainer|TestUnelevatedSandbox|TestRestrictedTokenNetworkBehaviour|TestReverseRelayReachesAServerInsideTheContainer' .
 
     - name: Windows sandbox smoke
       if: matrix.os == 'windows-latest'

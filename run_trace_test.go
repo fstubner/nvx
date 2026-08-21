@@ -40,6 +40,13 @@ func TestFirstActionOmitsSecretBearingArguments(t *testing.T) {
 		{"npx package is not an action", "npx", []string{"-y", "acme-internal-deploy-2024"}, ""},
 		{"bunx package is not an action", "bunx", []string{"some-private-tool"}, ""},
 
+		// Nor does node: its first positional is a script. This recorded
+		// `acme-client-secret.js` while SECURITY.md said arguments were not
+		// recorded -- a filename can name a client or an unshipped product.
+		{"node script name is not an action", "node", []string{"acme-client-secret.js"}, ""},
+		{"bun is ambiguous, so records nothing", "bun", []string{"install"}, ""},
+		{"an unknown command records nothing", "some-future-tool", []string{"build"}, ""},
+
 		// Flags are case-sensitive to the tools themselves. Lowercasing before
 		// the lookup made -F match the -f entry, so pnpm's filter VALUE was
 		// recorded as the subcommand.

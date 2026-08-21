@@ -238,6 +238,14 @@ func lookPathSkippingNvxShimsUncached(cmdName, nvxHome string) (string, error) {
 		if strings.EqualFold(filepath.Clean(part), filepath.Clean(shimDir)) {
 			continue
 		}
+		// Any OTHER nvx shim directory has to go too, not just the configured
+		// home's. Matching one path meant that pointing NVX_HOME somewhere else
+		// left the real ~/.nvx/bin on PATH, so looking up `node` found nvx's own
+		// shim and nvx re-entered itself without bound -- observed ending in
+		// "The paging file is too small" and a child dying in runtime.schedinit.
+		if directoryHoldsNvxShims(part) {
+			continue
+		}
 		filtered = append(filtered, part)
 	}
 	restore := pathEnv
@@ -250,6 +258,25 @@ func lookPathSkippingNvxShimsUncached(cmdName, nvxHome string) (string, error) {
 		}
 	}()
 	return exec.LookPath(cmdName)
+}
+
+// directoryHoldsNvxShims reports whether dir is an nvx shim directory.
+//
+// Identified by the nvx binary sitting beside the shims, which is how they are
+// generated: every shim invokes the nvx.exe in its own directory. Cheap enough
+// to ask per PATH entry on a lookup that already stats the filesystem, and it
+// answers for any nvx install rather than only the one this process was
+// configured with.
+func directoryHoldsNvxShims(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	name := "nvx"
+	if runtime.GOOS == "windows" {
+		name = "nvx.exe"
+	}
+	info, err := os.Stat(filepath.Join(dir, name))
+	return err == nil && !info.IsDir()
 }
 
 // preferWindowsRuntimeExe returns the PE executable for a Windows runtime shim path.
