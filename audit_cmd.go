@@ -24,6 +24,7 @@ import (
 func runAuditCommand(args []string, nvxHome string) int {
 	limit := 25
 	limitGiven := false
+	showAll := false
 	onlyRuns := false
 	onlyFailures := false
 	summarize := false
@@ -38,7 +39,10 @@ func runAuditCommand(args []string, nvxHome string) int {
 		case arg == "--summary":
 			summarize = true
 		case arg == "--all":
-			limit = 0
+			// Wins over --limit whatever the order. Last-flag-wins made
+			// `--all --limit=2` and `--limit=2 --all` disagree silently, and
+			// nobody passes both meaning "surprise me".
+			showAll = true
 		case strings.HasPrefix(arg, "--limit="):
 			n, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
 			if err != nil || n < 1 {
@@ -91,7 +95,7 @@ func runAuditCommand(args []string, nvxHome string) int {
 	// silently turned "how often was this contained" into "of the last 25
 	// entries, most of which may be security decisions rather than runs" -- a
 	// total that reads as complete and is not.
-	if summarize && !limitGiven {
+	if showAll || (summarize && !limitGiven) {
 		limit = 0
 	}
 
@@ -371,6 +375,15 @@ func printAuditSummary(entries []map[string]string) {
 			fmt.Printf("  %4d  %s\n", kv.n, kv.key)
 		}
 	}
+}
+
+// pluralise renders a count with its noun, so a summary does not open on
+// "1 runs".
+func pluralise(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 type countedKey struct {

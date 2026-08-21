@@ -25,7 +25,13 @@ import (
 	"testing"
 )
 
-func TestContainedProcessCannotListTheHomeDirectory(t *testing.T) {
+// Named for what it asserts. It used to be called
+// TestContainedProcessCannotListTheHomeDirectory, which claimed something it
+// deliberately does not check and that is not true -- a contained process CAN
+// enumerate %USERPROFILE%, via an ACE Windows ships and nvx cannot revoke. That
+// is recorded below and documented under Known limitations; the name implied it
+// was closed.
+func TestAncestorGrantsDoNotLeakDirectoryListings(t *testing.T) {
 	if os.Getenv("NVX_PROBE") != "1" {
 		t.Skip("set NVX_PROBE=1 to run")
 	}
@@ -104,7 +110,7 @@ func TestContainedProcessCannotListTheHomeDirectory(t *testing.T) {
 		"NVX_PROBE_ANCESTOR="+nested,
 	)
 	_, launchErr := launchAppContainerProcess(childExe,
-		[]string{"-test.run=TestContainedProcessCannotListTheHomeDirectory"},
+		[]string{"-test.run=TestAncestorGrantsDoNotLeakDirectoryListings"},
 		env, workDir, sid, 0, scopeCaps)
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))

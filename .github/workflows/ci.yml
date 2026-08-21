@@ -50,11 +50,18 @@ jobs:
       shell: pwsh
       env:
         NVX_PROBE: '1'
-      # TestRestrictedToken and TestReverseRelay named explicitly: the earlier
-      # pattern matched neither, so both probes ran nowhere -- they skip without
-      # NVX_PROBE=1 locally and CI never set it for them. A measurement nothing
-      # runs stops being a measurement the moment the code around it changes.
-      run: go test -v -run 'TestPipedStdio|TestAppContainer|TestUnelevatedSandbox|TestRestrictedTokenNetworkBehaviour|TestReverseRelayReachesAServerInsideTheContainer' .
+      # No -run filter. This was a hand-maintained list of names and it drifted
+      # exactly as such a list does: 31 of the 41 probe-gated tests matched
+      # nothing and ran nowhere, among them the ones that check a sandbox cannot
+      # read another project, that a deny ACE hides a secret, that one session
+      # cannot read another's files, and that the relay does not expose host
+      # loopback services. Every one of those backs a claim in README or
+      # SECURITY.md.
+      #
+      # NVX_PROBE=1 is itself the selector -- each probe checks it and skips
+      # otherwise -- so setting it and running everything needs no list to keep
+      # in step with the tests.
+      run: go test -v ./...
 
     - name: Windows sandbox smoke
       if: matrix.os == 'windows-latest'

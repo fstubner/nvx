@@ -163,15 +163,21 @@ func (t *runTrace) finish(exitCode int) {
 // subcommand answers what a review needs -- which kinds of command misbehave --
 // without turning a log into a place secrets accumulate.
 func firstAction(cmd string, args []string) string {
-	// Only commands whose first positional is genuinely a VERB.
+	// Only a subcommand nvx recognises by name is ever recorded.
 	//
-	// The rule used to be "anything except npx/bunx", which quietly recorded a
-	// filename for everything else: `nvx node acme-client-secret.js` stored
-	// `acme-client-secret.js`, in the file SECURITY.md invites people to paste
-	// into bug reports, while SECURITY.md said arguments were not recorded. An
-	// ad-hoc runner's first positional is a package and `node`'s is a script --
-	// neither is a subcommand, and guessing which commands are safe by exclusion
-	// gets the default wrong for every command nobody thought about.
+	// Two earlier rules were both wrong, in the same direction. "Anything except
+	// npx/bunx" recorded `node acme-client-secret.js` as if the filename were a
+	// verb. Narrowing to npm/yarn/pnpm still recorded `yarn deploy-acme-prod`,
+	// because yarn and pnpm treat a bare first positional as an implicit
+	// `run <script>` -- so a project's internal script names went into the file
+	// SECURITY.md invites people to paste into bug reports, while SECURITY.md
+	// said arguments were not recorded.
+	//
+	// Choosing by COMMAND cannot work: whether the first positional is a verb is
+	// a property of the argument, not of the program. Matching the argument
+	// against a fixed set makes the documented claim true by construction --
+	// nothing that is not on this list can be written, whatever new command or
+	// grammar turns up later.
 	if !subcommandGrammar[strings.ToLower(cmd)] {
 		return ""
 	}
@@ -197,17 +203,35 @@ func firstAction(cmd string, args []string) string {
 			}
 			return ""
 		}
-		// A package spec is not a subcommand, and it is the argument most likely
-		// to be a long private URL or a scoped internal name.
-		if strings.ContainsAny(a, "/\\@:") {
-			return ""
+		// The allowlist is the whole check. A package spec, a script path, a
+		// project's own script name and a private URL are all simply "not on the
+		// list", so no separate rule is needed for each shape somebody thinks of.
+		if knownSubcommands[strings.ToLower(a)] {
+			return strings.ToLower(a)
 		}
-		if len(a) > 32 {
-			return ""
-		}
-		return a
+		return ""
 	}
 	return ""
+}
+
+// knownSubcommands are the verbs nvx will write to the audit log.
+//
+// Deliberately a closed list of published subcommands, none of which is
+// project-specific or user-chosen. It exists so SECURITY.md's "does not record
+// arguments" is true by construction rather than by a chain of exclusions that
+// has now been wrong three times.
+//
+// Adding an entry means deciding that the word itself carries nothing private.
+// `run` qualifies; the script name after it does not, and is not recorded.
+var knownSubcommands = map[string]bool{
+	"access": true, "add": true, "audit": true, "ci": true, "config": true,
+	"create": true, "dedupe": true, "dlx": true, "doctor": true, "exec": true,
+	"explain": true, "init": true, "install": true, "link": true, "login": true,
+	"logout": true, "ls": true, "list": true, "outdated": true, "pack": true,
+	"ping": true, "prune": true, "publish": true, "rebuild": true, "remove": true,
+	"restart": true, "rm": true, "run": true, "start": true, "stop": true,
+	"test": true, "trust": true, "uninstall": true, "unlink": true,
+	"update": true, "upgrade": true, "version": true, "whoami": true, "why": true,
 }
 
 // subcommandGrammar lists the wrapped commands whose first positional argument
