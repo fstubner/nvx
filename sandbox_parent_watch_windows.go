@@ -22,13 +22,32 @@ import (
 // server that does not stop when its stdin reaches EOF -- plenty do not. Client
 // dies, server keeps running, nvx keeps waiting, forever.
 //
-// The signal used here is nvx's OWN stdin breaking, not the parent process
-// exiting. Both would have caught this case, but a parent-exit watchdog fires
-// wrongly on deliberate detachment -- `start /b nvx ...` leaves cmd.exe exiting
-// immediately by design -- and killing a dev server someone deliberately
-// detached would be a worse bug than the one being fixed. A broken stdin pipe
-// means specifically that whatever was talking to us is gone, which is the
-// condition that actually stranded these processes.
+// TWO signals must agree, and the first version of this shipped with only one.
+//
+// That version treated a broken stdin pipe on its own as "the client is gone",
+// which is false for an ordinary shell pipeline: a producer closing its end is
+// how a pipeline is SUPPOSED to finish. Measured against the built binary --
+//
+//	echo hi | nvx node -e "require('fs').readFileSync(0); <20s of work>"
+//
+// -- the producer exits, the child drains the buffer, PeekNamedPipe starts
+// reporting ERROR_BROKEN_PIPE, and a perfectly healthy command was killed at 15
+// seconds with exit 129. The same shape covers any parent that spawns nvx with
+// a pipe and calls stdin.end(), which is a common Node pattern. Found by
+// acceptance review.
+//
+// A drained, writer-closed pipe is indistinguishable at the handle level from
+// an abandoned client, so the pipe alone cannot answer this. What separates them
+// is who is still there: in a pipeline the shell that built it is alive and
+// waiting, and an MCP client that has gone away is not. So nvx leaves only when
+// its input has hung up AND the process that started it has exited.
+//
+// Deliberate detachment stays safe for the same reason it did before -- with
+// `start /b`, stdin is a console or NUL rather than a broken pipe, so the first
+// condition never holds.
+//
+// When the parent cannot be identified at all, nvx does NOT exit. Leaking a
+// process is a bad outcome; killing work someone is waiting on is a worse one.
 
 var (
 	procPeekNamedPipe = modKernel32.NewProc("PeekNamedPipe")
@@ -59,16 +78,98 @@ func watchStdinForHangup(onHangup func()) {
 		return
 	}
 
+	// Opened once, up front, and held: the handle keeps referring to this
+	// process even after it exits, so a recycled PID cannot later be mistaken
+	// for our parent still running -- or worse, an unrelated new process's exit
+	// mistaken for ours.
+	parent, ok := openParentProcess()
+	if !ok {
+		return // cannot tell a finished pipeline from a departed client; do nothing
+	}
+
 	go func() {
+		defer syscall.CloseHandle(parent)
 		for {
 			time.Sleep(stdinBrokenPipeInterval)
-			if stdinPipeIsBroken(stdin) {
+			if stdinPipeIsBroken(stdin) && processHasExited(parent) {
 				onHangup()
 				return
 			}
 		}
 	}()
 }
+
+// openParentProcess returns a handle to the process that started this one.
+func openParentProcess() (syscall.Handle, bool) {
+	ppid, ok := parentProcessID()
+	if !ok {
+		return 0, false
+	}
+	h, _, _ := procOpenProcessForJob.Call(uintptr(processSynchronize), 0, uintptr(ppid))
+	if h == 0 {
+		// Already gone, or not ours to open. Either way this watchdog cannot
+		// make a safe decision, and the safe default is to leave the command
+		// alone.
+		return 0, false
+	}
+	return syscall.Handle(h), true
+}
+
+// parentProcessID finds this process's parent via a process snapshot.
+//
+// Toolhelp rather than NtQueryInformationProcess: the parent PID is not exposed
+// by the Go standard library on Windows, and of the two ways to get it this one
+// is documented and stable.
+func parentProcessID() (uint32, bool) {
+	const th32csSnapProcess = 0x00000002
+	snap, _, _ := procCreateToolhelp32Snapshot.Call(uintptr(th32csSnapProcess), 0)
+	if snap == uintptr(syscall.InvalidHandle) || snap == 0 {
+		return 0, false
+	}
+	defer syscall.CloseHandle(syscall.Handle(snap))
+
+	var entry processEntry32W
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	self := uint32(syscall.Getpid())
+
+	ret, _, _ := procProcess32FirstW.Call(snap, uintptr(unsafe.Pointer(&entry)))
+	for ret != 0 {
+		if entry.ProcessID == self {
+			return entry.ParentProcessID, true
+		}
+		ret, _, _ = procProcess32NextW.Call(snap, uintptr(unsafe.Pointer(&entry)))
+	}
+	return 0, false
+}
+
+// processHasExited reports whether the process behind h has ended.
+func processHasExited(h syscall.Handle) bool {
+	const waitObject0 = 0x00000000
+	ret, _, _ := procWaitForSingleObject.Call(uintptr(h), 0)
+	return ret == waitObject0
+}
+
+// processEntry32W mirrors PROCESSENTRY32W. Only Size, ProcessID and
+// ParentProcessID are read; the rest is present so the struct is the size the
+// API checks for.
+type processEntry32W struct {
+	Size            uint32
+	Usage           uint32
+	ProcessID       uint32
+	DefaultHeapID   uintptr
+	ModuleID        uint32
+	Threads         uint32
+	ParentProcessID uint32
+	PriClassBase    int32
+	Flags           uint32
+	ExeFile         [260]uint16
+}
+
+var (
+	procCreateToolhelp32Snapshot = modKernel32.NewProc("CreateToolhelp32Snapshot")
+	procProcess32FirstW          = modKernel32.NewProc("Process32FirstW")
+	procProcess32NextW           = modKernel32.NewProc("Process32NextW")
+)
 
 // stdinPipeIsBroken reports whether the write end of stdin has been closed.
 //

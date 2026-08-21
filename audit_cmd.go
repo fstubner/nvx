@@ -214,7 +214,16 @@ func readBoundedLine(r *bufio.Reader) (string, error) {
 	}
 }
 
+// formatAuditEntry renders one record.
+//
+// Values are flattened again on the way out, even though auditLog flattens them
+// on the way in. The file is plain text on disk: it can be edited, it can carry
+// records written by an older nvx that did not sanitise, and it is the one input
+// here that an attacker who has reached the disk fully controls. Sanitising only
+// at the write path would mean trusting the file's contents, which is the
+// assumption this whole class of bug lives on.
 func formatAuditEntry(e map[string]string) string {
+	e = flattenAuditEntry(e)
 	when := shortTime(e["time"])
 	if e["event"] != "run" {
 		return fmt.Sprintf("%s  %-24s %s", when, e["event"], securityEventDetail(e))
@@ -234,6 +243,26 @@ func formatAuditEntry(e map[string]string) string {
 		line += "\n            ⚠ " + strings.ReplaceAll(w, " | ", "\n            ⚠ ")
 	}
 	return line
+}
+
+// flattenAuditEntry sanitises every value in a record read back from disk.
+//
+// The warnings field keeps its " | " separator, which formatAuditEntry splits on
+// to print one warning per line; flattenForLog would collapse it.
+func flattenAuditEntry(e map[string]string) map[string]string {
+	out := make(map[string]string, len(e))
+	for k, v := range e {
+		if k == "warnings" {
+			parts := strings.Split(v, " | ")
+			for i, p := range parts {
+				parts[i] = flattenForLog(p)
+			}
+			out[k] = strings.Join(parts, " | ")
+			continue
+		}
+		out[k] = flattenForLog(v)
+	}
+	return out
 }
 
 // securityEventDetail renders whatever a non-run record carries. The events are

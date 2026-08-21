@@ -62,11 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process-tree cleanup that already existed was never the problem: it fires when
   nvx exits, and nvx never exited.
 
-  nvx now notices when the pipe it was given for input loses its writer, and
-  stops — which triggers that existing cleanup and takes the sandbox with it. It
-  watches its own input rather than watching for its parent to exit, so
-  deliberately detached commands (`start /b nvx …`, where the launching shell
-  exits immediately by design) are unaffected.
+  nvx now stops when two things are true together: the pipe it was given for
+  input has lost its writer, **and** the program that started it has exited.
+  Stopping triggers the existing cleanup and takes the sandbox with it.
+
+  Both conditions are required because either alone is wrong. A producer closing
+  its end is how a pipeline is meant to finish — `echo hi | nvx node …` must not
+  be killed — and a parent exiting is normal for deliberately detached commands.
+  Only together do they mean nobody is left to talk to. If the parent cannot be
+  identified, nvx leaves the command alone.
 
   Windows only; on Linux and macOS the ordinary signal path already ends an
   abandoned process.

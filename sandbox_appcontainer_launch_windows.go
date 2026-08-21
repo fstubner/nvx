@@ -276,6 +276,15 @@ func launchAppContainerProcessOnce(
 		}
 	}
 
+	// Let the hangup watchdog end this wait. Terminating the child returns
+	// control here so every deferred cleanup below and in runSandbox runs --
+	// notably removing the guest profile, which an os.Exit from the watchdog
+	// used to skip, leaving a directory behind per abandoned run.
+	setActiveChildKiller(func() {
+		procTerminateProcess.Call(uintptr(pi.hProcess), uintptr(exitParentHungUp))
+	})
+	defer setActiveChildKiller(nil)
+
 	waitRet, _, waitErr := procWaitForSingleObject.Call(uintptr(pi.hProcess), INFINITE)
 	if waitRet == 0xFFFFFFFF {
 		return 1, fmt.Errorf("WaitForSingleObject: %w", waitErr)
