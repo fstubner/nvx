@@ -291,8 +291,11 @@ func flattenAuditEntry(e map[string]string) map[string]string {
 // written by several callers with different fields, so this names the ones that
 // exist rather than assuming a shape.
 func securityEventDetail(e map[string]string) string {
+	// `state` and `reason` are the hangup watchdog's. Without them here a
+	// hangup_watch record printed as its event name and nothing else, which is
+	// the same uselessness the instrumentation was added to fix.
 	var parts []string
-	for _, k := range []string{"host", "tool", "project", "path", "mode"} {
+	for _, k := range []string{"host", "tool", "project", "path", "mode", "state", "reason"} {
 		if v := e[k]; v != "" {
 			parts = append(parts, k+"="+v)
 		}

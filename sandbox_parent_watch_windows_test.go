@@ -3,6 +3,7 @@
 package main
 
 import (
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -129,11 +130,63 @@ func TestHangupWatchDoesNotArmOnANonPipeStdin(t *testing.T) {
 	defer procSetStdHandleTest.Call(stdInputHandle, uintptr(prev))
 
 	fired := make(chan struct{}, 1)
-	watchStdinForHangup(func() { fired <- struct{}{} })
+	watchStdinForHangup(tempDir(t), func() { fired <- struct{}{} })
 
 	select {
 	case <-fired:
 		t.Fatal("the watchdog armed on a non-pipe stdin and fired")
 	default:
+	}
+}
+
+// The watchdog has to say why it declined.
+//
+// It used to log only when it fired, so "declined" and "never armed" looked
+// identical from outside. That left 15 processes which outlived their client
+// with no way to tell which had happened, and the difference decides whether
+// there is a bug at all.
+func TestHangupWatchRecordsWhyItDidNotArm(t *testing.T) {
+	nul, err := syscall.Open("NUL", syscall.O_RDWR, 0)
+	if err != nil {
+		t.Skipf("cannot open NUL to stand in for a non-pipe stdin: %v", err)
+	}
+	defer syscall.CloseHandle(nul)
+	if fileType, _, _ := procGetFileType.Call(uintptr(nul)); fileType == fileTypePipe {
+		t.Skip("NUL reported itself as a pipe on this host")
+	}
+
+	prev, _ := syscall.GetStdHandle(syscall.STD_INPUT_HANDLE)
+	const stdInputHandle = uintptr(0xFFFFFFF6)
+	procSetStdHandleTest.Call(stdInputHandle, uintptr(nul))
+	defer procSetStdHandleTest.Call(stdInputHandle, uintptr(prev))
+
+	// Silent unless someone is investigating: this is a debugging aid, and the
+	// default must not write a record on every invocation.
+	quiet := tempDir(t)
+	t.Setenv(nvxTraceEnvVar, "")
+	watchStdinForHangup(quiet, func() {})
+	if entries, err := readAuditEntries(quiet); err != nil {
+		t.Fatal(err)
+	} else if len(entries) != 0 {
+		t.Errorf("the watchdog wrote records with %s unset: %v", nvxTraceEnvVar, entries)
+	}
+
+	home := tempDir(t)
+	t.Setenv(nvxTraceEnvVar, "1")
+	watchStdinForHangup(home, func() {})
+
+	entries, err := readAuditEntries(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want one hangup_watch record, got %d: %v", len(entries), entries)
+	}
+	e := entries[0]
+	if e["event"] != "hangup_watch" || e["state"] != "not-armed" {
+		t.Errorf("unexpected record: %v", e)
+	}
+	if !strings.Contains(e["reason"], "not a pipe") {
+		t.Errorf("the reason must name what stopped it arming, got %q", e["reason"])
 	}
 }

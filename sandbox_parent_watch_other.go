@@ -10,4 +10,4 @@ package main
 // signal path -- SIGHUP or SIGPIPE ends it -- and nvx's children are in its own
 // process group, so the tree goes together. Adding a poll loop there would be
 // machinery guarding against something that has not been observed.
-func watchStdinForHangup(onHangup func()) {}
+func watchStdinForHangup(nvxHome string, onHangup func()) {}
