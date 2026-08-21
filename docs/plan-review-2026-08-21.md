@@ -120,12 +120,44 @@ That probe is not a feature: no port configuration, no lifecycle, a fixed pool o
 four tunnels, and no answer for a server binding a port nvx was not told about.
 It settles feasibility, nothing more.
 
-**Remaining honest gap:** asynchronous piped stdio. The supervisor is inside the
-container too, so it cannot create a named pipe either. A preload could in
-principle broker pipe handles from the parent over the existing channel, but
-emulating stream semantics — backpressure, EOF timing, interleaving — for
-arbitrary third-party code is fragile. Worth documenting rather than trading the
-sandbox primitive for.
+**The async-pipe gap now has a route, and it does not need this trade either.**
+
+This review originally called async piped stdio the one honest gap, on the
+grounds that the supervisor is inside the container and so cannot create a named
+pipe either. That reasoning was sound and the conclusion was wrong, because
+nobody had checked the other direction. Creating a pipe instance and opening an
+existing one are different access checks: creation goes against
+`\Device\NamedPipe`, which nvx cannot grant per-container, while opening goes
+against the pipe's own security descriptor, which the *parent* chooses.
+
+Measured by `TestAppContainerCanConnectToAParentCreatedNamedPipe`:
+
+| Pipe's DACL | Contained process |
+|---|---|
+| default security | denied |
+| package SID alone | denied |
+| ALL APPLICATION PACKAGES alone | denied |
+| Everyone alone | denied |
+| Everyone + ALL APPLICATION PACKAGES | **opens, full round trip** |
+| Everyone + that container's package SID | **opens, full round trip** |
+
+The four single-ACE rows are why this was nearly missed a second time. An
+AppContainer's access check needs the DACL to grant the user identity *and* the
+package identity; any one ACE alone reads as a flat denial and looks exactly like
+a device-level refusal. The first version of this probe had only those rows and
+would have reported a false negative.
+
+So the shape is: **the parent creates the pipes and the container only opens
+them.** No stream emulation, no brokered handle inheritance, and the last row
+matters most — naming that container's package SID rather than
+`ALL APPLICATION PACKAGES` keeps the pipe openable by one sandbox only, so
+per-project identity survives.
+
+Not yet established: whether node can be made to adopt such a pipe as child
+stdio in practice (the preload would have to hand libuv a handle it did not
+create), and the probe granted `Everyone` where production should name the
+owning user's SID. Feasibility of the OS mechanism is settled; the integration
+is not.
 
 ## Component 2 — `.env` cloaking
 
