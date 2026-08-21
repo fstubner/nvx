@@ -127,7 +127,7 @@ Commands:
   grants reset [--all]     Forget this project's grants (or every project's)
   audit [--summary]        Review the local record of security decisions, and of
                            past runs when NVX_TRACE=1 (--runs, --failures,
-                           --limit=N)
+                           --limit=N, --all)
   cleanup                  Remove stale sandbox sessions from previous runs
   setup [--undo]           (Windows, optional) One-time elevated setup adding
                            drive-root access and removing a loopback exemption an

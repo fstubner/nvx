@@ -34,12 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Nothing is sent anywhere.** The file is on local disk and there is no
   uploader.
 
-  **Arguments are not recorded.** Only the subcommand, and only when it can be
-  identified without stepping over a flag that might take a value — because `npm
-  config set //registry/:_authToken=…` and `node -e '<script>'` put secrets in
-  argv, and this is the file a user would paste into a bug report. For `npx` and
-  `bunx` nothing is recorded at all beyond the command, since their first
-  argument is the package rather than a verb. Warnings are recorded as their
+  **Arguments are not recorded.** For `npm`, `yarn` and `pnpm` the subcommand is
+  (`install`, `run`), and only when it can be identified without stepping over a
+  flag that might take a value. Every other command records its name alone,
+  because their first argument is a package or a script path rather than a verb —
+  `npm config set //registry/:_authToken=…`, `node -e '<script>'` and `node
+  acme-client-secret.js` all put something private in argv, and this is the file
+  a user would paste into a bug report. Warnings are recorded as their
   message template, never as the rendered text, so a warning that quotes a
   package URL stores `…checks for %s.` and not the credentials in it.
 
