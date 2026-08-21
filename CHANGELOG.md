@@ -49,6 +49,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **nvx processes piled up forever once the program that started them exited.**
+  Measured on a development machine: 48 live `nvx` processes, 38 of them
+  orphaned, each still holding a sandbox supervisor, accumulating at about one
+  per 60–80 seconds until Windows ran out of commit charge and builds started
+  failing with "the paging file is too small". Nearly all were MCP servers
+  started through `nvx shim npx …`.
+
+  nvx waits for the command it launched. An MCP server does not stop when its
+  stdin reaches end-of-file — many do not — so when the client went away, the
+  server kept running, nvx kept waiting, and nothing ever ended either. The
+  process-tree cleanup that already existed was never the problem: it fires when
+  nvx exits, and nvx never exited.
+
+  nvx now notices when the pipe it was given for input loses its writer, and
+  stops — which triggers that existing cleanup and takes the sandbox with it. It
+  watches its own input rather than watching for its parent to exit, so
+  deliberately detached commands (`start /b nvx …`, where the launching shell
+  exits immediately by design) are unaffected.
+
+  Windows only; on Linux and macOS the ordinary signal path already ends an
+  abandoned process.
+
 * **The README's command list was missing five commands**, some for several
   releases: `doctor`, `grants` (both `list` and `reset`), `import`, `setup` and
   `shim`. A reader checking whether nvx could inspect its grants would have

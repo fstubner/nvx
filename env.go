@@ -642,6 +642,11 @@ func dedupeStrings(values []string) []string {
 	return out
 }
 
+// exitParentHungUp is the code nvx exits with when its stdin pipe lost its
+// writer. Distinct from 1 so an abandoned run stays distinguishable from a
+// command that genuinely failed, in the trace and anywhere else it lands.
+const exitParentHungUp = 129
+
 // runShim runs a wrapped command, contained or not. It wraps runShimTraced so
 // that every exit path -- refusal, sandbox, direct -- lands in one run record.
 func runShim(cmdName string, args []string, nvxHome string) int {
@@ -652,6 +657,16 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 }
 
 func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome string) int {
+	// Leave when whatever started us has gone. nvx waits on its child, and a
+	// long-lived child -- an MCP server is the case this was measured on -- can
+	// outlive the client it was speaking to, leaving nvx blocked forever holding
+	// a supervisor and an AppContainer. Exiting is what triggers the Job Object
+	// reaping that already exists, so this one call reclaims the whole tree.
+	watchStdinForHangup(func() {
+		LogWarn("The process that started nvx has gone away; stopping %s and its sandbox.", cmdName)
+		os.Exit(exitParentHungUp)
+	})
+
 	opts := parseShimOptions(args)
 	args = opts.args
 	opts.strictFlag = strictFlag
