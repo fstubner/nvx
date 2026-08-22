@@ -423,8 +423,12 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   input needs `nvx --no-sandbox`.
 
   Beyond 8 concurrent piped children in one process, output is collected and
-  delivered when each child exits instead of as it is produced. Nothing hangs and
-  nothing is lost; a progress spinner just arrives all at once.
+  delivered **when the stream ends** rather than as it is produced. Nothing hangs,
+  and no bytes are dropped — but read it from `stdout` events or the `close`
+  event, **not from an `exit` handler**. A caller that accumulates via `data` and
+  inspects the accumulator in `exit` sees it full for the first 8 children and
+  empty for the rest, in the same process. nvx prints a warning the first time a
+  process crosses that line, because otherwise it reads as a flaky test.
 
   The two-minute diagnostic hint deliberately covers installs only. An install
   that has not finished in two minutes is anomalous; an `npx`-launched dev server

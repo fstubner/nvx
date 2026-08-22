@@ -219,9 +219,14 @@ func (b *stdioBroker) Close() {
 			procCancelIoExBroker.Call(uintptr(h), 0)
 			syscall.CloseHandle(h)
 		}
-		node := ch.nodeServer
+		// Read INSIDE the Do, not before it. sync.Once serialises the bodies,
+		// not a read that happens outside one -- so lifting this out raced the
+		// pump goroutine's write to the same field. `go test -race` caught it
+		// every time under load and about 3% of the time in isolation, and CI
+		// runs -race, which is what made a suite that passes ten times in a row
+		// fail once with nothing to point at.
 		ch.closeOnce.Do(func() {
-			if node != 0 && node != syscall.InvalidHandle {
+			if node := ch.nodeServer; node != 0 && node != syscall.InvalidHandle {
 				procCancelIoExBroker.Call(uintptr(node), 0)
 				syscall.CloseHandle(node)
 			}

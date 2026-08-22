@@ -248,6 +248,18 @@ try {
       return { childPipe: parts[0], nodePipe: parts[1] };
     });
 
+    let warnedFallback = false;
+    function warnStdioFallbackOnce() {
+      if (warnedFallback) return;
+      warnedFallback = true;
+      try {
+        process.stderr.write(
+          'nvx: more concurrent piped children than the sandbox can stream; ' +
+          'their output arrives when each stream ends rather than as it is produced ' +
+          '(read it via stdout events or the close event, not in an exit handler).\n');
+      } catch (e) { /* stderr may be closed */ }
+    }
+
     // The fallback when the channel pool is empty. Same substitution the
     // synchronous APIs use -- descriptors, which an AppContainer may create --
     // with the output replayed through a stream once the child has exited, so a
@@ -286,6 +298,14 @@ try {
 
       const child = realSpawn.call(cp, command, Array.isArray(argv) ? argv : [],
         Object.assign({}, opts || {}, { stdio: fds }));
+
+      // Said out loud, once, because this path behaves differently from the
+      // streamed one IN THE SAME PROCESS: the first children stream as they go,
+      // and these deliver everything when the stream ends. A caller that reads
+      // its accumulated buffer in the child's 'exit' handler sees it empty here
+      // and full for the earlier children -- which looks like a flaky test
+      // rather than a limit being crossed. Exit codes and totals are unaffected.
+      warnStdioFallbackOnce();
 
       const replay = {};
       for (const i of wanted) {

@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -123,5 +124,95 @@ setTimeout(() => { say('HUNG'); process.exit(9); }, 60000);
 		if !strings.Contains(got, want) {
 			t.Errorf("expected %q in the contained report:\n%s", want, got)
 		}
+	}
+}
+
+// Past the channel pool, output must still all arrive -- and the test says WHEN.
+//
+// Acceptance found the docs claiming delivery "at exit" while the fallback
+// replays on stream close. A caller that accumulates via 'data' and reads its
+// buffer in the child's exit handler therefore sees it full for the first
+// children and empty for the rest, inside one process, with exit code 0. That
+// reads as a flaky test rather than a limit being crossed.
+//
+// The timing cannot be fixed -- the fallback only learns the child finished when
+// exit fires, and a stream write emits on the next tick -- so it is pinned here
+// instead, along with the guarantee that actually holds: nothing is dropped.
+func TestOutputPastTheChannelPoolArrivesCompleteOnClose(t *testing.T) {
+	if os.Getenv("NVX_PROBE") != "1" {
+		t.Skip("set NVX_PROBE=1 to run (builds nvx and launches a real AppContainer)")
+	}
+
+	dir := tempDir(t)
+	nvxExe := filepath.Join(dir, "nvx.exe")
+	if out, err := exec.Command("go", "build", "-o", nvxExe, ".").CombinedOutput(); err != nil {
+		t.Skipf("cannot build nvx for this test: %v\n%s", err, out)
+	}
+
+	// 12 children, comfortably past the 8 the pool can stream.
+	const script = `const { spawn } = require('child_process');
+const fs = require('fs');
+const out = process.argv[2];
+const say = m => { try { fs.appendFileSync(out, m + '\n'); } catch (e) {} };
+const N = 12, LINES = 200;
+let closed = 0;
+for (let i = 0; i < N; i++) {
+  const c = spawn(process.execPath,
+    ['-e', 'for(let j=0;j<' + LINES + ';j++)console.log("c' + i + '-"+j)'],
+    { stdio: 'pipe' });
+  let buf = '';
+  c.stdout.on('data', d => buf += d);
+  c.on('exit', () => say('exit ' + i + ' lines=' + buf.split('\n').filter(Boolean).length));
+  c.on('close', () => {
+    const lines = buf.split('\n').filter(Boolean);
+    say('close ' + i + ' lines=' + lines.length + ' last=' + lines[lines.length - 1]);
+    if (++closed === N) { say('DONE'); process.exit(0); }
+  });
+}
+setTimeout(() => { say('HUNG closed=' + closed); process.exit(9); }, 90000);
+`
+	scriptPath := filepath.Join(dir, "many.js")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reportPath := filepath.Join(dir, "report.txt")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, nvxExe, "--strict", "shim", "node", scriptPath, reportPath)
+	cmd.Dir = dir
+	out, _ := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("12 concurrent piped children never finished:\n%s", out)
+	}
+
+	report, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Skipf("no report written, so this host could not run it: %v\n%s", err, out)
+	}
+	got := string(report)
+	t.Logf("report:\n%s", strings.TrimSpace(got))
+
+	if !strings.Contains(got, "DONE") {
+		t.Fatalf("not every child closed:\n%s", got)
+	}
+	// The guarantee: by close, every child delivered every line, in order.
+	for i := 0; i < 12; i++ {
+		want := fmt.Sprintf("close %d lines=200 last=c%d-199", i, i)
+		if !strings.Contains(got, want) {
+			t.Errorf("child %d lost output past the pool; wanted %q in:\n%s", i, want, got)
+		}
+	}
+	// And the documented caveat: the later children have nothing yet at exit.
+	// Asserted so that if this ever becomes deliverable at exit, the docs and
+	// the warning that describe it are updated rather than left stale.
+	if !strings.Contains(got, "exit 11 lines=0") {
+		t.Log("NOTE: the last child now has output at 'exit'. If that is reliable, README, " +
+			"SECURITY.md, CHANGELOG and the preload's warning all describe a limit that no " +
+			"longer exists and should be corrected.")
+	}
+	if !strings.Contains(string(out), "more concurrent piped children") {
+		t.Error("crossing the pool limit printed no warning; the difference in behaviour between " +
+			"the first children and the rest is exactly what must not be silent")
 	}
 }

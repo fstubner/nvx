@@ -73,10 +73,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separate, exit codes propagate, and 20,000 lines arrive complete and in order.
 
   One gap: **writing to a contained child's stdin is not supported** —
-  `child.stdin` is `null` rather than a stream that silently discards. Beyond 8
-  concurrent piped children in one process, output is collected and delivered
-  when each child exits rather than as it is produced; nothing hangs and nothing
-  is lost. Windows only.
+  `child.stdin` is `null` rather than a stream that silently discards.
+
+  Beyond 8 concurrent piped children in one process, output is collected and
+  delivered when the stream ends rather than as it is produced. No bytes are
+  dropped, but they arrive on `close`, not before `exit` — so a caller that reads
+  its accumulated buffer in an `exit` handler sees it full for the first 8
+  children and empty for the rest. nvx warns once when a process crosses that
+  line. Windows only.
 
 * **Abandoned sandbox profiles are reclaimed automatically.** They used to wait
   for someone to run `nvx cleanup`, and nobody did — 91 had accumulated on the

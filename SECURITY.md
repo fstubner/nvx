@@ -167,7 +167,9 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
 
   Writing to a contained child's stdin is not supported: `child.stdin` is `null`.
   Beyond 8 concurrent piped children in a process, output is buffered to a file
-  in the guest home and delivered at exit rather than streamed.
+  in the guest home and delivered when the stream ends rather than as it is
+  produced — available from `stdout` events or `close`, not from an `exit`
+  handler.
 
   nvx's diagnostic hint covers installs only, on purpose: an install still running
   after two minutes is anomalous, while an `npx`-launched dev server running for
