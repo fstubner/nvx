@@ -130,6 +130,19 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   Windows ships for all AppContainers, which nvx cannot revoke. Where an elevated
   `nvx setup` has run, `C:\`, `C:\Users` and the profile root also carry a
   read+execute grant nvx added itself; `nvx setup --undo` removes those.
+- **`audit.log` is a record, not evidence against a local attacker.** Anything
+  running as you can append to it, and that includes code nvx deliberately does
+  not contain: at the default `standard` level your own code — `npm run build`,
+  `node script.js` — runs uncontained, so it can write a fabricated
+  `"mode":"sandboxed"` entry that `nvx audit` then displays as a genuine
+  contained run. Measured; a contained process is refused (`EPERM`), an
+  uncontained one is not.
+
+  This is inherent rather than an oversight: the file has to be writable by nvx
+  running as you, so it is writable by anything else running as you. Read it as
+  what nvx recorded about its own runs, not as proof of what did or did not
+  happen on a machine where untrusted code has already executed outside the
+  sandbox.
 - **Projects granted by nvx before 0.5.0 remain reachable.** Every sandbox shared
   one identity until 0.5.0 and the permissions were never revoked, so a project you
   previously used nvx in is readable and writable from any sandbox until nvx runs

@@ -121,15 +121,10 @@ func TestStagedViewHidesProjectButWritesThrough(t *testing.T) {
 		t.Fatalf("grant node_modules: %v", err)
 	}
 
-	self, _ := os.Executable()
-	data, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	childExe := filepath.Join(guestHome, "stagedprobe.exe")
-	if err := os.WriteFile(childExe, data, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	// The shared helper, for the reason given in the secret-mask probe: reading
+	// the test binary intermittently fails with "The handle is invalid" on
+	// Windows, and that is a fact about the host rather than a defect to fail on.
+	childExe := stageProbeChild(t, guestHome, "stagedprobe.exe")
 
 	read, write := makeTestPipe(t)
 	defer syscall.CloseHandle(read)

@@ -27,7 +27,9 @@ Measured on this machine during review, and reproducible:
   TCP and `ENOTFOUND` on DNS.
 - A host can reach a server inside the AppContainer through an outward tunnel
   while egress stays blocked
-  (`TestReverseRelayReachesAServerInsideTheContainer`, written during this
+  (`TestReverseRelayReachesAServerInsideTheContainer`, run with
+  `NVX_PROBE_PROTOTYPES=1`; flaky about 1 run in 8 and excluded from CI for that
+  reason — it demonstrates feasibility and guards nothing, written during this
   review).
 
 - Restricted tokens do not restrict the network. Measured after this review was
