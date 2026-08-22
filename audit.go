@@ -38,8 +38,14 @@ func auditLog(nvxHome, event string, fields map[string]string) {
 	if cwd, err := os.Getwd(); err == nil {
 		entry["cwd"] = flattenForLog(cwd)
 	}
-	for k, v := range fields {
-		entry[k] = flattenForLog(v)
+	// flattenAuditEntry rather than flattening each value directly, because the
+	// warnings field is a " | "-separated list and flattenForLog maps `|` to a
+	// space -- a rule added to stop one warning counting as two, which applied
+	// to the joined string destroyed the separator it was protecting. Two
+	// warnings then arrived as one run-on string and `--summary` counted them
+	// wrong. Same helper on both sides now, so write and read cannot disagree.
+	for k, v := range flattenAuditEntry(fields) {
+		entry[k] = v
 	}
 
 	line, err := json.Marshal(entry)

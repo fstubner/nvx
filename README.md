@@ -138,15 +138,25 @@ Commands:
   version, -v              Print version info
 
 Isolation flags — these go BEFORE the command, as `nvx --no-sandbox npm ...`.
-Passed to the wrapped command instead (`npm --no-sandbox ...`) they are stripped
-and ignored, so nothing can escape the sandbox by tacking a flag onto npm:
+Anything that WEAKENS containment is ignored if passed to the wrapped command
+instead (`npm --no-sandbox ...`), so no package can escape the sandbox by
+tacking a flag onto npm:
   --no-sandbox             Run this invocation without the sandbox
-  --strict                 Contain your own code too, not just installs and
-                           ad-hoc tools
   --standard               Force standard containment, overriding a project
                            policy that sets strict
+
+Flags that only ADD containment, or that cannot weaken it, are honoured wherever
+they appear — there is nothing to gain by sneaking in a flag that sandboxes you
+harder:
+  --strict                 Contain your own code too, not just installs and
+                           ad-hoc tools. Works before the command or among its
+                           arguments
+
+Passed to the wrapped command only, not before it:
   --filesystem-provider=<name>  Override isolation.filesystem.provider
-                           (native | docker; experimental: wsl, wslc, systemd-nspawn)
+                           (native | docker; experimental: wsl, wslc,
+                           systemd-nspawn). `nvx npm --filesystem-provider=…`,
+                           not `nvx --filesystem-provider=… npm`
 
 Options:
   --shell=<type>           Shell syntax to emit: powershell, bash, zsh

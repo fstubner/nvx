@@ -126,3 +126,50 @@ func difference(a, b []string) []string {
 	}
 	return out
 }
+
+// Flags documented as leading must actually parse as leading.
+//
+// The command lists are pinned against each other, but nothing guarded the flag
+// block -- so a README rewrite moved `--filesystem-provider` into the
+// before-the-command section, where it is not parsed at all and produces
+// "Unknown command". Following the documentation verbatim failed. Text parity
+// would not have caught it either; what matters is whether the parser agrees
+// with the prose, so this asks the parser.
+func TestDocumentedLeadingFlagsAreParsedAsLeading(t *testing.T) {
+	leading := []string{"--no-sandbox", "--strict", "--standard", "-y", "--yes", "-q", "--quiet", "--agent-mode"}
+	for _, flag := range leading {
+		args, _, _, _, _ := parseStartupFlags([]string{"nvx", flag, "npm", "install"})
+		if len(args) < 2 || args[1] != "npm" {
+			t.Errorf("%s is documented as a leading flag but parseStartupFlags did not consume it; "+
+				"the command would be read as %q", flag, args)
+		}
+	}
+
+	// And one that is deliberately NOT leading. If this ever starts parsing as
+	// leading, the README section it lives in has to move with it.
+	args, _, _, _, _ := parseStartupFlags([]string{"nvx", "--filesystem-provider=native", "npm"})
+	if len(args) >= 2 && args[1] == "npm" {
+		t.Error("--filesystem-provider now parses as a leading flag; it is documented as belonging " +
+			"to the wrapped command, and the docs need updating to match")
+	}
+}
+
+// --strict must keep working from inside the wrapped command's own arguments,
+// and --standard must not.
+//
+// That asymmetry is deliberate -- one only adds containment, the other reduces
+// it -- and it was documented backwards, in the README and in a struct comment,
+// both saying payload flags are stripped and ignored.
+func TestPayloadStrictAddsContainmentAndPayloadStandardCannotRemoveIt(t *testing.T) {
+	strictPolicy := levelStrict
+	standardPolicy := levelStandard
+
+	if !shouldContain(classYourCode, standardPolicy, shimOptions{payloadStrict: true}) {
+		t.Error("--strict among the command's own arguments did not add containment; it is honoured " +
+			"by design because sneaking in a flag that sandboxes you harder gains nothing")
+	}
+	if !shouldContain(classYourCode, strictPolicy, shimOptions{payloadStandard: true}) {
+		t.Error("--standard among the command's own arguments weakened a strict policy; a dependency's " +
+			"arguments must not be able to reduce containment")
+	}
+}

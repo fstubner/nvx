@@ -506,3 +506,64 @@ func captureStdout(t *testing.T, fn func()) string {
 	_ = r.Close()
 	return out
 }
+
+// Two warnings in one run must stay two warnings.
+//
+// flattenForLog maps `|` to a space so that one warning cannot be counted as
+// two. Applied to the joined `" | "` list on the way to disk, that rule
+// destroyed the separator it existed to protect: two warnings arrived as one
+// run-on string, and `nvx audit --summary` -- whose stated purpose is showing
+// which warnings keep firing -- reported a count that was simply wrong.
+//
+// Nothing covered a two-warning round trip, which is how a defence broke the
+// format it was defending.
+func TestTwoWarningsSurviveTheRoundTripSeparately(t *testing.T) {
+	home := tempDir(t)
+	resetTracedWarnings()
+	t.Setenv(nvxTraceEnvVar, "1")
+
+	LogWarn("first warning about %s.", "a thing")
+	LogWarn("second warning about %s.", "another thing")
+
+	tr := beginRunTrace(home, "npm", []string{"install"})
+	tr.top = true
+	tr.note(runModeSandboxed, "")
+	tr.finish(0)
+
+	entries, err := readAuditEntries(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 record, got %d", len(entries))
+	}
+
+	parts := strings.Split(entries[0]["warnings"], " | ")
+	if len(parts) != 2 {
+		t.Fatalf("the two warnings did not survive as two: %q", entries[0]["warnings"])
+	}
+	if !strings.Contains(parts[0], "first warning") || !strings.Contains(parts[1], "second warning") {
+		t.Errorf("warnings came back garbled: %q", parts)
+	}
+
+	// And the summary must count them as two, which is the visible symptom.
+	out := captureStdout(t, func() { printAuditSummary(entries) })
+	for _, want := range []string{"first warning", "second warning"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary lost %q:\n%s", want, out)
+		}
+	}
+}
+
+// A one-run summary must not say "1 runs". Asserted because the fix for this
+// was written twice and applied to the helper both times, never to the call.
+func TestSummaryUsesSingularForOneRun(t *testing.T) {
+	one := []map[string]string{{
+		"event": "run", "command": "npm", "mode": runModeSandboxed,
+		"exit": "0", "duration_ms": "10",
+	}}
+	out := captureStdout(t, func() { printAuditSummary(one) })
+	if !strings.Contains(out, "1 run,") {
+		t.Errorf("want a singular \"1 run,\" in:\n%s", out)
+	}
+}
