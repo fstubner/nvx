@@ -224,6 +224,137 @@ try {
 
   cp.execFileSync = patchExec(realExecFileSync, 'execFileSync');
   cp.execSync = patchExec(realExecSync, 'execSync');
+
+  // ---- async spawn: a stream, which a file cannot stand in for --------------
+  //
+  // The trick above does not extend here. What does work is that nvx pre-creates
+  // named pipes outside the container and this process only OPENS them: creating
+  // one is what an AppContainer is refused, opening one it is not.
+  //
+  // Per captured stream nvx provides a pair. The 'child' pipe's descriptor is
+  // handed to the child as its stdout/stderr; the 'node' pipe carries the same
+  // bytes back here. Two pipes because a named pipe joins a server to a client,
+  // so the child and this process -- both clients -- cannot reach each other
+  // directly, and nvx pumps between them.
+  //
+  // Every failure path falls back to the unpatched spawn, which restores the old
+  // behaviour rather than inventing a new one.
+  const channelSpec = process.env.NVX_STDIO_CHANNELS;
+  if (channelSpec) {
+    const net = require('net');
+    const realSpawn = cp.spawn;
+    const free = channelSpec.split(';').filter(Boolean).map(function (pair) {
+      const parts = pair.split('|');
+      return { childPipe: parts[0], nodePipe: parts[1] };
+    });
+
+    cp.spawn = function nvxSpawn(command, args, options) {
+      // spawn's signature lets args and options swap, so normalise before
+      // reading stdio out of it.
+      let opts = options;
+      let argv = args;
+      if (opts === undefined && args && !Array.isArray(args)) {
+        opts = args;
+        argv = [];
+      }
+      const stdio = opts ? opts.stdio : undefined;
+
+      const wanted = [];
+      if (slot(stdio, 1) === 'pipe') wanted.push(1);
+      if (slot(stdio, 2) === 'pipe') wanted.push(2);
+      if (!wanted.length || free.length < wanted.length) {
+        return realSpawn.apply(cp, arguments);
+      }
+
+      const taken = [];
+      const fds = [slot(stdio, 0), slot(stdio, 1), slot(stdio, 2)];
+
+      // stdin has to be substituted too, and forgetting it wasted an hour:
+      // leaving slot 0 as 'pipe' means node still creates a pipe for it, which
+      // is the exact call an AppContainer refuses. Every stdout/stderr channel
+      // in the world does not help if the process hangs on stdin first.
+      //
+      // An empty file, so the child reads EOF immediately -- the same
+      // substitution the synchronous path makes. Writing to a contained child's
+      // stdin is therefore not supported; child.stdin is null rather than a
+      // stream that silently goes nowhere.
+      let stdinDir = null;
+      if (fds[0] === 'pipe') {
+        try {
+          stdinDir = scratch();
+          const emptyPath = path.join(stdinDir, 'stdin');
+          fs.writeFileSync(emptyPath, '');
+          fds[0] = fs.openSync(emptyPath, 'r');
+        } catch (e) {
+          return realSpawn.apply(cp, arguments);
+        }
+      }
+
+      try {
+        for (const i of wanted) {
+          const ch = free.shift();
+          // 'r+' rather than 'w': these pipes are duplex, and opening one
+          // write-only is refused.
+          const writeFd = fs.openSync(ch.childPipe, 'r+');
+          const readFd = fs.openSync(ch.nodePipe, 'r+');
+          fds[i] = writeFd;
+          taken.push({ slot: i, ch: ch, writeFd: writeFd, readFd: readFd });
+        }
+      } catch (e) {
+        for (const t of taken) {
+          try { fs.closeSync(t.writeFd); } catch (e2) {}
+          try { fs.closeSync(t.readFd); } catch (e2) {}
+          free.push(t.ch);
+        }
+        return realSpawn.apply(cp, arguments);
+      }
+
+      const nextOpts = Object.assign({}, opts || {}, { stdio: fds });
+      const child = realSpawn.call(cp, command, Array.isArray(argv) ? argv : [], nextOpts);
+
+      // node reports null for a slot passed as a descriptor, so the readable
+      // side is attached here. Anything doing child.stdout.on('data') or
+      // .pipe() then sees an ordinary stream.
+      for (const t of taken) {
+        let stream;
+        try {
+          stream = new net.Socket({ fd: t.readFd, readable: true, writable: false });
+        } catch (e) {
+          stream = fs.createReadStream('', { fd: t.readFd });
+        }
+        // A stream with no error listener throws out of the event loop and
+        // takes the whole contained process down -- which is exactly what
+        // happened here with an EPIPE at end of stream. This shim is injected
+        // into every node process in the sandbox and must never be the reason
+        // one dies, so an error ends the stream instead of raising.
+        try {
+          stream.on('error', function () {
+            try { stream.destroy(); } catch (e2) {}
+          });
+        } catch (e) {}
+
+        if (t.slot === 1) child.stdout = stream;
+        else child.stderr = stream;
+        try { child.stdio[t.slot] = stream; } catch (e) {}
+      }
+
+      // This process also holds the child's write end, and while it does the
+      // reader never sees EOF: the stream would deliver every byte and then hang
+      // forever, which is the bug being fixed wearing a disguise.
+      child.once('spawn', function () {
+        for (const t of taken) {
+          try { fs.closeSync(t.writeFd); } catch (e) {}
+        }
+        if (typeof fds[0] === 'number') {
+          try { fs.closeSync(fds[0]); } catch (e) {}
+        }
+      });
+      child.once('close', function () {
+        for (const t of taken) free.push(t.ch);
+      });
+      return child;
+    };
+  }
 } catch (e) {
   // Never break a contained process because of this shim.
 }
