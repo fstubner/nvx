@@ -49,6 +49,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to about 8 MB on disk. It grew without limit before, which was tolerable when
   only security events went in it.
 
+* **A remembered permission failure no longer costs a slow command every week.**
+  nvx skips ancestor-directory grants that have failed before, because retrying
+  them costs three seconds and buys nothing. Those records expired after seven
+  days and all expired at once, so the first contained command after the deadline
+  paid the entire three-second retry budget — against roughly 0.6s for a normal
+  contained run.
+
+  Records now last a month, and at most one is re-tested per run. An environment
+  that starts working is still noticed within a few commands; the cost of
+  checking is about a second a month instead of three seconds a week.
+
 * **A contained command can stream its child's output.** `spawn(cmd, {stdio:
   'pipe'})` inside the sandbox used to block forever before the child existed —
   Windows builds piped stdio out of named pipes and a contained process cannot
