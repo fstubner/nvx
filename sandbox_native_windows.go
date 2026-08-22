@@ -180,6 +180,23 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		cleanEnv = addNodeOptionsRequire(cleanEnv, shim)
 	}
 
+	// Streaming capture needs a stream, which the preload's temp files cannot
+	// be. Contained code cannot create a named pipe, so nvx creates a small pool
+	// out here and the preload only opens them -- see sandbox_stdio_broker_windows.go.
+	//
+	// Silent when it does not work: the fallback is the behaviour that shipped
+	// before, so there is nothing for a user to act on, and this runs on every
+	// contained launch.
+	if sidStr, err := appContainerSidToString(sid); err == nil {
+		// The guest home is named after the sandbox id, which is what makes the
+		// pipe names unique between concurrent sessions.
+		broker, channelNames := provisionStdioChannels(sidStr, stdioSessionID(filepath.Base(guestHome)))
+		if broker != nil {
+			defer broker.Close()
+			cleanEnv = addStdioChannelsEnv(cleanEnv, channelNames)
+		}
+	}
+
 	// Network. In proxy mode (the default) the container is granted NO network
 	// capability at all, and reaches the parent's egress proxy through an in-
 	// container relay -- so the allowlist is enforced by the OS rather than

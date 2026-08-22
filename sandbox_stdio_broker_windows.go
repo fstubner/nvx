@@ -54,6 +54,9 @@ type stdioChannel struct {
 
 	childServer syscall.Handle
 	nodeServer  syscall.Handle
+	// closeOnce guards nodeServer, which both the pump (at end of stream) and
+	// Close (at end of session) want to close.
+	closeOnce sync.Once
 }
 
 // stdioBroker owns the provisioned channels and the goroutines pumping them.
@@ -139,9 +142,15 @@ func (c *stdioChannel) pump() {
 		return
 	}
 	_, _ = io.Copy(pipeWriter{c.nodeServer}, pipeReader{c.childServer})
-	// Disconnecting drops the reader's end so node sees EOF rather than waiting
-	// on a stream nothing will ever write to again.
-	procDisconnectNamedPipe.Call(uintptr(c.nodeServer))
+
+	// Closed, not disconnected. DisconnectNamedPipe tears the connection down
+	// under the client, which reaches node as EPIPE on a read -- an error event
+	// that killed the contained process outright. Closing the last server handle
+	// ends the stream the way the end of any stream should look.
+	c.closeOnce.Do(func() {
+		syscall.CloseHandle(c.nodeServer)
+		c.nodeServer = syscall.InvalidHandle
+	})
 }
 
 // Close tears the pool down. Cancelling pending I/O first: a pump parked in
@@ -158,12 +167,17 @@ func (b *stdioBroker) Close() {
 	}
 	b.closed = true
 	for _, ch := range b.channels {
-		for _, h := range []syscall.Handle{ch.childServer, ch.nodeServer} {
-			if h != 0 && h != syscall.InvalidHandle {
-				procCancelIoExBroker.Call(uintptr(h), 0)
-				syscall.CloseHandle(h)
-			}
+		if h := ch.childServer; h != 0 && h != syscall.InvalidHandle {
+			procCancelIoExBroker.Call(uintptr(h), 0)
+			syscall.CloseHandle(h)
 		}
+		node := ch.nodeServer
+		ch.closeOnce.Do(func() {
+			if node != 0 && node != syscall.InvalidHandle {
+				procCancelIoExBroker.Call(uintptr(node), 0)
+				syscall.CloseHandle(node)
+			}
+		})
 	}
 }
 
@@ -290,7 +304,6 @@ func stdioSessionID(sandboxID string) string {
 var (
 	procCreateNamedPipeBroker     = modKernel32.NewProc("CreateNamedPipeW")
 	procConnectNamedPipeBroker    = modKernel32.NewProc("ConnectNamedPipe")
-	procDisconnectNamedPipe       = modKernel32.NewProc("DisconnectNamedPipe")
 	procCancelIoExBroker          = modKernel32.NewProc("CancelIoEx")
 	procConvertStringSDToSDBroker = modAdvapi32.NewProc("ConvertStringSecurityDescriptorToSecurityDescriptorW")
 )
