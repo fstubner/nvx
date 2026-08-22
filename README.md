@@ -410,8 +410,11 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
 
   **Writing to a contained child's stdin is not supported.** `child.stdin` is
   `null` rather than a stream that silently discards. A tool that feeds its child
-  input needs `nvx --no-sandbox`. Above 8 concurrent captured streams in one
-  process, further `spawn` calls fall back to the old behaviour and hang.
+  input needs `nvx --no-sandbox`.
+
+  Beyond 8 concurrent piped children in one process, output is collected and
+  delivered when each child exits instead of as it is produced. Nothing hangs and
+  nothing is lost; a progress spinner just arrives all at once.
 
   The two-minute diagnostic hint deliberately covers installs only. An install
   that has not finished in two minutes is anomalous; an `npx`-launched dev server

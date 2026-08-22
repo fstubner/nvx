@@ -145,7 +145,7 @@ func TestReverseRelayReachesAServerInsideTheContainer(t *testing.T) {
 
 	// The host side of the experiment: talk to the contained server as a browser
 	// would, through the port the parent owns.
-	deadline := time.Now().Add(40 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	var got string
 	var lastErr error
 	for time.Now().Before(deadline) {
@@ -253,7 +253,13 @@ func runReverseRelayChild() {
 	// the listener -- which the test does immediately after asserting.
 	var served atomic.Bool
 	var wg sync.WaitGroup
-	hardStop := time.Now().Add(30 * time.Second)
+	// Comfortably longer than the host's attempt window below, and that ordering
+	// is the whole point. At 30s against a 40s window the child gave up first
+	// whenever a loaded machine made the AppContainer launch slow, which read as
+	// "the contained child exited before serving" -- a flake that passed in
+	// isolation every time and failed 1 run in 2 under the full suite, found once
+	// CI started running every probe.
+	hardStop := time.Now().Add(120 * time.Second)
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
 		go func(n int) {

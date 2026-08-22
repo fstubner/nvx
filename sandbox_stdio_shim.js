@@ -248,6 +248,69 @@ try {
       return { childPipe: parts[0], nodePipe: parts[1] };
     });
 
+    // The fallback when the channel pool is empty. Same substitution the
+    // synchronous APIs use -- descriptors, which an AppContainer may create --
+    // with the output replayed through a stream once the child has exited, so a
+    // caller doing child.stdout.on('data') still receives it.
+    function spawnThroughFiles(command, argv, opts, stdio, wanted) {
+      const stream = require('stream');
+      let dir;
+      try {
+        dir = scratch();
+      } catch (e) {
+        return realSpawn.call(cp, command, Array.isArray(argv) ? argv : [], opts);
+      }
+
+      const fds = [slot(stdio, 0), slot(stdio, 1), slot(stdio, 2)];
+      const paths = {};
+      const open = [];
+      try {
+        if (fds[0] === 'pipe') {
+          const inPath = path.join(dir, 'stdin');
+          fs.writeFileSync(inPath, '');
+          fds[0] = fs.openSync(inPath, 'r');
+          open.push(fds[0]);
+        }
+        for (const i of wanted) {
+          const p = path.join(dir, i === 1 ? 'stdout' : 'stderr');
+          fs.writeFileSync(p, '');
+          fds[i] = fs.openSync(p, 'w');
+          open.push(fds[i]);
+          paths[i] = p;
+        }
+      } catch (e) {
+        for (const fd of open) { try { fs.closeSync(fd); } catch (e2) {} }
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e2) {}
+        return realSpawn.call(cp, command, Array.isArray(argv) ? argv : [], opts);
+      }
+
+      const child = realSpawn.call(cp, command, Array.isArray(argv) ? argv : [],
+        Object.assign({}, opts || {}, { stdio: fds }));
+
+      const replay = {};
+      for (const i of wanted) {
+        const s = new stream.PassThrough();
+        s.on('error', function () {});
+        replay[i] = s;
+        if (i === 1) child.stdout = s; else child.stderr = s;
+        try { child.stdio[i] = s; } catch (e) {}
+      }
+
+      child.once('close', function () {
+        for (const fd of open) { try { fs.closeSync(fd); } catch (e) {} }
+        for (const i of wanted) {
+          let data = null;
+          try { data = fs.readFileSync(paths[i]); } catch (e) {}
+          try {
+            if (data && data.length) replay[i].write(data);
+            replay[i].end();
+          } catch (e) {}
+        }
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
+      });
+      return child;
+    }
+
     cp.spawn = function nvxSpawn(command, args, options) {
       // spawn's signature lets args and options swap, so normalise before
       // reading stdio out of it.
@@ -262,8 +325,21 @@ try {
       const wanted = [];
       if (slot(stdio, 1) === 'pipe') wanted.push(1);
       if (slot(stdio, 2) === 'pipe') wanted.push(2);
-      if (!wanted.length || free.length < wanted.length) {
+      if (!wanted.length) {
         return realSpawn.apply(cp, arguments);
+      }
+
+      // Out of channels is NOT a reason to hand this back to the real spawn:
+      // that call blocks synchronously inside libuv and wedges the entire
+      // process -- not just this child, and not recoverably, since even a timer
+      // already set never fires. An acceptance review found the fifth
+      // concurrent child doing exactly that.
+      //
+      // Files instead. The output arrives when the child exits rather than as
+      // it is produced, which is a real loss for a progress spinner and no loss
+      // at all for a command that finishes. Degrading beats hanging.
+      if (free.length < wanted.length) {
+        return spawnThroughFiles(command, argv, opts, stdio, wanted);
       }
 
       const taken = [];

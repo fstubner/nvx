@@ -150,14 +150,24 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   stand in for, and it is handled differently: nvx creates the pipes outside the
   container and the preload only opens them. Opening an existing pipe is a
   different access check from creating one, and it is permitted when the pipe's
-  DACL names both the user and that container's package identity — so the pipe is
-  openable by one sandbox and no other. Both endpoints are inside the same
-  sandbox; nvx moves bytes between two of its own children, which it already
-  parents. No capability is granted to make this work.
+  DACL names both the user nvx runs as and that container's package identity.
+  Both endpoints are inside the same sandbox; nvx moves bytes between two of its
+  own children, which it already parents. No capability is granted to make this
+  work.
+
+  **Another process running as the same user can open these pipes.** That is
+  unavoidable rather than an oversight: a contained process's token carries the
+  user's identity, so the ACE that admits the sandbox necessarily admits the
+  user. Anything already running as you can read the project and the audit log
+  regardless, so the pipes sit inside that existing boundary rather than outside
+  it — but a second local *account* cannot reach them. This entry claimed the
+  stronger "openable by one sandbox and no other" until an acceptance review
+  opened one from an ordinary process; the code had in fact granted Everyone,
+  which is now the user's SID.
 
   Writing to a contained child's stdin is not supported: `child.stdin` is `null`.
-  Beyond 8 concurrent captured streams in a process, further `spawn` calls fall
-  back to the previous behaviour and hang.
+  Beyond 8 concurrent piped children in a process, output is buffered to a file
+  in the guest home and delivered at exit rather than streamed.
 
   nvx's diagnostic hint covers installs only, on purpose: an install still running
   after two minutes is anomalous, while an `npx`-launched dev server running for

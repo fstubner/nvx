@@ -74,10 +74,16 @@ type stdioBroker struct {
 // more streams than this falls back to the existing behaviour rather than
 // failing, so the cost of the cap is the old limitation, not a new error.
 //
-// Eight covers a package manager running a few children with stdout and stderr
-// each. It is not a guess at a general case -- there is no evidence yet about
-// what real workloads need, and this is the number to revisit first.
-const stdioChannelPoolSize = 8
+// Counted in STREAMS, and a `stdio:'pipe'` spawn takes two of them, so this is
+// half as many children as it looks. Eight streams meant four concurrent piped
+// children while every document said eight -- measured by an acceptance review,
+// which found the fifth child wedging the whole process.
+//
+// Sixteen because a test runner with a worker per core is the workload that
+// exists, and eight children covers it on this machine. The number still only
+// moves the cliff; what removes it is the preload falling back to temp files
+// when the pool is empty, so exhaustion costs streaming rather than the command.
+const stdioChannelPoolSize = 16
 
 // nvxStdioChannelsEnv carries the provisioned names to the preload.
 const nvxStdioChannelsEnv = "NVX_STDIO_CHANNELS"
@@ -91,10 +97,22 @@ func provisionStdioChannels(containerSID string, sessionID string) (*stdioBroker
 	if containerSID == "" {
 		return nil, ""
 	}
-	// Both identities. Either ACE alone reads as a flat denial -- measured, and
-	// the reason an earlier probe nearly concluded the whole approach was
-	// impossible.
-	sddl := "D:(A;;GA;;;WD)(A;;GA;;;" + containerSID + ")"
+	// Both identities have to be granted: an AppContainer's access check is
+	// satisfied only when the DACL allows the user the process runs as AND its
+	// package identity, and either ACE alone reads as a flat denial. That is
+	// measured, and it is the reason an earlier probe nearly concluded the whole
+	// approach was impossible.
+	//
+	// The user ACE names THIS user. It said `WD` -- Everyone -- until an
+	// acceptance review opened one of these pipes from an ordinary process and
+	// showed the whole set enumerable by any local principal. That value was
+	// copied out of the probe, where Everyone was deliberately the upper-bound
+	// case, and it should never have left it.
+	userSID, err := currentUserSIDString()
+	if err != nil {
+		return nil, "" // no channels rather than a pipe open to everyone
+	}
+	sddl := "D:(A;;GA;;;" + userSID + ")(A;;GA;;;" + containerSID + ")"
 
 	broker := &stdioBroker{}
 	var names []string
@@ -112,6 +130,36 @@ func provisionStdioChannels(containerSID string, sessionID string) (*stdioBroker
 		go ch.pump()
 	}
 	return broker, strings.Join(names, ";")
+}
+
+// currentUserSIDString returns the SID of the user this process runs as.
+//
+// Note what this does and does not buy. It stops another local account reaching
+// these pipes. It cannot stop another process running as the SAME user, because
+// the contained process's own token carries this user's identity, so the ACE
+// that lets the sandbox in necessarily lets the user in. Anything already
+// running as this user could read the project and the audit log anyway; the
+// pipes are inside that existing boundary, not outside it. SECURITY.md says so
+// in those words rather than the stronger thing it used to claim.
+func currentUserSIDString() (string, error) {
+	var token syscall.Token
+	proc, _, _ := procGetCurrentProcess.Call()
+	if r, _, err := procOpenProcessToken.Call(
+		proc, uintptr(TOKEN_QUERY), uintptr(unsafe.Pointer(&token)),
+	); r == 0 {
+		return "", fmt.Errorf("OpenProcessToken: %v", err)
+	}
+	defer syscall.CloseHandle(syscall.Handle(token))
+
+	user, err := token.GetTokenUser()
+	if err != nil {
+		return "", fmt.Errorf("GetTokenUser: %w", err)
+	}
+	s, err := user.User.Sid.String()
+	if err != nil {
+		return "", fmt.Errorf("SID to string: %w", err)
+	}
+	return s, nil
 }
 
 func newStdioChannel(sessionID string, index int, sddl string) (*stdioChannel, error) {

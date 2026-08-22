@@ -61,10 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   container's identity. Output streams as it is produced, stdout and stderr stay
   separate, exit codes propagate, and 20,000 lines arrive complete and in order.
 
-  Two gaps, both falling back to the previous behaviour rather than failing in a
-  new way: **writing to a contained child's stdin is not supported** (`child.stdin`
-  is `null` rather than a stream that silently discards), and beyond 8 concurrent
-  captured streams in one process further calls hang as before. Windows only.
+  One gap: **writing to a contained child's stdin is not supported** —
+  `child.stdin` is `null` rather than a stream that silently discards. Beyond 8
+  concurrent piped children in one process, output is collected and delivered
+  when each child exits rather than as it is produced; nothing hangs and nothing
+  is lost. Windows only.
 
 * **Abandoned sandbox profiles are reclaimed automatically.** They used to wait
   for someone to run `nvx cleanup`, and nobody did — 91 had accumulated on the
