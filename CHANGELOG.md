@@ -49,6 +49,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to about 8 MB on disk. It grew without limit before, which was tolerable when
   only security events went in it.
 
+* **A contained command can stream its child's output.** `spawn(cmd, {stdio:
+  'pipe'})` inside the sandbox used to block forever before the child existed —
+  Windows builds piped stdio out of named pipes and a contained process cannot
+  create one. Every contained `npx vitest` or `npx playwright` run left a process
+  wedged until someone killed it; 17 were found on one machine, some blocked for
+  13 hours.
+
+  nvx now creates the pipes outside the container and the preload only opens
+  them, which Windows permits when the pipe names both the user and that
+  container's identity. Output streams as it is produced, stdout and stderr stay
+  separate, exit codes propagate, and 20,000 lines arrive complete and in order.
+
+  Two gaps, both falling back to the previous behaviour rather than failing in a
+  new way: **writing to a contained child's stdin is not supported** (`child.stdin`
+  is `null` rather than a stream that silently discards), and beyond 8 concurrent
+  captured streams in one process further calls hang as before. Windows only.
+
 * **Abandoned sandbox profiles are reclaimed automatically.** They used to wait
   for someone to run `nvx cleanup`, and nobody did — 91 had accumulated on the
   development machine. Each run now reclaims a few after the command finishes,

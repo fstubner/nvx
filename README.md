@@ -401,11 +401,17 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   calls `execFileSync(..., {stdio: "pipe"})` and `npm install esbuild` used to hang
   forever; it now completes in seconds.
 
-  **Streaming capture is not, and hangs.** Async `spawn(..., {stdio: 'pipe'})` is a
-  real stream that a file cannot stand in for. This affects **any** contained
-  command, not only installs: an `npx`/`bunx` tool that reads a child's output as
-  it is produced blocks the same way. Run such a command with `nvx --no-sandbox`
-  and treat it as uncontained.
+  **Streaming capture works too, with one gap.** Async `spawn(..., {stdio: 'pipe'})`
+  is a real stream that a file cannot stand in for, and it used to block forever —
+  an `npx vitest` or `npx playwright` run left a process wedged until it was killed
+  by hand. nvx now creates the pipes outside the container and the preload only
+  opens them, which Windows permits; the container never creates one. stdout and
+  stderr stream as they are produced, stay separate, and exit codes propagate.
+
+  **Writing to a contained child's stdin is not supported.** `child.stdin` is
+  `null` rather than a stream that silently discards. A tool that feeds its child
+  input needs `nvx --no-sandbox`. Above 8 concurrent captured streams in one
+  process, further `spawn` calls fall back to the old behaviour and hang.
 
   The two-minute diagnostic hint deliberately covers installs only. An install
   that has not finished in two minutes is anomalous; an `npx`-launched dev server
