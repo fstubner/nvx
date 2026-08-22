@@ -206,8 +206,15 @@ stdout.
 
 So nvx creates the pipes and contained code only opens them. Granting the
 specific container's package SID rather than ALL APPLICATION PACKAGES keeps the
-pipe openable by one sandbox and no other, so per-project identity survives.
-Nothing is granted to the container to make this work, and no capability changes.
+pipe closed to other sandboxes, so per-project identity survives. Nothing is
+granted to the container to make this work, and no capability changes.
+
+The user half of that DACL is this user's SID, and it read `WD` -- Everyone --
+until an acceptance review enumerated the pipes from an ordinary process and
+opened one. So a *different local account* cannot reach these pipes, and another
+process running as the same user can: the contained token carries the user's
+identity, so the ACE that admits the sandbox admits the user too. That is a
+property of the mechanism, not a gap to close, and SECURITY.md states it.
 `TestContainedProcessCanStreamAChildsOutput` drives the whole path through the
 real binary — 500 lines streamed, stdout and stderr separate, exit code
 propagated — because the fix spans a Go broker, an environment variable and a
