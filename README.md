@@ -397,6 +397,13 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
 - **`npm install -g` is refused inside the sandbox**, because a global install
   writes outside the project. nvx points you at `nvx --no-sandbox npm install -g`,
   which is an uncontained install — treat it as one.
+- **`nvx audit` shows what nvx recorded, which anything running as you can add to.**
+  A contained process cannot write `~/.nvx/audit.log`, but uncontained code can —
+  and at the default `standard` level your own code is uncontained, so
+  `npm run build` could append a fabricated "sandboxed" entry that `nvx audit`
+  then displays as real. The file has to be writable by nvx running as you, so it
+  is writable by anything else running as you. Useful for reviewing your own
+  usage; not proof against someone who already runs code as you.
 - **On Windows, a contained process cannot pipe a child's output.** An AppContainer
   is not allowed to create a named pipe, and that is how Windows builds piped child
   stdio — so a contained program that captures a subprocess's output (`execSync`

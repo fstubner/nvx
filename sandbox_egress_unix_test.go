@@ -27,6 +27,16 @@ func nonLoopbackListener(t *testing.T) net.Listener {
 	if err != nil {
 		t.Skipf("cannot enumerate interfaces: %v", err)
 	}
+	// Ordered, not first-come, and each candidate is proved reachable before it
+	// is used. Taking the first bindable address picked this machine's Tailscale
+	// address (100.106.71.95), which binds happily and then intermittently
+	// refuses connections -- the egress relay test failed with the proxy
+	// returning 502 and a direct dial "actively refused", which reads as the
+	// sandbox blocking everything rather than as the target being unreachable.
+	// That is the flagship egress test reporting a containment defect that did
+	// not exist.
+	var candidates []net.IP
+	var lastResort []net.IP
 	for _, a := range addrs {
 		ipnet, ok := a.(*net.IPNet)
 		if !ok || ipnet.IP.IsLoopback() || ipnet.IP.IsLinkLocalUnicast() {
@@ -36,13 +46,33 @@ func nonLoopbackListener(t *testing.T) net.Listener {
 		if v4 == nil {
 			continue
 		}
-		ln, lerr := net.Listen("tcp", net.JoinHostPort(v4.String(), "0"))
+		// 100.64.0.0/10 is carrier-grade NAT, which is what Tailscale and
+		// similar overlay networks hand out. Usable if nothing else exists, but
+		// never the first choice for a test that needs a dependable local peer.
+		if v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+			lastResort = append(lastResort, v4)
+			continue
+		}
+		candidates = append(candidates, v4)
+	}
+
+	for _, ip := range append(candidates, lastResort...) {
+		ln, lerr := net.Listen("tcp", net.JoinHostPort(ip.String(), "0"))
 		if lerr != nil {
 			continue
 		}
+		// Bindable is not the same as reachable. Proving it here turns "this
+		// host cannot host the probe" into a skip instead of a failure blamed on
+		// containment.
+		c, derr := net.DialTimeout("tcp", ln.Addr().String(), 2*time.Second)
+		if derr != nil {
+			_ = ln.Close()
+			continue
+		}
+		_ = c.Close()
 		return ln
 	}
-	t.Skip("no bindable non-loopback IPv4 address available")
+	t.Skip("no reachable non-loopback IPv4 address available")
 	return nil
 }
 

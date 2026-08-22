@@ -213,15 +213,14 @@ func TestContainedProcessCannotReachTheRealHome(t *testing.T) {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
-	self, _ := os.Executable()
-	data, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	childExe := filepath.Join(guestHome, "homeprobe.exe")
-	if err := os.WriteFile(childExe, data, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	// stageProbeChild rather than an inline copy, because it treats a failure to
+	// read the test binary as "this host cannot run the probe" instead of as a
+	// product defect. Reading it intermittently returns "The handle is invalid"
+	// on Windows -- observed once in four full probe runs -- and inline copies
+	// turned that into a red suite with a message about a handle, which is
+	// exactly the kind of random failure that teaches people to re-run CI rather
+	// than read it. Every other probe already used the helper.
+	childExe := stageProbeChild(t, guestHome, "homeprobe.exe")
 
 	read, write := makeTestPipe(t)
 	defer syscall.CloseHandle(read)

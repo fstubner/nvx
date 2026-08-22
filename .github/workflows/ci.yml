@@ -61,6 +61,12 @@ jobs:
       # NVX_PROBE=1 is itself the selector -- each probe checks it and skips
       # otherwise -- so setting it and running everything needs no list to keep
       # in step with the tests.
+      #
+      # NVX_PROBE_PROTOTYPES is deliberately NOT set. One feasibility prototype
+      # sits behind it because it is flaky (~1 run in 8) and guards nothing that
+      # ships; a pipeline that fails at random teaches people to re-run rather
+      # than read it. That is a different thing from the hand-maintained -run
+      # filter this replaced, which silently skipped real security probes.
       run: go test -v ./...
 
     - name: Windows sandbox smoke
