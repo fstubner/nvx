@@ -30,7 +30,13 @@ import (
 // rather than forever, because the cause is environmental -- a filter driver, an
 // antivirus policy -- and those change; an environment that starts working should
 // recover on its own rather than needing someone to know about a cache file.
-const ancestorSkipTTL = 7 * 24 * time.Hour
+//
+// A month rather than a week. The retry exists for a change of environment, and
+// those are rare enough that re-testing weekly bought nothing while costing a
+// visibly slower command each time it came round. Paired with re-testing one
+// path per run rather than all of them, the recurring cost of remembering a
+// failure is now about a second a month instead of three seconds a week.
+const ancestorSkipTTL = 30 * 24 * time.Hour
 
 func ancestorSkipPath(nvxHome string) string {
 	return filepath.Join(nvxHome, "ancestor-grant-skip.json")
@@ -52,15 +58,25 @@ func loadAncestorSkips(nvxHome string) map[string]time.Time {
 	if json.Unmarshal(data, &raw) != nil {
 		return skips
 	}
-	now := time.Now()
 	for p, ts := range raw {
 		at, err := time.Parse(time.RFC3339, ts)
-		if err != nil || now.Sub(at) > ancestorSkipTTL {
-			continue // expired or unreadable: let it be retried
+		if err != nil {
+			continue // unreadable: let it be retried
 		}
+		// Expired entries are KEPT, with their timestamp. Dropping them here
+		// made every expired path eligible in the same run, so a machine with
+		// three failing ancestors paid the whole grant budget at once -- three
+		// seconds, on whichever command happened to be the first after the TTL
+		// lapsed. The caller decides how many to re-test.
 		skips[p] = at
 	}
 	return skips
+}
+
+// ancestorSkipIsExpired reports whether a recorded failure is old enough to be
+// worth re-testing.
+func ancestorSkipIsExpired(at time.Time) bool {
+	return time.Since(at) > ancestorSkipTTL
 }
 
 func saveAncestorSkips(nvxHome string, skips map[string]time.Time) {
@@ -93,9 +109,20 @@ func normalizeAncestorKey(path string) string {
 func grantAncestorsSkippingKnownFailures(nvxHome string, paths []string, grant func(string) error) (attempted int) {
 	skips := loadAncestorSkips(nvxHome)
 
+	// At most one expired path is re-tested per run. Recovery still happens --
+	// an environment that starts working is noticed within a few commands -- but
+	// the cost of checking is one timeout rather than the whole budget, and it
+	// lands on one command instead of stacking on the same unlucky one.
+	retriedExpired := false
+
 	var eligible []string
 	for _, p := range paths {
-		if _, skipped := skips[normalizeAncestorKey(p)]; !skipped {
+		at, skipped := skips[normalizeAncestorKey(p)]
+		switch {
+		case !skipped:
+			eligible = append(eligible, p)
+		case ancestorSkipIsExpired(at) && !retriedExpired:
+			retriedExpired = true
 			eligible = append(eligible, p)
 		}
 	}

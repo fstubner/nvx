@@ -117,3 +117,68 @@ func TestAncestorSkipIsDisabledWithoutAnNvxHome(t *testing.T) {
 		t.Errorf("with no nvxHome the grant was attempted %d times, want 2 (no persistence)", attempts)
 	}
 }
+
+// Expiring several remembered failures must not make one command pay for all of
+// them.
+//
+// Dropping expired entries on load made every one eligible in the same run, so a
+// machine with three failing ancestors spent the whole three-second grant budget
+// on whichever command happened to be first after the TTL lapsed -- a command
+// that is otherwise ~660ms. Recovery is still the point; paying for it all at
+// once was not.
+func TestExpiredAncestorSkipsAreRetriedOneRunAtATime(t *testing.T) {
+	nvxHome := tempDir(t)
+	paths := []string{`C:\a`, `C:\b`, `C:\c`}
+
+	expired := time.Now().Add(-ancestorSkipTTL - time.Hour)
+	stale := map[string]time.Time{}
+	for _, p := range paths {
+		stale[normalizeAncestorKey(p)] = expired
+	}
+	saveAncestorSkips(nvxHome, stale)
+
+	// Every retry fails again, which is the case worth bounding: a genuinely
+	// broken environment must not get slower the longer it stays broken.
+	var attemptedPaths []string
+	grant := func(p string) error {
+		attemptedPaths = append(attemptedPaths, p)
+		return errAncestorGrantForTest
+	}
+
+	attempted := grantAncestorsSkippingKnownFailures(nvxHome, paths, grant)
+	if attempted != 1 {
+		t.Fatalf("attempted %d expired paths in one run (%v); one at a time is the point",
+			attempted, attemptedPaths)
+	}
+
+	// The one that was re-tested failed again, so it is remembered afresh and
+	// the NEXT run moves on to a different path rather than repeating this one.
+	second := grantAncestorsSkippingKnownFailures(nvxHome, paths, grant)
+	if second != 1 {
+		t.Fatalf("second run attempted %d paths, want 1", second)
+	}
+	if len(attemptedPaths) != 2 || attemptedPaths[0] == attemptedPaths[1] {
+		t.Errorf("the same path was re-tested twice instead of progressing: %v", attemptedPaths)
+	}
+}
+
+// A live (unexpired) record must still suppress the grant entirely.
+func TestUnexpiredAncestorSkipsAreNotRetriedAtAll(t *testing.T) {
+	nvxHome := tempDir(t)
+	paths := []string{`C:\a`, `C:\b`}
+	fresh := map[string]time.Time{}
+	for _, p := range paths {
+		fresh[normalizeAncestorKey(p)] = time.Now()
+	}
+	saveAncestorSkips(nvxHome, fresh)
+
+	attempted := grantAncestorsSkippingKnownFailures(nvxHome, paths, func(string) error {
+		t.Error("a recently failed grant was retried")
+		return errAncestorGrantForTest
+	})
+	if attempted != 0 {
+		t.Errorf("attempted %d, want 0", attempted)
+	}
+}
+
+var errAncestorGrantForTest = errors.New("grant refused")
