@@ -193,6 +193,26 @@ collision, so no choice of name routes around it and the only way to grant it
 would be loosening `\Device\NamedPipe` machine-wide for every AppContainer on the
 host, including real UWP apps. That is not a trade worth making.
 
+**Creating is refused; opening is not, and that distinction is the fix.** Nobody
+tested the second question until 2026-08-22, having reasoned from the first for
+months. `TestAppContainerCanConnectToAParentCreatedNamedPipe` shows a contained
+process opening a pipe the parent made and completing a round trip — but only
+when the DACL names the user AND that container's package identity. All four
+single-ACE cases deny, which reads exactly like a device-level refusal and is why
+an earlier version of that probe nearly recorded the opposite conclusion.
+`TestContainedChildCanGiveAHostPipeToItsOwnChild` adds the remaining step: the
+contained process can hand that opened handle to its own child as that child's
+stdout.
+
+So nvx creates the pipes and contained code only opens them. Granting the
+specific container's package SID rather than ALL APPLICATION PACKAGES keeps the
+pipe openable by one sandbox and no other, so per-project identity survives.
+Nothing is granted to the container to make this work, and no capability changes.
+`TestContainedProcessCanStreamAChildsOutput` drives the whole path through the
+real binary — 500 lines streamed, stdout and stderr separate, exit code
+propagated — because the fix spans a Go broker, an environment variable and a
+JavaScript preload, and no unit test on one of those notices the others drifting.
+
 The symptom is a different question, and it is fixed for the case that matters.
 File descriptors are not restricted, so `sandbox_stdio_shim.js` -- preloaded into
 every contained node process via `NODE_OPTIONS --require` -- routes the

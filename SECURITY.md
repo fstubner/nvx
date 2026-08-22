@@ -147,10 +147,17 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   way. `npm install esbuild` works as a result; it previously hung forever.
 
   Asynchronous `spawn(..., { stdio: "pipe" })` is a real stream that a file cannot
-  stand in for, and it still fails. This affects **any** contained command, not
-  only installs — an `npx` or `bunx` tool that streams a child's output as it is
-  produced hangs identically. Run it with `--no-sandbox` and treat it as
-  uncontained.
+  stand in for, and it is handled differently: nvx creates the pipes outside the
+  container and the preload only opens them. Opening an existing pipe is a
+  different access check from creating one, and it is permitted when the pipe's
+  DACL names both the user and that container's package identity — so the pipe is
+  openable by one sandbox and no other. Both endpoints are inside the same
+  sandbox; nvx moves bytes between two of its own children, which it already
+  parents. No capability is granted to make this work.
+
+  Writing to a contained child's stdin is not supported: `child.stdin` is `null`.
+  Beyond 8 concurrent captured streams in a process, further `spawn` calls fall
+  back to the previous behaviour and hang.
 
   nvx's diagnostic hint covers installs only, on purpose: an install still running
   after two minutes is anomalous, while an `npx`-launched dev server running for
