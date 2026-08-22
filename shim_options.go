@@ -17,10 +17,15 @@ type shimOptions struct {
 	// the sandbox by tacking a flag onto a package manager.
 	payloadNoSandbox bool
 	// payloadStrict / payloadStandard record --strict/--standard smuggled
-	// through the wrapped command's own args. Stripped but NOT honored, for the
-	// same anti-bypass reason as payloadNoSandbox: only a leading
-	// `nvx --strict`/`nvx --standard` (strictFlag/standardFlag) changes the
-	// containment level.
+	// through the wrapped command's own args.
+	//
+	// They are treated differently, and this comment said otherwise for long
+	// enough to mislead a reviewer: payloadStrict IS honoured (shouldContain),
+	// because --strict only ever adds containment and there is nothing to gain
+	// by sneaking in a flag that sandboxes you harder. payloadStandard is
+	// stripped and NOT honoured, for the anti-bypass reason payloadNoSandbox
+	// has: it reduces containment, so a dependency's own arguments must not be
+	// able to apply it.
 	payloadStrict   bool
 	payloadStandard bool
 	// strictFlag / standardFlag record a leading `nvx --strict`/`nvx --standard`

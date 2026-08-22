@@ -361,7 +361,7 @@ func printAuditSummary(entries []map[string]string) {
 		return
 	}
 
-	fmt.Printf("%d runs, %d failed\n", runs, failures)
+	fmt.Printf("%s, %d failed\n", pluralise(runs, "run"), failures)
 	fmt.Println("\nContainment:")
 	for _, kv := range rankCounts(modes) {
 		fmt.Printf("  %-10s %d\n", kv.key, kv.n)

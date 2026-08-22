@@ -434,10 +434,14 @@ Commands:
 
 Options:
   --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
-  --filesystem-provider=<name>  Override isolation.filesystem.provider
-  --no-sandbox           Disable sandbox for this shim invocation
-  --strict               Contain your own code too for this invocation (not just installs/ad-hoc tools)
-  --standard             Force standard containment for this invocation, overriding a project's strict policy
+  --no-sandbox           Disable sandbox for this shim invocation. Must come
+                         BEFORE the command; ignored if passed to it
+  --standard             Force standard containment, overriding a project's
+                         strict policy. Must come BEFORE the command
+  --strict               Contain your own code too (not just installs/ad-hoc
+                         tools). Honoured before the command or among its args
+  --filesystem-provider=<name>  Override isolation.filesystem.provider. Passed
+                         TO the command: nvx npm --filesystem-provider=...
   -y, --yes              Auto-approve all prompts
   -q, --quiet            Suppress success/info messages (errors and warnings still print)
   --agent-mode           Auto-approve all prompts and suppress success/info messages
