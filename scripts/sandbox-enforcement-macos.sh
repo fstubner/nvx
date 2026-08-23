@@ -77,8 +77,13 @@ cat > probe.js <<'PROBE'
 const fs = require('fs');
 const https = require('https');
 const out = [];
-const secret = process.env.PROBE_SECRET;
-const forbidden = process.env.PROBE_FORBIDDEN_WRITE;
+// Arguments, not environment variables: nvx scrubs the environment on the way
+// into the sandbox, which is the point of it. The first version of this probe
+// passed PROBE_* vars and they arrived undefined -- the containment working
+// exactly as designed, breaking the test measuring it.
+const secret = process.argv[2];
+const forbidden = process.argv[3];
+const report = process.argv[4];
 
 // Must be DENIED: a write outside the project is the guarantee macOS makes.
 try { fs.writeFileSync(forbidden, 'escaped'); out.push('WRITE_OUTSIDE=ALLOWED'); }
@@ -105,7 +110,7 @@ let finished = false;
 function done() {
   if (finished) return;
   finished = true;
-  fs.writeFileSync(process.env.PROBE_REPORT, out.join('\n') + '\n');
+  fs.writeFileSync(report, out.join('\n') + '\n');
   process.exit(0);
 }
 PROBE
@@ -113,8 +118,7 @@ PROBE
 REPORT="$PROJ/report.txt"
 echo "Running contained probe..."
 set +e
-PROBE_SECRET="$SECRET" PROBE_FORBIDDEN_WRITE="$FORBIDDEN_WRITE" PROBE_REPORT="$REPORT" \
-  "$NVX" -y --strict shim node probe.js
+"$NVX" -y --strict shim node probe.js "$SECRET" "$FORBIDDEN_WRITE" "$REPORT"
 rc=$?
 set -e
 
