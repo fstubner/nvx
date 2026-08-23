@@ -26,7 +26,9 @@ Along the way, I wanted to tackle a few other common frustrations:
 
   What a contained install can reach: your `package.json`, your lockfile, `node_modules`, and the rest of the project directory it is installing into. Environment variables are scrubbed and writes cannot leave the project.
 
-  What it cannot reach: your home directory — SSH keys, cloud credentials, `~/.npmrc` and its publish token — along with every other project on disk, and anywhere outside the project for writes. That is the class of attack this is built for: credential theft and persistence.
+  What it cannot reach, **on Windows and Linux**: your home directory — SSH keys, cloud credentials, `~/.npmrc` and its publish token — along with every other project on disk, and anywhere outside the project for writes. That is the class of attack this is built for: credential theft and persistence.
+
+  **On macOS, reads are not contained.** The Seatbelt profile allows filesystem reads, so a contained install can read `~/.ssh`, `~/.aws` and `~/.npmrc` by absolute path. Redirecting `$HOME` does not prevent that. What macOS does enforce is write containment and egress control. The reason is in [docs/enforcement-matrix.md](docs/enforcement-matrix.md): the dynamic linker must read system libraries whose locations vary by macOS version, and a strict read allowlist stops processes launching at all. If credential *reads* are what you need contained, macOS does not yet give you that.
 
   **Two limits worth stating plainly.** A `.env` file *inside the project* is readable by a contained install, because the project directory has to be readable for the install to work at all — see [Known limitations](#known-limitations). And containment covers installs and ad-hoc tools, not your own code: `npm run build` runs uncontained by default, so a dependency your own code imports is not sandboxed. `isolation.level: strict` extends containment to your own code.
 - **Process Isolation**: I wanted a sandbox to run untrusted stuff (like `npx` packages) with a clean slate: a throwaway `HOME`, scrubbed env secrets, and writes locked to the project.
@@ -326,7 +328,8 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
 - **A `.env` inside the project is readable by a contained install.** The project
   directory must be readable for an install to work, and `.env` lives in it.
   Environment *variables* are scrubbed, but a file is a file. Secrets outside the
-  project — `~/.ssh`, `~/.aws`, `~/.npmrc` — are unreachable.
+  project — `~/.ssh`, `~/.aws`, `~/.npmrc` — are unreachable **on Windows and
+  Linux**; on macOS the Seatbelt profile allows reads, so they are not.
 - **Your own code is not contained by default.** Containment applies to installs and
   ad-hoc tool runners (`npx`, `bunx`). `npm run build`, `npm test` and `node` run
   uncontained under the default `standard` level, so a compromised dependency your
