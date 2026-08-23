@@ -51,8 +51,12 @@ fi
 # probe said "network namespaces unavailable" on a host where the sandbox then
 # reported a loopback-only namespace three lines later -- so the one assertion
 # that proves egress is blocked was skipped exactly where it would have run.
+#
+# It probes by bringing loopback up rather than by creating the namespace,
+# because Ubuntu 24.04's AppArmor hardening permits the second and refuses the
+# first, and nvx needs the first.
 EGRESS_TESTABLE=1
-if ! unshare -Un -- true 2>/dev/null; then
+if ! command -v ip >/dev/null 2>&1 || ! unshare -Urn -- ip link set lo up >/dev/null 2>&1; then
   echo "::warning::network namespaces unavailable; the egress assertion will be skipped" >&2
   EGRESS_TESTABLE=0
 fi
@@ -186,9 +190,12 @@ if [[ ! -f "$REPORT" ]]; then
   # nothing, and the misattribution in this very message is what the failure was
   # chased as. A probe that explains away its own silence is worse than one that
   # fails.
-  if ! unshare -Un -- true 2>/dev/null; then
-    echo "::warning::this host does not permit unprivileged user namespaces, which the" >&2
-    echo "sandbox requires; nvx fails closed here. Skipping without asserting containment." >&2
+  if ! unshare -Urn -- ip link set lo up >/dev/null 2>&1; then
+    echo "::warning::this host does not allow loopback to be configured inside an" >&2
+    echo "unprivileged user namespace, which the sandbox requires; nvx fails closed" >&2
+    echo "here. On Ubuntu 24.04 lift it with" >&2
+    echo "  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0" >&2
+    echo "Skipping without asserting containment." >&2
     exit 0
   fi
   echo "FAIL: the contained probe wrote no report (nvx exit $rc)." >&2
