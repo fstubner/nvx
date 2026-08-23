@@ -120,6 +120,13 @@ func TestRelayDoesNotExposeHostLoopbackServices(t *testing.T) {
 	defer syscall.CloseHandle(read)
 	prevOut, _ := syscall.GetStdHandle(syscall.STD_OUTPUT_HANDLE)
 	const stdOutputHandle = uintptr(0xFFFFFFF5)
+	// Deferred, not only restored inline further down. This redirects the whole
+	// TEST PROCESS's stdout, so anything that stops the inline restore being
+	// reached takes every later line of test output with it: on 2026-08-23 the
+	// launch below hung, and the log showed "=== RUN" for this test and then
+	// nothing at all until the package was killed 11 minutes later, with no
+	// indication of which test was stuck.
+	defer procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(write))
 
 	env := append(scrubEnvironment(guestHome),
@@ -142,9 +149,42 @@ func TestRelayDoesNotExposeHostLoopbackServices(t *testing.T) {
 		targetExe,
 		"-test.run=TestRelayDoesNotExposeHostLoopbackServices",
 	}
-	_, launchErr := launchAppContainerProcess(nvxExe, args, env, workDir, sid, 0, scopeCaps)
+	// Bounded, because an unbounded launch here killed the package.
+	//
+	// Every AppContainer probe calls launchAppContainerProcess and reads the
+	// error to decide whether the host can host one; none of them consider that
+	// it might not come back. On a GitHub-hosted runner this call normally
+	// refuses in about a second, and on 2026-08-23 it hung instead, so `go test`
+	// hit its 10-minute package timeout and reported FAIL for the whole suite --
+	// a runner's shape presented as a product defect, which is what the skip
+	// paths exist to avoid.
+	//
+	// A timeout is treated as the host being unable to host the probe, like the
+	// refusals are, but says so distinctly: "hung" and "refused" are different
+	// observations and collapsing them would hide a real regression in the launch
+	// path behind an environment excuse.
+	type launchResult struct{ err error }
+	launched := make(chan launchResult, 1)
+	go func() {
+		_, err := launchAppContainerProcess(nvxExe, args, env, workDir, sid, 0, scopeCaps)
+		launched <- launchResult{err}
+	}()
+
+	var launchErr error
+	timedOut := false
+	select {
+	case r := <-launched:
+		launchErr = r.err
+	case <-time.After(90 * time.Second):
+		timedOut = true
+	}
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
+	if timedOut {
+		syscall.CloseHandle(write)
+		t.Skip("the AppContainer launch did not return within 90s; this host can neither host " +
+			"the probe nor refuse it promptly, so the relay exposure cannot be exercised here")
+	}
 	syscall.CloseHandle(write)
 	got := readProbeOutput(t, read)
 

@@ -59,21 +59,36 @@ refuses everything fails it rather than passing:
 
 ### Before cutting a release, on Windows
 
+Two commands, both of which need a real Windows machine:
+
 ```powershell
 go build -o nvx.exe .
 ./scripts/sandbox-enforcement-windows.ps1
 ```
 
+```powershell
+$env:NVX_PROBE=1; go test -timeout 40m .
+```
+
 This is the one platform gate CI cannot run. GitHub-hosted Windows runners
 refuse to create AppContainer children — `CreateProcess` returns "Access is
-denied" for every executable, including `cmd.exe` — so the script detects that
-and skips, and the step in CI is there to start asserting if that ever changes
-rather than to assert today. On a real Windows machine it takes about a minute
-and prints each result, so a partial regression is visible rather than just a
-pass or fail.
+denied" for every executable, including `cmd.exe` — so anything that launches a
+live contained process skips there. The enforcement script detects that and
+skips; the CI step exists to start asserting if a future runner image can host
+one, not to assert today.
+
+`NVX_PROBE=1` matters as much as the script. Those probes launch real
+AppContainers to check that a sandbox cannot read another project, that a deny
+ACE hides a secret, that one session cannot read another's guest home, and that
+the relay does not expose host loopback services — roughly twenty end-to-end
+containment assertions that skip on hosted CI and run here. Expect **0 failures
+and only 3 skips**: the flaky feasibility prototype (excluded on purpose), an
+internal helper child, and one symlink test that needs Developer Mode. More
+skips than that means something is quietly not being checked; last measured on
+Windows 11, 2026-08-23, at 319 passing in about 4½ minutes.
 
 That is why `docs/enforcement-matrix.md` says **measured** for the Windows
-column and **CI** for the other two. Running this is what keeps the word
+column and **CI** for the other two. Running both is what keeps the word
 "measured" true.
 
 ## Making changes
