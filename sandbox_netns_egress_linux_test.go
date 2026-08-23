@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -27,15 +28,38 @@ import (
 //
 // Before this change proxy mode could satisfy only the first, because the proxy
 // ran inside the namespace and had nothing to forward through.
+// requireLoopbackControl skips unless loopback can actually be brought up inside
+// the namespaces described by attr.
+//
+// Creating a namespace and being allowed to use it are different questions, and
+// only the second one matters here. Ubuntu 24.04 hardens unprivileged user
+// namespaces through AppArmor: the clone succeeds, CAP_NET_ADMIN inside it does
+// not, and `ip link set lo up` comes back "Operation not permitted" -- so the
+// contained child reports setup_failed and every assertion below reads as a
+// product failure caused by a distribution setting. Probing namespace creation
+// alone did exactly that on the hosted runner.
+//
+// CI runs this same test again as root (the privileged containment step), where
+// the restriction does not apply, so skipping here does not leave it unverified.
+func requireLoopbackControl(t *testing.T, attr *syscall.SysProcAttr) {
+	t.Helper()
+	probe := exec.Command("ip", "link", "set", "lo", "up")
+	probe.SysProcAttr = attr
+	if out, err := probe.CombinedOutput(); err != nil {
+		t.Skipf("cannot bring up loopback in the required namespaces here: %v: %s",
+			err, strings.TrimSpace(string(out)))
+	}
+}
+
 func TestNetnsContainedProcessReachesOnlyAllowlistedHosts(t *testing.T) {
 	if os.Getenv("NVX_TEST_NETNS_CHILD") == "1" {
 		runNetnsEgressChild()
 		return
 	}
-	requireNamespaceSupport(t, supervisorSysProcAttr("proxy"))
 	if _, err := exec.LookPath("ip"); err != nil {
 		t.Skip("iproute2 not installed; bringUpLoopback needs `ip`")
 	}
+	requireLoopbackControl(t, supervisorSysProcAttr("proxy"))
 
 	// Stand-in "remote host" on a non-loopback address, so the allowlist decision
 	// is genuinely exercised (loopback is always permitted -- F38).
