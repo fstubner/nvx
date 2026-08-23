@@ -72,7 +72,13 @@ func TestContainedChildCanGiveAHostPipeToItsOwnChild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the host could not create the pipe: %v", err)
 	}
-	defer syscall.CloseHandle(server)
+	// Cancel before closing, on every exit path. A pending ConnectNamedPipe
+	// makes CloseHandle block forever on a host that refuses AppContainer
+	// children, which is every GitHub-hosted Windows runner.
+	defer func() {
+		procCancelIoEx.Call(uintptr(server), 0)
+		syscall.CloseHandle(server)
+	}()
 
 	received := make(chan string, 1)
 	go func() { received <- readWholePipe(server) }()
