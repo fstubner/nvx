@@ -144,7 +144,22 @@ func requireAppContainerLaunch(t *testing.T, err error) {
 	if err == nil {
 		return
 	}
-	if strings.Contains(err.Error(), "Access is denied") {
+	// Two refusal shapes, not one. A host that cannot create AppContainer
+	// children reports either "Access is denied" or "The system cannot find the
+	// file specified" -- the second seen on GitHub-hosted runners launching
+	// C:\Windows\System32\cmd.exe, a file that self-evidently exists, and also
+	// locally as one of the reverse-relay prototype's two flaky failure modes.
+	// Matching only the first left eight probes failing where they should have
+	// skipped, and kept Windows CI red.
+	//
+	// Narrow on purpose: this is a launch error from CreateProcess for an
+	// AppContainer, where a missing-file result cannot be about the executable
+	// path. If a probe ever stages an executable that genuinely is not there,
+	// this would hide it -- so the skip message says which shape it matched,
+	// rather than reporting a uniform "cannot run here".
+	msg := err.Error()
+	if strings.Contains(msg, "Access is denied") ||
+		strings.Contains(msg, "The system cannot find the file specified") {
 		t.Skipf("this host cannot create AppContainer children (%v); GitHub-hosted Windows runners are known to refuse, so the probe cannot run here", err)
 	}
 	t.Fatalf("AppContainer launch failed for a reason other than the host refusing it: %v", err)
