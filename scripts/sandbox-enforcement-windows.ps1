@@ -191,10 +191,16 @@ function done() {
     # outside the sandbox and expecting it to be refused, which this does not do.
     # `nvx doctor` reports the exemption and exits non-zero; that is the check
     # for it, not this line.
+    # Only nvx's own exemption is relevant, and matching the SID *shape* was wrong:
+    # S-1-15-2- prefixes every AppContainer SID, so this fired on a machine whose
+    # nvx exemption had just been removed and which still carried four unrelated
+    # ones (a Windows WebView host and three orphans from uninstalled apps). It
+    # told the maintainer he still had the problem he had just fixed.
     $exempt = (& CheckNetIsolation LoopbackExempt -s 2>&1 | Out-String)
-    if ($exempt -match 'nvx' -or $exempt -match 'S-1-15-2-') {
-        Write-Host "note: a loopback exemption is registered on this machine. Egress denial above is" -ForegroundColor Yellow
-        Write-Host "      direct-connection only; loopback-forwarded egress is NOT asserted here." -ForegroundColor Yellow
+    if ($exempt -match 'nvx') {
+        Write-Host "note: an nvx loopback exemption is registered on this machine. Egress denial above" -ForegroundColor Yellow
+        Write-Host "      is direct-connection only; loopback-forwarded egress is NOT asserted here." -ForegroundColor Yellow
+        Write-Host "      Run 'nvx doctor' for the removal command." -ForegroundColor Yellow
     }
 
     # The file must genuinely be absent, not merely reported as denied by a probe
