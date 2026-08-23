@@ -283,30 +283,37 @@ When running in the sandbox:
 
 ### Verification matrix
 
-**Read the macOS column as "we believe so", not "we checked".** The three columns
-are not backed by equal evidence, and printing the same "Yes" in each would imply
-they are. What backs each cell is stated in it: **measured** means someone ran the
-attack and watched it fail, **CI** means an automated check would fail if it
-stopped holding, and **profile only** means the generated policy says so and
-nothing has ever tested the running system.
+The three columns are not backed by equal evidence, and printing the same "Yes"
+in each would imply they are. What backs each cell is stated in it: **measured**
+means someone ran the attack and watched it fail, **CI** means an automated check
+on a real machine of that OS would fail if it stopped holding, and **profile
+only** means the generated policy says so and nothing has tested the running
+system.
 
 | Guarantee | Windows (native) | Linux (native) | macOS (native) |
 |-----------|------------------|----------------|----------------|
-| Host profile write blocked | Yes — measured | Yes — CI (Landlock) | Profile only (Seatbelt) |
+| Host profile write blocked | Yes — measured | Yes — CI (Landlock) | Yes — CI (Seatbelt) |
 | Workdir write allowed | Yes — measured | Yes — CI | Yes — CI |
-| Egress via policy proxy | Yes — measured (AppContainer + parent proxy over a UNIX socket) | Yes — CI (loopback-only netns + parent proxy over a UNIX socket) | Profile only (Seatbelt + loopback proxy) |
-| Raw TCP/UDP bypass blocked at OS | Yes — measured (no network capability granted) | Yes — CI (netns + seccomp UDP deny) | Profile only (`(deny default)`, localhost permitted) |
+| Host profile read blocked | Yes — measured | Yes — CI (Landlock allowlist) | **No** — CI confirms reads are allowed |
+| Egress blocked when not allowlisted | Yes — measured | Yes — CI | Yes — CI |
+| Allowlisted host reachable through the proxy | Yes — measured (AppContainer + parent proxy over a UNIX socket) | Yes — CI (loopback-only netns + parent proxy over a UNIX socket) | Profile only (Seatbelt + loopback proxy) |
+| Raw TCP/UDP bypass blocked at OS | Yes — measured (no network capability granted) | Yes — CI (netns + seccomp UDP deny) | Direct outbound refused — CI; UDP, and which layer refuses, untested |
 | Fail-closed if FS/network primitive missing | Yes — measured | Yes — CI (Landlock 5.13+, iproute2 for netns) | Profile only |
 
-**What "profile only" means in practice.** `scripts/sandbox-smoke-macos.sh` runs on
-every CI build, and its single assertion is that a sandboxed `node` can write to
-its own working directory. It does not check that anything is *blocked* — a macOS
-build whose sandbox blocked nothing would pass it. The Seatbelt profile's text is
-asserted by unit tests, so nvx generates what it intends to; whether the kernel
-then enforces it has never been verified on macOS hardware. Treat the macOS rows
-as a design intent with a plausible mechanism behind it, not as a tested result.
-This is being stated rather than quietly carried because every previous
-overstatement in this project shipped ahead of a test that could have failed on it.
+**What backs the macOS column, as of 2026-08-23.**
+`scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on every CI
+build and asserts the denials, not just that the command ran. On the latest run a
+contained process reported `WRITE_OUTSIDE=DENIED`, `WRITE_INSIDE=ALLOWED`,
+`READ_OUTSIDE=ALLOWED` and `EGRESS=DENIED`. So write containment and egress denial
+are now observed behaviour on macOS hardware rather than inferred from the profile
+text, and the read weakness is observed too — it is asserted deliberately, so that
+tightening the profile fails CI and forces this table to be updated with it.
+
+Two macOS cells remain "profile only" and are not being rounded up. Nothing tests
+that an *allowlisted* host completes through the macOS proxy, and nothing tests
+UDP specifically or that nvx fails closed when `sandbox-exec` is absent. The
+older, broader disclaimer — "nothing has ever been verified on macOS hardware" —
+is no longer accurate, and leaving it would be its own kind of wrong.
 
 \* **Windows egress became enforced in 0.5.0 and was not before.** Until then the
 sandbox held the `internetClient` capability and connected directly, so
@@ -452,13 +459,17 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   Your own `npm run dev` is uncontained at the default `standard` level and is
   unaffected; for a contained tool runner use `nvx --no-sandbox npx <tool>`.
   Measured 2026-08-20; the FAQ had claimed loopback worked for dev servers.
-- **On macOS, nothing has been verified at runtime.** The Seatbelt profile's text
-  is asserted by unit tests, so nvx generates the policy it intends to — but no
-  test has ever confirmed the kernel enforces it. The macOS smoke check only proves
-  a sandboxed process can write its own working directory, which a sandbox blocking
-  nothing would also pass. If you are on macOS, treat every containment claim here
-  as intended rather than demonstrated. Closing this needs a Mac and a smoke test
-  that asserts the blocks, not just that the command ran.
+- **On macOS, reads are not contained** — see the note near the top of this file.
+  Write containment and egress denial are confirmed on macOS hardware in CI; the
+  read weakness is confirmed there too, and is a property of the profile rather
+  than a bug awaiting a fix.
+
+  This entry said until 2026-08-23 that *nothing* on macOS had been verified at
+  runtime, which was true when written and stopped being true when
+  `scripts/sandbox-enforcement-macos.sh` started running on a hosted macOS runner.
+  What is still untested there: that an allowlisted host completes through the
+  proxy, that UDP specifically is refused, and that nvx fails closed if
+  `sandbox-exec` is missing.
 - **On macOS, `network.mode: loopback` reaches every service on 127.0.0.1** — that
   being the mode's entire purpose. The default `proxy` mode reaches only nvx's own
   egress proxy, and `offline` reaches nothing.
@@ -467,9 +478,10 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   loopback, so a contained install could reach your database or another project's
   dev server with no `allow_hosts` entry, and `offline` was not offline. If any
   reachable loopback service forwards traffic, the allowlist is bypassable
-  entirely, which is what made it serious. Fixed, and pinned by a test — but note
-  it is a fix to the *generated profile*, which no macOS hardware has ever been
-  observed enforcing (see the entry above).
+  entirely, which is what made it serious. Fixed, and pinned by a test. The fix is
+  to the *generated profile*; what a macOS runner now confirms is that egress is
+  denied with an empty allowlist, which does not by itself prove the per-mode
+  loopback scoping (see the entry above).
 - **Detection is best-effort.** Typosquat and vulnerability checks reduce risk; they
   do not certify a package. Containment is the backstop, not the checks.
 

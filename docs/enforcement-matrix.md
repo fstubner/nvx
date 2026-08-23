@@ -17,18 +17,18 @@ silently.
 
 ## Native provider
 
-Every macOS cell below carries a silent qualifier, stated once here rather than
-repeated in each: **it describes the generated Seatbelt profile, not observed
-behaviour.** No macOS row in this table has been confirmed against a running
-system — see ⁵.
+Cells marked **profile only** describe the generated Seatbelt profile rather than
+observed behaviour — see ⁵ for which macOS rows are now confirmed against a
+running system and which are not.
 
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
-| Host filesystem write blocked (outside workdir + guest home) | Yes, except pre-0.5.0 projects⁷ | Yes | Profile only⁵ |
-| Host filesystem read restricted | Yes⁴ | Yes | No² |
+| Host filesystem write blocked (outside workdir + guest home) | Yes, except pre-0.5.0 projects⁷ | Yes⁸ | Yes⁵ |
+| Host filesystem read restricted | Yes⁴ | Yes⁸ | No² (confirmed⁵) |
 | Environment secrets scrubbed | Yes | Yes | Yes |
-| Egress restricted to policy allowlist | Yes³ | Yes | Profile only⁵ (loopback proxy) |
-| Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Profile only⁵ (`deny default`, localhost permitted) |
+| Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
+| Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Profile only⁵ |
+| Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Direct outbound refused⁵; UDP profile only (`deny default`, localhost permitted) |
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
 | Any loopback service reachable | Only with a leftover exemption³ | No (loopback-only netns) | No⁶ (proxy port only) |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Profile only⁵ (needs `/usr/bin/sandbox-exec`) |
@@ -65,16 +65,41 @@ external resolvers cannot leave; on macOS a determined process could still
 attempt DNS via the OS resolver. This is the main per-OS difference and is why
 Linux has the strongest network story.
 
-⁵ **"Profile only" means nobody has checked.** `sandbox_seatbelt.go` emits
-`(deny default)` and unit tests assert the profile's text, so nvx generates the
-policy it intends to. Whether the kernel enforces it has never been verified on
-macOS hardware. The one macOS check that runs in CI,
-`scripts/sandbox-smoke-macos.sh`, asserts that a sandboxed `node` can write to its
-own working directory and nothing else — it would pass unchanged against a build
-whose sandbox blocked nothing at all, which is the same shape of gap that let the
-Windows egress, piped-stdio and esbuild claims ship broken. Closing it needs a Mac
-and a smoke test that asserts the denials. Until then the honest reading of the
-macOS column is "intended", not "enforced".
+⁵ **Most of the macOS column is now confirmed on macOS hardware; two cells are
+not.** `scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on
+every CI build and asserts the denials rather than only that the command ran. A
+contained process reports, and CI requires:
+
+```
+WRITE_OUTSIDE=DENIED   WRITE_INSIDE=ALLOWED   READ_OUTSIDE=ALLOWED   EGRESS=DENIED
+```
+
+`WRITE_INSIDE` is there because a sandbox that refuses everything would satisfy
+every denial above it and is a broken launch, not enforcement; only the positive
+control tells them apart. `READ_OUTSIDE=ALLOWED` pins the documented weakness in
+² deliberately — if the profile is ever tightened this fails, which forces README,
+SECURITY.md, PRODUCT.md and this page to be updated in the same change rather than
+quietly going wrong in the flattering direction.
+
+Still profile only, and deliberately not rounded up: that an **allowlisted** host
+completes through the macOS proxy (the probe runs with an empty allowlist, so it
+only exercises refusal), that **UDP** in particular is refused, and that nvx
+**fails closed** when `/usr/bin/sandbox-exec` is absent. The script does check that
+`sandbox-exec` exists and fails loudly if a future runner image drops it, which is
+a different claim from nvx behaving correctly without it.
+
+`EGRESS=DENIED` also does not say which layer refused. The probe's request is a
+direct one — Node's classic `https` API ignores `HTTPS_PROXY`, so it never reaches
+the proxy — and it does not complete, but a DNS failure and a refused TCP connect
+are the same observation from inside. Per ¹, macOS is the platform where that
+distinction is real, so it is left unclaimed rather than assumed favourably.
+
+This footnote read "nobody has checked" until 2026-08-23, and before that the
+only macOS check in CI was `scripts/sandbox-smoke-macos.sh`, which asserted that a
+sandboxed `node` could write its own working directory and nothing else — it would
+have passed unchanged against a build whose sandbox blocked nothing, the same
+shape of gap that let the Windows egress, piped-stdio and esbuild claims ship
+broken.
 
 ⁶ **Fixed 2026-08-20; it used to be every loopback service.** Every restricted
 mode emitted `(allow network-outbound (remote tcp "localhost:*"))`, so contained
@@ -94,8 +119,10 @@ nothing rather than falling back to the wildcard. Pinned by
 against the previous behaviour.
 
 Note what this does and does not change: it removes a real hole in the generated
-profile, but the profile is still "profile only" per ⁵ — no macOS hardware has
-confirmed the kernel enforces any of it.
+profile. A macOS runner now confirms that egress is denied with an empty allowlist
+(⁵), which is not the same as confirming the per-mode loopback scoping — nothing
+stands up a loopback listener on macOS and checks which modes can reach it, so
+this particular row stays "profile only" in the sense that matters to it.
 
 ⁷ **A directory nvx used before 0.5.0 is still writable by every sandbox on the
 machine.** Up to 0.5.0 every sandbox ran as one shared package identity and the
@@ -286,6 +313,30 @@ while the guarantee did. The check is now pinned by
 `TestExemptMachineIsWarnedAbout`, which asserts against the machine's real
 exemption list rather than a model of it.
 
+⁸ **The Linux rows were green in CI for months without being tested, and that is
+worth knowing when reading them.** `scripts/sandbox-enforcement-linux.sh` now runs
+unprivileged on a hosted Ubuntu runner and requires:
+
+```
+WRITE_OUTSIDE=DENIED  WRITE_INSIDE=ALLOWED  READ_OUTSIDE=DENIED  READ_INSIDE=ALLOWED  EGRESS=DENIED
+```
+
+`scripts/sandbox-smoke-egress.sh` adds the direction a denial-only check cannot
+reach: it sends CONNECT to nvx's proxy and reads the status, getting 403 for a host
+outside the allowlist and 200 for the same host once allowlisted. Reading the
+status rather than an exit code is what makes those distinguishable — a machine
+with no outbound DNS previously produced the same failure as a refused host, and
+that is precisely how phase 1 used to "pass" without the allowlist being consulted.
+
+Until 2026-08-23 none of this ran. Every Linux script gated itself on `unshare -n`,
+which an ordinary user is refused, while nvx pairs the network namespace with a
+user namespace specifically so it works unprivileged — so all three skipped on
+every machine including the runner, and reported success. Underneath, the sandbox
+could not start a process at all: the target was given a nested user namespace
+whose uid/gid mapping is written through `/proc`, which its own Landlock ruleset
+does not grant. Both smoke scripts were also launching their probes uncontained.
+The rows above were not wrong about the design; nothing was checking them.
+
 ## Docker provider
 
 | Guarantee | Behavior |
@@ -299,7 +350,18 @@ exemption list rather than a model of it.
 
 ## CI note
 
-The Windows AppContainer smoke tests are skipped on GitHub-hosted Windows
-runners, which cannot reliably spawn AppContainer child processes. The native
-provider is exercised locally and on self-hosted runners; this is a limitation
-of the hosted CI environment, not of the provider.
+Linux and macOS each run an enforcement probe on a hosted runner of that OS (⁵,
+⁸). Windows is the exception: its AppContainer smoke tests are skipped on
+GitHub-hosted Windows runners, which cannot reliably spawn AppContainer child
+processes, so the Windows column rests on local and self-hosted runs. That is a
+limitation of the hosted environment, not of the provider — and the reason the
+Windows cells say "measured" rather than "CI".
+
+One Linux test skips unprivileged and is re-run as root in the same build:
+Ubuntu 24.04's AppArmor hardening allows an unprivileged user namespace to be
+created but refuses `CAP_NET_ADMIN` inside it, so loopback cannot be brought up
+and the egress test has nothing to measure. It probes for that capability rather
+than for the namespace, because the two answers differ and only the first one
+decides whether the test can run. CI relaxes
+`kernel.apparmor_restrict_unprivileged_userns` before the smoke and enforcement
+steps, which is why those do run unprivileged there.

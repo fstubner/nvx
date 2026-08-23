@@ -77,19 +77,25 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   Windows the AppContainer holds no network capability, so the OS refuses direct
   connections and DNS does not resolve. On both, the egress proxy runs outside the
   containment and is reached over a UNIX socket.
-- **On macOS, enforcement is unverified rather than cooperative.** This document
-  said until 2026-08-20 that macOS egress control was cooperative and a raw socket
-  could bypass the allowlist. Reading the generator, that is wrong: the profile is
-  `(deny default)` and permits outbound traffic to localhost only, so a raw socket
-  to an external host is refused by the kernel, not merely discouraged. README's
-  matrix said the opposite of this entry, and on a security question two shipped
-  documents disagreeing is its own defect.
+- **On macOS, enforcement is real but narrower than on Windows and Linux.** The
+  profile is `(deny default)` and permits outbound traffic to localhost only, so a
+  raw socket to an external host is refused by the kernel rather than merely
+  discouraged. A hosted macOS runner confirms this on every CI build
+  (`scripts/sandbox-enforcement-macos.sh`): a contained process is denied a write
+  outside its project, is denied egress with an empty allowlist, and is still
+  permitted to write its own project — the last of those being what distinguishes
+  enforcement from a sandbox that has simply failed to start.
 
-  The real limitation is weaker but still worth stating plainly: **none of it has
-  been verified on macOS hardware.** The profile's text is asserted by unit tests;
-  the macOS smoke test only checks that a sandboxed process can write its own
-  working directory, so it would pass against a sandbox that blocked nothing. Treat
-  macOS as intended-and-untested.
+  What macOS does not do is contain reads; see the entry below. Two cells stay
+  untested there and are not claimed: that an allowlisted host completes through
+  the proxy, and that nvx fails closed when `sandbox-exec` is missing.
+
+  This entry has been wrong in both directions. Until 2026-08-20 it said macOS
+  egress was cooperative and a raw socket could bypass the allowlist, which
+  understated the design and contradicted README's matrix — two shipped documents
+  disagreeing on a security question is its own defect. Until 2026-08-23 it then
+  said none of it had been verified on macOS hardware, which was true when written
+  and outlived the probe that made it false.
 - **On macOS, loopback access is now scoped to the mode** (fixed 2026-08-20).
   `proxy` reaches nvx's egress proxy and nothing else on 127.0.0.1; `offline`
   reaches nothing; `loopback` reaches all of it, which is what that mode is for.
@@ -98,8 +104,10 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   reach a local database, daemon port or another project's dev server with no
   allowlist entry, and `offline` was not offline. Any reachable service that
   forwards traffic would have made the allowlist meaningless. This was present
-  from the sandbox's first implementation. The fix is to the generated profile and
-  carries the same caveat as everything else on macOS: unverified at runtime.
+  from the sandbox's first implementation. The fix is to the generated profile.
+  What a macOS runner confirms is that egress is denied with an empty allowlist,
+  which does not by itself prove the per-mode loopback scoping — nothing stands up
+  a loopback listener on macOS and checks which modes reach it.
 - **On Windows, a loopback exemption left by a pre-0.5.0 `nvx setup` opens every
   service on 127.0.0.1** to contained code, whatever the allowlist says — local
   databases, daemon ports, other dev servers. 0.5.0 never registers one and
