@@ -64,7 +64,33 @@ EOF
 
 "$NVX" init-shims >/dev/null
 
-FETCH="require('https').get('https://example.com',()=>process.exit(0)).on('error',()=>process.exit(1))"
+# Ask the proxy for a tunnel, rather than making an ordinary HTTPS request and
+# hoping it goes through the proxy.
+#
+# It did not. Node's classic `https.get` ignores HTTPS_PROXY -- nothing in core
+# reads it -- so the old probe attempted a direct connection every time. Inside a
+# loopback-only network namespace that dies at DNS, which made phase 1 pass
+# without the allowlist being consulted at all, and made phase 2 impossible to
+# pass however correct the allowlist was.
+#
+# CONNECT is what a proxy-aware client sends, and its status code is the
+# allowlist decision itself: 200 tunnel established, 403 refused. That also
+# distinguishes "refused by policy" from "could not reach the proxy", which an
+# exit code cannot.
+CONNECT=$(cat <<'JS'
+const http = require('http');
+const u = new URL(process.env.HTTPS_PROXY);
+const req = http.request({
+  host: u.hostname, port: u.port, method: 'CONNECT', path: 'example.com:443',
+  headers: { 'Proxy-Authorization': 'Basic ' +
+    Buffer.from(decodeURIComponent(u.username) + ':' + decodeURIComponent(u.password)).toString('base64') },
+});
+req.on('connect', (res, socket) => { socket.destroy(); console.log('CONNECT=' + res.statusCode); process.exit(0); });
+req.on('response', res => { console.log('CONNECT=' + res.statusCode); process.exit(0); });
+req.on('error', e => { console.log('CONNECT=error ' + e.message); process.exit(0); });
+req.end();
+JS
+)
 
 # Phase 2's policy adds an allowlist entry, which widens what the sandbox permits,
 # and nvx refuses to honour a widening policy it has not been told to trust --
@@ -79,8 +105,14 @@ export NVX_TRUST_YES=true
 # "Running directly (not sandboxed)".
 
 echo "Phase 1: a non-allowlisted host must be blocked..."
-if "$NVX" -y --strict shim node -e "$FETCH"; then
-  echo "expected blocked egress to fail" >&2
+OUT1="$("$NVX" -y --strict shim node -e "$CONNECT" 2>&1 | grep '^CONNECT=' || true)"
+echo "  proxy said: ${OUT1:-<nothing>}"
+if [[ "$OUT1" == "CONNECT=200" ]]; then
+  echo "a host with an empty allowlist was tunnelled anyway" >&2
+  exit 1
+fi
+if [[ -z "$OUT1" ]]; then
+  echo "the contained process never reached the proxy, so the allowlist was not exercised" >&2
   exit 1
 fi
 
@@ -102,10 +134,29 @@ cat > .nvx-policy.json <<'EOF'
 }
 EOF
 
-if ! "$NVX" -y --strict shim node -e "$FETCH"; then
-  echo "an allowlisted host was blocked; the sandbox is denying everything, not enforcing a policy" >&2
-  echo "(this phase needs outbound network access; a offline CI runner will fail here)" >&2
-  exit 1
-fi
+OUT2="$("$NVX" -y --strict shim node -e "$CONNECT" 2>&1 | grep '^CONNECT=' || true)"
+echo "  proxy said: ${OUT2:-<nothing>}"
+case "$OUT2" in
+  CONNECT=200) ;;
+  CONNECT=403)
+    echo "an allowlisted host was refused by the allowlist; the sandbox is denying" >&2
+    echo "everything, not enforcing a policy. This is the regression this phase exists for." >&2
+    exit 1
+    ;;
+  CONNECT=502)
+    # The proxy accepted the request and failed to reach the host itself, so the
+    # allowlist did permit it -- which is the claim being made here. Separating
+    # this from 403 is the point of reading the status instead of an exit code:
+    # a machine with no outbound DNS would otherwise look identical to a broken
+    # allowlist. Measured on WSL2, where the uncontained control cannot resolve
+    # the host either.
+    echo "note: the proxy allowed the host but could not reach it (502); this host has" >&2
+    echo "no outbound access. The allowlist decision was correct in both phases." >&2
+    ;;
+  *)
+    echo "unexpected proxy response for an allowlisted host: ${OUT2:-<nothing>}" >&2
+    exit 1
+    ;;
+esac
 
 echo "Egress smoke passed: denied what it should, allowed what it should."
