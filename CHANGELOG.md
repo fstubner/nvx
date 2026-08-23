@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+* **Windows containment can now be re-checked by running one script, rather than
+  resting on having been measured once.** `scripts/sandbox-enforcement-windows.ps1`
+  joins the Linux and macOS probes and asserts the same five outcomes: writes and
+  reads outside the project denied, both allowed inside, egress denied with an
+  empty allowlist. Verified on Windows 11, including the control that matters —
+  run with containment off, the same probe reports the opposite and the forbidden
+  file appears on disk, so it distinguishes a working sandbox from a broken one.
+
+  Hosted Windows runners refuse to create AppContainer children, so this cannot
+  be gated in CI the way the other two are. It is a documented pre-release step
+  in `CONTRIBUTING.md`, together with the `NVX_PROBE=1` suite — the twenty-odd
+  end-to-end checks that skip on hosted CI and cover a sandbox reading another
+  project, a deny ACE hiding a secret, and a session reading another's guest
+  home. Last measured 2026-08-23: 319 pass, 0 fail, 3 expected skips, each named
+  so a fourth is a signal.
+
+  The existing Windows smoke test had the flaw the Linux enforcement script was
+  written to fix: it checked a host write by writing through the sandbox's
+  redirected `%USERPROFILE%`, which is meant to succeed, so it would have passed
+  against a sandbox restricting nothing. It had no read assertion at all.
+
+### Fixed
+
+* **A hung AppContainer launch no longer takes the whole Windows test suite with
+  it.** One probe's launch stopped returning on a hosted runner, so `go test` hit
+  its package timeout and reported failure for everything — a runner's shape
+  presented as a product defect. It is now bounded, and reports "hung" distinctly
+  from "refused" so a real regression cannot hide behind an environment excuse.
+
+* **Two CI checks reported the wrong reason for skipping.** The Windows egress
+  smoke stopped on the runner's Node version before reaching anything about nvx;
+  CI now installs a version that has the flag it needs, so it skips on the real
+  blocker instead. Nothing about the product changed — only whether the log tells
+  you the truth about what was and was not checked.
+
 ## [0.5.4] - 2026-08-23
 
 ### Fixed
