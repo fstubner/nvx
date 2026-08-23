@@ -139,20 +139,20 @@ jobs:
       shell: bash
       timeout-minutes: 8
       run: |
-        # Ubuntu 24.04 restricts what processes inside an unprivileged user
-        # namespace may do, through AppArmor rather than through Landlock. nvx
-        # creates NEWUSER|NEWNS, and exec of a perfectly allowlisted runtime was
-        # refused with EACCES until this is relaxed. It is a property of the
-        # distribution's default hardening, not of nvx, and an ephemeral runner
-        # is the right place to turn it off; a real user on 24.04 would hit the
-        # same wall, which is worth knowing separately.
+        # Ubuntu 24.04 refuses unprivileged user-namespace creation by default,
+        # through AppArmor rather than through Landlock. nvx's supervisor is
+        # cloned with CLONE_NEWUSER, so without this it cannot start at all and
+        # fails closed. That is the distribution's hardening, not an nvx bug, and
+        # an ephemeral runner is the right place to relax it; a real user on 24.04
+        # meets the same wall, which is worth knowing separately.
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
-        # Unprivileged, now that the sysctl above allows unprivileged user
-        # namespaces. Running it under sudo was the previous attempt and it kept
-        # failing: nvx enters NEWUSER, and files created by root are not
-        # accessible to a process in a user namespace that does not map root, so
-        # exec of the runtime was refused with EACCES while Landlock was granting
-        # it correctly. Unprivileged is also the configuration nvx is built for.
+        # Unprivileged on purpose: it is the configuration nvx is built for, and
+        # the sysctl above is what makes it possible here. Earlier revisions of
+        # this step blamed both AppArmor and root-owned files for the runtime
+        # failing to exec. Neither was it -- the target was asking for a second,
+        # nested user namespace, and the uid/gid mapping that goes with one is
+        # written through /proc, which the supervisor's own Landlock ruleset does
+        # not grant. See applyLinuxNamespaces.
         ./scripts/sandbox-enforcement-linux.sh
 
     # The smoke script checks a sandboxed process can write its own working

@@ -44,8 +44,15 @@ fi
 
 # The network half needs a namespace. Its absence skips only the egress
 # assertion -- the filesystem ones are still worth running.
+#
+# -U as well as -n, and for the same reason nvx's own supervisor needs
+# CLONE_NEWUSER: an ordinary user has no CAP_SYS_ADMIN, so a bare `unshare -n`
+# is refused even where nvx goes on to create the namespace successfully. This
+# probe said "network namespaces unavailable" on a host where the sandbox then
+# reported a loopback-only namespace three lines later -- so the one assertion
+# that proves egress is blocked was skipped exactly where it would have run.
 EGRESS_TESTABLE=1
-if ! unshare -n -- true 2>/dev/null; then
+if ! unshare -Un -- true 2>/dev/null; then
   echo "::warning::network namespaces unavailable; the egress assertion will be skipped" >&2
   EGRESS_TESTABLE=0
 fi
@@ -165,19 +172,28 @@ rc=$?
 set -e
 
 if [[ ! -f "$REPORT" ]]; then
-  # A host that cannot host the sandbox is not a failing product. Ubuntu 24.04
-  # restricts unprivileged user namespaces via AppArmor, so nvx's Landlock
-  # launch fails with "operation not permitted" and it refuses to run rather
-  # than running uncontained -- the fail-closed stance working. CI runs this
-  # step privileged for that reason; an unprivileged run says so and skips,
-  # exactly as the Windows probes do when a runner refuses AppContainers.
-  if [[ "$(id -u)" != "0" ]]; then
-    echo "::warning::the sandbox could not launch unprivileged on this host (Ubuntu restricts" >&2
-    echo "unprivileged user namespaces); re-run as root to assert containment. Skipping." >&2
+  # A host that genuinely cannot host the sandbox is not a failing product --
+  # some distributions forbid unprivileged user namespaces outright, and there
+  # nvx refuses to run rather than running uncontained, which is the fail-closed
+  # stance working.
+  #
+  # But this branch must decide that by TESTING it, not by looking at the uid.
+  # It used to skip whenever the run was unprivileged, and blamed Ubuntu's
+  # AppArmor restriction for it. On 2026-08-23 that was wrong: user namespaces
+  # were available, the sandbox started fine, and the target failed to exec for
+  # an unrelated reason (a nested user namespace whose uid_map write Landlock
+  # denied -- see applyLinuxNamespaces). The step went green, having asserted
+  # nothing, and the misattribution in this very message is what the failure was
+  # chased as. A probe that explains away its own silence is worse than one that
+  # fails.
+  if ! unshare -Un -- true 2>/dev/null; then
+    echo "::warning::this host does not permit unprivileged user namespaces, which the" >&2
+    echo "sandbox requires; nvx fails closed here. Skipping without asserting containment." >&2
     exit 0
   fi
-  echo "FAIL: the contained probe wrote no report (nvx exit $rc), running as root." >&2
-  echo "      Either the sandbox refused to launch node, or it blocked the report write." >&2
+  echo "FAIL: the contained probe wrote no report (nvx exit $rc)." >&2
+  echo "      User namespaces ARE available here, so this is not an environment limit:" >&2
+  echo "      either the sandbox refused to launch node, or it blocked the report write." >&2
   exit 1
 fi
 
@@ -217,4 +233,8 @@ if [[ $fail -ne 0 ]]; then
   exit 1
 fi
 
-echo "Linux enforcement probe passed: writes contained, reads restricted, egress denied."
+if [[ "$EGRESS_TESTABLE" == "1" ]]; then
+  echo "Linux enforcement probe passed: writes contained, reads restricted, egress denied."
+else
+  echo "Linux enforcement probe passed: writes contained, reads restricted. Egress NOT asserted."
+fi

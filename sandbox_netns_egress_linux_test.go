@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -33,7 +32,7 @@ func TestNetnsContainedProcessReachesOnlyAllowlistedHosts(t *testing.T) {
 		runNetnsEgressChild()
 		return
 	}
-	requireNamespaceSupport(t, syscall.CLONE_NEWNET)
+	requireNamespaceSupport(t, supervisorSysProcAttr("proxy"))
 	if _, err := exec.LookPath("ip"); err != nil {
 		t.Skip("iproute2 not installed; bringUpLoopback needs `ip`")
 	}
@@ -82,9 +81,12 @@ func TestNetnsContainedProcessReachesOnlyAllowlistedHosts(t *testing.T) {
 		// HTTP_PROXY, written by applyRelayProxyEnv.
 		"NVX_TEST_CRED="+proxy.ProxyCredential(),
 	)
-	// Exactly how platformLaunchNative creates the namespace: a clone flag, so the
-	// whole child process is inside it from birth rather than one thread.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWNET}
+	// Exactly how platformLaunchNative creates the namespace -- the same helper it
+	// calls, not a copy. Clone flags rather than unshare, so the whole child is
+	// inside the namespace from birth rather than one thread; and the user
+	// namespace among them, without which an ordinary user cannot ask for a network
+	// namespace at all and this test skips on every machine that is not root.
+	cmd.SysProcAttr = supervisorSysProcAttr("proxy")
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {

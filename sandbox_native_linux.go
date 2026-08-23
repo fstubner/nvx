@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 )
 
 // egressSocketName is the UNIX socket, inside the guest home, that the parent's
@@ -92,15 +91,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	//
 	// The target-side clone in applyLinuxNamespaces has always done this; only
 	// the supervisor's was missing it.
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUSER | supervisorCloneFlags(netCtx.Mode),
-		UidMappings: []syscall.SysProcIDMap{
-			{ContainerID: 0, HostID: syscall.Getuid(), Size: 1},
-		},
-		GidMappings: []syscall.SysProcIDMap{
-			{ContainerID: 0, HostID: syscall.Getgid(), Size: 1},
-		},
-	}
+	cmd.SysProcAttr = supervisorSysProcAttr(netCtx.Mode)
 
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {

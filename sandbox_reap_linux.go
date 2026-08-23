@@ -18,6 +18,15 @@ import "syscall"
 // It also makes the supervisor the reaper of last resort for orphaned
 // descendants; see reapUntilChildExits.
 //
+// One consequence to know about before reading /proc in the supervisor: nothing
+// remounts it, so /proc there is still the host's and shows the PARENT
+// namespace's pids. Any /proc/<pid> path built from a pid the supervisor
+// observes names a different process, or none at all. That is how a denied write
+// to /proc/<child>/uid_map came back as ENOENT and read as a missing runtime for
+// a long time (see applyLinuxNamespaces). Remounting is not available either: a
+// mount here would be the host's, because the supervisor has no mount namespace
+// of its own. Use wait4 and pidfds, not /proc, in this process.
+//
 // CLONE_NEWNET is conditional because network.mode=open deliberately keeps host
 // networking, whereas process-tree teardown is always wanted.
 func supervisorCloneFlags(networkMode string) uintptr {
@@ -26,6 +35,28 @@ func supervisorCloneFlags(networkMode string) uintptr {
 		flags |= syscall.CLONE_NEWNET
 	}
 	return flags
+}
+
+// supervisorSysProcAttr is how the supervisor is actually launched: the clone
+// flags above plus the user namespace that makes them possible for an ordinary
+// user, with this user mapped to root inside it.
+//
+// It exists so there is one definition rather than two. The teardown test used to
+// build its own SysProcAttr from supervisorCloneFlags alone, and when
+// CLONE_NEWUSER was added to the real launch the test kept the old shape --
+// so it went on asking whether an unprivileged process could create a PID
+// namespace unaided, got EPERM, and skipped. The behaviour it guards was running
+// fine by then; nothing said so.
+func supervisorSysProcAttr(networkMode string) *syscall.SysProcAttr {
+	return &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUSER | supervisorCloneFlags(networkMode),
+		UidMappings: []syscall.SysProcIDMap{
+			{ContainerID: 0, HostID: syscall.Getuid(), Size: 1},
+		},
+		GidMappings: []syscall.SysProcIDMap{
+			{ContainerID: 0, HostID: syscall.Getgid(), Size: 1},
+		},
+	}
 }
 
 // reapUntilChildExits waits for the process trackedPid, reaping every other child

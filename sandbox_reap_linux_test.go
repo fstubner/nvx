@@ -113,6 +113,39 @@ func TestTargetNamespacesNoLongerCreatePidNamespace(t *testing.T) {
 	}
 }
 
+// TestTargetNamespacesRequestNoUserMapping pins the fix for a launch failure that
+// stopped the Linux sandbox running anything at all.
+//
+// Asking for a mapped user namespace makes the Go runtime write
+// /proc/<child>/uid_map, gid_map and setgroups from the parent immediately after
+// the clone. The supervisor has called landlock_restrict_self by then and the
+// ruleset grants nothing under /proc, so the kernel refuses the write and the
+// target never execs. It reports ENOENT, not EACCES, because the supervisor sits
+// in its own PID namespace with the host's /proc mounted -- so the failure looked
+// like a missing runtime and was chased as one.
+//
+// The mount namespace must survive: it is what stops a bind mount reaching around
+// the Landlock rules. The user namespace comes from the supervisor's own clone.
+func TestTargetNamespacesRequestNoUserMapping(t *testing.T) {
+	cmd := exec.Command("/bin/true")
+	applyLinuxNamespaces(cmd, tempDir(t))
+	if cmd.SysProcAttr == nil {
+		t.Fatal("applyLinuxNamespaces set no SysProcAttr")
+	}
+	if cmd.SysProcAttr.Cloneflags&syscall.CLONE_NEWNS == 0 {
+		t.Errorf("target must still get its own mount namespace (got %#x)", cmd.SysProcAttr.Cloneflags)
+	}
+	if cmd.SysProcAttr.Cloneflags&syscall.CLONE_NEWUSER != 0 {
+		t.Errorf("target must not nest a second user namespace (got %#x)", cmd.SysProcAttr.Cloneflags)
+	}
+	// The mappings are the half that actually triggers the /proc write, so check
+	// them separately rather than trusting the flag to imply them.
+	if len(cmd.SysProcAttr.UidMappings) != 0 || len(cmd.SysProcAttr.GidMappings) != 0 {
+		t.Errorf("target must request no uid/gid mappings; they force a /proc write Landlock denies (uid=%v gid=%v)",
+			cmd.SysProcAttr.UidMappings, cmd.SysProcAttr.GidMappings)
+	}
+}
+
 // TestSupervisorDeathTearsDownDescendants is the behavioural claim behind moving
 // CLONE_NEWPID to the supervisor: killing nvx must take the whole contained tree
 // with it. Previously the target was PID 1 of its own namespace, so killing nvx
@@ -134,12 +167,12 @@ func TestSupervisorDeathTearsDownDescendants(t *testing.T) {
 		time.Sleep(30 * time.Second)
 		return
 	}
-	requireNamespaceSupport(t, supervisorCloneFlags("proxy"))
+	requireNamespaceSupport(t, supervisorSysProcAttr("proxy"))
 
 	hb := filepath.Join(tempDir(t), "heartbeat")
 	cmd := exec.Command(os.Args[0], "-test.run=TestSupervisorDeathTearsDownDescendants")
 	cmd.Env = append(os.Environ(), "NVX_TEST_REAP_CHILD=1", "NVX_TEST_HEARTBEAT="+hb)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: supervisorCloneFlags("proxy")}
+	cmd.SysProcAttr = supervisorSysProcAttr("proxy")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start supervisor: %v", err)
 	}
@@ -180,15 +213,21 @@ func TestSupervisorDeathTearsDownDescendants(t *testing.T) {
 	}
 }
 
-// requireNamespaceSupport skips unless this process can actually create the given
-// namespaces. Being root is NOT sufficient: a container without CAP_SYS_ADMIN --
-// the default for `docker run` and for GitHub's hosted runners -- returns EPERM
-// from clone(). Guarding on euid alone reproduces the F67 failure mode exactly: a
-// test that assumes its environment and turns CI red instead of skipping.
-func requireNamespaceSupport(t *testing.T, flags uintptr) {
+// requireNamespaceSupport skips unless this process can actually create the
+// namespaces described by attr. Being root is NOT sufficient: a container without
+// CAP_SYS_ADMIN -- the default for `docker run` and for GitHub's hosted runners --
+// returns EPERM from clone(). Guarding on euid alone reproduces the F67 failure
+// mode exactly: a test that assumes its environment and turns CI red instead of
+// skipping.
+//
+// It takes the whole SysProcAttr rather than a flag word so the probe asks the
+// question the caller will actually ask. Given flags alone it could only test
+// them unaided, which for an unprivileged process is refused whatever the real
+// launch does about it.
+func requireNamespaceSupport(t *testing.T, attr *syscall.SysProcAttr) {
 	t.Helper()
 	probe := exec.Command("/bin/true")
-	probe.SysProcAttr = &syscall.SysProcAttr{Cloneflags: flags}
+	probe.SysProcAttr = attr
 	if err := probe.Run(); err != nil {
 		t.Skipf("cannot create the required namespaces here: %v", err)
 	}

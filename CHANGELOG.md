@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+* **The Linux sandbox could not run anything.** Every contained launch died with
+  `Sandbox execution failed: fork/exec <runtime>/bin/node: no such file or
+  directory`, naming a file that was present, executable, and inside the rules
+  the sandbox had just granted.
+
+  The target was being started in a nested user namespace of its own, and asking
+  for one means the parent writes the uid and gid mappings through
+  `/proc/<child>/`. By that point the supervisor has applied its Landlock ruleset,
+  which grants nothing under `/proc`, so the kernel refused the write and the
+  process never started.
+
+  It reported a missing file rather than a refusal because the supervisor runs in
+  its own PID namespace with the host's `/proc` still mounted: the child's process
+  id names nothing there, so the path fails to open before permissions are
+  considered. The same launch outside that namespace says "permission denied".
+
+  The nested namespace is gone. The target keeps its own mount namespace, and
+  takes the user namespace from the supervisor, which is where it belongs --
+  membership in that one is what allowed the mount namespace unprivileged in the
+  first place. Nothing is less contained; a second namespace only gave the target
+  a fresh one to be root in.
+
+* **Three Linux checks in CI reported success without testing anything**, which
+  is why the above survived. Each gated itself on `unshare -n`, which an ordinary
+  user is refused — nvx asks for a network namespace and a user namespace
+  together, which is exactly what makes it available unprivileged. So all three
+  skipped on every unprivileged machine, including the runner they were written
+  for.
+
+  The containment probe additionally explained its own silence: finding no report
+  from the contained process, it blamed the distribution for restricting user
+  namespaces and exited zero, without checking whether they were restricted. They
+  were not. It now tests that before deciding, and fails if the sandbox had every
+  facility it needed and still produced nothing.
+
+  With them running, both smoke tests turned out to be launching their probe
+  uncontained, so the one that checks a sandboxed process cannot write outside
+  its project could never have passed and the other was measuring the host's
+  internet connection. Both now run strictly contained.
+
 ## [0.5.3] - 2026-08-23
 
 ### Added
