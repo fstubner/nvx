@@ -147,7 +147,13 @@ jobs:
         # is the right place to turn it off; a real user on 24.04 would hit the
         # same wall, which is worth knowing separately.
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
-        sudo -E env "PATH=$PATH" "HOME=$HOME" ./scripts/sandbox-enforcement-linux.sh
+        # Unprivileged, now that the sysctl above allows unprivileged user
+        # namespaces. Running it under sudo was the previous attempt and it kept
+        # failing: nvx enters NEWUSER, and files created by root are not
+        # accessible to a process in a user namespace that does not map root, so
+        # exec of the runtime was refused with EACCES while Landlock was granting
+        # it correctly. Unprivileged is also the configuration nvx is built for.
+        ./scripts/sandbox-enforcement-linux.sh
 
     # The smoke script checks a sandboxed process can write its own working
     # directory, which would pass against a sandbox that blocks nothing. The
