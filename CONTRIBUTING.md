@@ -46,6 +46,36 @@ go test -race ./...
 Platform sandbox smoke tests live in `scripts/` and are run by CI:
 `sandbox-smoke.sh` / `.ps1` and `sandbox-smoke-egress.*`.
 
+Alongside them are three **enforcement** probes, which are the ones that can
+fail. A smoke test checks that a contained process runs; an enforcement probe
+asserts what must be denied *and* what must still be allowed, so a sandbox that
+refuses everything fails it rather than passing:
+
+| Script | Runs where |
+|---|---|
+| `sandbox-enforcement-linux.sh` | CI, every build, unprivileged |
+| `sandbox-enforcement-macos.sh` | CI, every build |
+| `sandbox-enforcement-windows.ps1` | **Manually — see below** |
+
+### Before cutting a release, on Windows
+
+```powershell
+go build -o nvx.exe .
+./scripts/sandbox-enforcement-windows.ps1
+```
+
+This is the one platform gate CI cannot run. GitHub-hosted Windows runners
+refuse to create AppContainer children — `CreateProcess` returns "Access is
+denied" for every executable, including `cmd.exe` — so the script detects that
+and skips, and the step in CI is there to start asserting if that ever changes
+rather than to assert today. On a real Windows machine it takes about a minute
+and prints each result, so a partial regression is visible rather than just a
+pass or fail.
+
+That is why `docs/enforcement-matrix.md` says **measured** for the Windows
+column and **CI** for the other two. Running this is what keeps the word
+"measured" true.
+
 ## Making changes
 
 1. Fork and create a topic branch from `main`.
