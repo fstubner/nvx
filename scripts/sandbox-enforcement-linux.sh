@@ -50,17 +50,23 @@ if ! unshare -n -- true 2>/dev/null; then
   EGRESS_TESTABLE=0
 fi
 
-PROJ="$(mktemp -d)"
+# Not mktemp: hosted runners mount /tmp noexec, so a runtime installed there
+# cannot be executed at all -- "permission denied" on fork/exec, before Landlock
+# is even consulted. The home directory is on an ordinary filesystem.
+PROBE_ROOT="$HOME/.nvx-enforcement-probe"
+rm -rf "$PROBE_ROOT"
+mkdir -p "$PROBE_ROOT"
+PROJ="$PROBE_ROOT/project"
+mkdir -p "$PROJ"
 
 # Not mktemp for the fixture. The writable roots are the guest home and the work
 # directory, and on macOS the same mistake put the fixture inside an allowed
 # temp root and reported a false escape. The real home is outside the read
 # allowlist (/usr /lib /lib64 /bin /sbin /etc and specific /dev nodes) and
 # outside every writable root, so it tests both directions at once.
-OUTSIDE="$HOME/.nvx-enforcement-probe"
-rm -rf "$OUTSIDE"
+OUTSIDE="$PROBE_ROOT/outside"
 mkdir -p "$OUTSIDE"
-trap 'rm -rf "$PROJ" "$OUTSIDE"' EXIT
+trap 'rm -rf "$PROBE_ROOT"' EXIT
 
 SECRET="$OUTSIDE/credentials"
 printf 'SECRET-CONTENT-DO-NOT-LEAK\n' > "$SECRET"
@@ -78,7 +84,7 @@ FORBIDDEN_WRITE="$OUTSIDE/should-not-exist"
 # Installing an nvx-managed runtime is both the fix and the realistic case --
 # managing runtimes is what nvx is for. NVX_HOME is scratch so a developer
 # running this does not gain a runtime in their real ~/.nvx.
-export NVX_HOME="$PROJ/nvxhome"
+export NVX_HOME="$PROBE_ROOT/nvxhome"
 mkdir -p "$NVX_HOME"
 echo "Installing an nvx-managed runtime (Landlock does not permit exec outside its allowlist)..."
 if ! "$NVX" -y install 22 >/dev/null 2>&1 || ! "$NVX" -y default 22 >/dev/null 2>&1; then
