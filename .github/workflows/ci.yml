@@ -128,10 +128,17 @@ jobs:
     # the smoke script's host-write check goes through the sandbox's own $HOME,
     # which is the redirected guest profile, so it passes whenever the redirect
     # works even if nothing is restricted.
+    #
+    # Run privileged, like the netns tests above and for the same reason: Ubuntu
+    # 24.04 restricts unprivileged user namespaces, so nvx's Landlock launch is
+    # refused and nvx fails closed rather than running uncontained. Unprivileged
+    # the script skips with that explanation instead of failing, so it is still
+    # usable on a developer machine.
     - name: Linux containment enforcement
       if: matrix.os == 'ubuntu-latest'
       shell: bash
-      run: ./scripts/sandbox-enforcement-linux.sh
+      timeout-minutes: 6
+      run: sudo -E env "PATH=$PATH" "HOME=$HOME" ./scripts/sandbox-enforcement-linux.sh
 
     # The smoke script checks a sandboxed process can write its own working
     # directory, which would pass against a sandbox that blocks nothing. The
