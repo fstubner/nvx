@@ -40,6 +40,15 @@ reliably; a strict read allowlist breaks process launch. Write containment and
 egress control remain enforced, and environment secrets are scrubbed with `$HOME`
 redirected to an ephemeral guest profile.
 
+Writes are contained, with named exceptions: the profile grants write access to
+`/dev`, `/private/tmp`, `/private/var/tmp` and `/private/var/folders` so a
+contained process has somewhere to put temporary files. "Writes cannot leave the
+project" is therefore shorthand -- system temp trees are writable, and on macOS
+`$TMPDIR` lives under `/private/var/folders`. Found while writing
+`scripts/sandbox-enforcement-macos.sh`, whose first version put its
+must-not-be-writable fixture in `mktemp -d` and duly reported an escape that was
+the profile working as designed.
+
 **That redirection does not protect a file from being read, and this note used to
 say it did** -- it claimed "the sensitive material is still protected", which is
 true of writes and false of reads. `$HOME` decides where `~` expands to; it does

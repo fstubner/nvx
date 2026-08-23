@@ -48,12 +48,24 @@ if [[ ! -x /usr/bin/sandbox-exec ]]; then
 fi
 
 PROJ="$(mktemp -d)"
-OUTSIDE="$(mktemp -d)"
+
+# NOT mktemp for the "outside" fixture. buildSeatbeltProfile grants write access
+# to /dev, /private/tmp, /private/var/tmp and /private/var/folders so a contained
+# process has a usable temp directory -- and macOS mktemp returns a path under
+# /var/folders, which is a symlink into /private/var/folders. The first version
+# of this probe put its forbidden path there and reported that the sandbox had
+# been escaped, when the write had landed in a root the profile deliberately
+# allows.
+#
+# The real home is genuinely outside every write root. This script runs outside
+# the sandbox, so $HOME here is the actual home; the contained process gets an
+# ephemeral one, which is why the paths below are passed absolute rather than
+# through `~`.
+OUTSIDE="$HOME/.nvx-enforcement-probe"
+rm -rf "$OUTSIDE"
+mkdir -p "$OUTSIDE"
 trap 'rm -rf "$PROJ" "$OUTSIDE"' EXIT
 
-# The secret lives outside the project, reachable only by absolute path. Not in
-# $HOME, because nvx redirects HOME to an ephemeral guest profile and a test that
-# went through `~` would be measuring the redirect rather than the sandbox.
 SECRET="$OUTSIDE/credentials"
 printf 'SECRET-CONTENT-DO-NOT-LEAK\n' > "$SECRET"
 FORBIDDEN_WRITE="$OUTSIDE/should-not-exist"
