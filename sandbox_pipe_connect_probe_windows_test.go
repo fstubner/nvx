@@ -105,7 +105,18 @@ func TestAppContainerCanConnectToAParentCreatedNamedPipe(t *testing.T) {
 			if err != nil {
 				t.Fatalf("the PARENT could not create the pipe, so this case proves nothing: %v", err)
 			}
-			defer syscall.CloseHandle(server)
+			// Cancel BEFORE closing, on every exit path including a skip.
+			//
+			// A pending blocking ConnectNamedPipe makes CloseHandle wait for I/O that
+			// will never complete. On a host that refuses AppContainer children -- every
+			// GitHub-hosted Windows runner -- requireAppContainerLaunch skips below, the
+			// deferred close then blocked, and the whole package hit Go's 10-minute
+			// timeout: 9m39s in this one subtest. Cancelling only on the success path
+			// was the bug.
+			defer func() {
+				procCancelIoEx.Call(uintptr(server), 0)
+				syscall.CloseHandle(server)
+			}()
 
 			// Serve the pipe while the child runs: accept, echo, done. Started
 			// before the launch because ConnectNamedPipe must be waiting when the
