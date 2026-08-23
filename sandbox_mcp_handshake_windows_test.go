@@ -128,9 +128,11 @@ func TestContainedMcpServerCompletesHandshake(t *testing.T) {
 					return m
 				}
 			case err := <-readErr:
+				skipIfHostRefusesAppContainers(t, stderr.String())
 				t.Fatalf("contained server closed stdout before answering %s: %v (stderr: %s)",
 					what, err, tail(stderr.String()))
 			case <-deadline:
+				skipIfHostRefusesAppContainers(t, stderr.String())
 				t.Fatalf("no %s reply from the contained server within 90s (stderr: %s)",
 					what, tail(stderr.String()))
 			}
@@ -214,3 +216,25 @@ process.stdin.on('data', (d) => {
 });
 function reply(o) { process.stdout.write(JSON.stringify(o) + '\n'); }
 `
+
+// skipIfHostRefusesAppContainers turns "this machine will not run AppContainers"
+// into a skip rather than a failure.
+//
+// GitHub-hosted Windows runners refuse CreateProcess for an AppContainer child
+// with "Access is denied", which every other probe handles through
+// requireAppContainerLaunch. This test drives nvx as a subprocess instead of
+// calling the launcher, so the refusal arrives as nvx's stderr and a closed
+// stdout, and it failed where its siblings skipped.
+//
+// That kept CI red for 14 consecutive runs from the commit that widened CI to
+// run every probe. Widening was right; this test not knowing how to say "not
+// here" was the gap, and a red build nobody can act on is worse than a skip that
+// says why.
+func skipIfHostRefusesAppContainers(t *testing.T, stderr string) {
+	t.Helper()
+	if strings.Contains(stderr, "AppContainer launch failed") &&
+		strings.Contains(stderr, "Access is denied") {
+		t.Skipf("this host cannot create AppContainer children; GitHub-hosted Windows runners "+
+			"are known to refuse, so the probe cannot run here. nvx said:\n%s", tail(stderr))
+	}
+}
