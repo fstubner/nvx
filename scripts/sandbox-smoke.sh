@@ -15,13 +15,25 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   exit 0
 fi
 
-# -U as well as -n. nvx asks for the network namespace together with a user
-# namespace, which is what gives an ordinary user the CAP_SYS_ADMIN to request
-# one; a bare `unshare -n` is refused for anyone but root and made this smoke
-# test skip on every unprivileged machine, including the CI runner it was added
-# for.
-if ! unshare -Un -- true 2>/dev/null; then
-  echo "Network namespace unavailable in this environment; skipping Linux sandbox smoke." >&2
+# What the sandbox actually needs, probed as the sandbox will use it.
+#
+# Two things were wrong with asking `unshare -n`. It omits the user namespace
+# nvx pairs the network one with, so it is refused for anyone but root and this
+# script skipped on every unprivileged machine including the CI runner it was
+# written for. And creating the namespace is not the same as being allowed to
+# use it: Ubuntu 24.04 hardens unprivileged user namespaces through AppArmor, so
+# the clone succeeds, CAP_NET_ADMIN inside it does not, and nvx's loopback setup
+# gets EPERM and fails closed. Only bringing loopback up answers the question.
+if ! command -v ip >/dev/null 2>&1; then
+  echo "iproute2 not installed; nvx's loopback setup needs \`ip\`. Skipping." >&2
+  exit 0
+fi
+if ! unshare -Urn -- ip link set lo up >/dev/null 2>&1; then
+  echo "This host does not allow loopback to be configured inside an unprivileged" >&2
+  echo "user namespace, so nvx's network isolation cannot start and it fails closed." >&2
+  echo "On Ubuntu 24.04 this is AppArmor; lift it with:" >&2
+  echo "  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0" >&2
+  echo "Skipping Linux sandbox smoke." >&2
   exit 0
 fi
 

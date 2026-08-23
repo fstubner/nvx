@@ -10,12 +10,21 @@ if [[ ! -x "$NVX" ]]; then
   exit 1
 fi
 
-# -U as well as -n: nvx pairs the network namespace with a user namespace, which
-# is what makes it available unprivileged. A bare `unshare -n` is refused for
-# anyone but root, so this skipped everywhere it mattered.
-if [[ "$(uname -s)" == "Linux" ]] && ! unshare -Un -- true 2>/dev/null; then
-  echo "Network namespace unavailable; skipping egress smoke." >&2
-  exit 0
+# The precondition the sandbox actually has, probed the way it will use it --
+# see scripts/sandbox-smoke.sh for why namespace creation is the wrong question.
+if [[ "$(uname -s)" == "Linux" ]]; then
+  if ! command -v ip >/dev/null 2>&1; then
+    echo "iproute2 not installed; nvx's loopback setup needs \`ip\`. Skipping." >&2
+    exit 0
+  fi
+  if ! unshare -Urn -- ip link set lo up >/dev/null 2>&1; then
+    echo "This host does not allow loopback to be configured inside an unprivileged" >&2
+    echo "user namespace, so nvx's network isolation cannot start and it fails closed." >&2
+    echo "On Ubuntu 24.04 this is AppArmor; lift it with:" >&2
+    echo "  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0" >&2
+    echo "Skipping egress smoke." >&2
+    exit 0
+  fi
 fi
 
 if [[ "$(uname -s)" == "Linux" ]] && [[ "$(uname -r | cut -d. -f1-2)" < "5.13" ]]; then

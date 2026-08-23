@@ -120,6 +120,12 @@ jobs:
       run: |
         go build -o nvx .
         chmod +x scripts/sandbox-smoke.sh scripts/sandbox-smoke-egress.sh scripts/sandbox-enforcement-linux.sh
+        # Same reason as the enforcement step below: Ubuntu 24.04's AppArmor
+        # hardening lets an unprivileged user namespace be created but refuses
+        # CAP_NET_ADMIN inside it, so nvx's loopback setup gets EPERM and the
+        # sandbox fails closed. Without this both scripts skip themselves, which
+        # is honest but verifies nothing.
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
         ./scripts/sandbox-smoke.sh
         ./scripts/sandbox-smoke-egress.sh
 
