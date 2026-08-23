@@ -77,6 +77,21 @@ jobs:
         ./scripts/sandbox-smoke.ps1
         ./scripts/sandbox-smoke-egress.ps1
 
+    # The Windows counterpart of the Linux and macOS enforcement steps. It will
+    # skip here: hosted Windows runners refuse to create AppContainer children,
+    # CreateProcess returning "Access is denied" for every executable including
+    # cmd.exe. The step exists so that stops being a standing assumption -- if a
+    # future runner image can host one, this starts asserting on its own rather
+    # than waiting for someone to notice.
+    #
+    # Until then Windows enforcement is gated by hand before a release
+    # (CONTRIBUTING.md), which is what the word "measured" in the Windows column
+    # of docs/enforcement-matrix.md refers to.
+    - name: Windows containment enforcement
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/sandbox-enforcement-windows.ps1
+
     # The unit-test step above already exercises Landlock, the syscall table and
     # reaping -- those need no privileges and pass on a hosted runner. The netns
     # egress test does not: it needs CAP_SYS_ADMIN for unshare and `ip` from

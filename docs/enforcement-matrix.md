@@ -351,11 +351,35 @@ The rows above were not wrong about the design; nothing was checking them.
 ## CI note
 
 Linux and macOS each run an enforcement probe on a hosted runner of that OS (⁵,
-⁸). Windows is the exception: its AppContainer smoke tests are skipped on
-GitHub-hosted Windows runners, which cannot reliably spawn AppContainer child
-processes, so the Windows column rests on local and self-hosted runs. That is a
-limitation of the hosted environment, not of the provider — and the reason the
-Windows cells say "measured" rather than "CI".
+⁸). Windows is the exception: hosted Windows runners refuse to create
+AppContainer children — `CreateProcess` returns "Access is denied" for every
+executable, including `cmd.exe` — so anything that launches a real contained
+process skips there. That is a limitation of the hosted environment, not of the
+provider, and it is the reason the Windows cells say "measured" rather than "CI".
+
+What still runs on the hosted Windows runner is most of the suite: 441 tests
+pass with `NVX_PROBE=1`, covering ACL derivation, capability SIDs, profile
+generation and the syscall wrappers. The 21 that skip are exactly the ones that
+need a live contained child — which is to say, exactly the ones that would prove
+containment.
+
+`scripts/sandbox-enforcement-windows.ps1` closes that by hand. It asserts the
+same five outcomes as the Linux probe (writes and reads denied outside, both
+allowed inside, egress denied with an empty allowlist) and is run on a real
+Windows machine before a release; see CONTRIBUTING.md. It is wired into CI as
+well, where it detects the runner's limitation and skips, so that if a future
+image can host an AppContainer it begins asserting without anyone remembering to
+enable it.
+
+Two things it deliberately does not cover. Egress denial there is
+direct-connection only: the AppContainer holds no network capability, so the
+refusal does not depend on the allowlist, and a machine carrying a leftover
+pre-0.5.0 loopback exemption can still have egress forwarded through a loopback
+service (³, and `nvx doctor` is the check for it — the script prints a warning
+when it detects one). And the smoke script's own host-write check writes through
+the sandbox's redirected `%USERPROFILE%`, so it passes whenever redirection
+works; the enforcement probe uses absolute paths resolved outside the sandbox
+for that reason.
 
 One Linux test skips unprivileged and is re-run as root in the same build:
 Ubuntu 24.04's AppArmor hardening allows an unprivileged user namespace to be
