@@ -123,13 +123,23 @@ jobs:
         ./scripts/sandbox-smoke.sh
         ./scripts/sandbox-smoke-egress.sh
 
+    # The smoke script checks a sandboxed process can write its own working
+    # directory, which would pass against a sandbox that blocks nothing. The
+    # enforcement script is the one that can fail: it asserts what must be
+    # DENIED, what must still be ALLOWED, and the documented read weakness, so
+    # macOS stops being the platform whose claims rest on reading the generator.
     - name: macOS sandbox smoke
       if: matrix.os == 'macos-latest'
       shell: bash
       run: |
         go build -o nvx .
-        chmod +x scripts/sandbox-smoke-macos.sh
+        chmod +x scripts/sandbox-smoke-macos.sh scripts/sandbox-enforcement-macos.sh
         ./scripts/sandbox-smoke-macos.sh
+
+    - name: macOS containment enforcement
+      if: matrix.os == 'macos-latest'
+      shell: bash
+      run: ./scripts/sandbox-enforcement-macos.sh
 
   security-scan:
     name: Security Scan
