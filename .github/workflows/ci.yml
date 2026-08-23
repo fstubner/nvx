@@ -29,7 +29,15 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        # 24, not 20, because scripts/sandbox-smoke-egress.ps1 needs
+        # --use-env-proxy to exist: Node core ignores HTTP_PROXY without it, so on
+        # an older runtime the allowlisted half of that check can never pass and
+        # the script skipped itself before reaching anything about nvx. It now
+        # skips on the real blocker instead -- hosted Windows runners refusing to
+        # create AppContainer children -- which is the difference between a
+        # misleading reason and a true one. Node 20 is also deprecated on the
+        # runners.
+        node-version: '24'
 
     - name: Verify dependencies
       run: go mod verify
