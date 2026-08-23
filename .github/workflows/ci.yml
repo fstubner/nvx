@@ -119,9 +119,19 @@ jobs:
       shell: bash
       run: |
         go build -o nvx .
-        chmod +x scripts/sandbox-smoke.sh scripts/sandbox-smoke-egress.sh
+        chmod +x scripts/sandbox-smoke.sh scripts/sandbox-smoke-egress.sh scripts/sandbox-enforcement-linux.sh
         ./scripts/sandbox-smoke.sh
         ./scripts/sandbox-smoke-egress.sh
+
+    # The smoke scripts check that the sandbox runs and that blocked egress
+    # fails. This one asserts the filesystem guarantees with absolute paths --
+    # the smoke script's host-write check goes through the sandbox's own $HOME,
+    # which is the redirected guest profile, so it passes whenever the redirect
+    # works even if nothing is restricted.
+    - name: Linux containment enforcement
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash
+      run: ./scripts/sandbox-enforcement-linux.sh
 
     # The smoke script checks a sandboxed process can write its own working
     # directory, which would pass against a sandbox that blocks nothing. The
