@@ -66,6 +66,26 @@ SECRET="$OUTSIDE/credentials"
 printf 'SECRET-CONTENT-DO-NOT-LEAK\n' > "$SECRET"
 FORBIDDEN_WRITE="$OUTSIDE/should-not-exist"
 
+# A runtime Landlock actually permits.
+#
+# landlockReadOnlyRules grants read+exec on /usr /lib /lib64 /bin /sbin /etc and
+# on nvx's own versions/, bin/ and current/ -- and nothing else, because it is an
+# allowlist with no deny rule. The hosted runner's Node lives in
+# /opt/hostedtoolcache, so a contained process cannot exec it: the first
+# privileged run of this probe got "fork/exec .../node: permission denied" with
+# the sandbox working exactly as specified.
+#
+# Installing an nvx-managed runtime is both the fix and the realistic case --
+# managing runtimes is what nvx is for. NVX_HOME is scratch so a developer
+# running this does not gain a runtime in their real ~/.nvx.
+export NVX_HOME="$PROJ/nvxhome"
+mkdir -p "$NVX_HOME"
+echo "Installing an nvx-managed runtime (Landlock does not permit exec outside its allowlist)..."
+if ! "$NVX" -y install 22 >/dev/null 2>&1 || ! "$NVX" -y default 22 >/dev/null 2>&1; then
+  echo "::warning::could not install an nvx-managed runtime (network?); skipping Linux enforcement probe" >&2
+  exit 0
+fi
+
 cd "$PROJ"
 cat > .nvx-policy.json <<'POLICY'
 {
