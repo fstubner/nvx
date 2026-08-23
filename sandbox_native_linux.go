@@ -76,7 +76,31 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// still in the old namespace and one reached the public internet. Supplying the
 	// flag at clone time puts the whole child process in the new namespace from
 	// birth, which is deterministic and needs no thread pinning.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: supervisorCloneFlags(netCtx.Mode)}
+	// CLONE_NEWUSER, with this user mapped to root inside it, is what makes the
+	// rest of these flags possible without privileges.
+	//
+	// CLONE_NEWPID and CLONE_NEWNET both require CAP_SYS_ADMIN in the current
+	// user namespace. Without CLONE_NEWUSER an ordinary user has none, so the
+	// clone failed with EPERM and nvx fail-closed -- the Linux sandbox could not
+	// start at all except as root. Measured on WSL2 Ubuntu 24.04 and on a hosted
+	// Ubuntu runner: NEWPID|NEWNET is refused, NEWUSER|NEWPID|NEWNET succeeds,
+	// for the same user in the same shell.
+	//
+	// It went unnoticed because every Linux smoke script skips when a namespace
+	// cannot be created, so the one condition that proved the sandbox unusable
+	// was also the condition that stopped anything checking it.
+	//
+	// The target-side clone in applyLinuxNamespaces has always done this; only
+	// the supervisor's was missing it.
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWUSER | supervisorCloneFlags(netCtx.Mode),
+		UidMappings: []syscall.SysProcIDMap{
+			{ContainerID: 0, HostID: syscall.Getuid(), Size: 1},
+		},
+		GidMappings: []syscall.SysProcIDMap{
+			{ContainerID: 0, HostID: syscall.Getgid(), Size: 1},
+		},
+	}
 
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
