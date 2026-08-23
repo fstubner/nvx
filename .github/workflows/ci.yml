@@ -137,8 +137,17 @@ jobs:
     - name: Linux containment enforcement
       if: matrix.os == 'ubuntu-latest'
       shell: bash
-      timeout-minutes: 6
-      run: sudo -E env "PATH=$PATH" "HOME=$HOME" ./scripts/sandbox-enforcement-linux.sh
+      timeout-minutes: 8
+      run: |
+        # Ubuntu 24.04 restricts what processes inside an unprivileged user
+        # namespace may do, through AppArmor rather than through Landlock. nvx
+        # creates NEWUSER|NEWNS, and exec of a perfectly allowlisted runtime was
+        # refused with EACCES until this is relaxed. It is a property of the
+        # distribution's default hardening, not of nvx, and an ephemeral runner
+        # is the right place to turn it off; a real user on 24.04 would hit the
+        # same wall, which is worth knowing separately.
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
+        sudo -E env "PATH=$PATH" "HOME=$HOME" ./scripts/sandbox-enforcement-linux.sh
 
     # The smoke script checks a sandboxed process can write its own working
     # directory, which would pass against a sandbox that blocks nothing. The
