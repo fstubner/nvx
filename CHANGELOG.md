@@ -49,6 +49,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its project could never have passed and the other was measuring the host's
   internet connection. Both now run strictly contained.
 
+### Changed
+
+* **The published guarantees now match the evidence, in both directions.** README,
+  `SECURITY.md`, `PRODUCT.md` and `docs/enforcement-matrix.md` said macOS was
+  unverified at runtime and that Linux rested on privileged CI. Neither is true
+  now: each runs an enforcement probe on a hosted runner of its own OS, asserting
+  what must be denied *and* what must still be allowed, so a sandbox that refuses
+  everything fails rather than passes.
+
+  Four macOS cells stay unclaimed rather than rounded up — that an allowlisted host
+  completes through the proxy, that UDP in particular is refused, that nvx fails
+  closed without `sandbox-exec`, and which layer refuses the outbound connection
+  the probe does observe being refused.
+
+  macOS still does not contain reads. That is now asserted rather than merely
+  admitted: the probe requires the read to succeed, so tightening the profile fails
+  CI and forces all four documents to move in the same change.
+
 ## [0.5.3] - 2026-08-23
 
 ### Added
