@@ -123,7 +123,10 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
 - **A `.env` inside the project is readable by a contained install.** The project
   directory has to be readable for an install to work, and `.env` lives in it.
   Environment *variables* are scrubbed; a file is a file. Secrets outside the
-  project — `~/.ssh`, `~/.aws`, `~/.npmrc` — stay unreachable.
+  project — `~/.ssh`, `~/.aws`, `~/.npmrc` — stay unreachable on Windows and
+  Linux. **On macOS they do not**: the Seatbelt profile allows filesystem reads
+  (see `docs/enforcement-matrix.md` note 2), so macOS contains writes and egress
+  but not credential reads.
 - **Directory names outside the project are visible on Windows, contents are not.**
   A contained process can list your home directory, `C:\Users` and `C:\`, which is
   enough to learn which credential stores exist. The profile root carries an ACE

@@ -38,8 +38,17 @@ read system libraries and the dyld shared cache, whose locations vary by macOS
 version (e.g. the Cryptexes firmlink on Apple Silicon) and cannot be enumerated
 reliably; a strict read allowlist breaks process launch. Write containment and
 egress control remain enforced, and environment secrets are scrubbed with `$HOME`
-redirected to an ephemeral guest profile, so the sensitive material is still
-protected.
+redirected to an ephemeral guest profile.
+
+**That redirection does not protect a file from being read, and this note used to
+say it did** -- it claimed "the sensitive material is still protected", which is
+true of writes and false of reads. `$HOME` decides where `~` expands to; it does
+not stop anything opening `/Users/<you>/.ssh/id_rsa` by absolute path, and a
+postinstall script looking for credentials does not need `~` to find them. On
+macOS, credential *reads* are not contained. Say so rather than reasoning around
+it: the write and egress guarantees are real and the read guarantee is absent,
+which is a narrower product than the same sentence describes on Windows and
+Linux.
 
 ¹ On macOS, egress is gated by the loopback proxy and OS network rules. Linux
 additionally removes all non-loopback interfaces (network namespace), so DNS to
