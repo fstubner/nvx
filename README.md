@@ -301,24 +301,29 @@ system.
 | Workdir write allowed | Yes — measured | Yes — CI | Yes — CI |
 | Host profile read blocked | Yes — measured | Yes — CI (Landlock allowlist) | **No** — CI confirms reads are allowed |
 | Egress blocked when not allowlisted | Yes — measured | Yes — CI | Yes — CI |
-| Allowlisted host reachable through the proxy | Yes — measured (AppContainer + parent proxy over a UNIX socket) | Yes — CI (loopback-only netns + parent proxy over a UNIX socket) | Profile only (Seatbelt + loopback proxy) |
-| Raw TCP/UDP bypass blocked at OS | Yes — measured (no network capability granted) | Yes — CI (netns + seccomp UDP deny) | Direct outbound refused — CI; UDP, and which layer refuses, untested |
-| Fail-closed if FS/network primitive missing | Yes — measured | Yes — CI (Landlock 5.13+, iproute2 for netns) | Profile only |
+| Allowlisted host reachable through the proxy | Yes — measured (AppContainer + parent proxy over a UNIX socket) | Yes — CI (loopback-only netns + parent proxy over a UNIX socket) | Yes — CI (Seatbelt + loopback proxy) |
+| Raw TCP/UDP bypass blocked at OS | Yes — measured (no network capability granted) | Yes — CI (netns + seccomp UDP deny) | Yes — CI (TCP and UDP; which layer refuses TCP is untested) |
+| Fail-closed if FS/network primitive missing | Yes — measured | Yes — CI (Landlock 5.13+, iproute2 for netns) | Yes — CI (refuses to run without `sandbox-exec`) |
+| A contained server reachable from the host | Only via `--expose` | Yes | Yes |
 
-**What backs the macOS column, as of 2026-08-23.**
+**What backs the macOS column, as of 2026-08-24.**
 `scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on every CI
-build and asserts the denials, not just that the command ran. On the latest run a
-contained process reported `WRITE_OUTSIDE=DENIED`, `WRITE_INSIDE=ALLOWED`,
-`READ_OUTSIDE=ALLOWED` and `EGRESS=DENIED`. So write containment and egress denial
-are now observed behaviour on macOS hardware rather than inferred from the profile
-text, and the read weakness is observed too — it is asserted deliberately, so that
-tightening the profile fails CI and forces this table to be updated with it.
+build and asserts the denials, not just that the command ran. Latest run:
+`WRITE_OUTSIDE=DENIED`, `WRITE_INSIDE=ALLOWED`, `READ_OUTSIDE=ALLOWED`,
+`EGRESS=DENIED`, `UDP_EGRESS=DENIED`, and an allowlisted host tunnelling through
+the proxy with `CONNECT=200`.
 
-Two macOS cells remain "profile only" and are not being rounded up. Nothing tests
-that an *allowlisted* host completes through the macOS proxy, and nothing tests
-UDP specifically or that nvx fails closed when `sandbox-exec` is absent. The
-older, broader disclaimer — "nothing has ever been verified on macOS hardware" —
-is no longer accurate, and leaving it would be its own kind of wrong.
+That last one matters more than its size suggests: every other assertion runs
+with an empty allowlist, so all of them would also pass against a sandbox that
+had failed to start. Requiring an allowlisted host to *succeed* is what separates
+enforcement from breakage. The read weakness is asserted too, deliberately — if
+the profile is ever tightened, CI fails and forces this table to be updated with
+it.
+
+One macOS cell is still not claimed: the probe's outbound TCP attempt is refused,
+but nothing distinguishes a refusal at DNS from one at connect, and per the
+per-OS notes that distinction is real on macOS. It is left open rather than
+rounded up.
 
 \* **Windows egress became enforced in 0.5.0 and was not before.** Until then the
 sandbox held the `internetClient` capability and connected directly, so

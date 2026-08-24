@@ -27,12 +27,12 @@ running system and which are not.
 | Host filesystem read restricted | Yes⁴ | Yes⁸ | No² (confirmed⁵) |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
-| Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Profile only⁵ |
-| Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Direct outbound refused⁵; UDP profile only (`deny default`, localhost permitted) |
+| Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |
+| Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes⁵ (TCP and UDP; UDP refused at bind) |
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
 | Any loopback service reachable | Only with a leftover exemption³ | No (loopback-only netns) | No⁶ (proxy port only) |
 | A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
-| Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Profile only⁵ (needs `/usr/bin/sandbox-exec`) |
+| Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
 
 ² On macOS the Seatbelt profile allows filesystem reads. The dynamic linker must
 read system libraries and the dyld shared cache, whose locations vary by macOS
@@ -66,34 +66,50 @@ external resolvers cannot leave; on macOS a determined process could still
 attempt DNS via the OS resolver. This is the main per-OS difference and is why
 Linux has the strongest network story.
 
-⁵ **Most of the macOS column is now confirmed on macOS hardware; two cells are
-not.** `scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on
-every CI build and asserts the denials rather than only that the command ran. A
-contained process reports, and CI requires:
+⁵ **The macOS column is confirmed on macOS hardware, with one stated exception.**
+`scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on every CI
+build and asserts the denials rather than only that the command ran. A contained
+process reports, and CI requires:
 
 ```
-WRITE_OUTSIDE=DENIED   WRITE_INSIDE=ALLOWED   READ_OUTSIDE=ALLOWED   EGRESS=DENIED
+WRITE_OUTSIDE=DENIED   WRITE_INSIDE=ALLOWED   READ_OUTSIDE=ALLOWED
+EGRESS=DENIED          UDP_EGRESS=DENIED      CONNECT=200 (allowlisted host)
 ```
 
-`WRITE_INSIDE` is there because a sandbox that refuses everything would satisfy
-every denial above it and is a broken launch, not enforcement; only the positive
-control tells them apart. `READ_OUTSIDE=ALLOWED` pins the documented weakness in
-² deliberately — if the profile is ever tightened this fails, which forces README,
-SECURITY.md, PRODUCT.md and this page to be updated in the same change rather than
-quietly going wrong in the flattering direction.
+Two of those are load-bearing in a way the others are not. `WRITE_INSIDE` and
+`CONNECT=200` are the positive controls: every denial above them would also be
+satisfied by a sandbox that had failed to start, and requiring something to
+*succeed* is the only thing that tells enforcement from breakage. `CONNECT=200`
+is the one that closed the largest gap here — until 2026-08-24 the whole script
+ran with an empty allowlist and could only ever observe refusals.
 
-Still profile only, and deliberately not rounded up: that an **allowlisted** host
-completes through the macOS proxy (the probe runs with an empty allowlist, so it
-only exercises refusal), that **UDP** in particular is refused, and that nvx
-**fails closed** when `/usr/bin/sandbox-exec` is absent. The script does check that
-`sandbox-exec` exists and fails loudly if a future runner image drops it, which is
-a different claim from nvx behaving correctly without it.
+`READ_OUTSIDE=ALLOWED` pins the documented weakness in ² deliberately. If the
+profile is ever tightened this fails, which forces README, SECURITY.md,
+PRODUCT.md and this page to be updated in the same change rather than quietly
+going wrong in the flattering direction.
 
-`EGRESS=DENIED` also does not say which layer refused. The probe's request is a
-direct one — Node's classic `https` API ignores `HTTPS_PROXY`, so it never reaches
-the proxy — and it does not complete, but a DNS failure and a refused TCP connect
-are the same observation from inside. Per ¹, macOS is the platform where that
-distinction is real, so it is left unclaimed rather than assumed favourably.
+`UDP_EGRESS=DENIED` is refused at **bind**, not at send: sending on an unbound
+UDP socket makes the runtime bind one implicitly and Seatbelt rejects that with
+EPERM on 0.0.0.0. That is stronger than the send-level refusal expected, and it
+arrives as an error event rather than a callback error — unhandled, it killed the
+probe before it wrote a report, which is how the first version of that check
+failed on a real runner instead of recording a pass.
+
+Failing closed without `/usr/bin/sandbox-exec` is asserted by a unit test rather
+than by the script, because it needs that file to be absent and it cannot be
+removed from the machine under test. `seatbeltExecPath` is a variable so the test
+can move it; it asserts both that nvx reports failure and that the command left no
+trace, since reporting failure while having run the thing uncontained is the
+outcome that would actually matter. The script separately checks `sandbox-exec`
+exists and fails loudly if a future runner image drops it, which is a different
+claim.
+
+**Still unclaimed:** `EGRESS=DENIED` does not say which layer refused. The probe's
+request is a direct one — Node's classic `https` API ignores `HTTPS_PROXY`, so it
+never reaches the proxy — and it does not complete, but a DNS failure and a
+refused TCP connect are the same observation from inside. Per ¹, macOS is the
+platform where that distinction is real, so it is left open rather than assumed
+favourably.
 
 This footnote read "nobody has checked" until 2026-08-23, and before that the
 only macOS check in CI was `scripts/sandbox-smoke-macos.sh`, which asserted that a
