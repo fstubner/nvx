@@ -172,22 +172,26 @@ func TestDocumentedLeadingFlagsAreParsedAsLeading(t *testing.T) {
 	}
 }
 
-// --strict must keep working from inside the wrapped command's own arguments,
-// and --standard must not.
+// None of nvx's three containment flags is read from the wrapped command's own
+// arguments. They must all lead.
 //
-// That asymmetry is deliberate -- one only adds containment, the other reduces
-// it -- and it was documented backwards, in the README and in a struct comment,
-// both saying payload flags are stripped and ignored.
-func TestPayloadStrictAddsContainmentAndPayloadStandardCannotRemoveIt(t *testing.T) {
-	strictPolicy := levelStrict
-	standardPolicy := levelStandard
-
-	if !shouldContain(classYourCode, standardPolicy, shimOptions{payloadStrict: true}) {
-		t.Error("--strict among the command's own arguments did not add containment; it is honoured " +
-			"by design because sneaking in a flag that sandboxes you harder gains nothing")
+// --no-sandbox and --standard were always ignored there, because they REDUCE
+// containment and a dependency's arguments must not weaken the sandbox around
+// it. --strict was honoured there until 2026-08-24 on the reasoning that adding
+// containment is harmless — true of an attacker, false of a user, since --strict
+// is TypeScript's and ESLint's flag and `nvx tsc --strict` was silently sandboxed
+// as a result. See TestStrictIsNotReadFromTheProgramsArguments.
+func TestNoContainmentFlagIsReadFromTheCommandsOwnArguments(t *testing.T) {
+	if shouldContain(classYourCode, levelStandard, shimOptions{payloadStrict: true}) {
+		t.Error("--strict among the command's own arguments changed containment; it belongs to the " +
+			"program there and must lead to apply to nvx")
 	}
-	if !shouldContain(classYourCode, strictPolicy, shimOptions{payloadStandard: true}) {
+	if !shouldContain(classYourCode, levelStrict, shimOptions{payloadStandard: true}) {
 		t.Error("--standard among the command's own arguments weakened a strict policy; a dependency's " +
 			"arguments must not be able to reduce containment")
+	}
+	if !shouldContain(classInstall, levelStandard, shimOptions{payloadNoSandbox: true}) {
+		t.Error("--no-sandbox among the command's own arguments uncontained an install; that is the " +
+			"bypass this rule exists to refuse")
 	}
 }

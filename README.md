@@ -4,7 +4,7 @@
 
 
 
-[![Go Version](https://img.shields.io/badge/Go-1.23%2B-00ADD8?style=flat-square&logo=go)](#) [![Platforms](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)](#) [![Release](https://img.shields.io/badge/Release-0.5.5-orange?style=flat-square)](#) [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+[![Go Version](https://img.shields.io/badge/Go-1.23%2B-00ADD8?style=flat-square&logo=go)](#) [![Platforms](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)](#) [![Release](https://img.shields.io/badge/Release-0.5.6-orange?style=flat-square)](#) [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 
 
@@ -186,7 +186,7 @@ npm run dev
 node server.js
 ```
 
-Use `nvx --no-sandbox <command>` to bypass isolation for one command — the flag must come *before* the command. Passed after it (`npm --no-sandbox install`) it is stripped and ignored, deliberately: otherwise a package's own arguments could turn the sandbox off around itself. `--strict` is the exception and is honoured in either position, because it only ever adds containment.
+Use `nvx --no-sandbox <command>` to bypass isolation for one command — the flag must come *before* the command. **All three containment flags (`--no-sandbox`, `--standard`, `--strict`) work only in that leading position.** Written after the command they belong to the command: nvx notices them, tells you they did not apply, and passes them through untouched. That is deliberate in both directions — a package's own arguments must not be able to turn the sandbox off around itself, and nvx must not quietly reinterpret a word that belongs to another tool. `--strict` was honoured in either position until 0.5.6, which meant `nvx tsc --strict` was silently sandboxed: `--strict` is TypeScript's flag, not nvx's.
 
 After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh **project bin shims**. These route `node_modules/.bin` tools (e.g. `vite`, `eslint`) through nvx, so they use the pinned runtime and are audited. They are **not** contained at the default `standard` level: a local CLI is code your project chose to install, which nvx classifies the same as your own code. `isolation.level: strict` contains them too.
 

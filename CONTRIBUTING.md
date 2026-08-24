@@ -83,7 +83,11 @@ ACE hides a secret, that one session cannot read another's guest home, and that
 the relay does not expose host loopback services — roughly twenty end-to-end
 containment assertions that skip on hosted CI and run here.
 
-Expect **0 failures and exactly these 4 skips**:
+Expect **0 failures and exactly these 4 top-level skips**. `go test -v` also
+prints a fifth `--- SKIP` line for the subtest
+`TestStageAppContainerExecutableThroughALinkedDirectory/symlink`, which has the
+same Developer Mode cause as the third row — count top-level skips, or a reader
+following this literally goes looking for a phantom:
 
 | Skip | Why it is expected |
 |---|---|
