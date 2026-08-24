@@ -404,7 +404,7 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   that is when the permission grants are made and remembered.
 
   Measured on Windows 11: ~2.4s for a project's first contained run, ~390ms for
-  every one after, of which ~210ms is Node's own startup. Before 0.5.5 the steady
+  every one after, of which ~210ms is Node's own startup. Before 0.5.6 the steady
   state was ~650ms here and has been measured at ~1s and ~2.2s on other machines —
   nvx re-read every access-control entry on every launch, seventeen `icacls`
   processes a command, and now remembers the ones it has already verified.
