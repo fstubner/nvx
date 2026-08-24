@@ -71,7 +71,17 @@ func sidListContains(sids []string, sidStr string) bool {
 
 // listLoopbackExemptSIDs reads the machine's exemption list. The read needs no
 // elevation; only adding or removing does.
-func listLoopbackExemptSIDs() ([]string, error) {
+// listLoopbackExemptSIDs is a variable so a test can supply an exempt machine.
+//
+// The warning this feeds is the ONLY mitigation for a hole the enforcement matrix
+// describes as making the allowlist "unreachable to trust", and it was covered by
+// a single test that skips unless the machine already carries an exemption. That
+// test skipped in CI and on every healthy developer machine, so the matrix's claim
+// that the check "is now pinned by TestExemptMachineIsWarnedAbout" was true only
+// on a broken machine. Registering a real exemption to test it needs elevation and
+// would leave the tester's machine less safe than it found it, so the seam goes
+// here -- the same shape as seatbeltExecPath for the macOS fail-closed test.
+var listLoopbackExemptSIDs = func() ([]string, error) {
 	out, err := runWinCmd(15*time.Second, "CheckNetIsolation", "LoopbackExempt", "-s")
 	if err != nil {
 		return nil, fmt.Errorf("CheckNetIsolation LoopbackExempt -s: %v (%s)", err, strings.TrimSpace(string(out)))

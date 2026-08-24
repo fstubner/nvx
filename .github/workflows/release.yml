@@ -26,6 +26,48 @@ jobs:
       - name: Verify dependencies
         run: go mod verify
 
+      # This job runs on the tag and only tests on Ubuntu, so on its own it can
+      # publish a draft built from a commit whose Windows or macOS job later
+      # fails -- and did: the draft for v0.5.5 was complete while that commit's CI
+      # run was still in progress. A human still gates publication, so nothing
+      # broken can reach users this way, but "the draft exists" should not be
+      # weaker evidence than "CI passed".
+      #
+      # Waiting rather than duplicating the matrix: re-running three platforms
+      # here would double every release's cost to re-answer a question CI has
+      # already answered for the same SHA.
+      #
+      # Written with `gh` rather than a third-party wait action on purpose. This
+      # is the release pipeline of a supply-chain security tool; adding someone
+      # else's code to the job that signs and publishes its binaries, to save
+      # twenty lines of polling, is the trade this project exists to argue
+      # against.
+      - name: Wait for CI on this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sha="${GITHUB_SHA}"
+          for _ in $(seq 60); do   # 60 x 20s = 20 minutes
+            runs=$(gh run list --workflow=ci.yml --commit "$sha" \
+                     --json status,conclusion --jq '.[]' || echo '')
+            if [ -z "$runs" ]; then
+              echo "No CI run for $sha yet; waiting."
+            elif echo "$runs" | jq -e 'select(.status != "completed")' >/dev/null 2>&1; then
+              echo "CI still running for $sha."
+            elif echo "$runs" | jq -e 'select(.conclusion != "success")' >/dev/null 2>&1; then
+              echo "::error::CI did not pass for $sha; refusing to build a release from it."
+              gh run list --workflow=ci.yml --commit "$sha"
+              exit 1
+            else
+              echo "CI passed for $sha."
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::timed out waiting for CI on $sha"
+          exit 1
+
       - name: Run tests
         run: go test -race ./...
 

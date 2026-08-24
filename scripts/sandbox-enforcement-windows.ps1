@@ -88,9 +88,30 @@ try {
     # this script on a real Windows machine before cutting a release.
     $launch = & $nvx shim node -e "process.exit(0)" 2>&1 | Out-String
     if ($launch -match 'AppContainer launch failed') {
-        Write-Host "This host cannot create AppContainer children; skipping the containment assertions."
+        # Only the two shapes a HOST refusal takes, not any launch failure.
+        #
+        # This skipped on the mere presence of "AppContainer launch failed", so a
+        # regression that broke every launch would have read as "this host cannot
+        # host one" and the gate would have passed having asserted nothing -- the
+        # exact failure mode the Linux probe was rewritten to close. The two
+        # strings below are the ones requireAppContainerLaunch documents for a
+        # hosted runner refusing every executable, cmd.exe included.
+        #
+        # What this still cannot distinguish: a regression whose error happens to
+        # be "Access is denied". Nothing available from PowerShell can create an
+        # AppContainer independently of nvx to settle that, so it is narrowed
+        # rather than closed, and said so here rather than left to be assumed.
+        if ($launch -match 'Access is denied' -or $launch -match 'The system cannot find the file specified') {
+            Write-Host "This host cannot create AppContainer children; skipping the containment assertions."
+            Write-Host ("  " + $launch.Trim())
+            exit 0
+        }
+        Write-Host "FAIL: the sandbox could not launch, and not in a way this host is known to refuse." -ForegroundColor Red
+        Write-Host "      A hosted runner refuses with 'Access is denied' or 'The system cannot find the"
+        Write-Host "      file specified'. This is neither, so treat it as a regression rather than an"
+        Write-Host "      environment limit:"
         Write-Host ("  " + $launch.Trim())
-        exit 0
+        exit 1
     }
 
     # Arguments, not environment variables: nvx scrubs the environment on the way

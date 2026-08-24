@@ -746,7 +746,9 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	})
 
 	opts := parseShimOptions(args)
-	args = opts.args
+	// args is deliberately NOT replaced by a filtered copy. nvx reads its own
+	// flags out of these arguments; it does not take them away from the program
+	// they were typed for. See parseShimOptions.
 	opts.strictFlag = strictFlag
 	opts.standardFlag = standardFlag
 
@@ -805,7 +807,10 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	if contain {
 		trace.note(runModeSandboxed, "")
 		if opts.payloadNoSandbox {
-			LogInfo("--no-sandbox is ignored when passed to a wrapped command. To run without isolation, use: nvx --no-sandbox %s ...", cmdName)
+			LogInfo("--no-sandbox is ignored when passed to a wrapped command, and is passed on to %s unchanged. To run without isolation, use: nvx --no-sandbox %s ...", cmdName, cmdName)
+		}
+		if opts.payloadBareProvider {
+			LogInfo("--filesystem-provider needs its value attached, as --filesystem-provider=native. Written with a space, nvx cannot tell the value from one of %s's own arguments, so it is passed through untouched.", cmdName)
 		}
 		if isGlobalInstall(cmdName, args) {
 			// Normally unreachable: the same check runs before verification above.

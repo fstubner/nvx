@@ -81,11 +81,25 @@ one, not to assert today.
 AppContainers to check that a sandbox cannot read another project, that a deny
 ACE hides a secret, that one session cannot read another's guest home, and that
 the relay does not expose host loopback services — roughly twenty end-to-end
-containment assertions that skip on hosted CI and run here. Expect **0 failures
-and only 3 skips**: the flaky feasibility prototype (excluded on purpose), an
-internal helper child, and one symlink test that needs Developer Mode. More
-skips than that means something is quietly not being checked; last measured on
-Windows 11, 2026-08-23, at 319 passing in about 4½ minutes.
+containment assertions that skip on hosted CI and run here.
+
+Expect **0 failures and exactly these 4 skips**:
+
+| Skip | Why it is expected |
+|---|---|
+| flaky feasibility prototype | excluded on purpose; needs `NVX_PROBE_PROTOTYPES=1` |
+| internal child for the launch timing probe | a helper, not a test |
+| creating symlinks needs Developer Mode | environment, not product |
+| this machine has no nvx loopback exemption | the healthy state; the exempt branch is covered by `sandbox_loopback_exemption_seam_windows_test.go` |
+
+A fifth means something is quietly not being checked — go and look at it rather
+than at this table. Last measured on Windows 11, 2026-08-24: **332 passing** in
+about 4½ minutes.
+
+That number is a tripwire and it has already caught something. It read "3 skips"
+while the real count was 4, and the extra one was the loopback-exemption check
+verifying nothing on a healthy machine — found by an acceptance pass noticing the
+mismatch, not by anyone re-reading the tests.
 
 That is why `docs/enforcement-matrix.md` says **measured** for the Windows
 column and **CI** for the other two. Running both is what keeps the word

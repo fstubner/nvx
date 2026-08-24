@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.5] - 2026-08-24
 
+### Fixed (found by an independent acceptance pass before release)
+
+* **nvx no longer takes your program's arguments away from it.** It read its own
+  flags — `--no-sandbox`, `--strict`, `--standard`, `--filesystem-provider` — out
+  of a wrapped command's arguments and *removed* them, anywhere in the line, past
+  `--`, silently:
+
+  ```
+  nvx npx tsc --strict            → tsc ran WITHOUT --strict
+  nvx npx electron --no-sandbox   → electron never saw it
+  nvx node app.js -- --strict     → stripped past the end-of-options separator
+  nvx node app.js --filesystem-provider notes.txt keep  → "notes.txt" eaten too
+  ```
+
+  Those names are not nvx's to take: `--strict` belongs to TypeScript and ESLint,
+  `--no-sandbox` to Chromium and everything embedding it. A non-strict typecheck
+  was being reported as a strict one, with no error. It applied to uncontained
+  runs too, where nvx has no security interest at all.
+
+  nvx now *notices* these flags without confiscating them, and stops reading at
+  `--`. The anti-bypass rule is unchanged and still tested: a weakening flag
+  smuggled through a package manager's arguments is still refused — it is just
+  passed on to the program as well, and you are told it was ignored.
+  `--filesystem-provider` now only reads the documented `=` spelling, because
+  finding the value of the separated form meant consuming an argument that
+  belonged to the program.
+
+* **The loopback-exemption warning is now tested on a healthy machine.** It is the
+  only mitigation for a hole this project's own documentation calls serious, and
+  the single test covering it skipped unless the machine already carried an
+  exemption — so it skipped in CI and everywhere else, while the enforcement
+  matrix claimed the check was "pinned by" it. The detection now has a seam, and
+  four tests cover the exempt branch, the healthy branch, and the `nvx doctor`
+  line that had no test at all.
+
+* **The Windows containment gate can no longer pass by mistaking a regression for
+  an environment limit.** It skipped on *any* launch failure, so a change that
+  broke every launch would have read as "this host cannot create AppContainer
+  children". It now skips only on the two refusal shapes a hosted runner actually
+  produces, and fails on anything else.
+
+* **A release can no longer be built from a commit whose CI has not passed.** The
+  release workflow tested only on Ubuntu and did not wait for the cross-platform
+  run — the v0.5.5 draft was complete while that commit's CI was still going. It
+  now waits, using `gh` rather than a third-party action, because this is the job
+  that publishes the binaries of a supply-chain security tool.
+
 ### Added
 
 * **`--expose`: a server running inside the Windows sandbox can now be reached
