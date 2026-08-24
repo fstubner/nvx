@@ -57,12 +57,24 @@ func TestReverseRelayReachesAServerInsideTheContainer(t *testing.T) {
 	// Run it deliberately with NVX_PROBE_PROTOTYPES=1. Fixing the flakiness, or
 	// promoting this into a real feature with a real test, are both fine futures;
 	// gating other people's builds on it while it is neither is not.
-	if os.Getenv("NVX_PROBE_PROTOTYPES") != "1" {
-		t.Skip("set NVX_PROBE_PROTOTYPES=1 to run (flaky feasibility prototype, not a regression guard)")
-	}
+	// The child dispatch comes FIRST, above the gate. The contained child is this
+	// same binary re-invoked, and it is the fixture rather than a second run of
+	// the prototype -- so it must not be subject to the switch that decides
+	// whether the prototype runs at all.
+	//
+	// With the order reversed it skipped instantly and wrote no report, and the
+	// parent reported "the contained child exited before serving" on every run.
+	// That happened when the gate moved from NVX_PROBE to NVX_PROBE_PROTOTYPES:
+	// the child's environment carries the former and was never given the latter,
+	// so a change meant to stop this prototype turning CI red at random turned it
+	// from 1-in-8 flaky into always failing. Nothing noticed, because it only
+	// runs when someone asks for it by hand.
 	if os.Getenv("NVX_REVERSE_CHILD") == "1" {
 		runReverseRelayChild()
 		os.Exit(0)
+	}
+	if os.Getenv("NVX_PROBE_PROTOTYPES") != "1" {
+		t.Skip("set NVX_PROBE_PROTOTYPES=1 to run (flaky feasibility prototype, not a regression guard)")
 	}
 
 	const probeProfile = "nvx.sandbox.reverseprobe"
