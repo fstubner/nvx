@@ -397,12 +397,20 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   revisit stay. To clean one by hand:
   `icacls <project> /remove:g *S-1-15-2-...` for each such entry `icacls <project>`
   lists.
-- **A contained command is roughly 2 seconds, and the first one after a new runtime
-  is staged can be minutes.** The ~38ms dispatch figure above measures the shim, not
-  the sandbox: a contained launch has to prepare an isolated home and check
-  permissions. Steady state has been measured at ~1s and ~2.2s on different
-  machines; the first run after nvx stages a runtime copies the whole distribution
-  and has been measured at 45s to 3 minutes. Uncontained commands are unaffected.
+- **A contained command costs a few hundred milliseconds, and the first one after a
+  new runtime is staged can be minutes.** The ~38ms dispatch figure above measures
+  the shim, not the sandbox: a contained launch has to prepare an isolated home and
+  check permissions. The first run in a project is slower than the rest, because
+  that is when the permission grants are made and remembered.
+
+  Measured on Windows 11: ~2.4s for a project's first contained run, ~390ms for
+  every one after, of which ~210ms is Node's own startup. Before 0.5.5 the steady
+  state was ~650ms here and has been measured at ~1s and ~2.2s on other machines —
+  nvx re-read every access-control entry on every launch, seventeen `icacls`
+  processes a command, and now remembers the ones it has already verified.
+
+  The first run after nvx stages a runtime copies the whole distribution and has
+  been measured at 45s to 3 minutes. Uncontained commands are unaffected.
 - **The first contained run after an install is slow, once, in proportion to the
   dependency tree.** Measured 2026-08-20: loading a freshly installed 2,552-file
   package inside the sandbox took 5.8s the first time and 461ms every time after.

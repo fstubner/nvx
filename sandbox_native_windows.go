@@ -275,6 +275,12 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		)
 	}
 	if err != nil {
+		// A launch failure is the one signal that a remembered grant may have gone
+		// stale -- an ACE removed behind nvx's back by a repair tool or a profile
+		// reset. Forget them so the next run re-reads every ACL and re-grants what
+		// is missing, rather than skipping the fix for a week and leaving the cure
+		// to someone who knows the cache file exists.
+		invalidateGrantCache()
 		LogError("AppContainer launch failed: %v", err)
 		return 1
 	}

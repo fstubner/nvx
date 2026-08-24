@@ -203,7 +203,21 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 	// allowlist is even consulted. Every sandbox on the machine shares one package
 	// identity and therefore one loopback namespace, so reaching this relay is not
 	// evidence of being entitled to its allowlist.
-	if !strings.Contains(got, "PROXY_ANONYMOUS=407") {
+	//
+	// Two refusal shapes, not one -- the same lesson requireAppContainerLaunch
+	// records for CreateProcess. The proxy answers 407, and under load it
+	// sometimes closes the connection instead, which arrives here as
+	// READ_FAILED:EOF. Both are refusals and the closed connection is if anything
+	// the stricter of the two, but only 407 was accepted, so this test failed
+	// about one full-suite run in two while the behaviour it guards was correct.
+	//
+	// What must NOT pass is 200, or a tunnel that carried data. Those are the
+	// outcomes that would mean an anonymous client borrowed the allowlist, and
+	// they are still failures.
+	anonRefused := strings.Contains(got, "PROXY_ANONYMOUS=407") ||
+		strings.Contains(got, "PROXY_ANONYMOUS=READ_FAILED") ||
+		strings.Contains(got, "PROXY_ANONYMOUS=WRITE_FAILED")
+	if !anonRefused {
 		t.Errorf("a client with no credential was not refused; another session could borrow this allowlist:\n%s", got)
 	}
 

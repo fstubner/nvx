@@ -221,6 +221,13 @@ func deleteAppContainerProfile(profileName string) {
 // makes the far more expensive grant below idempotent: after the first run the
 // ACE is already in place and there is nothing to do.
 func appContainerHasGrant(sidStr, path string) bool {
+	// A grant verified recently is not re-read. That check is a process spawn,
+	// and in the steady state it is the dominant cost of a contained launch --
+	// see sandbox_grant_cache_windows.go for the measurement and for why caching
+	// only the positive answer is the safe direction.
+	if grantCacheHas(sidStr, path) {
+		return true
+	}
 	out, err := runWinCmd(10*time.Second, "icacls", path)
 	if err != nil {
 		return false
@@ -233,6 +240,7 @@ func appContainerHasGrant(sidStr, path string) bool {
 		if strings.Contains(strings.ToUpper(line), "(DENY)") {
 			return false
 		}
+		grantCacheRecord(sidStr, path)
 		return true
 	}
 	return false
