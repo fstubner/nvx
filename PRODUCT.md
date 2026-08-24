@@ -98,12 +98,13 @@ Deferred with intent, not built:
   contain reads**, and that is asserted rather than merely admitted, so tightening
   the profile fails CI and forces the documents to move with it.
 
-  Two earlier versions of this constraint were wrong in opposite directions: until
+  Earlier versions of this constraint were wrong in opposite directions: until
   2026-08-20 it called macOS egress "cooperative" when the profile is `(deny
-  default)`, and until 2026-08-23 it called macOS unverified at runtime after a
-  macOS runner had begun proving otherwise. What remains untested on macOS is
-  narrower than either: an allowlisted host completing through the proxy, UDP
-  specifically, and failing closed without `sandbox-exec`.
+  default)`; until 2026-08-23 it called macOS unverified at runtime after a macOS
+  runner had begun proving otherwise; and until 2026-08-24 it listed an
+  allowlisted host, UDP, and failing closed without `sandbox-exec` as untested
+  after all three had started passing. What remains unclaimed is narrower again:
+  which layer refuses the outbound connection the probe observes being refused.
 
   `docs/enforcement-matrix.md` is the authority; where it and this document
   disagree, that matrix is right and this file is stale.

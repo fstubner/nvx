@@ -404,11 +404,17 @@ executable, including `cmd.exe` — so anything that launches a real contained
 process skips there. That is a limitation of the hosted environment, not of the
 provider, and it is the reason the Windows cells say "measured" rather than "CI".
 
-What still runs on the hosted Windows runner is most of the suite: 441 tests
-pass with `NVX_PROBE=1`, covering ACL derivation, capability SIDs, profile
-generation and the syscall wrappers. The 21 that skip are exactly the ones that
-need a live contained child — which is to say, exactly the ones that would prove
-containment.
+What still runs on the hosted Windows runner is most of the suite: measured
+2026-08-24, 442 pass and 35 skip with `NVX_PROBE=1`, covering ACL derivation,
+capability SIDs, profile generation and the syscall wrappers. Twenty of those
+skips are the ones that need a live contained child — which is to say, exactly
+the ones that would prove containment. The rest are environmental (no staged
+runtime, a directory that inherits nothing) or deliberate.
+
+Counts here are the kind of number that rots quietly. This paragraph said "441
+pass, 21 skip" while the run it described was 442 and 35, and the gap was found
+by an acceptance pass rather than by anyone re-reading it. Treat a mismatch as
+worth investigating rather than worth correcting: the skip count is the signal.
 
 `scripts/sandbox-enforcement-windows.ps1` closes that by hand. It asserts the
 same five outcomes as the Linux probe (writes and reads denied outside, both

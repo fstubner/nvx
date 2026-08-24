@@ -86,9 +86,11 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   permitted to write its own project — the last of those being what distinguishes
   enforcement from a sandbox that has simply failed to start.
 
-  What macOS does not do is contain reads; see the entry below. Two cells stay
-  untested there and are not claimed: that an allowlisted host completes through
-  the proxy, and that nvx fails closed when `sandbox-exec` is missing.
+  What macOS does not do is contain reads; see the entry below. Since 2026-08-24 a
+  macOS runner also confirms that an allowlisted host completes through the proxy,
+  that UDP is refused, and that nvx fails closed without `sandbox-exec`. One cell
+  stays unclaimed: which layer refuses the outbound connection the probe observes
+  being refused, DNS or connect.
 
   This entry has been wrong in both directions. Until 2026-08-20 it said macOS
   egress was cooperative and a raw socket could bypass the allowlist, which
