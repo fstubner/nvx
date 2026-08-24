@@ -9,14 +9,21 @@ import (
 	"os/exec"
 )
 
+// seatbeltExecPath is where macOS keeps sandbox-exec. A variable rather than a
+// constant so a test can point it at a path that does not exist and check that
+// nvx refuses to run instead of running uncontained -- the one macOS
+// fail-closed claim that could not be verified while this was inlined, since
+// the real file cannot be removed from a running system.
+var seatbeltExecPath = "/usr/bin/sandbox-exec"
+
 // platformLaunchNative runs the command under sandbox-exec (Seatbelt) with
 // filesystem write restrictions — this is the default native path on macOS.
 func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath string, cleanEnv []string, netCtx NetworkLaunchContext) int {
-	sandboxExec := "/usr/bin/sandbox-exec"
-	if _, err := os.Stat(sandboxExec); err != nil {
-		LogError("native sandbox requires sandbox-exec at %s.", sandboxExec)
+	if _, err := os.Stat(seatbeltExecPath); err != nil {
+		LogError("native sandbox requires sandbox-exec at %s.", seatbeltExecPath)
 		return 1
 	}
+	sandboxExec := seatbeltExecPath
 
 	// Only the guest home and the working directory are writable. This used to also
 	// pass config.NvxHome and the runtime binary's directory, which let any
