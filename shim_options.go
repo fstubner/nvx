@@ -12,9 +12,13 @@ var standardFlag bool
 type shimOptions struct {
 	filesystemProvider string
 	// payloadNoSandbox records a --no-sandbox smuggled through the wrapped
-	// command (e.g. `npx --no-sandbox`). It is stripped but NOT honored: only an
-	// explicit `nvx --no-sandbox <cmd>` disables isolation, so nothing can bypass
-	// the sandbox by tacking a flag onto a package manager.
+	// command (e.g. `npx --no-sandbox`). It is NOT honoured: only an explicit
+	// `nvx --no-sandbox <cmd>` disables isolation, so nothing can bypass the
+	// sandbox by tacking a flag onto a package manager.
+	//
+	// It is passed on to the command unchanged. Until 2026-08-24 it was also
+	// removed, which is a different and much larger claim than refusing to honour
+	// it -- see parseShimOptions.
 	payloadNoSandbox bool
 	// payloadStrict / payloadStandard record --strict/--standard smuggled
 	// through the wrapped command's own args.
@@ -22,10 +26,10 @@ type shimOptions struct {
 	// They are treated differently, and this comment said otherwise for long
 	// enough to mislead a reviewer: payloadStrict IS honoured (shouldContain),
 	// because --strict only ever adds containment and there is nothing to gain
-	// by sneaking in a flag that sandboxes you harder. payloadStandard is
-	// stripped and NOT honoured, for the anti-bypass reason payloadNoSandbox
-	// has: it reduces containment, so a dependency's own arguments must not be
-	// able to apply it.
+	// by sneaking in a flag that sandboxes you harder. payloadStandard is NOT
+	// honoured, for the anti-bypass reason payloadNoSandbox has: it reduces
+	// containment, so a dependency's own arguments must not be able to apply it.
+	// Neither is removed from what the command receives.
 	payloadStrict   bool
 	payloadStandard bool
 	// payloadBareProvider records a `--filesystem-provider` with no "=", which nvx
