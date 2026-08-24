@@ -115,9 +115,16 @@ try {
 
 // Must be DENIED: UDP to an external host. Asserted separately from TCP because
 // the profile's `(deny default)` covers both and nothing checked the second, so
-// "raw TCP/UDP blocked" was half measured and half assumed. A refusal here is
-// the OS rejecting sendto, not a missing reply -- an unanswered packet would
-// look identical to a delivered one, so only an error counts as denied.
+// "raw TCP/UDP blocked" was half measured and half assumed. A missing reply
+// would not count -- an unanswered packet looks exactly like a delivered one --
+// so only an error from the OS counts as denied.
+//
+// It is refused at BIND, not at send: sending on an unbound UDP socket makes
+// node bind one implicitly, and Seatbelt rejects that with EPERM on 0.0.0.0.
+// That is a stronger refusal than the send-level one this expected, and it
+// arrives as an 'error' EVENT -- without this handler it is an unhandled error
+// that kills node before the report is written, which is how the first version
+// of this check failed on a real runner rather than recording a pass.
 const dgram = require('dgram');
 const sock = dgram.createSocket('udp4');
 let udpDone = false;
@@ -128,6 +135,7 @@ function udp(result) {
   try { sock.close(); } catch (e) {}
   step();
 }
+sock.on('error', () => udp('DENIED'));
 sock.send(Buffer.from('x'), 53, '1.1.1.1', (err) => udp(err ? 'DENIED' : 'ALLOWED'));
 setTimeout(() => udp('TIMEOUT'), 8000);
 
