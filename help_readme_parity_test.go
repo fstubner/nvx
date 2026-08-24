@@ -145,6 +145,24 @@ func TestDocumentedLeadingFlagsAreParsedAsLeading(t *testing.T) {
 		}
 	}
 
+	// --expose carries a value, in both spellings, and both must consume it. The
+	// separated form is the one that can go wrong: a parser that consumes the
+	// flag but not its argument leaves "5173" as the command.
+	defer func() { exposePortsFlag = nil }()
+	for _, form := range [][]string{
+		{"nvx", "--expose=5173", "npm", "install"},
+		{"nvx", "--expose", "5173", "npm", "install"},
+	} {
+		exposePortsFlag = nil
+		args, _, _, _, _ := parseStartupFlags(form)
+		if len(args) < 2 || args[1] != "npm" {
+			t.Errorf("%v: --expose did not consume its value; the command would be read as %q", form, args)
+		}
+		if len(exposePortsFlag) != 1 || exposePortsFlag[0] != "5173" {
+			t.Errorf("%v: recorded %v", form, exposePortsFlag)
+		}
+	}
+
 	// And one that is deliberately NOT leading. If this ever starts parsing as
 	// leading, the README section it lives in has to move with it.
 	args, _, _, _, _ := parseStartupFlags([]string{"nvx", "--filesystem-provider=native", "npm"})

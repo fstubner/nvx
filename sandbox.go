@@ -272,6 +272,11 @@ type NetworkLaunchContext struct {
 	// A netns has no route to any allowlisted host, so the proxy must stay
 	// outside it; a UNIX socket is how the contained side still reaches it.
 	EgressSocketPath string
+	// ExposePorts maps ports inside the sandbox to ports on the host's loopback
+	// (isolation.network.expose_ports, or --expose). Windows only: it exists
+	// because Windows refuses connections INTO an AppContainer, which Linux and
+	// macOS do not do, so a contained server is already reachable there.
+	ExposePorts []exposeMapping
 }
 
 // runSandbox is the main entry point for executing a command inside the nvx sandbox.
@@ -415,7 +420,10 @@ func runSandbox(config SandboxConfig) int {
 		}
 	}
 
-	netCtx := NetworkLaunchContext{Mode: policy.Isolation.Network.Mode}
+	netCtx := NetworkLaunchContext{
+		Mode:        policy.Isolation.Network.Mode,
+		ExposePorts: normalizeExposePorts(append(policy.Isolation.Network.ExposePorts, exposePortsFlag...)),
+	}
 	if egress != nil {
 		netCtx.HTTPProxyHost, netCtx.HTTPProxyPort = egress.HTTPListenHostPort()
 		netCtx.SOCKSProxyHost, netCtx.SOCKSProxyPort = egress.SOCKSListenHostPort()

@@ -153,6 +153,11 @@ harder:
   --strict                 Contain your own code too, not just installs and
                            ad-hoc tools. Works before the command or among its
                            arguments
+  --expose <in>[:<host>]   (Windows) Publish a port a server inside the sandbox
+                           listens on, so the host can reach it — Windows
+                           refuses connections into an AppContainer. The two
+                           numbers must differ; omit the host one to have a free
+                           port picked and printed. Grants no network capability
 
 Passed to the wrapped command only, not before it:
   --filesystem-provider=<name>  Override isolation.filesystem.provider
@@ -451,14 +456,31 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   that has not finished in two minutes is anomalous; an `npx`-launched dev server
   running for hours is doing its job, and a hint firing on it would be noise. So
   for tool runners the hang is documented rather than detected.
-- **On Windows, a server started inside the sandbox is unreachable from the host.**
-  The bind succeeds and the tool prints that it is listening, but Windows refuses
-  connections into an AppContainer from outside it — the same restriction the
-  egress relay exists to work around, and unaffected by the loopback exemption. So
-  `nvx npx vite`, `npx serve` and similar appear to start and then serve nobody.
-  Your own `npm run dev` is uncontained at the default `standard` level and is
-  unaffected; for a contained tool runner use `nvx --no-sandbox npx <tool>`.
-  Measured 2026-08-20; the FAQ had claimed loopback worked for dev servers.
+- **On Windows, a server started inside the sandbox needs `--expose` to be
+  reachable from the host.** Windows refuses connections into an AppContainer, so
+  a contained `npx vite` binds its port, prints that it is listening, and serves
+  nobody. `--expose` publishes it:
+
+  ```
+  nvx --expose 5173:8080 npx vite
+  ```
+
+  The two numbers cannot be the same, and that is not a style choice: an
+  AppContainer shares the host's network stack rather than getting its own, so one
+  port number cannot hold both the contained server and the host listener —
+  measured, with the contained server losing the race and dying on `EADDRINUSE`.
+  Give the port your server uses inside, then the port you want to visit. With the
+  second omitted (`--expose 5173`) nvx picks a free one and prints the URL.
+
+  Nothing is relaxed to make this work: the contained side dials *outward* over a
+  UNIX socket and the parent splices inbound requests onto it, so no network
+  capability is granted and egress stays exactly as restricted. That is asserted
+  on every run of the probe, not merely intended.
+
+  Your own `npm run dev` is uncontained at the default `standard` level and needs
+  none of this. Until 0.5.5 there was no way to reach a contained server at all;
+  the FAQ had claimed loopback worked for dev servers, which was measured false on
+  2026-08-20.
 - **On macOS, reads are not contained** — see the note near the top of this file.
   Write containment and egress denial are confirmed on macOS hardware in CI; the
   read weakness is confirmed there too, and is a property of the profile rather

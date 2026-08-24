@@ -3,10 +3,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -217,7 +219,26 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// grants the guest home or the working directory.
 	capabilitySIDs := append(scopeCaps, networkCaps...)
 
-	if useRelay {
+	// Publishing a port needs the in-container supervisor too, since the tunnels
+	// are dialled from in there. In the default proxy mode it is already running
+	// for the relay; this is what makes --expose work in "open" mode as well,
+	// where nothing else would have started it.
+	exposeCtx, cancelExpose := context.WithCancel(context.Background())
+	defer cancelExpose()
+	for _, m := range netCtx.ExposePorts {
+		e, perr := publishExposedPort(exposeCtx, guestHome, m)
+		if perr != nil {
+			LogError("Could not publish port %d from the sandbox: %v", m.Container, perr)
+			return 1
+		}
+		defer e.Close()
+		// The host port is the one the developer types, and it is deliberately not
+		// the one their dev server prints, so say both.
+		LogInfo("Sandbox port %d is published at http://127.0.0.1:%d (the URL the server prints is only valid inside)",
+			m.Container, e.hostPort)
+	}
+
+	if useRelay || len(netCtx.ExposePorts) > 0 {
 		cmdPath, launchArgs, err = wrapWithEgressSupervisor(
 			sid, config.NvxHome, guestHome, workDir, netCtx, cmdPath, launchArgs,
 		)
@@ -287,7 +308,10 @@ func wrapWithEgressSupervisor(
 	sid uintptr, nvxHome, guestHome, workDir string,
 	netCtx NetworkLaunchContext, cmdPath string, args []string,
 ) (string, []string, error) {
-	if netCtx.EgressSocketPath == "" {
+	// The egress socket is required only when the relay is the reason we are here.
+	// A launch that wraps solely to publish a port (network.mode "open") has no
+	// proxy to reach and must not be refused for lacking one.
+	if netCtx.EgressSocketPath == "" && windowsEgressNeedsRelay(netCtx.Mode) {
 		return "", nil, fmt.Errorf("no egress socket was prepared for this session")
 	}
 	supervisor, err := stageAppContainerSupervisor(nvxHome)
@@ -306,9 +330,13 @@ func wrapWithEgressSupervisor(
 		"--nvx-home=" + nvxHome,
 		"--network-mode=" + netCtx.Mode,
 		"--egress-socket=" + netCtx.EgressSocketPath,
-		"--",
-		cmdPath,
 	}
+	// Only the container port crosses: inside the sandbox the host mapping is
+	// meaningless, and the tunnel socket is named by the container port.
+	for _, m := range netCtx.ExposePorts {
+		supervisorArgs = append(supervisorArgs, "--expose="+strconv.Itoa(m.Container))
+	}
+	supervisorArgs = append(supervisorArgs, "--", cmdPath)
 	return supervisor, append(supervisorArgs, args...), nil
 }
 

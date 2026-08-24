@@ -76,6 +76,21 @@ type NetworkPolicy struct {
 	DefaultAllow  []string `json:"default_allow"`
 	AllowHosts    []string `json:"allow_hosts"`
 	PromptUnknown bool     `json:"prompt_unknown"`
+	// ExposePorts publishes a port a server inside the sandbox listens on, so the
+	// host can reach it: ["5173"] or ["5173:8080"] as container[:host]. Windows
+	// refuses connections into an AppContainer, so without this a contained dev
+	// server binds, reports itself listening, and serves nobody.
+	//
+	// Strings rather than numbers because the host half is optional; with it
+	// omitted nvx picks a free port and prints the URL. The two cannot be the same
+	// number -- an AppContainer shares the host's network stack, so one port
+	// cannot hold both ends (see exposeMapping).
+	//
+	// This does NOT relax containment: the port is published by a tunnel the
+	// contained side dials outward, and no network capability is granted for it.
+	// It is also not an egress permission -- what the sandbox may reach is still
+	// AllowHosts alone.
+	ExposePorts []string `json:"expose_ports,omitempty"`
 
 	DefaultAllowSet  bool `json:"-"`
 	PromptUnknownSet bool `json:"-"`
@@ -545,6 +560,14 @@ func policyLoosens(before, after Policy) bool {
 		return true
 	}
 	if hostsAdded(before.Isolation.Network.AllowHosts, after.Isolation.Network.AllowHosts) {
+		return true
+	}
+	// Publishing a port is a widening, even though it grants the sandbox no new
+	// access. It puts something the contained process serves onto the host's
+	// loopback, where a browser will treat it with the trust localhost carries --
+	// so a project file that adds one is asking for something a developer should
+	// approve, exactly like an allowlist entry.
+	if hostsAdded(before.Isolation.Network.ExposePorts, after.Isolation.Network.ExposePorts) {
 		return true
 	}
 	if !strings.EqualFold(before.Isolation.Filesystem.Provider, after.Isolation.Filesystem.Provider) {

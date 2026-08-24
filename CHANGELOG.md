@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+* **`--expose`: a server running inside the Windows sandbox can now be reached
+  from the host.** A contained `npx vite` used to bind its port, print that it
+  was listening, and serve nobody — Windows refuses connections into an
+  AppContainer, and no setting changed that.
+
+  ```
+  nvx --expose 5173:8080 npx vite
+  ```
+
+  Also settable per project as `isolation.network.expose_ports: ["5173:8080"]`.
+  Omit the second number and nvx picks a free port and prints the URL.
+
+  **The two numbers cannot be the same.** An AppContainer shares the host's
+  network stack rather than getting its own, so one port cannot hold both the
+  contained server and the host listener; with both set to 51733 the contained
+  server lost the race and died with `EADDRINUSE`. Give the port your server uses
+  inside, then the port you want to visit.
+
+  **Nothing is relaxed to make this work.** The contained side dials *outward*
+  over a UNIX socket and the parent splices inbound requests onto those tunnels,
+  so no network capability is granted and egress stays exactly as restricted. The
+  end-to-end test asserts both in the same run: the host reaches the contained
+  server, and the contained process still cannot reach the internet. Adding a
+  port to a project policy counts as loosening it, so it needs the same approval
+  an allowlist entry does — publishing puts whatever the sandbox serves onto
+  loopback, where a browser extends it the trust localhost carries.
+
 ### Changed
 
 * **Windows containment can now be re-checked by running one script, rather than

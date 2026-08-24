@@ -215,7 +215,10 @@ func applyLandlockSandbox(guestHome, workDir, nvxHome string) error {
 	return nil
 }
 
-func runLandlockExecChild(guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath string, args []string) int {
+func runLandlockExecChild(a supervisorExecArgs) int {
+	guestHome, workDir, nvxHome := a.GuestHome, a.WorkDir, a.NvxHome
+	networkMode, egressSocket := a.NetworkMode, a.EgressSocket
+	cmdPath, args := a.CmdPath, a.CmdArgs
 	// The network namespace is created by the parent as a clone flag, so this
 	// process is already inside it (see platformLaunchNative for why it is not
 	// unshared here). Loopback exists but starts down.

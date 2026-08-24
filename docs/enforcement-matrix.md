@@ -31,6 +31,7 @@ running system and which are not.
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Direct outbound refused⁵; UDP profile only (`deny default`, localhost permitted) |
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
 | Any loopback service reachable | Only with a leftover exemption³ | No (loopback-only netns) | No⁶ (proxy port only) |
+| A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Profile only⁵ (needs `/usr/bin/sandbox-exec`) |
 
 ² On macOS the Seatbelt profile allows filesystem reads. The dynamic linker must
@@ -336,6 +337,36 @@ could not start a process at all: the target was given a nested user namespace
 whose uid/gid mapping is written through `/proc`, which its own Landlock ruleset
 does not grant. Both smoke scripts were also launching their probes uncontained.
 The rows above were not wrong about the design; nothing was checking them.
+
+⁹ **Two things about Windows containment that surprise people, both measured.**
+
+**An AppContainer shares the host's network stack.** It is not a Linux network
+namespace: a port bound inside the container is occupied on the host too, and
+vice versa. What Windows blocks is *connections into* the container, not the
+port's existence. So a contained server is unreachable while still holding the
+port, and `--expose` cannot publish a port under the same number it uses inside
+-- the parent's listener wins the race and the contained server dies with
+`EADDRINUSE`. Measured on Windows 11 with 51733 on both sides.
+
+`--expose` therefore maps `inside:host` with two different numbers. It grants no
+network capability: the contained side dials outward over AF_UNIX and the parent
+splices inbound requests onto those tunnels, so egress stays exactly as
+restricted. `TestExposedPortIsReachableFromTheHost` asserts both halves in one
+run -- the host reaches the contained server, and the contained process still
+cannot reach the internet.
+
+**A blocked write can report success.** A contained process writing to the user
+profile root gets no error, reads its own file back, and stats it -- while the
+host has no such file at that path. Windows redirects the write into a
+per-container view rather than refusing it. Measured 2026-08-24, with the
+contained process still running at the time of the host check, so this is not
+cleanup racing the observation.
+
+Containment holds either way, but it means an in-sandbox return value is not
+evidence on its own, in either direction. Every probe here checks the host's
+disk as well as what the contained process reported, which is why
+`scripts/sandbox-enforcement-windows.ps1` asserts the forbidden path is absent
+rather than trusting `WRITE_OUTSIDE=DENIED`.
 
 ## Docker provider
 

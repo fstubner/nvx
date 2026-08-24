@@ -235,9 +235,18 @@ func pruneUnusedSupervisors(nvxHome string) {
 // Isolation itself is not applied here, unlike the Landlock supervisor: the
 // AppContainer was applied by the parent's CreateProcess call and is inherited,
 // so by the time this runs the containment is already in force.
-func runAppContainerExecChild(workDir, networkMode, egressSocket, cmdPath string, args []string) int {
+func runAppContainerExecChild(a supervisorExecArgs) int {
+	workDir, networkMode, egressSocket := a.WorkDir, a.NetworkMode, a.EgressSocket
+	cmdPath, args := a.CmdPath, a.CmdArgs
+
 	relayCtx, cancelRelay := context.WithCancel(context.Background())
 	defer cancelRelay()
+
+	// Publish any exposed ports before the target starts, so a dev server that
+	// prints its URL immediately is reachable by the time anyone reads it.
+	for _, port := range a.ExposePorts {
+		startExposeTunnels(relayCtx, a.GuestHome, port)
+	}
 
 	var proxyEnvAddr string
 	if egressSocket != "" && windowsEgressNeedsRelay(networkMode) {
