@@ -119,6 +119,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **Contained commands on Windows are about 40% faster after a project's first
+  run** — ~650ms to ~390ms measured on Windows 11, of which ~210ms is Node's own
+  startup, so nvx's share of it more than halved.
+
+  Nothing about the sandbox changed. nvx was re-reading every access-control
+  entry on every launch: seventeen `icacls` processes a command, ~20ms each,
+  ~350ms of a ~410ms setup. The permission work itself is trivial — the cost was
+  starting the process to ask. About ten of those paths give the same answer on
+  every run for a given project and runtime, so nvx now remembers which grants it
+  has verified and stops re-asking.
+
+  Only *positive* answers are remembered, which is what makes it safe: a stale
+  "already granted" makes a launch fail, and can never make the sandbox more
+  permissive. Entries expire after a week, and any failed launch clears them all,
+  so a permission removed behind nvx's back is repaired on the next run rather
+  than needing anyone to know a cache file exists.
+
 * **macOS now proves three things it previously only described.** An allowlisted
   host must be *reachable* through the proxy, not merely a blocked one refused —
   every earlier assertion ran with an empty allowlist, so all of them would have
