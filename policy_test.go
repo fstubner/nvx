@@ -6,13 +6,15 @@ import (
 )
 
 func TestParseLandlockExecArgs(t *testing.T) {
-	guest, work, nvx, mode, shimCmd, sock, cmd, args, ok := parseSupervisorExecArgs([]string{
+	a, ok := parseSupervisorExecArgs([]string{
 		"--guest-home=/guest",
 		"--work-dir=/work",
 		"--nvx-home=/nvx",
 		"--network-mode=proxy",
 		"--command=node",
 		"--egress-socket=/guest/.nvx-egress.sock",
+		"--expose=5173",
+		"--expose=3000",
 		"--",
 		"/bin/node",
 		"-v",
@@ -20,12 +22,40 @@ func TestParseLandlockExecArgs(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ok")
 	}
-	if guest != "/guest" || work != "/work" || nvx != "/nvx" || mode != "proxy" || shimCmd != "node" ||
-		sock != "/guest/.nvx-egress.sock" || cmd != "/bin/node" {
-		t.Fatalf("unexpected parse: %q %q %q %q %q %q %q", guest, work, nvx, mode, shimCmd, sock, cmd)
+	if a.GuestHome != "/guest" || a.WorkDir != "/work" || a.NvxHome != "/nvx" || a.NetworkMode != "proxy" ||
+		a.ShimCommand != "node" || a.EgressSocket != "/guest/.nvx-egress.sock" || a.CmdPath != "/bin/node" {
+		t.Fatalf("unexpected parse: %+v", a)
 	}
-	if len(args) != 1 || args[0] != "-v" {
-		t.Fatalf("unexpected args: %v", args)
+	if len(a.CmdArgs) != 1 || a.CmdArgs[0] != "-v" {
+		t.Fatalf("unexpected args: %v", a.CmdArgs)
+	}
+	// Repeatable, and order-preserving: the supervisor opens one tunnel set per
+	// entry, so a dropped or reordered port is a port that silently is not served.
+	if len(a.ExposePorts) != 2 || a.ExposePorts[0] != 5173 || a.ExposePorts[1] != 3000 {
+		t.Fatalf("unexpected expose ports: %v", a.ExposePorts)
+	}
+}
+
+// TestParseSupervisorExecArgsRejectsUnusableExposePorts pins that a bad --expose
+// does not take the launch down. These arguments are built by nvx a few lines
+// from where they are parsed, so a bad value is an internal bug; refusing to
+// start the sandbox over one would turn a missing tunnel into a dead command.
+func TestParseSupervisorExecArgsRejectsUnusableExposePorts(t *testing.T) {
+	a, ok := parseSupervisorExecArgs([]string{
+		"--guest-home=/guest",
+		"--work-dir=/work",
+		"--expose=0",
+		"--expose=70000",
+		"--expose=notaport",
+		"--expose=5173",
+		"--",
+		"/bin/node",
+	})
+	if !ok {
+		t.Fatal("a bad --expose must not make the whole argument set invalid")
+	}
+	if len(a.ExposePorts) != 1 || a.ExposePorts[0] != 5173 {
+		t.Fatalf("expected only the usable port to survive, got %v", a.ExposePorts)
 	}
 }
 

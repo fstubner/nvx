@@ -14,6 +14,14 @@ var yesFlag = false
 var quietFlag = false
 var agentModeFlag = false
 
+// exposePortsFlag holds --expose values, which add to whatever
+// isolation.network.expose_ports already lists rather than replacing it.
+//
+// A package-level variable, like quietFlag above, rather than a sixth value out
+// of parseStartupFlags: that already returns five booleans and every caller
+// spells out the ones it does not want.
+var exposePortsFlag []string
+
 func init() {
 	var yes, noSandbox, strict, standard bool
 	os.Args, yes, noSandbox, strict, standard = parseStartupFlags(os.Args)
@@ -33,6 +41,18 @@ func init() {
 		// hides progress chatter and not security output.
 		quietFlag = true
 	}
+}
+
+// addExposePortFlag records one --expose value. A bad one is refused loudly
+// rather than ignored: the developer asked for a port to be reachable, and
+// silently not publishing it leaves them debugging a server that looks fine.
+func addExposePortFlag(v string) {
+	if _, err := parseExposeSpec(v); err != nil {
+		LogError("--expose: %v.", err)
+		LogInfo("Use --expose <port-inside-the-sandbox> or --expose <inside>:<host>, e.g. --expose 5173:8080.")
+		os.Exit(1)
+	}
+	exposePortsFlag = append(exposePortsFlag, v)
 }
 
 func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
@@ -62,6 +82,19 @@ func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
 		case "--standard":
 			standard = true
 		default:
+			// --expose=<port>, and --expose <port>. Both spellings, because the
+			// other valued flag nvx accepts (--filesystem-provider=) uses the
+			// first and every developer's muscle memory from docker -p uses the
+			// second.
+			if v, ok := strings.CutPrefix(args[i], "--expose="); ok {
+				addExposePortFlag(v)
+				continue
+			}
+			if args[i] == "--expose" && i+1 < len(args) {
+				addExposePortFlag(args[i+1])
+				i++
+				continue
+			}
 			filtered = append(filtered, args[i:]...)
 			return filtered, yes, noSandbox, strict, standard
 		}
@@ -239,20 +272,20 @@ func main() {
 		os.Exit(runWindowsSetup(nvxHome, undo))
 
 	case "__landlock-exec":
-		guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath, cmdArgs, ok := parseSupervisorExecArgs(os.Args[2:])
+		a, ok := parseSupervisorExecArgs(os.Args[2:])
 		if !ok {
 			LogError("Invalid __landlock-exec arguments")
 			os.Exit(1)
 		}
-		os.Exit(runLandlockExecChild(guestHome, workDir, nvxHome, networkMode, shimCommand, egressSocket, cmdPath, cmdArgs))
+		os.Exit(runLandlockExecChild(a))
 
 	case "__appcontainer-exec":
-		_, workDir, _, networkMode, _, egressSocket, cmdPath, cmdArgs, ok := parseSupervisorExecArgs(os.Args[2:])
+		a, ok := parseSupervisorExecArgs(os.Args[2:])
 		if !ok {
 			LogError("Invalid __appcontainer-exec arguments")
 			os.Exit(1)
 		}
-		os.Exit(runAppContainerExecChild(workDir, networkMode, egressSocket, cmdPath, cmdArgs))
+		os.Exit(runAppContainerExecChild(a))
 
 	case "help", "-h", "--help":
 		printHelp()
@@ -440,6 +473,10 @@ Options:
                          strict policy. Must come BEFORE the command
   --strict               Contain your own code too (not just installs/ad-hoc
                          tools). Honoured before the command or among its args
+  --expose <in>[:<host>] (Windows) Publish a port a server inside the sandbox
+                         listens on, so the host can reach it. The two numbers
+                         must differ. Omit the host port to have one picked and
+                         printed. Must come BEFORE the command
   --filesystem-provider=<name>  Override isolation.filesystem.provider. Passed
                          TO the command: nvx npm --filesystem-provider=...
   -y, --yes              Auto-approve all prompts
