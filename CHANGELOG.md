@@ -62,7 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CONTRIBUTING.md` counted top-level skips while `go test -v` prints one more for
   a subtest.
 
-## [0.5.5] - 2026-08-24
+## [0.5.5] - cut, never published
+
+Tagged and built, then blocked by an independent acceptance review that found
+the containment gap listed under 0.5.6 above. Nothing was released under this
+version; everything below ships in 0.5.6. Kept as its own section because the
+work is separable and the reason it did not ship is worth being able to find.
 
 ### Fixed (found by an independent acceptance pass before release)
 
@@ -163,14 +168,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   redirected `%USERPROFILE%`, which is meant to succeed, so it would have passed
   against a sandbox restricting nothing. It had no read assertion at all.
 
-* **Contained commands on Windows are about 40% faster after a project's first
-  run** — ~650ms to ~390ms measured on Windows 11, of which ~210ms is Node's own
-  startup, so nvx's share of it more than halved.
+* **Contained commands on Windows got faster after a project's first run.**
+  Measured on Windows 11, a warm `nvx --strict shim node -e 0`: **~650ms before,
+  ~390ms after**. Bare `node -e 0` on the same machine measures ~210ms, so most
+  of what remains is Node starting rather than nvx.
 
   Nothing about the sandbox changed. nvx was re-reading every access-control
-  entry on every launch: seventeen `icacls` processes a command, ~20ms each,
-  ~350ms of a ~410ms setup. The permission work itself is trivial — the cost was
-  starting the process to ask. About ten of those paths give the same answer on
+  entry on every launch: **17** `icacls` processes per command, each measured at
+  ~20ms. Sandbox setup measured ~410ms in total, of which the permission phase
+  alone measured ~250ms. The permission work itself is trivial — the cost was
+  starting a process to ask. About ten of those paths give the same answer on
   every run for a given project and runtime, so nvx now remembers which grants it
   has verified and stops re-asking.
 
