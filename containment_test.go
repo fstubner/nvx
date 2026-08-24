@@ -54,23 +54,37 @@ func TestShouldContain(t *testing.T) {
 	}
 }
 
-// TestStrictIsHonouredInThePayloadPosition covers F75. `nvx node --strict app.js`
-// silently ran uncontained: --strict was stripped from the arguments and then
-// discarded, so the user got neither the containment they asked for nor an error
-// saying they had not got it. `nvx help` shows the flag without saying it must
-// lead.
+// TestStrictIsNotReadFromTheProgramsArguments reverses an earlier decision, and
+// the reason is worth keeping.
 //
-// The anti-bypass rule that ignores smuggled flags is right for --no-sandbox and
-// --standard, which REDUCE containment. --strict only ever adds it, so there is
-// nothing to gain by sneaking it in.
-func TestStrictIsHonouredInThePayloadPosition(t *testing.T) {
+// --strict used to be honoured wherever it appeared, on the reasoning that it
+// only ever ADDS containment so there was nothing to gain by smuggling it. That
+// reasoning was about an attacker and forgot the ordinary user: --strict is
+// TypeScript's most-used flag, and ESLint's. `nvx tsc --strict` means "typecheck
+// strictly" and nvx read it as "sandbox this", quietly moving the command into a
+// container where writes outside the project are redirected to a throwaway home
+// -- and on Windows such a write REPORTS SUCCESS (docs/enforcement-matrix.md), so
+// a build appears to work and produces nothing.
+//
+// It is the same defect as nvx removing --strict from a program's arguments,
+// which was fixed alongside this: both treat a word that belongs to other tools
+// as nvx's own wherever it is found. Now it must lead, like --no-sandbox and
+// --standard, and the flag is still NOTICED so the user can be told why nothing
+// happened.
+func TestStrictIsNotReadFromTheProgramsArguments(t *testing.T) {
 	opts := parseShimOptions([]string{"--strict", "app.js"})
 	if !opts.payloadStrict {
-		t.Fatal("--strict was not parsed out of the payload arguments")
+		t.Fatal("--strict must still be noticed, so the user can be told it did not apply")
 	}
-	if !shouldContain(classYourCode, levelStandard, opts) {
-		t.Error("`nvx node --strict app.js` ran uncontained; --strict in the payload position " +
-			"must raise containment, since it can only ever add it")
+	if shouldContain(classYourCode, levelStandard, opts) {
+		t.Error("`nvx node app.js --strict` was contained; --strict is the program's flag there " +
+			"and must not silently change how nvx runs it")
+	}
+
+	// Leading --strict is the supported spelling and still works.
+	leading := shimOptions{strictFlag: true}
+	if !shouldContain(classYourCode, levelStandard, leading) {
+		t.Error("`nvx --strict node app.js` did not contain; the leading flag is the one that must work")
 	}
 }
 

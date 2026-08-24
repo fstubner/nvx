@@ -804,6 +804,14 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		}
 	}
 
+	// Said whether or not this run is contained, because the surprising case is
+	// the uncontained one: someone typed --strict expecting a sandbox and, since
+	// it is no longer read from the command's own arguments, did not get one.
+	// Saying it in both cases costs a line and avoids a silent difference.
+	if opts.payloadStrict && !strictFlag {
+		LogInfo("--strict is only read BEFORE the command. `%s ... --strict` is %s's own flag and was passed to it untouched; to contain this run use: nvx --strict %s ...", cmdName, cmdName, cmdName)
+	}
+
 	if contain {
 		trace.note(runModeSandboxed, "")
 		if opts.payloadNoSandbox {

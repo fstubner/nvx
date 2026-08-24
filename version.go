@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var appVersion = "0.5.5"
+var appVersion = "0.5.6"
 
 // Release represents a Node.js release from the official index.json
 type Release struct {

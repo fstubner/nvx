@@ -42,22 +42,26 @@ func shouldContain(class invocationClass, level isolationLevel, opts shimOptions
 	// call only — it is not a blanket bypass. `--standard` downgrades strict to
 	// standard, but standard still contains everything that is not your own
 	// code (installs, ad-hoc tools); it never uncontains an install.
-	// --strict is honoured wherever it appears, including inside the wrapped
-	// command's own arguments (`nvx node --strict app.js`, or a shimmed
-	// `node --strict app.js`). It only ever ADDS containment, so the anti-bypass
-	// rule that ignores smuggled flags does not apply to it: there is nothing to
-	// gain by sneaking in a flag that sandboxes you harder.
+	// --strict must LEAD, like --no-sandbox and --standard. It is not read from
+	// the wrapped command's own arguments.
 	//
-	// It was previously stripped and discarded in that position, which is the
-	// worst of both -- the flag vanished from the command line, so the user got
-	// neither the containment they asked for nor an error telling them they had
-	// not got it. `nvx help` shows `--strict` without saying it must lead.
+	// It used to be, on the reasoning that it only ever adds containment so there
+	// was nothing to gain by smuggling it. That reasoning was about an attacker
+	// and missed the ordinary user: `--strict` is TypeScript's most common flag,
+	// and ESLint's, and several others'. `nvx tsc --strict` meant "typecheck
+	// strictly", and nvx read it as "sandbox this", silently moving the command
+	// into a container where writes outside the project are redirected to a
+	// throwaway home -- and on Windows such a write REPORTS SUCCESS (see
+	// docs/enforcement-matrix.md). A build would appear to work and produce
+	// nothing.
 	//
-	// --standard keeps the old treatment: it REDUCES containment relative to a
-	// strict policy, so honouring it from inside a package's own arguments would
-	// let a dependency's script argument weaken the sandbox around it.
+	// That is the same defect as nvx removing --strict from the program's
+	// arguments, which was fixed a commit earlier: both come from treating a word
+	// that belongs to other tools as nvx's own wherever it is found. Noticing it
+	// is still fine, and payloadStrict is still recorded, so the caller can say
+	// why nothing happened.
 	effectiveLevel := level
-	if opts.strictFlag || opts.payloadStrict {
+	if opts.strictFlag {
 		effectiveLevel = levelStrict
 	} else if opts.standardFlag {
 		effectiveLevel = levelStandard

@@ -52,10 +52,19 @@ and run scripts. Its defenses are layered:
 2. **Supply-chain checks** — typosquatting detection, OSV vulnerability
    lookups, package release-age warnings, and install-script prompts run
    before untrusted code executes.
-3. **Process isolation** — shimmed commands run inside an OS-native sandbox
-   (Windows AppContainer, Linux Landlock + network namespace + seccomp,
-   macOS Seatbelt) with a scrubbed environment and filesystem writes confined
-   to the working directory and an ephemeral guest home.
+3. **Process isolation** — commands that fetch or execute package-authored code
+   run inside an OS-native sandbox (Windows AppContainer, Linux Landlock +
+   network namespace + seccomp, macOS Seatbelt) with a scrubbed environment and
+   filesystem writes confined to the working directory and an ephemeral guest
+   home.
+
+   That is installs (`install`, `ci`, `add`, `update`, `rebuild`, `dedupe`,
+   `audit fix`) and ad-hoc tool runners (`npx`, `bunx`, `npm exec`, `pnpm dlx`,
+   `bun x`, `npm create`, `npm init <initializer>`). It is **not** your own code:
+   `npm run build`, `npm test` and a bare `node app.js` run uncontained at the
+   default `standard` level, by design — `isolation.level: strict` extends
+   containment to those too. This entry said "shimmed commands" without the
+   distinction until 0.5.6, which was less careful than README on the same point.
 4. **Egress control** — outbound network access is mediated by a loopback
    allowlist proxy; unknown hosts are denied or prompted (fail-closed when
    non-interactive).

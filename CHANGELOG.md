@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2026-08-24
+
+### Security
+
+* **Commands that fetch and run untrusted package code were not being contained.**
+  `npx` was; the identical operation spelled any other way was not:
+
+  | Command | Before | Now |
+  |---|---|---|
+  | `npm exec`, `pnpm dlx`, `yarn dlx`, `bun x` | not contained | contained |
+  | `npm create`, `npm init <initializer>` | not contained | contained |
+  | `npm update`, `npm rebuild`, `npm dedupe`, `npm audit fix` | not contained | contained |
+  | `yarn upgrade`, `pnpm update`, `bun update` | not contained | contained |
+
+  These ran with no sandbox, no vulnerability scan and no typosquat check.
+  `npm exec cowsay` fetched a package from the registry and executed it
+  uncontained, while `npx cowsay` — the same thing — was contained. `npm rebuild`
+  re-runs every dependency's install scripts. `npm audit fix` is the command you
+  run *because of* a security advisory. `npm create vite` is how a project starts.
+
+  README claimed the opposite in four places and SECURITY.md in one, and no
+  limitations section mentioned it. No test covered it in either direction, which
+  is why it survived: the classification tests listed `npx`, `bunx`, `uvx`, `pyx`
+  and stopped. Found by an independent acceptance review of the 0.5.5 build,
+  which is why 0.5.5 was never published.
+
+  The reverse is now tested too — `npm run build`, `npm test`, a bare `npm init`
+  and `npm audit` without `fix` still run uncontained, because a security tool
+  that contains everything is one people switch off.
+
+### Fixed
+
+* **`--strict` is no longer read from a command's own arguments.** It must lead,
+  like `--no-sandbox` and `--standard`.
+
+  It was honoured anywhere on the reasoning that it only ever *adds* containment,
+  so smuggling it gained nothing. True of an attacker, wrong for everyone else:
+  `--strict` is TypeScript's most-used flag and ESLint's. `nvx tsc --strict` meant
+  "typecheck strictly" and nvx read it as "sandbox this", moving the command into
+  a container where writes outside the project are redirected to a throwaway home
+  — and on Windows such a write reports success, so a build could appear to work
+  and produce nothing.
+
+  Same defect as 0.5.5's fix for nvx *removing* those flags, in the opposite
+  direction: both came from treating a word that belongs to other tools as nvx's
+  own. nvx still notices it and now says why it did nothing.
+
+* **A skipped privileged containment test fails CI instead of warning.** The step
+  printed "it is verifying nothing" and let the job go green — the exact condition
+  that let three Linux checks report success for months.
+
+* Documentation corrected where it was less careful than the code:
+  `SECURITY.md` said "shimmed commands run inside an OS-native sandbox" without
+  the your-own-code distinction README makes; the `NVX_PROBE` skip count in
+  `CONTRIBUTING.md` counted top-level skips while `go test -v` prints one more for
+  a subtest.
+
 ## [0.5.5] - 2026-08-24
 
 ### Fixed (found by an independent acceptance pass before release)

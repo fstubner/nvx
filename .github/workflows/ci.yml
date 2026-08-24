@@ -133,8 +133,16 @@ jobs:
         # -run selects only the namespace-gated tests; a skip here means the
         # environment still cannot host them, which is worth seeing in the log.
         sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone' . 2>&1 | tee /tmp/priv.log
+        # A failure, not a warning. This said "it is verifying nothing" and then
+        # let the job go green, so the condition it names could persist
+        # indefinitely -- which is what happened on Linux before 2026-08-23, when
+        # three checks skipped on every machine including this runner and reported
+        # success for months. A step that describes a hole and does not act on it
+        # is a slower version of not checking.
         if grep -q '^--- SKIP' /tmp/priv.log; then
-          echo "::warning::a privileged containment test skipped even under sudo; it is verifying nothing"
+          echo "::error::a privileged containment test skipped even under sudo; it is verifying nothing"
+          grep -B3 '^--- SKIP' /tmp/priv.log || true
+          exit 1
         fi
 
     - name: Linux sandbox smoke
