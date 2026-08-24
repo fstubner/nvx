@@ -113,15 +113,34 @@ try {
   out.push(got.includes('SECRET-CONTENT') ? 'READ_OUTSIDE=ALLOWED' : 'READ_OUTSIDE=GARBLED');
 } catch (e) { out.push('READ_OUTSIDE=DENIED'); }
 
-// Must be DENIED: no host is allowlisted, so this must not complete.
-const req = https.get('https://example.com', () => { out.push('EGRESS=ALLOWED'); done(); });
-req.on('error', () => { out.push('EGRESS=DENIED'); done(); });
-req.setTimeout(15000, () => { req.destroy(); out.push('EGRESS=TIMEOUT'); done(); });
+// Must be DENIED: UDP to an external host. Asserted separately from TCP because
+// the profile's `(deny default)` covers both and nothing checked the second, so
+// "raw TCP/UDP blocked" was half measured and half assumed. A refusal here is
+// the OS rejecting sendto, not a missing reply -- an unanswered packet would
+// look identical to a delivered one, so only an error counts as denied.
+const dgram = require('dgram');
+const sock = dgram.createSocket('udp4');
+let udpDone = false;
+function udp(result) {
+  if (udpDone) return;
+  udpDone = true;
+  out.push('UDP_EGRESS=' + result);
+  try { sock.close(); } catch (e) {}
+  step();
+}
+sock.send(Buffer.from('x'), 53, '1.1.1.1', (err) => udp(err ? 'DENIED' : 'ALLOWED'));
+setTimeout(() => udp('TIMEOUT'), 8000);
 
-let finished = false;
-function done() {
-  if (finished) return;
-  finished = true;
+// Must be DENIED: no host is allowlisted, so this must not complete.
+const req = https.get('https://example.com', () => { out.push('EGRESS=ALLOWED'); step(); });
+req.on('error', () => { out.push('EGRESS=DENIED'); step(); });
+req.setTimeout(15000, () => { req.destroy(); out.push('EGRESS=TIMEOUT'); step(); });
+
+// Both async checks must land before the report is written, or whichever
+// finishes second is missing from it and reads as a failed assertion.
+let pending = 2;
+function step() {
+  if (--pending > 0) return;
   fs.writeFileSync(report, out.join('\n') + '\n');
   process.exit(0);
 }
@@ -156,6 +175,7 @@ expect() {
 expect "WRITE_OUTSIDE=DENIED" "a contained process wrote outside the project; write containment is the guarantee macOS makes"
 expect "WRITE_INSIDE=ALLOWED" "a contained process could not write its own project, so the sandbox is broken rather than strict, and every denial above proves nothing"
 expect "EGRESS=DENIED"        "a contained process reached a host with an empty allowlist; egress control is the other guarantee macOS makes"
+expect "UDP_EGRESS=DENIED"    "a contained process sent a UDP packet to an external host; the profile is (deny default) and that must cover UDP as well as TCP"
 
 # The documented weakness. A change here is not necessarily a regression -- it
 # may be an improvement -- but it must not go unnoticed, because four documents
@@ -175,9 +195,83 @@ if [[ -e "$FORBIDDEN_WRITE" ]]; then
   fail=1
 fi
 
+# Phase 2: the direction a denial-only check cannot reach.
+#
+# Everything above runs with an EMPTY allowlist, so it can only ever show that
+# things are refused -- which a sandbox that had failed to start would also show.
+# Allowlisting a host and requiring it to SUCCEED is what separates enforcement
+# from breakage, and it was the largest macOS cell still resting on the profile's
+# text rather than on a runner.
+#
+# CONNECT to the proxy directly rather than an ordinary HTTPS request: Node's
+# classic https API ignores HTTPS_PROXY, so a plain request goes direct and is
+# refused no matter how correct the allowlist is. Its status code IS the
+# allowlist decision -- 200 tunnelled, 403 refused -- which also tells a refusal
+# apart from an unreachable proxy, as an exit code cannot.
+echo "Phase 2: an allowlisted host must be reachable through the proxy..."
+cat > .nvx-policy.json <<'POLICY'
+{
+  "isolation": {
+    "enabled": true,
+    "level": "strict",
+    "network": {
+      "mode": "proxy",
+      "default_allow": ["example.com:443"],
+      "prompt_unknown": false
+    }
+  }
+}
+POLICY
+
+cat > connect.js <<'CONNECT'
+const http = require('http');
+const raw = process.env.HTTPS_PROXY || process.env.https_proxy || '';
+if (!raw) { console.log('CONNECT=no-proxy-env'); process.exit(0); }
+const u = new URL(raw);
+const req = http.request({
+  host: u.hostname, port: u.port, method: 'CONNECT', path: 'example.com:443',
+  headers: { 'Proxy-Authorization': 'Basic ' +
+    Buffer.from(decodeURIComponent(u.username) + ':' + decodeURIComponent(u.password)).toString('base64') },
+});
+req.on('connect', (res, socket) => { socket.destroy(); console.log('CONNECT=' + res.statusCode); process.exit(0); });
+req.on('response', res => { console.log('CONNECT=' + res.statusCode); process.exit(0); });
+req.on('error', e => { console.log('CONNECT=error ' + e.message); process.exit(0); });
+req.setTimeout(20000, () => { req.destroy(); console.log('CONNECT=timeout'); process.exit(0); });
+req.end();
+CONNECT
+
+# The policy above widens what the sandbox may reach, and nvx refuses to honour a
+# widening policy it has not been told to trust. This script wrote it a few lines
+# up, which is not the case that guard exists for.
+export NVX_TRUST_YES=true
+OUT2="$("$NVX" -y --strict shim node connect.js 2>&1 | grep '^CONNECT=' || true)"
+echo "  proxy said: ${OUT2:-<nothing>}"
+case "$OUT2" in
+  CONNECT=200) ;;
+  CONNECT=403)
+    echo "FAIL: an allowlisted host was refused by the allowlist. The sandbox is denying" >&2
+    echo "      everything rather than enforcing a policy, which every check above would" >&2
+    echo "      have passed regardless. This is the regression this phase exists for." >&2
+    fail=1
+    ;;
+  CONNECT=502)
+    # The proxy accepted the request and could not reach the host itself, so the
+    # allowlist did permit it -- which is the claim. Reading the status rather
+    # than an exit code is what makes this distinguishable from a refusal; an
+    # offline runner would otherwise look like a broken allowlist.
+    echo "note: the proxy allowed the host but could not reach it (502); this runner has no" >&2
+    echo "      outbound access. The allowlist decision was still correct." >&2
+    ;;
+  *)
+    echo "FAIL: unexpected proxy response for an allowlisted host: ${OUT2:-<nothing>}" >&2
+    fail=1
+    ;;
+esac
+
 if [[ $fail -ne 0 ]]; then
   echo "macOS enforcement probe FAILED." >&2
   exit 1
 fi
 
-echo "macOS enforcement probe passed: writes contained, egress denied, reads allowed as documented."
+echo "macOS enforcement probe passed: writes contained, egress denied for TCP and UDP,"
+echo "an allowlisted host reachable through the proxy, reads allowed as documented."
