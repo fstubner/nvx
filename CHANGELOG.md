@@ -119,6 +119,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **macOS now proves three things it previously only described.** An allowlisted
+  host must be *reachable* through the proxy, not merely a blocked one refused —
+  every earlier assertion ran with an empty allowlist, so all of them would have
+  passed against a sandbox that had failed to start. UDP is checked separately
+  from TCP, and turns out to be refused harder than expected: at bind rather than
+  at send. And nvx refusing to run at all when `sandbox-exec` is missing is now a
+  test rather than a reading of the code.
+
+  One macOS claim is still not made: the outbound connection the probe watches
+  being refused could be failing at DNS or at connect, and nothing distinguishes
+  them. On macOS that difference is real, so it stays open.
+
 * **The published guarantees now match the evidence, in both directions.** README,
   `SECURITY.md`, `PRODUCT.md` and `docs/enforcement-matrix.md` said macOS was
   unverified at runtime and that Linux rested on privileged CI. Neither is true
