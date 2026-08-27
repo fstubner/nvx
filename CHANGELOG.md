@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+* **Sandboxed MCP servers no longer pile up after their client exits.** Measured
+  on the maintainer's machine: 18 nvx processes, 12 of them orphaned, 43 node
+  processes holding 3.9 GB between them, the system freezing. Every orphan was
+  `nvx shim npx <an MCP server>`.
+
+  nvx only left when two signals agreed: its input pipe had hung up *and* the
+  process that started it had exited. On Windows a sibling that inherited the
+  write end of that pipe keeps it open indefinitely, so the first signal never
+  arrived. nvx had already recorded the reason itself, in its own hangup log:
+  "the parent has exited, but something still holds the input pipe open".
+
+  The parent having exited is now enough on its own. That is safe because of when
+  the watchdog arms at all: only when stdin is a pipe, meaning someone
+  deliberately wired a channel to nvx. If the process that did that is gone,
+  nothing is talking to it.
+
+  It does not reopen the regression the two-signal rule was added for. That was a
+  finished shell pipeline, where the producer closes its end and the pipe reads as
+  broken while the shell that built the pipeline is still waiting — the parent is
+  alive there, so nothing fires. It was the pipe half that was the wrong signal.
+  Both cases now have a test, and the orphan one was confirmed to fail against the
+  old rule before the fix and pass after.
+
+  Deliberate detachment is unaffected: `start /b` leaves stdin a console, where
+  the watchdog never arms.
+
 ## [0.5.6] - 2026-08-24
 
 ### Security
