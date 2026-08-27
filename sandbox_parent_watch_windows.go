@@ -98,12 +98,20 @@ func watchStdinForHangup(nvxHome string, onHangup func()) {
 	ppid, _ := parentProcessID()
 	noteHangupWatch(nvxHome, "armed", fmt.Sprintf("watching stdin pipe against parent pid %d", ppid))
 
+	// Read once, here, rather than inside the goroutine. The goroutine outlives
+	// the call and a test that sets the interval for its own case would otherwise
+	// be writing this while an earlier test's watchdog is still reading it -- a
+	// data race, and one -race caught in CI rather than locally. Capturing it also
+	// means the interval is fixed for the life of a watch, which is the behaviour
+	// worth having anyway.
+	interval := stdinBrokenPipeInterval
+
 	go func() {
 		defer syscall.CloseHandle(parent)
 		lastReason := ""
 		parentSeenGone := false
 		for {
-			time.Sleep(stdinBrokenPipeInterval)
+			time.Sleep(interval)
 
 			broken := stdinPipeIsBroken(stdin)
 			gone := processHasExited(parent)
