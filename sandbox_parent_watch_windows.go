@@ -64,7 +64,10 @@ const (
 // stdinBrokenPipeInterval is how often the pipe is checked. Generous on purpose:
 // these are processes that live for hours, and the cost of noticing a minute
 // late is nothing next to the cost of a poll loop on every nvx invocation.
-const stdinBrokenPipeInterval = 15 * time.Second
+//
+// A variable rather than a constant so the orphan reproduction can run in
+// seconds instead of minutes. Nothing in the product writes to it.
+var stdinBrokenPipeInterval = 15 * time.Second
 
 // watchStdinForHangup calls onHangup once nvx's stdin pipe has no writer left.
 //
@@ -98,16 +101,49 @@ func watchStdinForHangup(nvxHome string, onHangup func()) {
 	go func() {
 		defer syscall.CloseHandle(parent)
 		lastReason := ""
+		parentSeenGone := false
 		for {
 			time.Sleep(stdinBrokenPipeInterval)
 
 			broken := stdinPipeIsBroken(stdin)
 			gone := processHasExited(parent)
-			if broken && gone {
-				noteHangupWatch(nvxHome, "fired", "input hung up and the parent has exited")
+
+			// The parent being gone is enough, GIVEN that stdin is a pipe.
+			//
+			// Requiring a broken pipe as well is what let 12 orphans accumulate on
+			// the maintainer's machine on 2026-08-27, each holding a sandbox and a
+			// contained child, 43 node processes and 3.9 GB between them, until the
+			// system froze. nvx had recorded the reason itself: "the parent has
+			// exited, but something still holds the input pipe open". On Windows a
+			// sibling that inherited the write end is enough to keep it open for
+			// ever, so the pipe never breaks and the second signal never arrives.
+			//
+			// This does not reopen the regression the two-signal rule was added
+			// for. That was a finished shell pipeline -- the producer closes its
+			// end, the pipe reads as broken, and a healthy command was killed at 15
+			// seconds while the SHELL THAT BUILT THE PIPELINE was still waiting for
+			// it. The parent is alive in that case, so `gone` is false and nothing
+			// fires. It was the pipe half that was the wrong signal, not this one.
+			//
+			// Deliberate detachment stays safe by the arming rule above rather than
+			// by this one: `start /b` leaves stdin a console or NUL, so the
+			// watchdog never arms at all. Reaching here means someone deliberately
+			// wired a pipe to us, and the process that did it has since died.
+			//
+			// Confirmed across two consecutive polls so a momentary misread cannot
+			// end a command on its own.
+			if gone {
+				if !parentSeenGone {
+					parentSeenGone = true
+					noteHangupWatch(nvxHome, "confirming", "the parent has exited; confirming before leaving")
+					continue
+				}
+				noteHangupWatch(nvxHome, "fired",
+					fmt.Sprintf("the parent has exited (input pipe broken: %t)", broken))
 				onHangup()
 				return
 			}
+			parentSeenGone = false
 
 			// Why it declined, recorded on CHANGE only. Polling every 15s for
 			// hours would otherwise bury the log in identical lines, and the
@@ -115,11 +151,8 @@ func watchStdinForHangup(nvxHome string, onHangup func()) {
 			// while the parent lives, or the reverse, is what distinguishes an
 			// abandoned server from a finished pipeline.
 			reason := "input pipe still has a writer, and the parent is still running"
-			switch {
-			case broken && !gone:
+			if broken {
 				reason = "input hung up, but the process that started nvx is still running"
-			case !broken && gone:
-				reason = "the parent has exited, but something still holds the input pipe open"
 			}
 			if reason != lastReason {
 				noteHangupWatch(nvxHome, "waiting", reason)
