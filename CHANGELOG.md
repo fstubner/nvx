@@ -41,6 +41,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of the *second* of two commands. Both are failures now — the same
   warn-instead-of-fail shape CI's Linux step was changed to reject.
 
+* **Dead classification code for runtimes this build does not manage is gone.**
+  `classifyInvocation` still had branches for `uv` and `deno`, and `uvx`/`pyx`
+  sat in the ad-hoc-tool list — left behind when the Deno, Go and Python
+  providers were removed. None of those names is in any provider's shim list, so
+  nvx never saw those commands and the code could not run. Unreachable code that
+  reads as support for a runtime is worse than none; the real implementations are
+  preserved on `feature/polyglot-runtimes`.
+
+* **CI now prints the probe counts instead of the docs quoting them.**
+  `docs/enforcement-matrix.md` cited "442 pass and 35 skip" from a hosted Windows
+  run someone had read by hand. It had already rotted once, and the correction
+  could not be checked by a reviewer at all — a developer machine *runs* the
+  probes a hosted runner skips, so the number was unreproducible by design. Every
+  run now emits `NVX_PROBE_COUNTS pass=… skip=… fail=…` to its job summary and
+  log, along with the distinct skip reasons, and the page says where to look
+  rather than carrying a figure that goes quietly wrong.
+
 * nvx stopping a command 15–30 seconds after its launcher exits, with exit 129,
   is now documented in README rather than only in this file — including the case
   it can catch by surprise: a deliberately detached process that still has a pipe

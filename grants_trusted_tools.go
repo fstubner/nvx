@@ -48,7 +48,7 @@ func stripVersionSuffix(spec string) string {
 	return prefix + rest
 }
 
-// trustedToolCandidate inspects an ad-hoc-tool invocation (npx/bunx/uvx/pyx)
+// trustedToolCandidate inspects an ad-hoc-tool invocation (npx/bunx)
 // and returns the bare tool name and whether its subcommand looks like it
 // needs to persist credentials/config across runs (an auth-shaped subcommand).
 // Returns ("", false) for any command that is not an ad-hoc-tool executor.

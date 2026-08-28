@@ -75,7 +75,30 @@ jobs:
       # ships; a pipeline that fails at random teaches people to re-run rather
       # than read it. That is a different thing from the hand-maintained -run
       # filter this replaced, which silently skipped real security probes.
-      run: go test -v ./...
+      #
+      # The counts are printed at the end, and that is the point of the tee.
+      # docs/enforcement-matrix.md used to quote "442 pass and 35 skip" from a
+      # run someone had read by hand; it drifted, and an acceptance pass could
+      # not check it from a developer machine because this host runs the probes
+      # rather than skipping them. A number nobody can reproduce is a number that
+      # rots quietly. Now every run states its own, in one greppable line, and
+      # the doc cites where to look instead of embedding a figure.
+      #
+      # PASS/SKIP/FAIL here are TOP-LEVEL tests. `go test -v` also prints
+      # subtest lines, which is why a hand count and this one disagree.
+      run: |
+        go test -v ./... 2>&1 | Tee-Object -FilePath probe.log
+        $code = $LASTEXITCODE
+        $pass = (Select-String -Path probe.log -Pattern '^--- PASS' ).Count
+        $skip = (Select-String -Path probe.log -Pattern '^--- SKIP' ).Count
+        $fail = (Select-String -Path probe.log -Pattern '^--- FAIL' ).Count
+        $line = "NVX_PROBE_COUNTS pass=$pass skip=$skip fail=$fail"
+        Write-Host $line
+        "$line" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+        Write-Host "--- skip reasons ---"
+        Select-String -Path probe.log -Pattern '^--- SKIP' -Context 2,0 |
+          ForEach-Object { $_.Context.PreContext[-1] } | Sort-Object -Unique
+        exit $code
 
     - name: Windows sandbox smoke
       if: matrix.os == 'windows-latest'

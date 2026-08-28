@@ -83,7 +83,7 @@ func commandCanTripNamedPipeLimit(command string, args []string) bool {
 	base := strings.ToLower(filepath.Base(command))
 	base = strings.TrimSuffix(strings.TrimSuffix(base, ".cmd"), ".exe")
 	switch base {
-	case "npm", "yarn", "pnpm", "bun", "deno":
+	case "npm", "yarn", "pnpm", "bun":
 	default:
 		return false
 	}
