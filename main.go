@@ -472,7 +472,8 @@ Options:
   --standard             Force standard containment, overriding a project's
                          strict policy. Must come BEFORE the command
   --strict               Contain your own code too (not just installs/ad-hoc
-                         tools). Honoured before the command or among its args
+                         tools). Must come BEFORE the command, like the two
+                         above; after it, the flag belongs to the command
   --expose <in>[:<host>] (Windows) Publish a port a server inside the sandbox
                          listens on, so the host can reach it. The two numbers
                          must differ. Omit the host port to have one picked and

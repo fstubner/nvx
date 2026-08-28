@@ -139,20 +139,16 @@ Commands:
   shim <cmd> [args]        Internal shim router (called by generated wrappers)
   version, -v              Print version info
 
-Isolation flags — these go BEFORE the command, as `nvx --no-sandbox npm ...`.
-Anything that WEAKENS containment is ignored if passed to the wrapped command
-instead (`npm --no-sandbox ...`), so no package can escape the sandbox by
-tacking a flag onto npm:
+Isolation flags — ALL of these go BEFORE the command, as
+`nvx --no-sandbox npm ...`. Written after it they belong to the command: nvx
+notices them, says they did not apply, and passes them through untouched. That
+holds in both directions — no package can escape the sandbox by tacking a flag
+onto npm, and nvx does not reinterpret a word that belongs to another tool:
   --no-sandbox             Run this invocation without the sandbox
   --standard               Force standard containment, overriding a project
                            policy that sets strict
-
-Flags that only ADD containment, or that cannot weaken it, are honoured wherever
-they appear — there is nothing to gain by sneaking in a flag that sandboxes you
-harder:
   --strict                 Contain your own code too, not just installs and
-                           ad-hoc tools. Works before the command or among its
-                           arguments
+                           ad-hoc tools
   --expose <in>[:<host>]   (Windows) Publish a port a server inside the sandbox
                            listens on, so the host can reach it — Windows
                            refuses connections into an AppContainer. The two
@@ -422,6 +418,23 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   It matters only where something is waiting with a timeout. If you are wiring a
   contained command into a tool that gives up after a few seconds, run it once by
   hand after installing to absorb the cost.
+- **nvx stops a command once the program that started it has exited, and reports
+  exit 129.** It checks every 15 seconds and needs two consecutive observations,
+  so this lands 15–30 seconds after the parent goes away. It only applies when
+  nvx's input is a pipe — the shape a long-lived stdio server is launched with.
+
+  This exists because sandboxed MCP servers outlived their clients and
+  accumulated until a machine froze: 18 nvx processes, 43 Node processes and
+  3.9 GB, measured 2026-08-27. An ordinary shell pipeline is unaffected, because
+  there the shell that built it is still running.
+
+  **What this can catch by surprise:** a command deliberately detached with a
+  pipe still attached to its input — for example Node's
+  `spawn(cmd, {detached: true, stdio: 'pipe'})` where the launcher then exits.
+  Detaching via `start /b` is unaffected, because that leaves the input a console
+  and the check never arms. If you need a long-running job to outlive its
+  launcher, give it a console or a file for stdin rather than a pipe.
+
 - **`npm install -g` is refused inside the sandbox**, because a global install
   writes outside the project. nvx points you at `nvx --no-sandbox npm install -g`,
   which is an uncontained install — treat it as one.

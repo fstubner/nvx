@@ -101,3 +101,59 @@ func TestOrdinaryCommandsAreStillYourOwnCode(t *testing.T) {
 		})
 	}
 }
+
+// A script's NAME is not a subcommand.
+//
+// Widening the verb sets in 0.5.6 turned an old assumption into a live bug: both
+// token scans looked at every non-flag argument, so a project with a script
+// called "update" had `npm run update` classified as an install and silently
+// sandboxed. Measured 2026-08-28 against the shipped binary: `npm run build` ran
+// directly, `npm run update` and `npm run create` ran "in native sandbox".
+//
+// That is not a harmless over-approximation. A contained run gets a scrubbed
+// environment -- 102 variables down to 22 on the machine where this was found,
+// taking a token the script needed with them -- plus egress limited to the
+// allowlist, and a write outside the project that reports success while
+// producing nothing (enforcement matrix, footnote 9). The command was never
+// untrusted; it is the developer's own script.
+//
+// README states the rule this restores: "Running your own code (node server.js,
+// npm run dev) is not contained at the default standard level."
+func TestAScriptNameIsNotReadAsASubcommand(t *testing.T) {
+	for _, name := range []string{
+		"update", "upgrade", "rebuild", "dedupe", "add", "create", "install", "exec", "dlx", "audit",
+	} {
+		t.Run("npm run "+name, func(t *testing.T) {
+			if got := classifyInvocation("npm", []string{"run", name}); got != classYourCode {
+				t.Errorf("`npm run %s` classified as %v; the word after `run` is the developer's own "+
+					"script name, and containing it scrubs the environment and restricts egress around "+
+					"a command that was never untrusted", name, got)
+			}
+		})
+	}
+
+	// Arguments to the script are equally not nvx's to read.
+	if got := classifyInvocation("npm", []string{"run", "release", "add", "install"}); got != classYourCode {
+		t.Errorf("arguments passed to a script were read as subcommands: got %v", got)
+	}
+	// run-script is npm's long spelling of the same thing.
+	if got := classifyInvocation("npm", []string{"run-script", "update"}); got != classYourCode {
+		t.Errorf("`npm run-script update` classified as %v", got)
+	}
+
+	// And the real subcommands must still be caught, or this fix has traded one
+	// silent misclassification for another in the dangerous direction.
+	for _, tc := range []struct {
+		args []string
+		want invocationClass
+	}{
+		{[]string{"update"}, classInstall},
+		{[]string{"install", "express"}, classInstall},
+		{[]string{"exec", "cowsay"}, classAdHocTool},
+		{[]string{"--loglevel", "verbose", "install", "pkg"}, classInstall},
+	} {
+		if got := classifyInvocation("npm", tc.args); got != tc.want {
+			t.Errorf("`npm %v` classified as %v, want %v", tc.args, got, tc.want)
+		}
+	}
+}

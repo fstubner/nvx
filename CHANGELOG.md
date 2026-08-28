@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.7] - 2026-08-28
 
+### Fixed (found by an independent acceptance pass before release)
+
+* **`npm run <script>` is no longer sandboxed when the script's name happens to
+  match a package-manager verb.** A project with a script called `update`,
+  `create`, `rebuild`, `dedupe`, `upgrade` or `add` had `npm run <that>` silently
+  contained — scrubbed environment, restricted egress, confined writes — around a
+  command that is the developer's own code. Measured: `npm run build` ran
+  directly, `npm run update` ran "in native sandbox".
+
+  Widening the verb set in 0.5.6 turned a long-standing assumption into a live
+  bug: both token scans read every non-flag argument, so a script's *name* was
+  read as a subcommand. The scans now stop at `run`/`run-script`, after which
+  everything belongs to the script — the same rule already applied to `--`.
+
+  The justification in the code was that mistaking a token for a verb "pushes a
+  command toward MORE containment, never less — the safe direction". This project
+  rejected exactly that reasoning for `--strict` one release earlier. More
+  containment is not free when it lands on a command that was never untrusted,
+  and on Windows a blocked write outside the project can report success while
+  producing nothing.
+
+* **`nvx --help` and README documented the pre-0.5.6 `--strict` rule**, telling
+  users it works "before the command or among its arguments". It has not since
+  0.5.6, so anyone following the help text believed their own code was contained
+  when it was not. README also contradicted itself on the same page.
+
+* The comment in `shim_options.go` describing which smuggled flags are honoured
+  has now been wrong in both directions at different times, and says so.
+
+* The hand-run Windows release gate could pass having asserted nothing: it exited
+  0 when Node was missing, and its runtime-install check read only the exit code
+  of the *second* of two commands. Both are failures now — the same
+  warn-instead-of-fail shape CI's Linux step was changed to reject.
+
+* nvx stopping a command 15–30 seconds after its launcher exits, with exit 129,
+  is now documented in README rather than only in this file — including the case
+  it can catch by surprise: a deliberately detached process that still has a pipe
+  on its input.
+
 ### Fixed
 
 * **Sandboxed MCP servers no longer pile up after their client exits.** Measured

@@ -71,12 +71,32 @@ var refreshVerbs = []string{"update", "up", "upgrade", "rebuild", "dedupe", "ddp
 // follows for flags.
 func subcommandCandidates(args []string) []string {
 	for i, a := range args {
-		if a == "--" {
+		// `run <script> [args...]`: the script's name is not a subcommand, and
+		// neither is anything after it. Without this, a project with a script
+		// called "update", "create" or "rebuild" had `npm run <that>` silently
+		// sandboxed -- scrubbed environment, restricted egress -- because the
+		// name collided with a verb. Measured 2026-08-28.
+		if a == "--" || isRunScriptVerb(a) {
 			args = args[:i]
 			break
 		}
 	}
 	return nonFlagTokens(args)
+}
+
+// isRunScriptVerb reports the package-manager subcommands after which the next
+// token names a user-defined script rather than anything nvx should read.
+//
+// npm, pnpm and yarn all spell it `run` (npm also accepts `run-script`); bun
+// uses `run` too. `npm test` and `npm start` take no script name, so they are
+// deliberately absent -- they have nothing following that could be mistaken for
+// a verb.
+func isRunScriptVerb(arg string) bool {
+	switch strings.ToLower(arg) {
+	case "run", "run-script":
+		return true
+	}
+	return false
 }
 
 // hasExecutorVerb reports whether this invocation fetches and runs a package

@@ -371,8 +371,22 @@ var installAliases = map[string]bool{
 // going past the flag's value and finds "install" further along. The only
 // failure direction is a stray non-flag token that happens to match a verb
 // name being mistaken for the subcommand, which pushes a command toward MORE
-// containment/verification, never less — the safe direction for a security
-// classifier to fail in.
+// containment/verification, never less.
+//
+// That last sentence used to end "— the safe direction for a security
+// classifier to fail in", and this project has already rejected that reasoning
+// once, for --strict in 0.5.6: it is true of an attacker and wrong for
+// everyone else. Measured 2026-08-28, `npm run update` in a project with a
+// script called "update" was sandboxed, because the SCRIPT NAME matched a verb.
+// The command then ran with a scrubbed environment (102 variables down to 22,
+// including the token it needed) and egress restricted to the allowlist, and a
+// write outside the project can report success while producing nothing (see
+// docs/enforcement-matrix.md footnote 9). "More containment" is not free when
+// it lands on a command that was never untrusted.
+//
+// The scan therefore stops at `run`/`run-script`. Everything after those
+// belongs to the script being run: its name first, then its arguments. None of
+// it is nvx's to interpret, exactly as with tokens after "--".
 func findInstallVerbIndex(args []string, extraVerbs ...string) int {
 	extra := make(map[string]bool, len(extraVerbs))
 	for _, v := range extraVerbs {
@@ -380,6 +394,9 @@ func findInstallVerbIndex(args []string, extraVerbs ...string) int {
 	}
 	for i, arg := range args {
 		if arg == "--" {
+			return -1
+		}
+		if isRunScriptVerb(arg) {
 			return -1
 		}
 		if strings.HasPrefix(arg, "-") {

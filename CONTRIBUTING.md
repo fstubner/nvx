@@ -97,7 +97,7 @@ following this literally goes looking for a phantom:
 | this machine has no nvx loopback exemption | the healthy state; the exempt branch is covered by `sandbox_loopback_exemption_seam_windows_test.go` |
 
 A fifth means something is quietly not being checked — go and look at it rather
-than at this table. Last measured on Windows 11, 2026-08-24: **332 passing** in
+than at this table. Last measured on Windows 11, 2026-08-28: **337 passing** in
 about 4½ minutes.
 
 That number is a tripwire and it has already caught something. It read "3 skips"
