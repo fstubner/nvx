@@ -30,8 +30,16 @@ func (c invocationClass) String() string {
 // executorCommands are ad-hoc tool runners: they fetch and execute a package
 // that was not explicitly installed into the project, so every invocation is
 // untrusted-code-by-default regardless of subcommand.
+//
+// Only the commands nvx actually shims. `uvx` and `pyx` were listed here, and
+// `uv`/`deno` had their own branches below, left behind when the Deno, Go and
+// Python providers were removed. Neither name is in any provider's
+// ShimCommands, so nvx never saw those invocations and the code could not run --
+// it read as support for runtimes this build does not manage. The full
+// implementation is preserved on feature/polyglot-runtimes; if it returns, it
+// brings its own classification with it.
 var executorCommands = map[string]bool{
-	"npx": true, "bunx": true, "uvx": true, "pyx": true,
+	"npx": true, "bunx": true,
 }
 
 // executorVerbs are the same operation as npx, spelled as a subcommand.
@@ -137,7 +145,7 @@ func hasAuditFix(args []string) bool {
 
 // classifyInvocation determines which containment class a wrapped command
 // invocation falls into. It is subcommand-aware: the same command name (npm,
-// bun, uv) can be your-code, install, or (for npx/bunx/uvx/pyx) an ad-hoc tool
+// bun) can be your-code, install, or (for npx/bunx) an ad-hoc tool
 // runner, depending on whether an install-style verb appears anywhere in its
 // arguments (see hasInstallVerb) — not just whether the first non-flag
 // argument happens to be one, since a preceding value-taking flag this
@@ -164,16 +172,6 @@ func classifyInvocation(cmd string, args []string) invocationClass {
 		return classYourCode
 	case "bun":
 		if hasInstallVerb(args, append([]string{"a"}, refreshVerbs...)...) {
-			return classInstall
-		}
-		return classYourCode
-	case "uv":
-		if hasInstallVerb(args, "pip") {
-			return classInstall
-		}
-		return classYourCode
-	case "deno":
-		if hasInstallVerb(args) {
 			return classInstall
 		}
 		return classYourCode

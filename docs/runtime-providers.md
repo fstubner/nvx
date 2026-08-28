@@ -8,6 +8,15 @@ runtimes can be added without touching the CLI, sandbox, or policy code.
 Experimental Deno, Go, and Python providers live on the
 `feature/polyglot-runtimes` branch.
 
+Nothing in the shipped build carries stubs for them any more. `classifyInvocation`
+kept branches for `uv` and `deno`, and `uvx`/`pyx` sat in the ad-hoc-tool list,
+left behind when those providers were removed — unreachable, because a command is
+only ever classified after nvx has shimmed it, and none of those names is in any
+provider's `ShimCommands`. Removed 2026-08-28 after an acceptance pass pointed out
+that unreachable code reads as support for runtimes this build does not manage.
+The branch has the real versions; a provider returning brings its own
+classification with it.
+
 ## The interface
 
 ```go

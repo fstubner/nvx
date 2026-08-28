@@ -27,15 +27,10 @@ func TestClassifyInvocation(t *testing.T) {
 		{"bun install", "bun", []string{"install"}, classInstall},
 		{"bun add", "bun", []string{"add", "lodash"}, classInstall},
 		{"bun add short alias", "bun", []string{"a", "lodash"}, classInstall},
-		{"uv add", "uv", []string{"add", "requests"}, classInstall},
-		{"uv pip install", "uv", []string{"pip", "install", "requests"}, classInstall},
-		{"deno add npm pkg", "deno", []string{"add", "npm:lodash"}, classInstall},
 
 		// ad-hoc-tool
 		{"npx tool", "npx", []string{"cowsay", "hi"}, classAdHocTool},
 		{"bunx tool", "bunx", []string{"cowsay", "hi"}, classAdHocTool},
-		{"uvx tool", "uvx", []string{"ruff", "check"}, classAdHocTool},
-		{"pyx tool", "pyx", []string{"ruff", "check"}, classAdHocTool},
 
 		// leading flags must not defeat subcommand detection
 		{"npm with global flag then install", "npm", []string{"--loglevel=error", "install", "pkg"}, classInstall},
