@@ -8,6 +8,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -193,5 +195,51 @@ func TestPeerCheckFailsClosedWithoutAJob(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("no reason given for the refusal")
+	}
+}
+
+// The peer lookup must require loopback at both ends, not just the two port
+// numbers: it decides which process is allowed through the tunnel.
+func TestThePeerLookupRequiresLoopbackAtBothEnds(t *testing.T) {
+	const src, dst = 4321, 8080
+	be := func(p uint16) uint32 { return uint32(p&0xff)<<8 | uint32(p>>8) }
+	const other = uint32(0x0100A8C0) // 192.168.0.1
+
+	loopback := &mibTCPRowOwnerPID{
+		LocalAddr: loopbackAddrLE, RemoteAddr: loopbackAddrLE,
+		LocalPort: be(src), RemotePort: be(dst), OwningPID: 42,
+	}
+	if !rowIsLoopbackConnection(loopback, src, dst) {
+		t.Fatal("a genuine loopback connection was not matched; every legitimate peer would be refused")
+	}
+
+	for name, row := range map[string]*mibTCPRowOwnerPID{
+		"remote end elsewhere": {LocalAddr: loopbackAddrLE, RemoteAddr: other, LocalPort: be(src), RemotePort: be(dst)},
+		"local end elsewhere":  {LocalAddr: other, RemoteAddr: loopbackAddrLE, LocalPort: be(src), RemotePort: be(dst)},
+		"neither end loopback": {LocalAddr: other, RemoteAddr: other, LocalPort: be(src), RemotePort: be(dst)},
+	} {
+		if rowIsLoopbackConnection(row, src, dst) {
+			t.Errorf("%s: a non-loopback connection was accepted as the tunnel's peer", name)
+		}
+	}
+}
+
+// Every refusal is audited, not just the first. The console warning is
+// deliberately once-per-run so a port scan cannot bury it; the audit log is the
+// half that must record a sustained probe.
+func TestEveryRefusalIsAuditedNotJustTheFirst(t *testing.T) {
+	home := t.TempDir()
+	c := &connectHostListener{mapping: connectMapping{Host: 9222}, nvxHome: home}
+
+	for i := 0; i < 3; i++ {
+		c.refuseOnce(nil)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, "audit.log"))
+	if err != nil {
+		t.Fatalf("no audit log was written: %v", err)
+	}
+	if n := strings.Count(string(data), "connect_peer_refused"); n != 3 {
+		t.Fatalf("audited %d refusals of 3; a sustained cross-sandbox probe would leave no trace after the first", n)
 	}
 }

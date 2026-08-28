@@ -122,20 +122,32 @@ func grantCacheRecord(sidStr, path string) {
 	saveGrantCacheLocked()
 }
 
-// grantCacheForget drops one entry, for when nvx itself removes an ACE. Narrow
-// where invalidateGrantCache is broad: here nvx knows exactly which grant went
-// away, so throwing away a dozen verified entries would just pay for ACL reads it
-// already has answers for.
-func grantCacheForget(sidStr, path string) {
+// grantCacheForgetUnder drops the entry for root and for everything beneath it.
+//
+// The entries nvx writes are inheritable, so withdrawing one on a directory also
+// removes the access its descendants had through it. Forgetting only the exact
+// path left those descendants cached as granted: nvx logged that it had granted
+// them, skipped the grant because the cache said so, and the sandbox got EPERM on
+// a directory the policy still named -- for the full seven-day cache lifetime,
+// with the log saying the opposite. Measured with a parent and child both named
+// in a policy, the parent then dropped.
+func grantCacheForgetUnder(sidStr, root string) {
 	grantCacheMu.Lock()
 	defer grantCacheMu.Unlock()
 	loadGrantCacheLocked()
-	key := grantCacheKey(sidStr, path)
-	if _, had := grantCacheEntries[key]; !had {
-		return
+	prefix := grantCacheKey(sidStr, root)
+	changed := false
+	for key := range grantCacheEntries {
+		// Either the directory itself, or something below it. The separator check
+		// keeps "C:b" from matching an entry for "C:bc".
+		if key == prefix || strings.HasPrefix(key, prefix+string(filepath.Separator)) {
+			delete(grantCacheEntries, key)
+			changed = true
+		}
 	}
-	delete(grantCacheEntries, key)
-	saveGrantCacheLocked()
+	if changed {
+		saveGrantCacheLocked()
+	}
 }
 
 // invalidateGrantCache forgets everything, so the next launch re-reads every ACL.
