@@ -69,6 +69,22 @@ type FilesystemPolicy struct {
 	Provider   string   `json:"provider"`
 	Mode       string   `json:"mode,omitempty"`
 	AllowWrite []string `json:"allow_write"`
+	// AllowReadExec are extra directories a contained process may READ and
+	// EXECUTE from. Never writable, whatever else the policy says.
+	//
+	// It exists because some tools keep the program they run outside anything nvx
+	// grants. Playwright is the case that forced it: its browsers live in
+	// %LOCALAPPDATA%\ms-playwright (~/.cache/ms-playwright on Linux), and a
+	// contained process could not even list that directory, let alone launch a
+	// browser from it -- measured 2026-08-28, EPERM contained against 27 entries
+	// uncontained. Nothing about ports was involved, which is what the MCP
+	// containment design assumed the blocker was.
+	//
+	// Deliberately not defaulted to the Playwright path. nvx manages JavaScript
+	// runtimes; baking one browser vendor's cache directory into the sandbox
+	// would be a guess about what a project runs, and every entry here widens
+	// what contained code may execute. Naming it is the point.
+	AllowReadExec []string `json:"allow_read_exec,omitempty"`
 }
 
 type NetworkPolicy struct {
@@ -570,6 +586,12 @@ func policyLoosens(before, after Policy) bool {
 	if hostsAdded(before.Isolation.Network.ExposePorts, after.Isolation.Network.ExposePorts) {
 		return true
 	}
+	// Extra read/execute roots widen what contained code can run. A project file
+	// that adds one is asking to execute something from outside everything nvx
+	// grants, which is a decision for whoever owns the machine.
+	if hostsAdded(before.Isolation.Filesystem.AllowReadExec, after.Isolation.Filesystem.AllowReadExec) {
+		return true
+	}
 	if !strings.EqualFold(before.Isolation.Filesystem.Provider, after.Isolation.Filesystem.Provider) {
 		return true
 	}
@@ -642,6 +664,13 @@ func MergePolicies(global, local Policy) Policy {
 	}
 	if len(local.Isolation.Filesystem.AllowWrite) > 0 {
 		merged.Isolation.Filesystem.AllowWrite = append(merged.Isolation.Filesystem.AllowWrite, local.Isolation.Filesystem.AllowWrite...)
+	}
+	// Appended, like AllowWrite and the host allowlists: a project adds the roots
+	// its own toolchain needs on top of anything global policy already grants,
+	// rather than replacing it. policyLoosens treats an addition here as widening,
+	// so a checked-in file still has to be trusted before it takes effect.
+	if len(local.Isolation.Filesystem.AllowReadExec) > 0 {
+		merged.Isolation.Filesystem.AllowReadExec = append(merged.Isolation.Filesystem.AllowReadExec, local.Isolation.Filesystem.AllowReadExec...)
 	}
 	if local.Isolation.Network.Mode != "" {
 		merged.Isolation.Network.Mode = local.Isolation.Network.Mode

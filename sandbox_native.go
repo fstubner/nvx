@@ -137,7 +137,10 @@ type supervisorExecArgs struct {
 	// refuses connections INTO an AppContainer, so reaching them is a reverse
 	// tunnel the contained side dials outward; see runExposeTunnels.
 	ExposePorts []int
-	CmdPath     string
+	// ReadExecRoots are extra directories the contained process may read and
+	// execute from, given as --read-exec=<abs path> and repeatable.
+	ReadExecRoots []string
+	CmdPath       string
 	CmdArgs     []string
 }
 
@@ -161,6 +164,10 @@ func parseSupervisorExecArgs(argv []string) (supervisorExecArgs, bool) {
 			a.ShimCommand = strings.TrimPrefix(arg, "--command=")
 		case strings.HasPrefix(arg, "--egress-socket="):
 			a.EgressSocket = strings.TrimPrefix(arg, "--egress-socket=")
+		case strings.HasPrefix(arg, "--read-exec="):
+			if v := strings.TrimPrefix(arg, "--read-exec="); v != "" {
+				a.ReadExecRoots = append(a.ReadExecRoots, v)
+			}
 		case strings.HasPrefix(arg, "--expose="):
 			// Ignore anything unparseable rather than failing the launch: these
 			// arguments are built by nvx itself a few lines away, so a bad value

@@ -31,6 +31,10 @@ type SandboxConfig struct {
 	// guest profile instead of an ephemeral one for the run. Empty means "use
 	// the ephemeral guest home" (the default, contained behavior).
 	ToolName string
+	// ReadExecRoots are extra directories the contained process may read and
+	// execute from (isolation.filesystem.allow_read_exec), already expanded and
+	// made absolute. Never writable.
+	ReadExecRoots []string
 }
 
 // sensitiveEnvPrefixes are environment variable prefixes that will be scrubbed
