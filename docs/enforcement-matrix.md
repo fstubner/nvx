@@ -31,6 +31,7 @@ running system and which are not.
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes⁵ (TCP and UDP; UDP refused at bind) |
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
 | Any loopback service reachable | Only with a leftover exemption³ | No (loopback-only netns) | No⁶ (proxy port only) |
+| One named host service reachable | Only via `--connect`⁹ | No | No |
 | A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
 
@@ -370,6 +371,18 @@ splices inbound requests onto those tunnels, so egress stays exactly as
 restricted. `TestExposedPortIsReachableFromTheHost` asserts both halves in one
 run -- the host reaches the contained server, and the contained process still
 cannot reach the internet.
+
+`--connect` is the same machinery pointed the other way, and the same two-number
+rule applies for the same reason. nvx runs the listener inside the sandbox and
+dials `127.0.0.1:<host>` itself from outside, so the contained side chooses when
+to connect and never where -- one port, for one run, closed when the command
+exits. `TestAContainedDialReachesTheHostServiceItWasGranted` drives a real
+connection end to end through both halves.
+
+That is what makes it defensible where the pre-0.5.0 loopback exemption was not:
+`CheckNetIsolation LoopbackExempt` was machine-wide, permanent, opened *every*
+service on 127.0.0.1 to the sandbox, and needed elevation to revoke. This grants
+nothing at the OS level at all.
 
 **A blocked write can report success.** A contained process writing to the user
 profile root gets no error, reads its own file back, and stats it -- while the

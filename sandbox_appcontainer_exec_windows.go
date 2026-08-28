@@ -247,6 +247,15 @@ func runAppContainerExecChild(a supervisorExecArgs) int {
 	for _, port := range a.ExposePorts {
 		startExposeTunnels(relayCtx, a.GuestHome, port)
 	}
+	// And the way out to the host services this run was granted.
+	for _, m := range a.ConnectPorts {
+		if _, err := startConnectListeners(relayCtx, a.GuestHome, m); err != nil {
+			// Fail closed: the target would otherwise start believing it can reach
+			// a service it cannot, and fail somewhere less legible.
+			LogError("Could not open the path to 127.0.0.1:%d inside the sandbox: %v", m.Host, err)
+			return 1
+		}
+	}
 
 	var proxyEnvAddr string
 	if egressSocket != "" && windowsEgressNeedsRelay(networkMode) {

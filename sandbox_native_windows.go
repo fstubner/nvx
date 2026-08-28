@@ -264,7 +264,25 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 			m.Container, e.hostPort)
 	}
 
-	if useRelay || len(netCtx.ExposePorts) > 0 {
+	// Host services this sandbox may reach. The parent opens the socket and picks
+	// the in-sandbox port, so the supervisor is told both numbers rather than
+	// deciding either -- the contained side never chooses where it can dial.
+	for i, m := range netCtx.ConnectPorts {
+		c, cerr := openConnectPort(exposeCtx, guestHome, m)
+		if cerr != nil {
+			LogError("Could not open a path to 127.0.0.1:%d for the sandbox: %v", m.Host, cerr)
+			return 1
+		}
+		defer c.Close()
+		if netCtx.ConnectPorts[i].Inside == 0 {
+			netCtx.ConnectPorts[i].Inside = freeLoopbackPort()
+		}
+		LogWarn("The sandbox may reach 127.0.0.1:%d on this machine, as 127.0.0.1:%d inside it (%s).",
+			m.Host, netCtx.ConnectPorts[i].Inside, connectEnvVar(m.Host))
+		cleanEnv = append(cleanEnv, fmt.Sprintf("%s=%d", connectEnvVar(m.Host), netCtx.ConnectPorts[i].Inside))
+	}
+
+	if useRelay || len(netCtx.ExposePorts) > 0 || len(netCtx.ConnectPorts) > 0 {
 		cmdPath, launchArgs, err = wrapWithEgressSupervisor(
 			sid, config.NvxHome, guestHome, workDir, netCtx, cmdPath, launchArgs,
 		)
@@ -367,6 +385,10 @@ func wrapWithEgressSupervisor(
 	// meaningless, and the tunnel socket is named by the container port.
 	for _, m := range netCtx.ExposePorts {
 		supervisorArgs = append(supervisorArgs, "--expose="+strconv.Itoa(m.Container))
+	}
+	for _, m := range netCtx.ConnectPorts {
+		supervisorArgs = append(supervisorArgs,
+			fmt.Sprintf("--connect=%d:%d", m.Host, m.Inside))
 	}
 	supervisorArgs = append(supervisorArgs, "--", cmdPath)
 	return supervisor, append(supervisorArgs, args...), nil

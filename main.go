@@ -22,6 +22,9 @@ var agentModeFlag = false
 // spells out the ones it does not want.
 var exposePortsFlag []string
 
+// connectPortsFlag holds --connect values: host services the sandbox may reach.
+var connectPortsFlag []string
+
 func init() {
 	var yes, noSandbox, strict, standard bool
 	os.Args, yes, noSandbox, strict, standard = parseStartupFlags(os.Args)
@@ -53,6 +56,16 @@ func addExposePortFlag(v string) {
 		os.Exit(1)
 	}
 	exposePortsFlag = append(exposePortsFlag, v)
+}
+
+// addConnectPortFlag records one --connect value.
+func addConnectPortFlag(v string) {
+	if _, err := parseConnectSpec(v); err != nil {
+		LogError("--connect: %v.", err)
+		LogInfo("Use --connect <port-on-your-machine> or --connect <host>:<in-sandbox>, e.g. --connect 9222:19222.")
+		os.Exit(1)
+	}
+	connectPortsFlag = append(connectPortsFlag, v)
 }
 
 func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
@@ -92,6 +105,15 @@ func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
 			}
 			if args[i] == "--expose" && i+1 < len(args) {
 				addExposePortFlag(args[i+1])
+				i++
+				continue
+			}
+			if v, ok := strings.CutPrefix(args[i], "--connect="); ok {
+				addConnectPortFlag(v)
+				continue
+			}
+			if args[i] == "--connect" && i+1 < len(args) {
+				addConnectPortFlag(args[i+1])
 				i++
 				continue
 			}
@@ -478,6 +500,11 @@ Options:
                          listens on, so the host can reach it. The two numbers
                          must differ. Omit the host port to have one picked and
                          printed. Must come BEFORE the command
+  --connect <host>[:<in>]  (Windows) Let the sandbox reach ONE service already
+                         running on your machine, over a tunnel nvx dials. The
+                         two numbers must differ; the in-sandbox one is printed
+                         and set as NVX_CONNECT_<host>. Must come BEFORE the
+                         command
   --filesystem-provider=<name>  Override isolation.filesystem.provider. Passed
                          TO the command: nvx npm --filesystem-provider=...
   -y, --yes              Auto-approve all prompts
