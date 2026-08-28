@@ -25,8 +25,12 @@ if (-not (Test-Path $nvx)) {
     Write-Error "Build nvx.exe first (go build -o nvx.exe .)"
 }
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Host "Node.js not available; skipping Windows enforcement probe."
-    exit 0
+    # A failure, not a skip. This is the hand-run release gate on a machine the
+    # maintainer controls, and "no Node here" is a broken setup rather than an
+    # environment nvx has to tolerate. Exiting 0 made a green run mean nothing.
+    Write-Host "FAIL: Node.js is not on PATH, so nothing can be contained and nothing was asserted." -ForegroundColor Red
+    Write-Host "      This is the pre-release gate; install Node and run it again."
+    exit 1
 }
 
 # Set-Location changes the SESSION's location, not just this script's, so every
@@ -59,12 +63,24 @@ try {
     # ~/.nvx. Matches what the Linux and macOS scripts do.
     $env:NVX_HOME = Join-Path $probeRoot "nvxhome"
     New-Item -ItemType Directory -Force -Path $env:NVX_HOME | Out-Null
+    # Both commands checked, and a failure is fatal.
+    #
+    # $LASTEXITCODE reflects only the LAST command, so a failed `install`
+    # followed by a successful `default` read as success. And the failure exited
+    # 0 with a warning, so this gate could pass having asserted nothing -- the
+    # same warn-instead-of-fail shape that let three Linux checks report success
+    # for months, and that ci.yml was changed to reject.
     Write-Host "Installing an nvx-managed runtime..."
     & $nvx -y install 22 2>&1 | Out-Null
+    $installCode = $LASTEXITCODE
     & $nvx -y default 22 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "::warning::could not install an nvx-managed runtime (network?); skipping Windows enforcement probe"
-        exit 0
+    $defaultCode = $LASTEXITCODE
+    if ($installCode -ne 0 -or $defaultCode -ne 0) {
+        Write-Host "FAIL: could not install an nvx-managed runtime (install=$installCode default=$defaultCode)." -ForegroundColor Red
+        Write-Host "      Without one the sandbox has nothing it is permitted to execute, so this gate"
+        Write-Host "      would assert nothing. If this is a network problem, fix it and re-run rather"
+        Write-Host "      than treating a green run as evidence."
+        exit 1
     }
 
     @{

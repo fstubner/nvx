@@ -23,13 +23,20 @@ type shimOptions struct {
 	// payloadStrict / payloadStandard record --strict/--standard smuggled
 	// through the wrapped command's own args.
 	//
-	// They are treated differently, and this comment said otherwise for long
-	// enough to mislead a reviewer: payloadStrict IS honoured (shouldContain),
-	// because --strict only ever adds containment and there is nothing to gain
-	// by sneaking in a flag that sandboxes you harder. payloadStandard is NOT
-	// honoured, for the anti-bypass reason payloadNoSandbox has: it reduces
-	// containment, so a dependency's own arguments must not be able to apply it.
-	// Neither is removed from what the command receives.
+	// NEITHER is honoured, and both are recorded only so the caller can say why
+	// nothing happened. Neither is removed from what the command receives.
+	//
+	// payloadStandard has never been honoured, for the anti-bypass reason
+	// payloadNoSandbox has: it reduces containment, so a dependency's own
+	// arguments must not be able to apply it.
+	//
+	// payloadStrict WAS honoured until 0.5.6, because it only ever adds
+	// containment and smuggling it gains an attacker nothing. That was the wrong
+	// question: --strict is TypeScript's and ESLint's flag, so `nvx tsc --strict`
+	// was silently sandboxed. See shouldContain.
+	//
+	// This comment has now been wrong in both directions at different times.
+	// Check containment.go before trusting it.
 	payloadStrict   bool
 	payloadStandard bool
 	// payloadBareProvider records a `--filesystem-provider` with no "=", which nvx
