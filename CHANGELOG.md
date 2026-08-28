@@ -121,6 +121,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variable containing its own name looped without bound and nothing launched --
   no error, no output.
 
+* **Withdrawing a read/execute grant no longer removes a permission nvx did not
+  grant.** Withdrawing is not selective -- it removes an identity's whole entry on
+  a directory, not one right from it. Two things made that destructive: a grant
+  skipped because a broader entry already covered it was still recorded as though
+  nvx had written it, and reclamation ran after the writable roots were
+  established rather than before. Naming the project's own directory in
+  `allow_read_exec` and then removing it therefore deleted the write access the
+  project needed, and the next run died with "chdir: Access is denied". Only what
+  nvx writes is recorded now, and reclamation runs first so anything still needed
+  is re-established after it.
+
+* **A permission check no longer reads the directory's own path as permissions.**
+  It matched on the whole line of `icacls` output, which begins with the path, so
+  a directory whose name contains `(M)`, `(RX)` or `(R)` was read as already
+  holding those rights -- the grant was then skipped and the wrong answer cached,
+  leaving the sandbox unable to reach a directory the policy named.
+
+* **A grant record that cannot be read is no longer discarded.** It was parsed
+  leniently and then overwritten, which stranded every permission it listed:
+  invisible to reclamation and to `nvx grants reset`, removable only by hand. It
+  is now kept under a `.unreadable` name and reported. Records are also written
+  atomically, so an interrupted write cannot produce that state in the first
+  place.
+
 * **`TestReadExecRootsAreNeverWritable` now tests what it claims.** It asserted
   that an unrelated directory was absent from a set built from two other paths --
   true regardless of what the code under test did, and it passed with the

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,11 +75,30 @@ func loadProjectGrants(nvxHome, scopeDir string) projectGrants {
 	if nvxHome == "" || scopeDir == "" {
 		return g
 	}
-	data, err := os.ReadFile(grantsPath(nvxHome, scopeDir))
+	path := grantsPath(nvxHome, scopeDir)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return g
 	}
-	_ = json.Unmarshal(data, &g)
+	if uerr := json.Unmarshal(data, &g); uerr != nil {
+		// A ledger that does not parse was treated as an empty one and then silently
+		// overwritten. That is the worst outcome available: it records filesystem
+		// permissions nvx granted, so discarding it strands every permission it named
+		// -- invisible to reconciliation and to `grants reset`, removable only with
+		// icacls by hand.
+		//
+		// Keep the file under a name that says what happened, and say so. The
+		// permissions still need removing by hand, but there is at least something on
+		// disk that names them.
+		quarantine := path + ".unreadable"
+		if rerr := os.Rename(path, quarantine); rerr == nil {
+			LogWarn("This project's grant record could not be read; it has been kept as %s.", quarantine)
+			LogWarn("Directory permissions it listed are no longer tracked and must be removed with icacls.")
+		} else {
+			LogWarn("This project's grant record could not be read: %v", uerr)
+		}
+		return projectGrants{ProjectPath: scopeDir, PolicyPins: map[string]string{}}
+	}
 	if g.PolicyPins == nil {
 		g.PolicyPins = map[string]string{}
 	}
@@ -94,7 +114,22 @@ func saveProjectGrants(nvxHome string, g projectGrants) error {
 		return err
 	}
 	out = append(out, '\n')
-	return os.WriteFile(grantsPath(nvxHome, g.ProjectPath), out, 0600)
+
+	// Written to a temporary file and renamed, so an interrupted write or a full
+	// disk cannot leave a half-written file behind. That matters more since this
+	// file started tracking filesystem permissions: a truncated ledger does not
+	// parse, and a permission nothing has a record of is one nothing can withdraw
+	// -- not reconciliation, not `nvx grants reset`, only icacls by hand.
+	final := grantsPath(nvxHome, g.ProjectPath)
+	tmp := fmt.Sprintf("%s.%d.tmp", final, os.Getpid())
+	if err := os.WriteFile(tmp, out, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // hashPolicyFile returns the hex sha256 of a policy file's contents.
@@ -146,6 +181,7 @@ func readGrantsFile(path string) []readExecGrant {
 	}
 	var g projectGrants
 	if err := json.Unmarshal(data, &g); err != nil {
+		LogWarn("Skipping an unreadable grant record at %s; any directory permissions it listed are not withdrawn.", path)
 		return nil
 	}
 	return g.ReadExecGrants

@@ -453,9 +453,16 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   file, and the next contained run withdraws the permission. `nvx grants list`
   shows what is currently granted and `nvx grants reset` withdraws it immediately.
 
-  Nothing has to be cleaned up by hand. Earlier builds of this feature did leave
-  something behind: the permission was written and never removed, and the only way
-  back was working out the capability SID and running `icacls` yourself.
+  One case is not automatic. The identity is derived from the project root, so
+  moving that root — adding or removing a `package.json` above your working
+  directory — leaves the permission granted under the old identity unreconciled.
+  It cannot be *used* while stale (a run at the old root reconciles it before the
+  contained process starts), but it stays on disk until either such a run happens
+  or you run `nvx grants reset --all`, which sweeps every project.
+
+  Nothing else needs cleaning up by hand. Earlier builds of this feature left the
+  permission behind entirely, with no way back but working out the capability SID
+  and running `icacls` yourself.
 
   **On Linux this grants reading and executing, but not listing.** A contained
   process can read and run files under the root; `readdir` on it is still refused.

@@ -127,3 +127,34 @@ func processIsRunning(pid int) bool {
 	const waitTimeout = 0x00000102
 	return ret == waitTimeout
 }
+
+// superviseProcessTree puts process (and everything it spawns) in a job that
+// reaps them, and publishes that job so the --connect tunnel can ask whether a
+// peer belongs to this run. Returns the cleanup to defer.
+//
+// One function rather than the two steps inline, because the publish half had no
+// test that could fail: deleting it left the whole suite green while every
+// legitimate --connect connection was refused by the built binary -- the feature
+// entirely dead, failing closed, and nothing noticing. That is the shape this
+// project's own discipline names, a fix that is correct but never delivered. A
+// seam a test can hold is what makes it checkable; see
+// TestSupervisingTheProcessTreePublishesTheJobForThePeerCheck.
+func superviseProcessTree(process syscall.Handle) (cleanup func()) {
+	job, err := createReapingJob()
+	if err != nil {
+		LogWarn("Could not set up process-tree reaping for this sandbox session: %v", err)
+		return func() {}
+	}
+	if err := assignToReapingJob(job, process); err != nil {
+		LogWarn("Could not enable process-tree reaping for this sandbox session: %v", err)
+		return func() { _ = syscall.CloseHandle(job) }
+	}
+	// Only after a successful assignment, so membership actually means something,
+	// and before the target runs, so no tunnel traffic can arrive while it is
+	// still unset.
+	setSessionJob(job)
+	return func() {
+		setSessionJob(0)
+		_ = syscall.CloseHandle(job)
+	}
+}

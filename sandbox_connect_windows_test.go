@@ -31,7 +31,7 @@ func TestAContainedDialReachesTheHostServiceItWasGranted(t *testing.T) {
 	guestHome := shortTempDir(t)
 
 	m := connectMapping{Host: host}
-	parent, err := openConnectPort(ctx, guestHome, m)
+	parent, err := openConnectPort(ctx, t.TempDir(), guestHome, m)
 	if err != nil {
 		t.Fatalf("openConnectPort: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestTheWayOutClosesWhenTheRunDoes(t *testing.T) {
 	guestHome := shortTempDir(t)
 	m := connectMapping{Host: host}
 
-	parent, err := openConnectPort(ctx, guestHome, m)
+	parent, err := openConnectPort(ctx, t.TempDir(), guestHome, m)
 	if err != nil {
 		t.Fatalf("openConnectPort: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestTheTunnelRefusesAPeerItCannotPlaceInThisSandbox(t *testing.T) {
 	guestHome := shortTempDir(t)
 	m := connectMapping{Host: host}
 
-	parent, err := openConnectPort(ctx, guestHome, m)
+	parent, err := openConnectPort(ctx, t.TempDir(), guestHome, m)
 	if err != nil {
 		t.Fatalf("openConnectPort: %v", err)
 	}

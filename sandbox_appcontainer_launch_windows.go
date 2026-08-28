@@ -267,21 +267,7 @@ func launchAppContainerProcessOnce(
 	// Best-effort: job objects are a defense-in-depth safety net, not a
 	// containment guarantee, so a failure here logs rather than aborting a
 	// command the user is waiting on.
-	if job, jobErr := createReapingJob(); jobErr != nil {
-		LogWarn("Could not set up process-tree reaping for this sandbox session: %v", jobErr)
-	} else {
-		defer func() { _ = syscall.CloseHandle(job) }()
-		if err := assignToReapingJob(job, pi.hProcess); err != nil {
-			LogWarn("Could not enable process-tree reaping for this sandbox session: %v", err)
-		} else {
-			// Publish it: the --connect tunnel asks this job whether a peer is one
-			// of ours. Only after a successful assignment, so membership actually
-			// means something. Set before the target runs, so no tunnel traffic can
-			// arrive while it is still zero.
-			setSessionJob(job)
-			defer setSessionJob(0)
-		}
-	}
+	defer superviseProcessTree(pi.hProcess)()
 
 	// Let the hangup watchdog end this wait. Terminating the child returns
 	// control here so every deferred cleanup below and in runSandbox runs --
