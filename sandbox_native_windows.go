@@ -122,6 +122,32 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		LogError("AppContainer filesystem setup failed: %v", err)
 		return 1
 	}
+
+	// Extra read/execute roots from isolation.filesystem.allow_read_exec, granted
+	// to THIS PROJECT's capability rather than the shared package identity.
+	//
+	// The distinction matters because these ACEs persist on disk: granted to the
+	// package SID, one project asking for a browser cache would admit every
+	// sandbox on the machine, for ever, and removing the policy entry would not
+	// take it back. Scoped to the capability, only sandboxes carrying this
+	// project's identity are let in -- the same reasoning that made the writable
+	// roots per-project in 0.5.0.
+	//
+	// Best-effort, like the working-directory grant: a failure costs the feature
+	// that needed the path, not the run.
+	for _, root := range config.ReadExecRoots {
+		granted := false
+		for _, capSID := range scopeCaps {
+			if err := grantSandboxReadExec(capSID, root); err != nil {
+				LogWarn("Could not grant the sandbox read access to %q: %v", root, err)
+				continue
+			}
+			granted = true
+		}
+		if granted {
+			LogInfo("Sandbox may read and execute from %s", root)
+		}
+	}
 	// Make the command reachable from inside the container BEFORE rewriting it.
 	//
 	// A runtime outside ~/.nvx/versions is copied into nvxHome, because its own

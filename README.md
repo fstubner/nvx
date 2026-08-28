@@ -418,6 +418,34 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   It matters only where something is waiting with a timeout. If you are wiring a
   contained command into a tool that gives up after a few seconds, run it once by
   hand after installing to absorb the cost.
+- **A contained tool cannot reach a program kept outside the project.** The
+  sandbox grants your project, a throwaway home, and nvx's own runtimes — nothing
+  else. A tool that keeps its executables somewhere else cannot run them.
+
+  Playwright is the case that surfaced it: its browsers live in
+  `%LOCALAPPDATA%\ms-playwright` (`~/.cache/ms-playwright` elsewhere), and a
+  contained process could not even list that directory. Name it and it works:
+
+  ```json
+  { "isolation": { "filesystem": {
+      "allow_read_exec": ["%LOCALAPPDATA%/ms-playwright"] } } }
+  ```
+
+  Read and execute only — never write, whatever else the policy says. Paths take
+  `~`, `$VAR` and `%VAR%` so one policy file works across machines, and a path
+  that does not exist here is skipped with a warning rather than failing the run.
+  Adding one widens what contained code may execute, so a project file that does
+  it needs the same approval as an egress allowlist entry. On Windows the grant is
+  scoped to that project's sandbox identity, not shared with every sandbox on the
+  machine.
+
+  **On Linux this grants reading and executing, but not listing.** A contained
+  process can read and run files under the root; `readdir` on it is still refused.
+  That is not specific to these roots — `/usr/bin` and `/etc` cannot be listed
+  either, and they have been granted since the Linux sandbox was written. A tool
+  that enumerates a directory to find its own binaries will not work contained on
+  Linux yet.
+
 - **nvx stops a command once the program that started it has exited, and reports
   exit 129.** It checks every 15 seconds and needs two consecutive observations,
   so this lands 15–30 seconds after the parent goes away. It only applies when

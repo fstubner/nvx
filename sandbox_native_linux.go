@@ -51,9 +51,16 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		"--network-mode=" + netCtx.Mode,
 		"--command=" + config.Command,
 		"--egress-socket=" + netCtx.EgressSocketPath,
-		"--",
-		cmdPath,
 	}
+	for _, root := range config.ReadExecRoots {
+		args = append(args, "--read-exec="+root)
+		// Said on Linux as well as Windows. Granting a contained process the right
+		// to execute something from outside every default root is worth one line
+		// of output, and its absence is how a policy entry that silently did
+		// nothing would go unnoticed.
+		LogInfo("Sandbox may read and execute from %s", root)
+	}
+	args = append(args, "--", cmdPath)
 	args = append(args, config.Args...)
 
 	cmd := exec.Command(exe, args...)

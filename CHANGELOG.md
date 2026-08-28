@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+* **`isolation.filesystem.allow_read_exec`: let a contained tool reach a program
+  kept outside the project.** The sandbox grants the project, a throwaway home
+  and nvx's own runtimes, and nothing else — so a tool whose executables live
+  elsewhere cannot run them.
+
+  Playwright is the case that forced it. Its browsers are in
+  `%LOCALAPPDATA%\ms-playwright`, and a contained process could not list that
+  directory at all: measured EPERM inside against 27 entries outside, and
+  `LIST_OK` inside once the root was granted.
+
+  ```json
+  { "isolation": { "filesystem": {
+      "allow_read_exec": ["%LOCALAPPDATA%/ms-playwright"] } } }
+  ```
+
+  Read and execute only, never write. Paths expand `~`, `$VAR` and `%VAR%` so one
+  file works across machines; a path that is not present here is skipped with a
+  warning rather than failing the run. Adding one counts as loosening, so a
+  checked-in project file needs the same approval an egress allowlist entry does.
+  On Windows the grant goes to the project's own capability rather than the shared
+  package identity — these ACEs persist on disk, so granting the shared identity
+  would have admitted every sandbox on the machine, permanently, with no way to
+  take it back by editing the policy.
+
+  This also corrects the MCP containment design, which recorded that
+  browser-driving servers cannot be contained on Windows because connections
+  *into* an AppContainer are refused. True when reaching a browser already running
+  on the host — but when Playwright launches its own, the browser is a child
+  inside the container and is reached over intra-container loopback, which nvx
+  already proves works. Ports were never the blocker for that case; the binary
+  being unreachable was.
+
+  **Linux grants reading and executing, not listing.** A contained process can
+  read and run files under a granted root but cannot `readdir` it. That is not
+  specific to this feature: `/usr/bin` and `/etc` cannot be listed either, and
+  they have carried the directory-read right since the Linux sandbox was written.
+  Recorded in README rather than worked around.
+
 ## [0.5.7] - 2026-08-28
 
 ### Fixed (found by an independent acceptance pass before release)

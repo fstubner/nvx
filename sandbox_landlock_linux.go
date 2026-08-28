@@ -183,7 +183,7 @@ func landlockReadOnlyRules(nvxHome string) []landlockRule {
 	return rules
 }
 
-func applyLandlockSandbox(guestHome, workDir, nvxHome string) error {
+func applyLandlockSandbox(guestHome, workDir, nvxHome string, readExecRoots []string) error {
 	if err := prctlSetNoNewPrivs(); err != nil {
 		return fmt.Errorf("prctl(NO_NEW_PRIVS): %w", err)
 	}
@@ -200,6 +200,29 @@ func applyLandlockSandbox(guestHome, workDir, nvxHome string) error {
 		}
 		if err := landlockAddRule(fd, landlockAccessFull, p); err != nil {
 			return fmt.Errorf("landlock rule for %q: %w", p, err)
+		}
+	}
+
+	// Extra read/execute roots from isolation.filesystem.allow_read_exec. Same
+	// rights as the system read-only roots below: read and execute, never write.
+	// A missing path is skipped rather than fatal -- the parent already warned
+	// about it, and a stale entry should not stop the command.
+	//
+	// Measured on WSL2 Ubuntu 24.04: with a root granted, a contained process
+	// reads a file inside it that it is refused without one. Listing the
+	// directory is still refused, and that is NOT specific to these roots --
+	// `/usr/bin` and `/etc` cannot be listed either, and they have carried
+	// LANDLOCK_ACCESS_FS_READ_DIR since the Linux sandbox was written. Reading
+	// and executing are what this feature is for, so it does its job; the
+	// listing gap is recorded in README as a known limitation rather than
+	// silently worked around here.
+	for _, root := range readExecRoots {
+		info, statErr := os.Stat(root)
+		if statErr != nil || !info.IsDir() {
+			continue
+		}
+		if err := landlockAddRule(fd, landlockAccessReadExec, root); err != nil {
+			return fmt.Errorf("landlock read/execute rule for %q: %w", root, err)
 		}
 	}
 
@@ -247,7 +270,7 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 		proxyEnvAddr = addr
 	}
 
-	if err := applyLandlockSandbox(guestHome, workDir, nvxHome); err != nil {
+	if err := applyLandlockSandbox(guestHome, workDir, nvxHome, a.ReadExecRoots); err != nil {
 		LogError("Landlock isolation failed: %v", err)
 		return 1
 	}

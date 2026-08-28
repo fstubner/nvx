@@ -120,6 +120,27 @@ func sandboxScopeForWorkDir(workDir string) string {
 
 // grantSandboxModify gives sidStr modify access to path and its descendants.
 // See grantAppContainerPath for why the ACE is inheritable rather than /t.
+// grantSandboxReadExec gives one identity read and execute on path and its
+// descendants. Never write, whatever the caller asks.
+//
+// Takes a SID string rather than the package handle so the caller can scope this
+// to THIS PROJECT's capability. The first version granted the shared package SID,
+// which would have let every sandbox on the machine read and execute from a
+// directory one project asked for -- and because these ACEs persist on disk,
+// removing the policy entry would not have taken it back. Scoping to the
+// capability means only sandboxes holding this project's identity are admitted.
+func grantSandboxReadExec(sidStr, path string) error {
+	if appContainerHasGrant(sidStr, path) {
+		return nil
+	}
+	grantArg := fmt.Sprintf("*%s:(OI)(CI)(RX)", sidStr)
+	out, err := runWinCmd(45*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
+	if err != nil {
+		return fmt.Errorf("icacls read/execute grant for sandbox identity: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func grantSandboxModify(sidStr, path string) error {
 	if appContainerHasGrant(sidStr, path) {
 		return nil
