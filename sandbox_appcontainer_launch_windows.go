@@ -273,6 +273,13 @@ func launchAppContainerProcessOnce(
 		defer func() { _ = syscall.CloseHandle(job) }()
 		if err := assignToReapingJob(job, pi.hProcess); err != nil {
 			LogWarn("Could not enable process-tree reaping for this sandbox session: %v", err)
+		} else {
+			// Publish it: the --connect tunnel asks this job whether a peer is one
+			// of ours. Only after a successful assignment, so membership actually
+			// means something. Set before the target runs, so no tunnel traffic can
+			// arrive while it is still zero.
+			setSessionJob(job)
+			defer setSessionJob(0)
 		}
 	}
 

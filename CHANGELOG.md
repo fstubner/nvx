@@ -30,8 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checked-in project file needs the same approval an egress allowlist entry does.
   On Windows the grant goes to the project's own capability rather than the shared
   package identity — these ACEs persist on disk, so granting the shared identity
-  would have admitted every sandbox on the machine, permanently, with no way to
-  take it back by editing the policy.
+  would have admitted every sandbox on the machine rather than only this project's.
+
+  **The grant outlives the policy either way**, and the scoping narrows who it
+  admits, not how long it lasts. Deleting the `allow_read_exec` entry or the whole
+  policy file does not remove the ACE, and neither `nvx grants reset` nor `nvx
+  doctor --fix` does; removing it means editing the ACL with `icacls`. The README
+  says so and gives the command. An earlier draft of this entry cited permanence
+  as the reason the shared-identity design was rejected, which was not a
+  difference between them.
 
   This also corrects the MCP containment design, which recorded that
   browser-driving servers cannot be contained on Windows because connections
@@ -77,6 +84,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   On macOS and Linux the flag parses and warns that it does nothing, rather than
   being silently ignored. (`--expose` now warns there too; it was silent before.)
+  Both warn when the command is not sandboxed at all, for the same reason.
+
+### Fixed (found by an independent acceptance pass before release)
+
+* **A `--connect` grant is now confined to the sandbox that asked for it.** It was
+  not. Windows permits loopback within an AppContainer package and every nvx
+  sandbox shares one package identity, so the in-sandbox listener was reachable
+  from every other nvx sandbox running at the same time: measured, a sandbox in an
+  unrelated project with no grant of its own read the granted service. nvx now
+  identifies the process behind each tunnel connection, refuses any that is not
+  part of this run, and logs the refusal. Unverifiable peers are refused rather
+  than admitted. This was a known hazard in the wrong place -- the egress relay has
+  the same exposure and has defended itself with a per-session credential since an
+  acceptance pass found the equivalent attack on 2026-08-19.
+
+* **A directory granted by `allow_read_exec` no longer becomes permanently
+  unwritable if it is later used as a working directory.** The check for an
+  existing grant matched on identity alone, never on which rights were held, so a
+  read-only entry convinced the modify grant it had nothing to do. Every write in
+  that directory then failed with EPERM, and nothing in the product could clear it
+  -- repeat runs, `grants reset --all`, `doctor --fix` and deleting the policy
+  entry all left it broken. Removing the entry by hand made it worse: the grant
+  cache still reported success, so no grant was re-applied and contained commands
+  could not even enter the directory. Rights are now part of both the check and
+  the cache key.
+
+* **An explicit `--connect <host>:<inside>` is no longer overridden by a policy
+  entry for the same port.** The policy won the de-duplication silently, handing
+  back a different in-sandbox port, so a command line naming the port it asked for
+  pointed at nothing.
+
+* **A self-referential `%VAR%` in a policy path no longer hangs nvx.** Expansion
+  restarted from the beginning of the string after each substitution, so a
+  variable containing its own name looped without bound and nothing launched --
+  no error, no output.
+
+* **`TestReadExecRootsAreNeverWritable` now tests what it claims.** It asserted
+  that an unrelated directory was absent from a set built from two other paths --
+  true regardless of what the code under test did, and it passed with the
+  enforcement path deliberately given write permissions. It now checks the access
+  mask the rule is built from. Its comment also claimed the Windows side was
+  covered by an enforcement probe; no probe covers this feature, and the claim is
+  gone rather than reworded.
 
 ## [0.5.7] - 2026-08-28
 

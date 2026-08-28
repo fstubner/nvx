@@ -82,17 +82,31 @@ func expandPathVars(p string) string {
 		}
 	}
 	// %VAR% first: os.ExpandEnv does not understand it.
-	for {
-		start := strings.Index(p, "%")
+	//
+	// Scanning resumes after each substitution rather than restarting, so a
+	// variable whose value contains its own name expands once instead of for ever.
+	// It used to restart from the beginning: with SELFREF=%SELFREF% this spun
+	// without bound and nvx never launched anything -- no error, no output, just a
+	// process to kill. Found by an acceptance pass on 2026-08-28.
+	//
+	// The bound is a second guard, not the fix. One pass cannot loop, but a chain
+	// of variables expanding into each other still grows the string, and a policy
+	// file is not worth an unbounded allocation.
+	const maxExpansions = 32
+	from := 0
+	for n := 0; n < maxExpansions; n++ {
+		start := strings.Index(p[from:], "%")
 		if start < 0 {
 			break
 		}
+		start += from
 		end := strings.Index(p[start+1:], "%")
 		if end < 0 {
 			break
 		}
-		name := p[start+1 : start+1+end]
-		p = p[:start] + os.Getenv(name) + p[start+1+end+1:]
+		value := os.Getenv(p[start+1 : start+1+end])
+		p = p[:start] + value + p[start+1+end+1:]
+		from = start + len(value)
 	}
 	return os.ExpandEnv(p)
 }
