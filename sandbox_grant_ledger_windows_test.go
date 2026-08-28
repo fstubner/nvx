@@ -3,9 +3,13 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -166,25 +170,133 @@ func TestASecondUnreadableRecordDoesNotOverwriteTheFirst(t *testing.T) {
 	}
 }
 
-// The record is written atomically, so an interrupted write cannot leave a
-// half-written file -- which would not parse, stranding every permission it named.
+// The record is written atomically: a reader must never observe a partial file.
+//
+// This is what atomicity buys, and the only thing that distinguishes it from a
+// plain write. An earlier version asserted that no temporary file was left behind
+// and that the result parsed -- both true of a non-atomic write, so it passed
+// with the rename removed.
+//
+// A plain write truncates the destination and fills it, so a concurrent reader
+// can catch it empty or half-written. Writing to a temporary file and renaming
+// means every reader sees one complete version or the other.
 func TestTheRecordIsWrittenAtomically(t *testing.T) {
 	home := t.TempDir()
 	scope := t.TempDir()
-	g := projectGrants{ProjectPath: scope, ReadExecGrants: []readExecGrant{{Path: `C:\x`, SID: "S-1-15-3-1024-1"}}}
+	path := grantsPath(home, scope)
+
+	// Enough entries that a non-atomic write has a window worth catching.
+	grants := make([]readExecGrant, 0, 200)
+	for i := 0; i < 200; i++ {
+		grants = append(grants, readExecGrant{
+			Path: filepath.Join(`C:\someeasonably\long\directory
+ame	o\widen	he\window`, string(rune('a'+i%26))),
+			SID: "S-1-15-3-1024-1111111111-2222222222-3333333333-4444444444-5555555555-6666666666-7777777777-8888888888",
+		})
+	}
+	g := projectGrants{ProjectPath: scope, ReadExecGrants: grants}
 	if err := saveProjectGrants(home, g); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	entries, err := os.ReadDir(grantsDir(home))
-	if err != nil {
-		t.Fatalf("readdir: %v", err)
-	}
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".tmp") {
-			t.Fatalf("a temporary file was left behind (%s); the write is not completing with a rename", e.Name())
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	torn := make(chan string, 1)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Closed however this ends, or the reader below spins for ever.
+		defer close(stop)
+		for i := 0; i < 300; i++ {
+			if err := saveProjectGrants(home, g); err != nil {
+				return
+			}
 		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				runtime.Gosched() // a reader may legitimately miss the file mid-rename
+				continue
+			}
+			var out projectGrants
+			if jerr := json.Unmarshal(data, &out); jerr != nil {
+				select {
+				case torn <- fmt.Sprintf("read %d bytes that do not parse: %v", len(data), jerr):
+				default:
+				}
+				return
+			}
+		}
+	}()
+	wg.Wait()
+
+	select {
+	case why := <-torn:
+		t.Fatalf("a concurrent reader saw a partial record (%s); the write is not atomic, so an interrupted save would leave a file that cannot be read -- stranding every permission it named", why)
+	default:
 	}
-	if _, ok := readGrantsFile(grantsPath(home, scope)); !ok {
-		t.Fatal("the record just written does not parse")
+}
+
+// A withdrawal must be confirmed against the access-control list, not believed
+// because icacls exited zero.
+//
+// icacls exits 0 whether it changed anything or not: on a path it cannot find it
+// prints "Successfully processed 0 files; Failed processing 1 files" and still
+// returns success -- measured, for both /grant and /remove:g. An entry travels
+// with a directory that is renamed, so withdrawing by the recorded path removed
+// nothing, reported success, and let the record be deleted while the permission
+// lived on under the new name. Every "the withdrawal failed, keep the record"
+// branch in this package was unreachable, because the condition could not occur.
+func TestAWithdrawalThatRemovedNothingIsReportedAsFailure(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "tools")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	sid, err := scopeCapabilitySID(dir)
+	if err != nil {
+		t.Skipf("cannot derive a capability SID here: %v", err)
+	}
+	if _, gerr := grantSandboxReadExec(sid, dir); gerr != nil {
+		t.Skipf("cannot write an ACL in the test environment: %v", gerr)
+	}
+
+	renamed := filepath.Join(parent, "tools_renamed")
+	if rerr := os.Rename(dir, renamed); rerr != nil {
+		t.Skipf("cannot rename: %v", rerr)
+	}
+	t.Cleanup(func() { _ = revokeSandboxReadExec(sid, renamed) })
+
+	// The permission is now on `renamed`; the record still names `dir`.
+	if err := revokeSandboxReadExec(sid, dir); err == nil {
+		t.Fatal("withdrawing from a path that no longer exists reported success; the record would be deleted while the permission lives on under the new name")
+	}
+	if !readExecEntryIsOurs(sid, renamed) {
+		t.Fatal("test precondition: the entry did not travel with the rename")
+	}
+}
+
+// A grant that did not land must not be reported as one that did, or the caller
+// records a permission that does not exist and the sandbox fails to read a
+// directory nvx said it had granted.
+func TestAGrantThatWroteNothingIsReportedAsFailure(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "never-created")
+	sid, err := scopeCapabilitySID(dir)
+	if err != nil {
+		t.Skipf("cannot derive a capability SID here: %v", err)
+	}
+	if _, gerr := grantSandboxReadExec(sid, dir); gerr == nil {
+		t.Fatal("granting on a path that does not exist reported success")
 	}
 }

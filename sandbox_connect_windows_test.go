@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 // The claim worth testing is end to end: something dialling the in-sandbox port
@@ -200,27 +201,46 @@ func TestPeerCheckFailsClosedWithoutAJob(t *testing.T) {
 
 // The peer lookup must require loopback at both ends, not just the two port
 // numbers: it decides which process is allowed through the tunnel.
+//
+// The table handed to the scan carries a decoy first -- a non-loopback connection
+// using the same two ports, owned by a different process. A scan that matched
+// ports alone would return the decoy's owner, and the tunnel would judge the
+// wrong process. An earlier version of this test asserted on the row matcher
+// directly and passed with the scan reverted to a port-only match.
 func TestThePeerLookupRequiresLoopbackAtBothEnds(t *testing.T) {
 	const src, dst = 4321, 8080
+	const decoyPID, realPID = 111, 222
 	be := func(p uint16) uint32 { return uint32(p&0xff)<<8 | uint32(p>>8) }
-	const other = uint32(0x0100A8C0) // 192.168.0.1
+	const elsewhere = uint32(0x0100A8C0) // 192.168.0.1
 
-	loopback := &mibTCPRowOwnerPID{
-		LocalAddr: loopbackAddrLE, RemoteAddr: loopbackAddrLE,
-		LocalPort: be(src), RemotePort: be(dst), OwningPID: 42,
+	rows := []mibTCPRowOwnerPID{
+		{LocalAddr: elsewhere, RemoteAddr: elsewhere, LocalPort: be(src), RemotePort: be(dst), OwningPID: decoyPID},
+		{LocalAddr: loopbackAddrLE, RemoteAddr: loopbackAddrLE, LocalPort: be(src), RemotePort: be(dst), OwningPID: realPID},
 	}
-	if !rowIsLoopbackConnection(loopback, src, dst) {
-		t.Fatal("a genuine loopback connection was not matched; every legitimate peer would be refused")
+	buf := make([]byte, int(unsafe.Sizeof(uint32(0)))+len(rows)*int(unsafe.Sizeof(mibTCPRowOwnerPID{})))
+	*(*uint32)(unsafe.Pointer(&buf[0])) = uint32(len(rows))
+	for i := range rows {
+		off := unsafe.Sizeof(uint32(0)) + uintptr(i)*unsafe.Sizeof(mibTCPRowOwnerPID{})
+		*(*mibTCPRowOwnerPID)(unsafe.Pointer(&buf[off])) = rows[i]
 	}
 
-	for name, row := range map[string]*mibTCPRowOwnerPID{
-		"remote end elsewhere": {LocalAddr: loopbackAddrLE, RemoteAddr: other, LocalPort: be(src), RemotePort: be(dst)},
-		"local end elsewhere":  {LocalAddr: other, RemoteAddr: loopbackAddrLE, LocalPort: be(src), RemotePort: be(dst)},
-		"neither end loopback": {LocalAddr: other, RemoteAddr: other, LocalPort: be(src), RemotePort: be(dst)},
-	} {
-		if rowIsLoopbackConnection(row, src, dst) {
-			t.Errorf("%s: a non-loopback connection was accepted as the tunnel's peer", name)
-		}
+	got, err := ownerInTCPTable(buf, src, dst)
+	if err != nil {
+		t.Fatalf("the loopback connection was not found: %v", err)
+	}
+	if got == decoyPID {
+		t.Fatal("a non-loopback connection with the same ports was returned as the tunnel's peer")
+	}
+	if got != realPID {
+		t.Fatalf("owner = %d, want the loopback connection's %d", got, realPID)
+	}
+
+	// And a table with only the decoy must resolve to nothing at all.
+	only := make([]byte, int(unsafe.Sizeof(uint32(0)))+int(unsafe.Sizeof(mibTCPRowOwnerPID{})))
+	*(*uint32)(unsafe.Pointer(&only[0])) = 1
+	*(*mibTCPRowOwnerPID)(unsafe.Pointer(&only[unsafe.Sizeof(uint32(0))])) = rows[0]
+	if _, err := ownerInTCPTable(only, src, dst); err == nil {
+		t.Fatal("a non-loopback connection was accepted as the tunnel's peer")
 	}
 }
 

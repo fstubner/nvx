@@ -90,6 +90,21 @@ func ownerOfLoopbackConnection(srcPort, dstPort uint16) (uint32, error) {
 		return 0, fmt.Errorf("GetExtendedTcpTable: rc=%d (%v)", rc, err)
 	}
 
+	return ownerInTCPTable(buf, srcPort, dstPort)
+}
+
+// ownerInTCPTable scans a MIB_TCPTABLE_OWNER_PID buffer for the loopback
+// connection from srcPort to dstPort.
+//
+// Split from the syscall so a test can hand it a table containing a decoy: a
+// non-loopback connection using the same two port numbers. Nothing else here can
+// produce one on demand, and without it a test cannot tell this scan from one
+// that matches ports alone -- which is exactly the mistake this must not make,
+// since it decides which process is allowed through a tunnel.
+func ownerInTCPTable(buf []byte, srcPort, dstPort uint16) (uint32, error) {
+	if len(buf) < int(unsafe.Sizeof(uint32(0))) {
+		return 0, fmt.Errorf("TCP table is too short to read")
+	}
 	n := *(*uint32)(unsafe.Pointer(&buf[0]))
 	rowSize := unsafe.Sizeof(mibTCPRowOwnerPID{})
 	for i := uintptr(0); i < uintptr(n); i++ {

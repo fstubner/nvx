@@ -152,6 +152,14 @@ func grantSandboxReadExec(sidStr, path string) (ours bool, err error) {
 	if err != nil {
 		return false, fmt.Errorf("icacls read/execute grant for sandbox identity: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
+	// Confirm it landed. icacls exits 0 even when it wrote nothing -- on a path it
+	// cannot find it prints "Failed processing 1 files" and still returns success
+	// (measured). Reporting a grant that did not happen would tell the caller to
+	// record a permission that does not exist, and the sandbox would then fail to
+	// read a directory nvx said it had granted.
+	if !readExecEntryIsOurs(sidStr, path) {
+		return false, fmt.Errorf("icacls reported success but no read/execute permission is present on %s", path)
+	}
 	return true, nil
 }
 
@@ -338,7 +346,16 @@ func appContainerHasGrantFor(sidStr, path string, want grantKind) bool {
 	// removing the read-only ACE with icacls left the cache still answering yes,
 	// so no grant was re-applied and the directory ended up with no access at all
 	// -- every contained command in it then failed before it could even chdir.
-	if grantCacheHas(grantIdentityFor(sidStr, want), path) {
+	// Read/execute is asked afresh every time; only the modify answer is cached.
+	//
+	// The cache exists for the many ancestor and working-directory checks on the
+	// startup path. Read/execute roots are a handful of paths a policy names
+	// explicitly, so re-reading them costs one ACL read each for a feature the user
+	// opted into -- and caching the answer was actively harmful: an entry removed
+	// behind nvx's back (with the very icacls command nvx's own messages tell people
+	// to run) left the cache reporting it as granted for seven days, so the grant was
+	// skipped, the log said it had been made, and the sandbox got EPERM.
+	if want != grantReadExec && grantCacheHas(grantIdentityFor(sidStr, want), path) {
 		return true
 	}
 	out, err := runWinCmd(10*time.Second, "icacls", path)
@@ -359,7 +376,9 @@ func appContainerHasGrantFor(sidStr, path string, want grantKind) bool {
 		if rights == "" || !want.satisfies(rights) {
 			continue
 		}
-		grantCacheRecord(grantIdentityFor(sidStr, want), path)
+		if want != grantReadExec {
+			grantCacheRecord(grantIdentityFor(sidStr, want), path)
+		}
 		return true
 	}
 	return false
