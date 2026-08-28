@@ -39,7 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the entry, or the whole policy file, and the next run takes the permission off
   disk. `nvx grants list` shows them; `nvx grants reset` withdraws them, instead of
   deleting its own records and orphaning the permissions they tracked, which is
-  what it did before.
+  what it did before. A record it cannot read is kept rather than deleted, and
+  reported, since removing it would strand exactly what it was there to track.
 
   This also corrects the MCP containment design, which recorded that
   browser-driving servers cannot be contained on Windows because connections
@@ -120,6 +121,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restarted from the beginning of the string after each substitution, so a
   variable containing its own name looped without bound and nothing launched --
   no error, no output.
+
+* **A lost grant record no longer strands a permission for ever.** Only what a
+  run had just written was recorded, and an entry from an earlier run was
+  indistinguishable from someone else's, so once a record was lost — a corrupt
+  file, a deleted grants directory, one failed save — every later run re-confirmed
+  the permission and declined to write it down again. nvx now recognises its own
+  entry by its exact signature, so the record is re-created and the permission can
+  still be withdrawn.
+
+* **`nvx grants reset` no longer deletes a record it has just reported it cannot
+  act on.** An unreadable record was treated as one holding nothing, so it was
+  removed along with the rest — destroying the only trace of permissions still on
+  disk, and reporting success. It is kept and counted now. A second unreadable
+  record also no longer overwrites the first.
+
+* **Withdrawing a grant now clears the cache for the whole directory tree.** The
+  entries nvx writes are inheritable, so withdrawing one on a parent removes the
+  access its children had through it; the cache still listed those children as
+  granted, so their grant was skipped and the sandbox got EPERM on a directory the
+  policy still named — for up to seven days, while the log said it had been
+  granted.
 
 * **Withdrawing a read/execute grant no longer removes a permission nvx did not
   grant.** Withdrawing is not selective -- it removes an identity's whole entry on

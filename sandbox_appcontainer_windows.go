@@ -134,16 +134,54 @@ func sandboxScopeForWorkDir(workDir string) string {
 // -- because a modify entry already covered read and execute -- meant a later
 // withdrawal deleted the WRITE access that entry was really there for, and the
 // project's own directory became unusable: "chdir: Access is denied", measured.
-func grantSandboxReadExec(sidStr, path string) (wrote bool, err error) {
+func grantSandboxReadExec(sidStr, path string) (ours bool, err error) {
 	if appContainerHasGrantFor(sidStr, path, grantReadExec) {
-		return false, nil
+		// Already satisfied -- but by what? An entry nvx wrote on an earlier run is
+		// this feature's to take back; someone else's broader entry is not.
+		//
+		// Answering "no" to both was a defect with no way out. A record can be lost
+		// -- a corrupt ledger, a deleted grants directory, one failed save -- and
+		// every later run then saw its own entry, declined to record it, and left a
+		// permission nvx had granted that nothing could ever withdraw. Measured:
+		// with the record removed, three further runs re-confirmed the entry and
+		// recorded nothing, and emptying the policy withdrew nothing.
+		return readExecEntryIsOurs(sidStr, path), nil
 	}
-	grantArg := fmt.Sprintf("*%s:(OI)(CI)(RX)", sidStr)
+	grantArg := fmt.Sprintf("*%s:%s", sidStr, nvxReadExecMask)
 	out, err := runWinCmd(45*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
 	if err != nil {
 		return false, fmt.Errorf("icacls read/execute grant for sandbox identity: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return true, nil
+}
+
+// nvxReadExecMask is exactly what grantSandboxReadExec writes, and therefore the
+// signature that identifies an entry as nvx's own.
+const nvxReadExecMask = "(OI)(CI)(RX)"
+
+// readExecEntryIsOurs reports whether path carries the precise entry
+// grantSandboxReadExec writes for sidStr.
+//
+// Exact, not "contains RX". A broader entry that happens to include read and
+// execute -- a modify grant for the working directory, say -- is not this
+// feature's to remove, because withdrawing takes the identity's whole entry and
+// would delete the write access with it. An inherited entry prints with a leading
+// (I) and so does not match either, which is right: it lives on an ancestor and
+// removing it here would do nothing.
+func readExecEntryIsOurs(sidStr, path string) bool {
+	out, err := runWinCmd(10*time.Second, "icacls", path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, sidStr) {
+			continue
+		}
+		if strings.EqualFold(rightsAfterSID(line, sidStr), nvxReadExecMask) {
+			return true
+		}
+	}
+	return false
 }
 
 // grantSandboxModify gives sidStr modify access to path and its descendants.

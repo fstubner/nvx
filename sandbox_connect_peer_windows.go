@@ -98,16 +98,23 @@ func ownerOfLoopbackConnection(srcPort, dstPort uint16) (uint32, error) {
 			break
 		}
 		row := (*mibTCPRowOwnerPID)(unsafe.Pointer(&buf[off]))
-		// Both addresses as well as both ports. Matching ports alone would accept a
-		// connection that merely happens to use the reported source port toward the
-		// same-numbered port on some other interface -- the function is named for
-		// loopback and must actually require it.
-		if row.LocalAddr == loopbackAddrLE && row.RemoteAddr == loopbackAddrLE &&
-			netPort(row.LocalPort) == srcPort && netPort(row.RemotePort) == dstPort {
+		if rowIsLoopbackConnection(row, srcPort, dstPort) {
 			return row.OwningPID, nil
 		}
 	}
 	return 0, fmt.Errorf("no connection from port %d to port %d", srcPort, dstPort)
+}
+
+// rowIsLoopbackConnection reports whether a table row is the loopback connection
+// from srcPort to dstPort.
+//
+// Both addresses as well as both ports. Matching ports alone would accept a
+// connection that merely happens to use the reported source port toward the
+// same-numbered port on some other interface -- this decides which process is
+// allowed through a tunnel, so it must require what its name claims.
+func rowIsLoopbackConnection(row *mibTCPRowOwnerPID, srcPort, dstPort uint16) bool {
+	return row.LocalAddr == loopbackAddrLE && row.RemoteAddr == loopbackAddrLE &&
+		netPort(row.LocalPort) == srcPort && netPort(row.RemotePort) == dstPort
 }
 
 // sessionJob is this run's reaping job, published so the connect tunnel can ask

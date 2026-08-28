@@ -160,15 +160,19 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	for _, root := range config.ReadExecRoots {
 		granted := false
 		for _, capSID := range scopeCaps {
-			wrote, err := grantSandboxReadExec(capSID, root)
+			ours, err := grantSandboxReadExec(capSID, root)
 			if err != nil {
 				LogWarn("Could not grant the sandbox read access to %q: %v", root, err)
 				continue
 			}
 			granted = true
-			// Only what nvx actually wrote. A grant skipped because a broader entry
-			// already covers it is not this feature's to take away.
-			if wrote {
+			// Record every entry that is nvx's own -- one just written, or one written
+			// by an earlier run -- and nothing else. Recording a broader entry that
+			// merely covers read and execute would let a later withdrawal delete the
+			// write access it exists for; recording only what THIS run wrote left a
+			// lost record unrecoverable, because the next run saw its own entry and
+			// declined to write it down again.
+			if ours {
 				ledger.ReadExecGrants = recordReadExecGrant(ledger.ReadExecGrants, capSID, root)
 			}
 		}
@@ -179,8 +183,8 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	if scope != "" && (len(ledger.ReadExecGrants) != beforeCount || len(revokedNow) > 0) {
 		// Fold in anything another run in this project recorded while this one was
 		// working, so the later write does not erase the earlier one's records.
-		ledger.ReadExecGrants = mergeLedgerForSave(
-			ledger.ReadExecGrants, readGrantsFile(grantsPath(config.NvxHome, scope)), revokedNow)
+		stored, _ := readGrantsFile(grantsPath(config.NvxHome, scope))
+		ledger.ReadExecGrants = mergeLedgerForSave(ledger.ReadExecGrants, stored, revokedNow)
 		ledger.ProjectPath = scope
 		if err := saveProjectGrants(config.NvxHome, ledger); err != nil {
 			// Worth saying out loud: the grant itself succeeded, so access is wider

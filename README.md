@@ -453,12 +453,21 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   file, and the next contained run withdraws the permission. `nvx grants list`
   shows what is currently granted and `nvx grants reset` withdraws it immediately.
 
-  One case is not automatic. The identity is derived from the project root, so
-  moving that root — adding or removing a `package.json` above your working
-  directory — leaves the permission granted under the old identity unreconciled.
-  It cannot be *used* while stale (a run at the old root reconciles it before the
-  contained process starts), but it stays on disk until either such a run happens
-  or you run `nvx grants reset --all`, which sweeps every project.
+  Two cases are not automatic, and `nvx grants reset --all` — which sweeps every
+  project — is the answer to both.
+
+  The identity is derived from the project root, so *moving* that root leaves the
+  permission granted under the old identity unreconciled. The root is the nearest
+  ancestor holding a `package.json`, so this needs a `package.json` to appear or
+  disappear closer to your working directory than the current one; adding one
+  further up changes nothing. The stale permission cannot be *used* while stale —
+  a run at the old root reconciles it before the contained process starts — but it
+  stays on disk until such a run happens or you reset.
+
+  The other is a grant record nvx cannot read. It keeps the file, renamed to
+  `.unreadable`, and says so, but it can no longer tell what that record listed, so
+  those permissions are removed with `icacls` by hand. Records are written
+  atomically, so this should take deliberate corruption to reach.
 
   Nothing else needs cleaning up by hand. Earlier builds of this feature left the
   permission behind entirely, with no way back but working out the capability SID

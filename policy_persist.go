@@ -90,7 +90,7 @@ func loadProjectGrants(nvxHome, scopeDir string) projectGrants {
 		// Keep the file under a name that says what happened, and say so. The
 		// permissions still need removing by hand, but there is at least something on
 		// disk that names them.
-		quarantine := path + ".unreadable"
+		quarantine := quarantinePath(path)
 		if rerr := os.Rename(path, quarantine); rerr == nil {
 			LogWarn("This project's grant record could not be read; it has been kept as %s.", quarantine)
 			LogWarn("Directory permissions it listed are no longer tracked and must be removed with icacls.")
@@ -174,15 +174,36 @@ func persistNetworkAllowHost(nvxHome, hostPort string) {
 // readGrantsFile loads one grants file by path, for callers walking the grants
 // directory rather than resolving a project. Returns nothing if it cannot be
 // read: a reset must not abort on one unreadable file.
-func readGrantsFile(path string) []readExecGrant {
+// Returns ok=false when the file cannot be read or parsed, which is NOT the same
+// as holding no grants. Conflating them let `grants reset --all` delete a record
+// it had just reported it could not act on, destroying the only trace of
+// permissions still on disk -- and report success while doing it.
+func readGrantsFile(path string) (grants []readExecGrant, ok bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	var g projectGrants
 	if err := json.Unmarshal(data, &g); err != nil {
-		LogWarn("Skipping an unreadable grant record at %s; any directory permissions it listed are not withdrawn.", path)
-		return nil
+		return nil, false
 	}
-	return g.ReadExecGrants
+	return g.ReadExecGrants, true
+}
+
+// quarantinePath returns a free name to preserve an unreadable record under.
+//
+// Numbered rather than fixed: os.Rename replaces an existing target on Windows,
+// so a second unreadable record silently destroyed the first -- along with the
+// only record of whatever permissions that one named.
+func quarantinePath(path string) string {
+	candidate := path + ".unreadable"
+	for i := 1; ; i++ {
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+		if i > 100 {
+			return candidate // give up and overwrite rather than spin
+		}
+		candidate = fmt.Sprintf("%s.unreadable.%d", path, i)
+	}
 }

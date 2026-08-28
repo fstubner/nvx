@@ -88,10 +88,25 @@ func runGrants(args []string, nvxHome string) int {
 			// them. Deleting the ledger first would leave the access-control entries
 			// on disk with nothing left that knows they exist -- which is what
 			// "reset" was quietly doing before.
-			revoked, failed := 0, 0
+			revoked, failed, unreadable := 0, 0, 0
 			for _, e := range entries {
 				path := filepath.Join(dir, e.Name())
-				r, f := revokeAllReadExecGrants(readGrantsFile(path), revokeSandboxReadExec)
+				// Preserved records of permissions nvx can no longer account for.
+				// Deleting one would destroy the only trace that they exist.
+				if strings.Contains(e.Name(), ".unreadable") {
+					unreadable++
+					continue
+				}
+				grants, ok := readGrantsFile(path)
+				if !ok {
+					// Could not be read, so its permissions cannot be withdrawn and
+					// its contents are unknown. Keep the file: removing it is exactly
+					// the loss this whole ledger exists to prevent.
+					LogWarn("Could not read %s; it was left in place, and any directory permissions it lists are not withdrawn.", e.Name())
+					unreadable++
+					continue
+				}
+				r, f := revokeAllReadExecGrants(grants, revokeSandboxReadExec)
 				revoked += r
 				failed += f
 				if f > 0 {
@@ -109,6 +124,9 @@ func runGrants(args []string, nvxHome string) int {
 			if failed > 0 {
 				LogWarn("Could not withdraw %d permission(s); their records were kept so a later reset can retry.", failed)
 			}
+			if unreadable > 0 {
+				LogWarn("%d grant record(s) could not be read and were kept; directory permissions they list must be removed with icacls.", unreadable)
+			}
 			LogSuccess("Reset all project grants.")
 			return 0
 		}
@@ -119,7 +137,15 @@ func runGrants(args []string, nvxHome string) int {
 			return 1
 		}
 		path := grantsPath(nvxHome, scope)
-		if revoked, failed := revokeAllReadExecGrants(readGrantsFile(path), revokeSandboxReadExec); revoked > 0 || failed > 0 {
+		grants, readable := readGrantsFile(path)
+		if !readable {
+			if _, statErr := os.Stat(path); statErr == nil {
+				LogError("This project's grant record could not be read; it was left in place rather than deleted.")
+				LogInfo("Any directory permissions it lists must be removed with icacls.")
+				return 1
+			}
+		}
+		if revoked, failed := revokeAllReadExecGrants(grants, revokeSandboxReadExec); revoked > 0 || failed > 0 {
 			if revoked > 0 {
 				LogInfo("Withdrew %d read/execute directory permission(s).", revoked)
 			}

@@ -23,7 +23,10 @@ func revokeSandboxReadExec(sidStr, path string) error {
 	if err != nil {
 		return fmt.Errorf("icacls revoke for sandbox identity: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
-	grantCacheForget(grantIdentityFor(sidStr, grantReadExec), path)
-	grantCacheForget(grantIdentityFor(sidStr, grantModify), path)
+	// The whole subtree, not just this path: the entry removed was inheritable, so
+	// every descendant loses the access it had through it, and a descendant still
+	// cached as granted would be skipped on the next launch and fail with EPERM.
+	grantCacheForgetUnder(grantIdentityFor(sidStr, grantReadExec), path)
+	grantCacheForgetUnder(grantIdentityFor(sidStr, grantModify), path)
 	return nil
 }
