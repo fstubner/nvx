@@ -32,13 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package identity — these ACEs persist on disk, so granting the shared identity
   would have admitted every sandbox on the machine rather than only this project's.
 
-  **The grant outlives the policy either way**, and the scoping narrows who it
-  admits, not how long it lasts. Deleting the `allow_read_exec` entry or the whole
-  policy file does not remove the ACE, and neither `nvx grants reset` nor `nvx
-  doctor --fix` does; removing it means editing the ACL with `icacls`. The README
-  says so and gives the command. An earlier draft of this entry cited permanence
-  as the reason the shared-identity design was rejected, which was not a
-  difference between them.
+  **The grant is recorded, and withdrawn when the policy stops asking for it.** It
+  persists between runs by design -- re-applying it every launch would put a
+  permissions call on the startup path for every root -- so nvx keeps a ledger of
+  what it granted and reconciles it on each contained run in that project. Delete
+  the entry, or the whole policy file, and the next run takes the permission off
+  disk. `nvx grants list` shows them; `nvx grants reset` withdraws them, instead of
+  deleting its own records and orphaning the permissions they tracked, which is
+  what it did before.
 
   This also corrects the MCP containment design, which recorded that
   browser-driving servers cannot be contained on Windows because connections

@@ -19,11 +19,17 @@ import (
 //     credentials they save (e.g. `wrangler login`) persist.
 //   - PolicyPins:    sha256 of each project policy file the user has trusted,
 //     keyed by cleaned absolute path.
+//   - ReadExecGrants: filesystem ACEs nvx granted for allow_read_exec, recorded
+//     so they can be withdrawn when the policy stops asking for them.
 type projectGrants struct {
 	ProjectPath  string            `json:"project_path"`
 	AllowHosts   []string          `json:"allow_hosts,omitempty"`
 	TrustedTools []string          `json:"trusted_tools,omitempty"`
 	PolicyPins   map[string]string `json:"policy_pins,omitempty"`
+	// ReadExecGrants are the access-control entries nvx wrote for
+	// isolation.filesystem.allow_read_exec, so it can take them back. See
+	// sandbox_read_exec_grants.go.
+	ReadExecGrants []readExecGrant `json:"read_exec_grants,omitempty"`
 }
 
 // hasTrustedTool reports whether tool (case-insensitive) is in the granted
@@ -128,4 +134,19 @@ func persistNetworkAllowHost(nvxHome, hostPort string) {
 		return
 	}
 	auditLog(nvxHome, "grant_added", map[string]string{"host": hostPort, "project": scope})
+}
+
+// readGrantsFile loads one grants file by path, for callers walking the grants
+// directory rather than resolving a project. Returns nothing if it cannot be
+// read: a reset must not abort on one unreadable file.
+func readGrantsFile(path string) []readExecGrant {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var g projectGrants
+	if err := json.Unmarshal(data, &g); err != nil {
+		return nil
+	}
+	return g.ReadExecGrants
 }

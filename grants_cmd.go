@@ -35,6 +35,16 @@ func formatProjectGrants(g projectGrants) string {
 			fmt.Fprintf(&b, "    - %s\n", path)
 		}
 	}
+	// Listed because these are the only grants that write something outside nvx's
+	// own storage. `nvx grants reset` withdraws them.
+	if len(g.ReadExecGrants) == 0 {
+		b.WriteString("  read/execute directories: (none)\n")
+	} else {
+		b.WriteString("  read/execute directories (filesystem permissions nvx granted):\n")
+		for _, r := range g.ReadExecGrants {
+			fmt.Fprintf(&b, "    - %s\n", r.Path)
+		}
+	}
 	return b.String()
 }
 
@@ -74,10 +84,30 @@ func runGrants(args []string, nvxHome string) int {
 				LogError("Failed to read grants directory: %v", err)
 				return 1
 			}
+			// Withdraw the filesystem permissions before dropping the record of
+			// them. Deleting the ledger first would leave the access-control entries
+			// on disk with nothing left that knows they exist -- which is what
+			// "reset" was quietly doing before.
+			revoked, failed := 0, 0
 			for _, e := range entries {
-				if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
+				path := filepath.Join(dir, e.Name())
+				r, f := revokeAllReadExecGrants(readGrantsFile(path), revokeSandboxReadExec)
+				revoked += r
+				failed += f
+				if f > 0 {
+					// Keep the record of whatever could not be withdrawn; removing it
+					// would strand those entries permanently.
+					continue
+				}
+				if err := os.Remove(path); err != nil {
 					LogWarn("Failed to remove %s: %v", e.Name(), err)
 				}
+			}
+			if revoked > 0 {
+				LogInfo("Withdrew %d read/execute directory permission(s).", revoked)
+			}
+			if failed > 0 {
+				LogWarn("Could not withdraw %d permission(s); their records were kept so a later reset can retry.", failed)
 			}
 			LogSuccess("Reset all project grants.")
 			return 0
@@ -89,6 +119,15 @@ func runGrants(args []string, nvxHome string) int {
 			return 1
 		}
 		path := grantsPath(nvxHome, scope)
+		if revoked, failed := revokeAllReadExecGrants(readGrantsFile(path), revokeSandboxReadExec); revoked > 0 || failed > 0 {
+			if revoked > 0 {
+				LogInfo("Withdrew %d read/execute directory permission(s).", revoked)
+			}
+			if failed > 0 {
+				LogWarn("Could not withdraw %d permission(s); the record was kept so a later reset can retry.", failed)
+				return 1
+			}
+		}
 		if err := os.Remove(path); err != nil {
 			if os.IsNotExist(err) {
 				LogSuccess("No grants recorded for this project.")
