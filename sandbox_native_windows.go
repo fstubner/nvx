@@ -117,6 +117,25 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		noteMissingElevatedGrants(config.NvxHome, sid, workDir)
 	}
 
+	// Withdraw stale read/execute grants BEFORE the writable roots are set up, not
+	// after.
+	//
+	// Withdrawing is not selective -- icacls removes an identity's whole granted
+	// entry on a path, not one right from it. Run the other way round, reclaiming a
+	// stale entry on a directory that is also this run's working directory deleted
+	// the write access just granted for it, and the command died with "chdir:
+	// Access is denied". Doing it first means prepareAppContainerFilesystem
+	// re-establishes whatever this run actually needs, after anything the policy no
+	// longer asks for is gone.
+	scope := sandboxScopeForWorkDir(workDir)
+	ledger := loadProjectGrants(config.NvxHome, scope)
+	beforeCount := len(ledger.ReadExecGrants)
+	var revokedNow []readExecGrant
+	if capSID, cerr := scopeCapabilitySID(scope); cerr == nil {
+		ledger.ReadExecGrants, revokedNow = reconcileReadExecGrants(
+			ledger.ReadExecGrants, config.ReadExecRoots, []string{capSID}, revokeSandboxReadExec)
+	}
+
 	scopeCaps, err := prepareAppContainerFilesystem(sid, config.NvxHome, guestHome, workDir)
 	if err != nil {
 		LogError("AppContainer filesystem setup failed: %v", err)
@@ -136,32 +155,28 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// Best-effort, like the working-directory grant: a failure costs the feature
 	// that needed the path, not the run.
 	//
-	// Every grant is recorded, and the record reconciled against the policy on the
-	// way in, so a root the policy no longer names has its entry withdrawn here
-	// rather than lingering on disk with no way to remove it but icacls. See
-	// sandbox_read_exec_grants.go.
-	scope := sandboxScopeForWorkDir(workDir)
-	ledger := loadProjectGrants(config.NvxHome, scope)
-	before := len(ledger.ReadExecGrants)
-	var revokedNow []readExecGrant
-	ledger.ReadExecGrants, revokedNow = reconcileReadExecGrants(
-		ledger.ReadExecGrants, config.ReadExecRoots, scopeCaps, revokeSandboxReadExec)
-
+	// Grants nvx writes are recorded so they can be withdrawn later; the
+	// reconciliation above is the other half. See sandbox_read_exec_grants.go.
 	for _, root := range config.ReadExecRoots {
 		granted := false
 		for _, capSID := range scopeCaps {
-			if err := grantSandboxReadExec(capSID, root); err != nil {
+			wrote, err := grantSandboxReadExec(capSID, root)
+			if err != nil {
 				LogWarn("Could not grant the sandbox read access to %q: %v", root, err)
 				continue
 			}
 			granted = true
-			ledger.ReadExecGrants = recordReadExecGrant(ledger.ReadExecGrants, capSID, root)
+			// Only what nvx actually wrote. A grant skipped because a broader entry
+			// already covers it is not this feature's to take away.
+			if wrote {
+				ledger.ReadExecGrants = recordReadExecGrant(ledger.ReadExecGrants, capSID, root)
+			}
 		}
 		if granted {
 			LogInfo("Sandbox may read and execute from %s", root)
 		}
 	}
-	if scope != "" && (len(ledger.ReadExecGrants) != before || len(revokedNow) > 0) {
+	if scope != "" && (len(ledger.ReadExecGrants) != beforeCount || len(revokedNow) > 0) {
 		// Fold in anything another run in this project recorded while this one was
 		// working, so the later write does not erase the earlier one's records.
 		ledger.ReadExecGrants = mergeLedgerForSave(
@@ -293,7 +308,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// the in-sandbox port, so the supervisor is told both numbers rather than
 	// deciding either -- the contained side never chooses where it can dial.
 	for i, m := range netCtx.ConnectPorts {
-		c, cerr := openConnectPort(exposeCtx, guestHome, m)
+		c, cerr := openConnectPort(exposeCtx, config.NvxHome, guestHome, m)
 		if cerr != nil {
 			LogError("Could not open a path to 127.0.0.1:%d for the sandbox: %v", m.Host, cerr)
 			return 1

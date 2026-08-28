@@ -52,6 +52,9 @@ const (
 	// TCP_TABLE_OWNER_PID_CONNECTIONS: established connections with owning PIDs.
 	tcpTableOwnerPidConnections = 4
 	processQueryLimitedInfo     = 0x1000
+	// 127.0.0.1 as the table stores it: network byte order read as a
+	// little-endian uint32, so the octets appear reversed.
+	loopbackAddrLE = 0x0100007F
 )
 
 // mibTCPRowOwnerPID mirrors MIB_TCPROW_OWNER_PID. Ports and addresses are in
@@ -95,7 +98,12 @@ func ownerOfLoopbackConnection(srcPort, dstPort uint16) (uint32, error) {
 			break
 		}
 		row := (*mibTCPRowOwnerPID)(unsafe.Pointer(&buf[off]))
-		if netPort(row.LocalPort) == srcPort && netPort(row.RemotePort) == dstPort {
+		// Both addresses as well as both ports. Matching ports alone would accept a
+		// connection that merely happens to use the reported source port toward the
+		// same-numbered port on some other interface -- the function is named for
+		// loopback and must actually require it.
+		if row.LocalAddr == loopbackAddrLE && row.RemoteAddr == loopbackAddrLE &&
+			netPort(row.LocalPort) == srcPort && netPort(row.RemotePort) == dstPort {
 			return row.OwningPID, nil
 		}
 	}

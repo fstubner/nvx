@@ -118,10 +118,9 @@ func sandboxScopeForWorkDir(workDir string) string {
 	return filepath.Clean(workDir)
 }
 
-// grantSandboxModify gives sidStr modify access to path and its descendants.
-// See grantAppContainerPath for why the ACE is inheritable rather than /t.
 // grantSandboxReadExec gives one identity read and execute on path and its
 // descendants. Never write, whatever the caller asks.
+// See grantAppContainerPath for why the ACE is inheritable rather than /t.
 //
 // Takes a SID string rather than the package handle so the caller can scope this
 // to THIS PROJECT's capability. The first version granted the shared package SID,
@@ -129,18 +128,25 @@ func sandboxScopeForWorkDir(workDir string) string {
 // directory one project asked for -- and because these ACEs persist on disk,
 // removing the policy entry would not have taken it back. Scoping to the
 // capability means only sandboxes holding this project's identity are admitted.
-func grantSandboxReadExec(sidStr, path string) error {
+// Returns whether an entry was actually written. The caller records only what
+// nvx wrote, because withdrawing is not selective: icacls removes an identity's
+// whole granted entry, not one right from it. Recording a grant that was skipped
+// -- because a modify entry already covered read and execute -- meant a later
+// withdrawal deleted the WRITE access that entry was really there for, and the
+// project's own directory became unusable: "chdir: Access is denied", measured.
+func grantSandboxReadExec(sidStr, path string) (wrote bool, err error) {
 	if appContainerHasGrantFor(sidStr, path, grantReadExec) {
-		return nil
+		return false, nil
 	}
 	grantArg := fmt.Sprintf("*%s:(OI)(CI)(RX)", sidStr)
 	out, err := runWinCmd(45*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
 	if err != nil {
-		return fmt.Errorf("icacls read/execute grant for sandbox identity: %v (%s)", err, strings.TrimSpace(string(out)))
+		return false, fmt.Errorf("icacls read/execute grant for sandbox identity: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
-	return nil
+	return true, nil
 }
 
+// grantSandboxModify gives sidStr modify access to path and its descendants.
 func grantSandboxModify(sidStr, path string) error {
 	if appContainerHasGrantFor(sidStr, path, grantModify) {
 		return nil
@@ -262,10 +268,18 @@ const (
 	grantReadExec
 )
 
-// satisfies reports whether an ACL line's rights cover what is being asked for.
+// satisfies reports whether an ACE's rights cover what is being asked for.
 // Modify covers read/execute; read/execute does not cover modify.
-func (k grantKind) satisfies(aclLine string) bool {
-	up := strings.ToUpper(aclLine)
+//
+// Takes the rights alone, never the whole icacls line. The line begins with the
+// directory's own path, and a path containing "(M)", "(RX)" or "(R)" would
+// otherwise be read as rights -- measured: a directory named with "(M)" in it
+// reported modify access from an entry that granted only (OI)(CI)(RX). It fails
+// toward "already granted", so the grant is skipped and the wrong answer cached.
+// This codebase already had rightsAfterSID for exactly this trap, after a path
+// containing "(I)" was once read as an inherited entry.
+func (k grantKind) satisfies(rights string) bool {
+	up := strings.ToUpper(rights)
 	hasModify := strings.Contains(up, "(M)") || strings.Contains(up, "(F)") || strings.Contains(up, "(W)")
 	if k == grantModify {
 		return hasModify
@@ -297,11 +311,14 @@ func appContainerHasGrantFor(sidStr, path string, want grantKind) bool {
 		if !strings.Contains(line, sidStr) {
 			continue
 		}
-		// An explicit deny must not be read as "already granted".
+		// An explicit deny must not be read as "already granted". Checked against
+		// the whole line on purpose: icacls prints "(DENY)" before the SID, so it is
+		// not part of the rights this cuts out below.
 		if strings.Contains(strings.ToUpper(line), "(DENY)") {
 			return false
 		}
-		if !want.satisfies(line) {
+		rights := rightsAfterSID(line, sidStr)
+		if rights == "" || !want.satisfies(rights) {
 			continue
 		}
 		grantCacheRecord(grantIdentityFor(sidStr, want), path)

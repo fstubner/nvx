@@ -58,12 +58,29 @@ type connectHostListener struct {
 	mapping  connectMapping
 	tunnelL  net.Listener
 	hostAddr string
+	nvxHome  string
 	warnOnce sync.Once
 }
 
-// refuseOnce reports a rejected peer a single time. A port scanner would
-// otherwise turn a real warning into a flood that buries it.
+// refuseOnce reports a rejected peer a single time on the console. A port
+// scanner would otherwise turn a real warning into a flood that buries it.
+//
+// The audit entry is written every time, not once: the console line is for the
+// person watching, and suppressing repeats there is right, but a sustained
+// cross-sandbox probe leaving no trace after its first attempt is exactly what an
+// audit log is for.
 func (c *connectHostListener) refuseOnce(err error) {
+	// Audited every time. The console line below is for the person watching and is
+	// rightly suppressed after the first, but a sustained cross-sandbox probe
+	// leaving no trace after its first attempt is exactly what an audit log is for.
+	reason := "not_in_this_sandbox"
+	if err != nil {
+		reason = "unverifiable"
+	}
+	auditLog(c.nvxHome, "connect_peer_refused", map[string]string{
+		"host_port": strconv.Itoa(c.mapping.Host),
+		"reason":    reason,
+	})
 	c.warnOnce.Do(func() {
 		// A nil error is the ordinary rejection: the peer was identified and simply
 		// is not ours. An error means the question could not be answered, which
@@ -111,7 +128,7 @@ func readPeerHeader(r net.Conn) (srcPort, dstPort uint16, err error) {
 const maxWindowsUnixSocketPath = 107
 
 // openConnectPort sets up the parent side for one mapping.
-func openConnectPort(ctx context.Context, guestHome string, m connectMapping) (*connectHostListener, error) {
+func openConnectPort(ctx context.Context, nvxHome, guestHome string, m connectMapping) (*connectHostListener, error) {
 	sock := windowsConnectSocketPath(guestHome, m.Host)
 	if len(sock) > maxWindowsUnixSocketPath {
 		return nil, fmt.Errorf(
@@ -128,6 +145,7 @@ func openConnectPort(ctx context.Context, guestHome string, m connectMapping) (*
 		mapping:  m,
 		tunnelL:  tunnelL,
 		hostAddr: fmt.Sprintf("127.0.0.1:%d", m.Host),
+		nvxHome:  nvxHome,
 	}
 	go c.accept(ctx)
 	return c, nil
