@@ -875,6 +875,16 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	trace.note(runModeDirect, describeSandboxSkip(cmdName, args, policy, opts))
 	if trace.isTop() {
 		LogInfo("Running directly (not sandboxed): %s %s", cmdName, strings.Join(args, " "))
+		// Both port flags only mean something inside a sandbox, so this command
+		// gets neither the tunnel nor the environment variable naming it. Say so:
+		// silently dropping them leaves the developer debugging a service that is
+		// working perfectly, which is the exact failure --expose was added to end.
+		if len(exposePortsFlag) > 0 {
+			LogWarn("--expose does nothing here: this command is not sandboxed, so its ports are already reachable.")
+		}
+		if len(connectPortsFlag) > 0 {
+			LogWarn("--connect does nothing here: this command is not sandboxed, so it can already reach your local services directly.")
+		}
 	}
 
 	rt := runtimeForShim(cmdName)

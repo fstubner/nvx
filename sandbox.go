@@ -428,9 +428,14 @@ func runSandbox(config SandboxConfig) int {
 	}
 
 	netCtx := NetworkLaunchContext{
-		Mode:         policy.Isolation.Network.Mode,
-		ExposePorts:  normalizeExposePorts(append(policy.Isolation.Network.ExposePorts, exposePortsFlag...)),
-		ConnectPorts: normalizeConnectPorts(append(policy.Isolation.Network.ConnectPorts, connectPortsFlag...)),
+		Mode:        policy.Isolation.Network.Mode,
+		ExposePorts: normalizeExposePorts(append(policy.Isolation.Network.ExposePorts, exposePortsFlag...)),
+		// Flag first, policy second. normalizeConnectPorts keeps the first entry for
+		// a given host port, and the developer typing --connect 9222:19222 has
+		// asked for a specific in-sandbox port -- usually because a command line
+		// names it. Policy-first silently handed them a different port with no
+		// warning, so the endpoint they hardcoded pointed at nothing.
+		ConnectPorts: normalizeConnectPorts(append(append([]string{}, connectPortsFlag...), policy.Isolation.Network.ConnectPorts...)),
 	}
 	if egress != nil {
 		netCtx.HTTPProxyHost, netCtx.HTTPProxyPort = egress.HTTPListenHostPort()

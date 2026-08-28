@@ -130,7 +130,7 @@ func sandboxScopeForWorkDir(workDir string) string {
 // removing the policy entry would not have taken it back. Scoping to the
 // capability means only sandboxes holding this project's identity are admitted.
 func grantSandboxReadExec(sidStr, path string) error {
-	if appContainerHasGrant(sidStr, path) {
+	if appContainerHasGrantFor(sidStr, path, grantReadExec) {
 		return nil
 	}
 	grantArg := fmt.Sprintf("*%s:(OI)(CI)(RX)", sidStr)
@@ -142,7 +142,7 @@ func grantSandboxReadExec(sidStr, path string) error {
 }
 
 func grantSandboxModify(sidStr, path string) error {
-	if appContainerHasGrant(sidStr, path) {
+	if appContainerHasGrantFor(sidStr, path, grantModify) {
 		return nil
 	}
 	grantArg := fmt.Sprintf("*%s:(OI)(CI)(M)", sidStr)
@@ -242,11 +242,51 @@ func deleteAppContainerProfile(profileName string) {
 // makes the far more expensive grant below idempotent: after the first run the
 // ACE is already in place and there is nothing to do.
 func appContainerHasGrant(sidStr, path string) bool {
+	return appContainerHasGrantFor(sidStr, path, grantModify)
+}
+
+// grantKind distinguishes the two rights nvx grants, because "does this SID
+// appear in the ACL" is not the same question as "does it hold the access we are
+// about to skip granting".
+//
+// Conflating them was a real defect. A directory granted read/execute by
+// allow_read_exec, then later used as a working directory, kept its read-only
+// ACE for ever: the modify grant saw the SID, concluded the work was done, and
+// skipped it. Every write inside that directory failed with EPERM, and nothing
+// in the product could clear it -- repeat runs, `grants reset --all`, `doctor
+// --fix` and deleting the policy entry all left it broken. Measured 2026-08-28.
+type grantKind int
+
+const (
+	grantModify grantKind = iota
+	grantReadExec
+)
+
+// satisfies reports whether an ACL line's rights cover what is being asked for.
+// Modify covers read/execute; read/execute does not cover modify.
+func (k grantKind) satisfies(aclLine string) bool {
+	up := strings.ToUpper(aclLine)
+	hasModify := strings.Contains(up, "(M)") || strings.Contains(up, "(F)") || strings.Contains(up, "(W)")
+	if k == grantModify {
+		return hasModify
+	}
+	return hasModify || strings.Contains(up, "(RX)") || strings.Contains(up, "(R)")
+}
+
+// appContainerHasGrantFor asks the question appContainerHasGrant should always
+// have asked: does sidStr already hold AT LEAST the access `want` on path?
+func appContainerHasGrantFor(sidStr, path string, want grantKind) bool {
 	// A grant verified recently is not re-read. That check is a process spawn,
 	// and in the steady state it is the dominant cost of a contained launch --
 	// see sandbox_grant_cache_windows.go for the measurement and for why caching
 	// only the positive answer is the safe direction.
-	if grantCacheHas(sidStr, path) {
+	//
+	// Cached per right, not per path. Recording "granted" without recording
+	// granted WHAT is what made the defect above unrecoverable even by hand:
+	// removing the read-only ACE with icacls left the cache still answering yes,
+	// so no grant was re-applied and the directory ended up with no access at all
+	// -- every contained command in it then failed before it could even chdir.
+	if grantCacheHas(grantIdentityFor(sidStr, want), path) {
 		return true
 	}
 	out, err := runWinCmd(10*time.Second, "icacls", path)
@@ -261,10 +301,22 @@ func appContainerHasGrant(sidStr, path string) bool {
 		if strings.Contains(strings.ToUpper(line), "(DENY)") {
 			return false
 		}
-		grantCacheRecord(sidStr, path)
+		if !want.satisfies(line) {
+			continue
+		}
+		grantCacheRecord(grantIdentityFor(sidStr, want), path)
 		return true
 	}
 	return false
+}
+
+// grantIdentityFor keeps the two rights in separate cache namespaces, by folding
+// the right into the identity the cache is keyed on.
+func grantIdentityFor(sidStr string, k grantKind) string {
+	if k == grantReadExec {
+		return sidStr + "|rx"
+	}
+	return sidStr + "|m"
 }
 
 // grantAppContainerPath gives the AppContainer modify access to path and its

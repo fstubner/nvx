@@ -4,11 +4,15 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"time"
 )
 
 // Letting a contained process reach one named service on the host.
@@ -54,6 +58,47 @@ type connectHostListener struct {
 	mapping  connectMapping
 	tunnelL  net.Listener
 	hostAddr string
+	warnOnce sync.Once
+}
+
+// refuseOnce reports a rejected peer a single time. A port scanner would
+// otherwise turn a real warning into a flood that buries it.
+func (c *connectHostListener) refuseOnce(err error) {
+	c.warnOnce.Do(func() {
+		// A nil error is the ordinary rejection: the peer was identified and simply
+		// is not ours. An error means the question could not be answered, which
+		// fails closed too but is worth distinguishing -- one is another sandbox
+		// reaching for the port, the other is nvx unable to tell.
+		if err == nil {
+			LogWarn("Refused a connection to 127.0.0.1:%d: it came from a process outside this sandbox.", c.mapping.Host)
+			return
+		}
+		LogWarn("Refused a connection to 127.0.0.1:%d: could not confirm it came from this sandbox (%v).", c.mapping.Host, err)
+	})
+}
+
+// peerHeader is what the supervisor sends before the tunnelled bytes: the
+// loopback source and destination ports of the connection it accepted, big
+// endian. Four bytes, fixed -- it is read by the parent, written by nvx's own
+// supervisor, and never seen by the contained tool.
+const peerHeaderLen = 4
+
+func writePeerHeader(w net.Conn, srcPort, dstPort uint16) error {
+	var b [peerHeaderLen]byte
+	binary.BigEndian.PutUint16(b[0:2], srcPort)
+	binary.BigEndian.PutUint16(b[2:4], dstPort)
+	_, err := w.Write(b[:])
+	return err
+}
+
+func readPeerHeader(r net.Conn) (srcPort, dstPort uint16, err error) {
+	var b [peerHeaderLen]byte
+	_ = r.SetReadDeadline(time.Now().Add(exposeDialTimeout))
+	if _, err = io.ReadFull(r, b[:]); err != nil {
+		return 0, 0, err
+	}
+	_ = r.SetReadDeadline(time.Time{})
+	return binary.BigEndian.Uint16(b[0:2]), binary.BigEndian.Uint16(b[2:4]), nil
 }
 
 // maxWindowsUnixSocketPath is how long an AF_UNIX path may be on Windows.
@@ -96,6 +141,24 @@ func (c *connectHostListener) accept(ctx context.Context) {
 		}
 		go func(inbound net.Conn) {
 			if ctx.Err() != nil {
+				_ = inbound.Close()
+				return
+			}
+			// Who is actually on the other end? The supervisor reports the loopback
+			// port it accepted from; this side resolves it to a process and checks
+			// it belongs to this sandbox. See sandbox_connect_peer_windows.go for
+			// why the question has to be asked and why it is answered out here.
+			srcPort, dstPort, herr := readPeerHeader(inbound)
+			if herr != nil {
+				_ = inbound.Close()
+				return
+			}
+			ok, verr := verifyTunnelPeer(srcPort, dstPort)
+			if !ok {
+				// Refuse, and say so once. Silence here would look exactly like the
+				// host service being down, and this is the case worth knowing about:
+				// something outside this sandbox reached for a port it was not given.
+				c.refuseOnce(verr)
 				_ = inbound.Close()
 				return
 			}
@@ -144,6 +207,17 @@ func startConnectListeners(ctx context.Context, guestHome string, m connectMappi
 				tun, derr := net.DialTimeout("unix", sock, exposeDialTimeout)
 				if derr != nil {
 					_ = conn.Close()
+					return
+				}
+				// Report who connected before anything is forwarded. The parent
+				// resolves these ports to a process and refuses the tunnel if it is
+				// not one this sandbox launched -- this side cannot do that itself
+				// (GetExtendedTcpTable is ACCESS_DENIED in an AppContainer).
+				src, sok := conn.RemoteAddr().(*net.TCPAddr)
+				dst, dok := conn.LocalAddr().(*net.TCPAddr)
+				if !sok || !dok || writePeerHeader(tun, uint16(src.Port), uint16(dst.Port)) != nil {
+					_ = conn.Close()
+					_ = tun.Close()
 					return
 				}
 				spliceConns(conn, tun)

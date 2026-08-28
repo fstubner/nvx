@@ -379,6 +379,22 @@ to connect and never where -- one port, for one run, closed when the command
 exits. `TestAContainedDialReachesTheHostServiceItWasGranted` drives a real
 connection end to end through both halves.
 
+**"For one run" is enforced, not implied.** An AppContainer's loopback is not
+private: Windows permits it within a package, and every nvx sandbox shares one
+package identity, so the in-sandbox listener is reachable from every other nvx
+sandbox running concurrently. Measured 2026-08-28 -- a sandbox in an unrelated
+project with no grant of its own read the granted service, while the same probe
+could reach neither the real port nor an unrelated one. Note the shape: this is
+the hazard the egress relay already defends against with a per-session proxy
+credential (see EgressProxy.token, and the acceptance pass of 2026-08-19 that
+found a sibling borrowing another project's allowlist). A credential works there
+because HTTP has somewhere to put one; a tunnel carrying an arbitrary protocol
+does not, so the peer is identified instead. Every process a run launches is in
+that run's Job Object, so the parent resolves the connection to a process and
+refuses anything outside it -- in the parent, because `GetExtendedTcpTable` is
+ACCESS_DENIED inside an AppContainer. Unverifiable peers are refused, not
+admitted.
+
 That is what makes it defensible where the pre-0.5.0 loopback exemption was not:
 `CheckNetIsolation LoopbackExempt` was machine-wide, permanent, opened *every*
 service on 127.0.0.1 to the sandbox, and needed elevation to revoke. This grants

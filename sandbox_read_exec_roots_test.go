@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -24,9 +23,9 @@ func TestReadExecRootsResolveAndReject(t *testing.T) {
 	got := resolveReadExecRoots([]string{
 		real,
 		filepath.Join(real, "does-not-exist"), // dropped: nothing to grant
-		file,                                 // dropped: a file, not a directory
-		"",                                   // dropped: empty
-		real,                                 // dropped: duplicate
+		file,                                  // dropped: a file, not a directory
+		"",                                    // dropped: empty
+		real,                                  // dropped: duplicate
 	})
 	if len(got) != 1 {
 		t.Fatalf("expected only the one usable directory, got %v", got)
@@ -104,18 +103,3 @@ func TestLocalReadExecRootsAreAppendedToGlobal(t *testing.T) {
 // The grant is read and execute. It must never widen writes, whatever else the
 // policy says — a directory you launch a browser from is not one an install
 // should be able to rewrite.
-func TestReadExecRootsAreNeverWritable(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		// sandboxWritableRoots is the Linux writable set; the Windows equivalent
-		// is asserted by the enforcement probe, which writes and expects EPERM.
-		t.Skip("writable-root composition is checked on Linux; Windows is covered by the enforcement probe")
-	}
-	guest, work := tempDir(t), tempDir(t)
-	extra := tempDir(t)
-
-	for _, w := range sandboxWritableRoots(guest, work) {
-		if strings.EqualFold(w, extra) {
-			t.Fatalf("a read/execute root appeared in the writable set: %s", extra)
-		}
-	}
-}

@@ -85,3 +85,20 @@ func TestConnectPortsMergeRatherThanReplace(t *testing.T) {
 		t.Fatalf("merged connect_ports = %v, want both entries", merged.Isolation.Network.ConnectPorts)
 	}
 }
+
+func TestAnExplicitConnectFlagBeatsAPolicyEntryForTheSamePort(t *testing.T) {
+	// The flag names an in-sandbox port because a command line usually has to
+	// hardcode it. A policy entry for the same host port used to win the dedupe
+	// and silently substitute a different port, so the hardcoded endpoint pointed
+	// at nothing and nothing said why.
+	flagFirst := []string{"9222:19222"}
+	policy := []string{"9222"}
+
+	got := normalizeConnectPorts(append(flagFirst, policy...))
+	if len(got) != 1 {
+		t.Fatalf("got %d mappings, want the two entries for port 9222 deduped: %+v", len(got), got)
+	}
+	if got[0].Inside != 19222 {
+		t.Fatalf("in-sandbox port = %d, want the 19222 the flag asked for", got[0].Inside)
+	}
+}

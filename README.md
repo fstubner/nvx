@@ -445,6 +445,21 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   scoped to that project's sandbox identity, not shared with every sandbox on the
   machine.
 
+  **On Windows the grant outlives the policy that asked for it.** It is written
+  into the directory's access-control list on disk, so deleting the
+  `allow_read_exec` entry — or the whole policy file — does not take it back, and
+  neither `nvx grants reset` nor `nvx doctor --fix` removes it. Verified on
+  2026-08-28: with the policy gone, a contained process still listed and read the
+  directory. Removing it means editing the ACL yourself:
+
+  ```
+  icacls "<the granted directory>" /remove:g *<the capability SID icacls shows>
+  ```
+
+  The scoping above still holds — only sandboxes carrying this project's identity
+  are admitted, and the identity is derived from the project's path. Recreating a
+  deleted project at the same path therefore inherits the grant.
+
   **On Linux this grants reading and executing, but not listing.** A contained
   process can read and run files under the root; `readdir` on it is still refused.
   That is not specific to these roots — `/usr/bin` and `/etc` cannot be listed
@@ -567,6 +582,17 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   gets to choose a destination. This is deliberately not the machine-wide loopback
   exemption that 0.5.0 removed, which opened every local service to every sandbox
   on the machine, permanently, and could not be revoked without elevation.
+
+  **The grant is confined to the sandbox that asked for it**, and that takes an
+  explicit check rather than coming for free. Windows permits loopback *within* an
+  AppContainer package, and every nvx sandbox shares one package identity — so the
+  in-sandbox listener is, by default, reachable from every other nvx sandbox
+  running at that moment. Measured on 2026-08-28 before this was addressed: a
+  sandbox in an unrelated project, with no grant of its own, read the service.
+  nvx now identifies the process behind each tunnel connection and refuses any
+  that is not part of this run, so a concurrent sandbox is turned away and the
+  refusal is logged. It fails closed: a peer nvx cannot place inside this run does
+  not get through.
 
   In a policy file it is `isolation.network.connect_ports`, and adding one counts
   as loosening, so a project cannot grant itself a host port without approval.

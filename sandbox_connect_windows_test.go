@@ -20,6 +20,12 @@ import (
 func TestAContainedDialReachesTheHostServiceItWasGranted(t *testing.T) {
 	host := startEchoService(t)
 
+	// Stand in for the peer check; this test is about the plumbing carrying bytes
+	// end to end. The check's own behaviour is tested with the real one.
+	prev := verifyTunnelPeer
+	verifyTunnelPeer = func(uint16, uint16) (bool, error) { return true, nil }
+	t.Cleanup(func() { verifyTunnelPeer = prev })
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	guestHome := shortTempDir(t)
@@ -130,4 +136,62 @@ func startEchoService(t *testing.T) int {
 		}
 	}()
 	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// The tunnel must refuse a peer it cannot place inside this sandbox. Without
+// this, a --connect grant is reachable by every other nvx sandbox on the
+// machine: they all share one AppContainer package identity, and Windows permits
+// loopback within a package. Measured before the check existed -- a sandbox from
+// an unrelated project with no grant of its own read the granted service.
+func TestTheTunnelRefusesAPeerItCannotPlaceInThisSandbox(t *testing.T) {
+	host := startEchoService(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	guestHome := shortTempDir(t)
+	m := connectMapping{Host: host}
+
+	parent, err := openConnectPort(ctx, guestHome, m)
+	if err != nil {
+		t.Fatalf("openConnectPort: %v", err)
+	}
+	defer parent.Close()
+
+	// No session job is published in a test process, so every peer is
+	// unverifiable -- which must fail closed, not open.
+	if sessionJob != 0 {
+		t.Fatalf("test precondition: sessionJob should be unset, got %v", sessionJob)
+	}
+
+	tun, err := net.DialTimeout("unix", windowsConnectSocketPath(guestHome, m.Host), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial the tunnel socket: %v", err)
+	}
+	defer tun.Close()
+	if err := writePeerHeader(tun, 1234, 5678); err != nil {
+		t.Fatalf("write peer header: %v", err)
+	}
+	if _, err := tun.Write([]byte("give me the service\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_ = tun.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 1)
+	if _, rerr := tun.Read(buf); rerr == nil {
+		t.Fatal("an unverifiable peer was spliced to the host service; the tunnel must fail closed")
+	}
+}
+
+// The verifier itself must not answer "yes" when it cannot tell.
+func TestPeerCheckFailsClosedWithoutAJob(t *testing.T) {
+	if sessionJob != 0 {
+		t.Skip("a session job is published; this checks the no-job path")
+	}
+	ok, err := peerBelongsToThisSandbox(1234, 5678)
+	if ok {
+		t.Fatal("peerBelongsToThisSandbox said yes with no job to check against")
+	}
+	if err == nil {
+		t.Fatal("no reason given for the refusal")
+	}
 }
