@@ -112,7 +112,7 @@ func TestLandlockDoesNotExposeNvxHomeSecrets(t *testing.T) {
 
 func runNvxHomeProbeChild() {
 	nvxHome := os.Getenv("NVX_TEST_NVXHOME")
-	if err := applyLandlockSandbox(os.Getenv("NVX_TEST_GUEST"), os.Getenv("NVX_TEST_WORK"), nvxHome); err != nil {
+	if err := applyLandlockSandbox(os.Getenv("NVX_TEST_GUEST"), os.Getenv("NVX_TEST_WORK"), nvxHome, nil); err != nil {
 		fmt.Printf("SETUP_FAILED=%v\n", err)
 		return
 	}
