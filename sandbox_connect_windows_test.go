@@ -159,8 +159,8 @@ func TestTheTunnelRefusesAPeerItCannotPlaceInThisSandbox(t *testing.T) {
 
 	// No session job is published in a test process, so every peer is
 	// unverifiable -- which must fail closed, not open.
-	if sessionJob != 0 {
-		t.Fatalf("test precondition: sessionJob should be unset, got %v", sessionJob)
+	if sessionJob.Load() != 0 {
+		t.Fatalf("test precondition: sessionJob should be unset, got %v", sessionJob.Load())
 	}
 
 	tun, err := net.DialTimeout("unix", windowsConnectSocketPath(guestHome, m.Host), 5*time.Second)
@@ -184,7 +184,7 @@ func TestTheTunnelRefusesAPeerItCannotPlaceInThisSandbox(t *testing.T) {
 
 // The verifier itself must not answer "yes" when it cannot tell.
 func TestPeerCheckFailsClosedWithoutAJob(t *testing.T) {
-	if sessionJob != 0 {
+	if sessionJob.Load() != 0 {
 		t.Skip("a session job is published; this checks the no-job path")
 	}
 	ok, err := peerBelongsToThisSandbox(1234, 5678)
