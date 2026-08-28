@@ -107,6 +107,19 @@ type NetworkPolicy struct {
 	// It is also not an egress permission -- what the sandbox may reach is still
 	// AllowHosts alone.
 	ExposePorts []string `json:"expose_ports,omitempty"`
+	// ConnectPorts are services already running on the host that a contained
+	// process may reach: ["9222"] or ["9222:19222"] as host[:in-sandbox].
+	//
+	// The sandbox otherwise cannot reach anything on your machine -- Windows
+	// refuses an AppContainer's loopback connections, and a Linux netns has its
+	// own loopback entirely. That is deliberate, and this is the narrow, named
+	// way through it: one port, for one run, reached over a tunnel nvx owns.
+	//
+	// It is NOT the pre-0.5.0 loopback exemption, which opened every service on
+	// 127.0.0.1 to every sandbox on the machine, permanently, and had to be
+	// removed. This grants one port to one run, and nvx dials the host end
+	// itself, so the sandbox never gets a general route out.
+	ConnectPorts []string `json:"connect_ports,omitempty"`
 
 	DefaultAllowSet  bool `json:"-"`
 	PromptUnknownSet bool `json:"-"`
@@ -586,6 +599,13 @@ func policyLoosens(before, after Policy) bool {
 	if hostsAdded(before.Isolation.Network.ExposePorts, after.Isolation.Network.ExposePorts) {
 		return true
 	}
+	// Reaching a service on the host is the largest widening in this file: it is
+	// a deliberate hole in the containment boundary, of exactly the kind the
+	// loopback exemption was removed for being. Narrow and named is what makes it
+	// defensible, and approval is part of that.
+	if hostsAdded(before.Isolation.Network.ConnectPorts, after.Isolation.Network.ConnectPorts) {
+		return true
+	}
 	// Extra read/execute roots widen what contained code can run. A project file
 	// that adds one is asking to execute something from outside everything nvx
 	// grants, which is a decision for whoever owns the machine.
@@ -669,6 +689,9 @@ func MergePolicies(global, local Policy) Policy {
 	// its own toolchain needs on top of anything global policy already grants,
 	// rather than replacing it. policyLoosens treats an addition here as widening,
 	// so a checked-in file still has to be trusted before it takes effect.
+	if len(local.Isolation.Network.ConnectPorts) > 0 {
+		merged.Isolation.Network.ConnectPorts = append(merged.Isolation.Network.ConnectPorts, local.Isolation.Network.ConnectPorts...)
+	}
 	if len(local.Isolation.Filesystem.AllowReadExec) > 0 {
 		merged.Isolation.Filesystem.AllowReadExec = append(merged.Isolation.Filesystem.AllowReadExec, local.Isolation.Filesystem.AllowReadExec...)
 	}

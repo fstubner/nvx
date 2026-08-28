@@ -10,8 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"time"
 	"strings"
+	"time"
 )
 
 // SandboxConfig holds the parameters for an isolated execution environment.
@@ -281,6 +281,9 @@ type NetworkLaunchContext struct {
 	// because Windows refuses connections INTO an AppContainer, which Linux and
 	// macOS do not do, so a contained server is already reachable there.
 	ExposePorts []exposeMapping
+	// ConnectPorts are host services the sandbox may reach
+	// (isolation.network.connect_ports, or --connect).
+	ConnectPorts []connectMapping
 }
 
 // runSandbox is the main entry point for executing a command inside the nvx sandbox.
@@ -425,12 +428,24 @@ func runSandbox(config SandboxConfig) int {
 	}
 
 	netCtx := NetworkLaunchContext{
-		Mode:        policy.Isolation.Network.Mode,
-		ExposePorts: normalizeExposePorts(append(policy.Isolation.Network.ExposePorts, exposePortsFlag...)),
+		Mode:         policy.Isolation.Network.Mode,
+		ExposePorts:  normalizeExposePorts(append(policy.Isolation.Network.ExposePorts, exposePortsFlag...)),
+		ConnectPorts: normalizeConnectPorts(append(policy.Isolation.Network.ConnectPorts, connectPortsFlag...)),
 	}
 	if egress != nil {
 		netCtx.HTTPProxyHost, netCtx.HTTPProxyPort = egress.HTTPListenHostPort()
 		netCtx.SOCKSProxyHost, netCtx.SOCKSProxyPort = egress.SOCKSListenHostPort()
+	}
+	// Both port tunnels are implemented for AppContainer only. Said out loud
+	// rather than silently ignored: a developer who asked for a port and got
+	// nothing debugs their own server first, and finds nothing wrong with it.
+	if runtime.GOOS != "windows" {
+		if len(netCtx.ExposePorts) > 0 {
+			LogWarn("--expose is a Windows feature; ports are not published on %s.", runtime.GOOS)
+		}
+		if len(netCtx.ConnectPorts) > 0 {
+			LogWarn("--connect is a Windows feature; the sandbox cannot reach host services on %s.", runtime.GOOS)
+		}
 	}
 
 	return fsProvider.Run(SandboxRequest{

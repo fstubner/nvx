@@ -140,8 +140,12 @@ type supervisorExecArgs struct {
 	// ReadExecRoots are extra directories the contained process may read and
 	// execute from, given as --read-exec=<abs path> and repeatable.
 	ReadExecRoots []string
-	CmdPath       string
-	CmdArgs     []string
+	// ConnectPorts are host services this sandbox may reach, given as
+	// --connect=<hostPort>:<insidePort> and repeatable. Both numbers are decided
+	// by the parent, so the supervisor never chooses either.
+	ConnectPorts []connectMapping
+	CmdPath      string
+	CmdArgs      []string
 }
 
 // parseSupervisorExecArgs parses internal __landlock-exec / __appcontainer-exec
@@ -164,6 +168,10 @@ func parseSupervisorExecArgs(argv []string) (supervisorExecArgs, bool) {
 			a.ShimCommand = strings.TrimPrefix(arg, "--command=")
 		case strings.HasPrefix(arg, "--egress-socket="):
 			a.EgressSocket = strings.TrimPrefix(arg, "--egress-socket=")
+		case strings.HasPrefix(arg, "--connect="):
+			if m, err := parseConnectSpec(strings.TrimPrefix(arg, "--connect=")); err == nil && m.Inside != 0 {
+				a.ConnectPorts = append(a.ConnectPorts, m)
+			}
 		case strings.HasPrefix(arg, "--read-exec="):
 			if v := strings.TrimPrefix(arg, "--read-exec="); v != "" {
 				a.ReadExecRoots = append(a.ReadExecRoots, v)
@@ -255,6 +263,71 @@ func normalizeExposePorts(specs []string) []exposeMapping {
 			continue
 		}
 		seen[m.Container] = true
+		out = append(out, m)
+	}
+	return out
+}
+
+// connectMapping is one service on the host that the sandbox may reach: the port
+// it actually listens on, and the port the contained process dials to get there.
+//
+// Two numbers for the same reason exposeMapping needs two. The container shares
+// the host's network stack, so nvx cannot put its in-sandbox listener on the
+// same port the real service occupies. The contained tool therefore has to be
+// told which local port to use; nvx publishes that in the environment as
+// NVX_CONNECT_<hostPort> so a wrapper script or a tool that reads its endpoint
+// from the environment needs no hardcoding.
+//
+// Inside 0 means "pick a free one and report it".
+type connectMapping struct {
+	Host   int
+	Inside int
+}
+
+// parseConnectSpec reads "9222" or "9222:19222" as host[:inside].
+//
+// Host-first, the mirror of parseExposeSpec's container-first: in both cases the
+// number the developer already knows comes first, and the one nvx can choose
+// comes second. For --expose that is the port their dev server prints; here it
+// is the port the service on their machine is already listening on.
+func parseConnectSpec(s string) (connectMapping, error) {
+	s = strings.TrimSpace(s)
+	host, inside, hasInside := strings.Cut(s, ":")
+	h, err := strconv.Atoi(strings.TrimSpace(host))
+	if err != nil || !validExposePort(h) {
+		return connectMapping{}, fmt.Errorf("%q is not a TCP port between 1 and 65535", s)
+	}
+	m := connectMapping{Host: h}
+	if hasInside {
+		in, ierr := strconv.Atoi(strings.TrimSpace(inside))
+		if ierr != nil || !validExposePort(in) {
+			return connectMapping{}, fmt.Errorf("%q has an unusable in-sandbox port", s)
+		}
+		if in == h {
+			return connectMapping{}, fmt.Errorf(
+				"%q maps a port to itself; the container shares the host's network stack, so the "+
+					"in-sandbox listener and the real service cannot both hold %d", s, h)
+		}
+		m.Inside = in
+	}
+	return m, nil
+}
+
+// normalizeConnectPorts parses entries, dropping bad ones with a warning and
+// de-duplicating by host port.
+func normalizeConnectPorts(specs []string) []connectMapping {
+	var out []connectMapping
+	seen := map[int]bool{}
+	for _, s := range specs {
+		m, err := parseConnectSpec(s)
+		if err != nil {
+			LogWarn("Ignoring connect_ports entry: %v.", err)
+			continue
+		}
+		if seen[m.Host] {
+			continue
+		}
+		seen[m.Host] = true
 		out = append(out, m)
 	}
 	return out

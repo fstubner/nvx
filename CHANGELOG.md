@@ -47,6 +47,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they have carried the directory-read right since the Linux sandbox was written.
   Recorded in README rather than worked around.
 
+* **`--connect` (Windows): let a contained tool reach one service already running
+  on your machine.** The mirror of `--expose`, and the missing direction. The
+  sandbox has no route to your loopback — Windows refuses an AppContainer's
+  loopback connections, and the egress proxy declines host loopback destinations
+  on purpose — so a contained tool that must talk to a browser with remote
+  debugging on, a local database or a device emulator had no way to get there.
+
+  ```
+  nvx --connect 9222:19222 npx some-tool --endpoint http://127.0.0.1:19222
+  ```
+
+  nvx runs a listener inside the sandbox and dials `127.0.0.1:9222` itself from
+  outside. The contained side chooses when to connect, never where. Both ends
+  close when the command exits.
+
+  The two numbers must differ, for the same measured reason `--expose` requires
+  it: an AppContainer shares the host's network stack rather than getting its own,
+  so one port cannot hold both the in-sandbox listener and the real service. Omit
+  the second (`--connect 9222`) and nvx picks a free port, prints it, and sets
+  `NVX_CONNECT_9222` in the sandbox — useful for a tool that reads its endpoint
+  from the environment, not for a command line your shell expands before nvx runs.
+
+  In a policy file it is `isolation.network.connect_ports`; adding one counts as
+  loosening, so a project cannot grant itself a host port without approval. This
+  is deliberately not the machine-wide loopback exemption removed in 0.5.0, which
+  opened every service on 127.0.0.1 to every sandbox permanently and needed
+  elevation to revoke — `--connect` grants nothing at the OS level at all.
+
+  On macOS and Linux the flag parses and warns that it does nothing, rather than
+  being silently ignored. (`--expose` now warns there too; it was silent before.)
+
 ## [0.5.7] - 2026-08-28
 
 ### Fixed (found by an independent acceptance pass before release)

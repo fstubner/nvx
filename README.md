@@ -154,6 +154,11 @@ onto npm, and nvx does not reinterpret a word that belongs to another tool:
                            refuses connections into an AppContainer. The two
                            numbers must differ; omit the host one to have a free
                            port picked and printed. Grants no network capability
+  --connect <host>[:<in>]  (Windows) Let the sandbox reach one service already
+                           running on your machine — the mirror of `--expose`.
+                           Give the port your service uses; nvx runs a listener
+                           inside the sandbox and dials the real one itself. The
+                           two numbers must differ. Grants no network capability
 
 Passed to the wrapped command only, not before it:
   --filesystem-provider=<name>  Override isolation.filesystem.provider
@@ -301,6 +306,7 @@ system.
 | Raw TCP/UDP bypass blocked at OS | Yes — measured (no network capability granted) | Yes — CI (netns + seccomp UDP deny) | Yes — CI (TCP and UDP; which layer refuses TCP is untested) |
 | Fail-closed if FS/network primitive missing | Yes — measured | Yes — CI (Landlock 5.13+, iproute2 for netns) | Yes — CI (refuses to run without `sandbox-exec`) |
 | A contained server reachable from the host | Only via `--expose` | Yes | Yes |
+| One named host service reachable from the sandbox | Only via `--connect` | No | No |
 
 **What backs the macOS column, as of 2026-08-24.**
 `scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on every CI
@@ -535,6 +541,35 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   none of this. Until 0.5.5 there was no way to reach a contained server at all;
   the FAQ had claimed loopback worked for dev servers, which was measured false on
   2026-08-20.
+- **On Windows, a contained tool needs `--connect` to reach a service running on
+  your machine.** The other direction, and the same reason: the sandbox has no
+  route to your loopback, and the egress proxy refuses host loopback destinations
+  on purpose. A contained tool that has to talk to something you are already
+  running — a browser with remote debugging on, a local database, a device
+  emulator — gets there one named port at a time:
+
+  ```
+  nvx --connect 9222:19222 npx @playwright/mcp --cdp-endpoint http://127.0.0.1:19222
+  ```
+
+  The in-sandbox port cannot also be 9222, for the network-stack reason above, so
+  pick a second number — as above — whenever the command line has to name it.
+  Your shell expands the command line before nvx runs, so a variable is no use
+  there.
+
+  With the second number omitted (`--connect 9222`) nvx chooses a free port,
+  prints it, and sets `NVX_CONNECT_9222` in the sandbox. That form is for tools
+  that read their endpoint from the environment or a config file at startup, not
+  from argv.
+
+  Nothing general is opened. nvx runs the listener inside, dials `127.0.0.1:9222`
+  itself from outside, and closes both when the command exits — the sandbox never
+  gets to choose a destination. This is deliberately not the machine-wide loopback
+  exemption that 0.5.0 removed, which opened every local service to every sandbox
+  on the machine, permanently, and could not be revoked without elevation.
+
+  In a policy file it is `isolation.network.connect_ports`, and adding one counts
+  as loosening, so a project cannot grant itself a host port without approval.
 - **On macOS, reads are not contained** — see the note near the top of this file.
   Write containment and egress denial are confirmed on macOS hardware in CI; the
   read weakness is confirmed there too, and is a property of the profile rather
