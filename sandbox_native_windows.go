@@ -143,7 +143,8 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	scope := sandboxScopeForWorkDir(workDir)
 	ledger := loadProjectGrants(config.NvxHome, scope)
 	before := len(ledger.ReadExecGrants)
-	ledger.ReadExecGrants = reconcileReadExecGrants(
+	var revokedNow []readExecGrant
+	ledger.ReadExecGrants, revokedNow = reconcileReadExecGrants(
 		ledger.ReadExecGrants, config.ReadExecRoots, scopeCaps, revokeSandboxReadExec)
 
 	for _, root := range config.ReadExecRoots {
@@ -160,7 +161,11 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 			LogInfo("Sandbox may read and execute from %s", root)
 		}
 	}
-	if scope != "" && len(ledger.ReadExecGrants) != before {
+	if scope != "" && (len(ledger.ReadExecGrants) != before || len(revokedNow) > 0) {
+		// Fold in anything another run in this project recorded while this one was
+		// working, so the later write does not erase the earlier one's records.
+		ledger.ReadExecGrants = mergeLedgerForSave(
+			ledger.ReadExecGrants, readGrantsFile(grantsPath(config.NvxHome, scope)), revokedNow)
 		ledger.ProjectPath = scope
 		if err := saveProjectGrants(config.NvxHome, ledger); err != nil {
 			// Worth saying out loud: the grant itself succeeded, so access is wider

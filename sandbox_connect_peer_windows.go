@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -102,11 +103,16 @@ func ownerOfLoopbackConnection(srcPort, dstPort uint16) (uint32, error) {
 }
 
 // sessionJob is this run's reaping job, published so the connect tunnel can ask
-// whether a peer belongs to this sandbox. Written once during launch, before the
-// target starts and therefore before any tunnel traffic exists.
-var sessionJob syscall.Handle
+// whether a peer belongs to this sandbox.
+//
+// Atomic because the launch goroutine writes it while tunnel accept goroutines
+// read it. The window is small -- it is set before the target starts and cleared
+// after it exits -- but a tunnel connection can arrive in it, and a torn read of
+// a handle would be decided against a value that was never valid. The race
+// detector did not catch this: no test drives a launch and a tunnel together.
+var sessionJob atomic.Uintptr
 
-func setSessionJob(h syscall.Handle) { sessionJob = h }
+func setSessionJob(h syscall.Handle) { sessionJob.Store(uintptr(h)) }
 
 // verifyTunnelPeer is the check the tunnel actually calls, held in a variable so
 // a test can stand in for it.
@@ -127,7 +133,8 @@ var verifyTunnelPeer = peerBelongsToThisSandbox
 // host service on its behalf; refusing costs the feature, allowing costs the
 // containment claim.
 func peerBelongsToThisSandbox(srcPort, dstPort uint16) (bool, error) {
-	if sessionJob == 0 {
+	job := sessionJob.Load()
+	if job == 0 {
 		return false, fmt.Errorf("this session has no process job to check membership against")
 	}
 	pid, err := ownerOfLoopbackConnection(srcPort, dstPort)
@@ -141,7 +148,7 @@ func peerBelongsToThisSandbox(srcPort, dstPort uint16) (bool, error) {
 	defer syscall.CloseHandle(syscall.Handle(h))
 
 	var inJob int32
-	ret, _, jerr := procIsProcessInJob.Call(h, uintptr(sessionJob), uintptr(unsafe.Pointer(&inJob)))
+	ret, _, jerr := procIsProcessInJob.Call(h, job, uintptr(unsafe.Pointer(&inJob)))
 	if ret == 0 {
 		return false, fmt.Errorf("IsProcessInJob for %d: %v", pid, jerr)
 	}

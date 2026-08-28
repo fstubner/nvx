@@ -50,8 +50,8 @@ func sameGrantPath(a, b string) bool {
 // others or fail a command the user is waiting on. An entry that could not be
 // revoked stays in the ledger so the next run tries again -- dropping it would
 // lose the only record that the grant exists.
-func reconcileReadExecGrants(existing []readExecGrant, wanted []string, capSIDs []string, revoke func(sid, path string) error) []readExecGrant {
-	keep := make([]readExecGrant, 0, len(existing))
+func reconcileReadExecGrants(existing []readExecGrant, wanted []string, capSIDs []string, revoke func(sid, path string) error) (keep, revoked []readExecGrant) {
+	keep = make([]readExecGrant, 0, len(existing))
 	for _, g := range existing {
 		if grantStillWanted(g, wanted, capSIDs) {
 			keep = append(keep, g)
@@ -63,8 +63,42 @@ func reconcileReadExecGrants(existing []readExecGrant, wanted []string, capSIDs 
 			continue
 		}
 		LogInfo("Withdrew the sandbox's read access to %s (no longer in the policy).", g.Path)
+		revoked = append(revoked, g)
 	}
-	return keep
+	return keep, revoked
+}
+
+// mergeLedgerForSave folds this run's ledger together with whatever is on disk
+// now, so a concurrent run in the same project cannot erase the other's records.
+//
+// Two nvx runs in one project each load the ledger, change it, and write it back;
+// the later write would otherwise drop whatever the earlier one added. That is
+// only untidy for most of what this file records, but an unrecorded grant is the
+// one state this feature exists to prevent: the permission is on disk and nothing
+// -- not reconciliation, not `grants reset` -- knows to take it back.
+//
+// Entries this run revoked are excluded, or a stale copy on disk would resurrect
+// a permission that has just been removed. Everything else is kept, erring toward
+// recording: a record with no permission behind it costs one no-op revoke, while a
+// permission with no record is invisible.
+func mergeLedgerForSave(ours, stored, revoked []readExecGrant) []readExecGrant {
+	out := append([]readExecGrant{}, ours...)
+	for _, s := range stored {
+		if containsGrant(revoked, s) || containsGrant(out, s) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func containsGrant(in []readExecGrant, g readExecGrant) bool {
+	for _, c := range in {
+		if strings.EqualFold(c.SID, g.SID) && sameGrantPath(c.Path, g.Path) {
+			return true
+		}
+	}
+	return false
 }
 
 // grantStillWanted reports whether a recorded grant is one the current policy
@@ -73,6 +107,25 @@ func reconcileReadExecGrants(existing []readExecGrant, wanted []string, capSIDs 
 // A grant to a capability this run is not carrying is left alone rather than
 // treated as unwanted: the ledger is per project, but a stale or hand-edited
 // entry naming some other identity is not this run's to revoke.
+// A consequence worth stating, because it looks like a leak and is not.
+//
+// The identity is derived from the project root, so anything that moves that root
+// -- adding or removing a package.json above the working directory, moving the
+// project -- gives later runs a different identity, and the grants made under the
+// old one stop matching any capability this run carries. They are kept, and this
+// run reconciles only its own.
+//
+// Measured 2026-08-28: adding a package.json produced a second permission on the
+// same directory, and dropping the policy withdrew only the current scope's. The
+// other one sits on disk unreconciled.
+//
+// It cannot be used while stale, which is what keeps it out of the containment
+// story: the permission admits only a sandbox carrying that old identity, and such
+// a run is one rooted at that old scope -- which loads that scope's ledger and
+// reconciles it before the contained process starts. Verified by reverting the
+// scope with the policy emptied: the permission was withdrawn and the sandbox got
+// EPERM in the same launch. `nvx grants reset --all` walks every ledger and clears
+// them regardless.
 func grantStillWanted(g readExecGrant, wanted []string, capSIDs []string) bool {
 	ours := false
 	for _, sid := range capSIDs {
