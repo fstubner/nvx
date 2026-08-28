@@ -122,6 +122,22 @@ func grantCacheRecord(sidStr, path string) {
 	saveGrantCacheLocked()
 }
 
+// grantCacheForget drops one entry, for when nvx itself removes an ACE. Narrow
+// where invalidateGrantCache is broad: here nvx knows exactly which grant went
+// away, so throwing away a dozen verified entries would just pay for ACL reads it
+// already has answers for.
+func grantCacheForget(sidStr, path string) {
+	grantCacheMu.Lock()
+	defer grantCacheMu.Unlock()
+	loadGrantCacheLocked()
+	key := grantCacheKey(sidStr, path)
+	if _, had := grantCacheEntries[key]; !had {
+		return
+	}
+	delete(grantCacheEntries, key)
+	saveGrantCacheLocked()
+}
+
 // invalidateGrantCache forgets everything, so the next launch re-reads every ACL.
 //
 // Called when an AppContainer launch fails. If an ACE was removed behind nvx's

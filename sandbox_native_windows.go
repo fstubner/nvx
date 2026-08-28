@@ -135,6 +135,17 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	//
 	// Best-effort, like the working-directory grant: a failure costs the feature
 	// that needed the path, not the run.
+	//
+	// Every grant is recorded, and the record reconciled against the policy on the
+	// way in, so a root the policy no longer names has its entry withdrawn here
+	// rather than lingering on disk with no way to remove it but icacls. See
+	// sandbox_read_exec_grants.go.
+	scope := sandboxScopeForWorkDir(workDir)
+	ledger := loadProjectGrants(config.NvxHome, scope)
+	before := len(ledger.ReadExecGrants)
+	ledger.ReadExecGrants = reconcileReadExecGrants(
+		ledger.ReadExecGrants, config.ReadExecRoots, scopeCaps, revokeSandboxReadExec)
+
 	for _, root := range config.ReadExecRoots {
 		granted := false
 		for _, capSID := range scopeCaps {
@@ -143,9 +154,18 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 				continue
 			}
 			granted = true
+			ledger.ReadExecGrants = recordReadExecGrant(ledger.ReadExecGrants, capSID, root)
 		}
 		if granted {
 			LogInfo("Sandbox may read and execute from %s", root)
+		}
+	}
+	if scope != "" && len(ledger.ReadExecGrants) != before {
+		ledger.ProjectPath = scope
+		if err := saveProjectGrants(config.NvxHome, ledger); err != nil {
+			// Worth saying out loud: the grant itself succeeded, so access is wider
+			// than before, and an unrecorded grant is one nothing can take back.
+			LogWarn("Could not record the sandbox's read grants, so nvx will not be able to withdraw them later: %v", err)
 		}
 	}
 	// Make the command reachable from inside the container BEFORE rewriting it.

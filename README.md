@@ -445,20 +445,17 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   scoped to that project's sandbox identity, not shared with every sandbox on the
   machine.
 
-  **On Windows the grant outlives the policy that asked for it.** It is written
-  into the directory's access-control list on disk, so deleting the
-  `allow_read_exec` entry — or the whole policy file — does not take it back, and
-  neither `nvx grants reset` nor `nvx doctor --fix` removes it. Verified on
-  2026-08-28: with the policy gone, a contained process still listed and read the
-  directory. Removing it means editing the ACL yourself:
+  **On Windows the grant is a real filesystem permission, and nvx takes it back
+  when the policy stops asking.** It has to persist between runs — re-applying it
+  every launch would put a permissions call on the startup path for every root —
+  so it is recorded, and reconciled against the policy each time you run something
+  contained in that project. Remove the `allow_read_exec` entry, or the policy
+  file, and the next contained run withdraws the permission. `nvx grants list`
+  shows what is currently granted and `nvx grants reset` withdraws it immediately.
 
-  ```
-  icacls "<the granted directory>" /remove:g *<the capability SID icacls shows>
-  ```
-
-  The scoping above still holds — only sandboxes carrying this project's identity
-  are admitted, and the identity is derived from the project's path. Recreating a
-  deleted project at the same path therefore inherits the grant.
+  Nothing has to be cleaned up by hand. Earlier builds of this feature did leave
+  something behind: the permission was written and never removed, and the only way
+  back was working out the capability SID and running `icacls` yourself.
 
   **On Linux this grants reading and executing, but not listing.** A contained
   process can read and run files under the root; `readdir` on it is still refused.
