@@ -22,7 +22,7 @@ func TestContainmentNotDisprovedUnderLandlock(t *testing.T) {
 		guest := os.Getenv("NVX_TEST_GUEST")
 		work := os.Getenv("NVX_TEST_WORK")
 		nvxHome := os.Getenv("NVX_TEST_NVXHOME")
-		if err := applyLandlockSandbox(guest, work, nvxHome); err != nil {
+		if err := applyLandlockSandbox(guest, work, nvxHome, nil); err != nil {
 			fmt.Fprintf(os.Stderr, "LANDLOCK_FAILED: %v\n", err)
 			os.Exit(3)
 		}

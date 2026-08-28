@@ -21,7 +21,7 @@ import (
 func TestLandlockSandboxCanStartACommand(t *testing.T) {
 	if os.Getenv("NVX_TEST_LANDLOCK_CHILD") == "1" {
 		if err := applyLandlockSandbox(
-			os.Getenv("NVX_TEST_GUEST"), os.Getenv("NVX_TEST_WORK"), os.Getenv("NVX_TEST_NVXHOME"),
+			os.Getenv("NVX_TEST_GUEST"), os.Getenv("NVX_TEST_WORK"), os.Getenv("NVX_TEST_NVXHOME"), nil,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "SANDBOX_SETUP_FAILED: %v\n", err)
 			os.Exit(2)
