@@ -155,41 +155,59 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// Best-effort, like the working-directory grant: a failure costs the feature
 	// that needed the path, not the run.
 	//
-	// Grants nvx writes are recorded so they can be withdrawn later; the
-	// reconciliation above is the other half. See sandbox_read_exec_grants.go.
-	for _, root := range config.ReadExecRoots {
-		granted := false
-		for _, capSID := range scopeCaps {
-			ours, err := grantSandboxReadExec(capSID, root)
-			if err != nil {
-				LogWarn("Could not grant the sandbox read access to %q: %v", root, err)
-				continue
-			}
-			granted = true
-			// Record every entry that is nvx's own -- one just written, or one written
-			// by an earlier run -- and nothing else. Recording a broader entry that
-			// merely covers read and execute would let a later withdrawal delete the
-			// write access it exists for; recording only what THIS run wrote left a
-			// lost record unrecoverable, because the next run saw its own entry and
-			// declined to write it down again.
-			if ours {
-				ledger.ReadExecGrants = recordReadExecGrant(ledger.ReadExecGrants, capSID, root)
+	// Record the intent BEFORE granting, and refuse to grant if it cannot be
+	// recorded.
+	//
+	// The other order left a permission on disk that nothing named: a grants file
+	// that could not be written -- read-only, full disk, a permissions problem of
+	// its own -- produced a warning saying nvx would not be able to withdraw the
+	// grant later, and then granted it anyway. Nothing could find it afterwards,
+	// including `grants reset`, because the only thing that would have named it was
+	// the file that failed to save.
+	//
+	// This way round the failure is harmless in the other direction: a record whose
+	// permission was never written costs one no-op withdrawal on some later run.
+	if len(config.ReadExecRoots) > 0 && scope != "" {
+		intended := ledger.ReadExecGrants
+		for _, root := range config.ReadExecRoots {
+			for _, capSID := range scopeCaps {
+				intended = recordReadExecGrant(intended, capSID, root)
 			}
 		}
-		if granted {
-			LogInfo("Sandbox may read and execute from %s", root)
+		if len(intended) != beforeCount || len(revokedNow) > 0 {
+			stored, _ := readGrantsFile(grantsPath(config.NvxHome, scope))
+			ledger.ReadExecGrants = mergeLedgerForSave(intended, stored, revokedNow)
+			ledger.ProjectPath = scope
+			if err := saveProjectGrants(config.NvxHome, ledger); err != nil {
+				LogError("Could not record the read/execute permissions this policy asks for: %v", err)
+				LogInfo("They were not granted: a permission nvx cannot record is one it could never withdraw.")
+				return 1
+			}
 		}
-	}
-	if scope != "" && (len(ledger.ReadExecGrants) != beforeCount || len(revokedNow) > 0) {
-		// Fold in anything another run in this project recorded while this one was
-		// working, so the later write does not erase the earlier one's records.
+	} else if scope != "" && len(revokedNow) > 0 {
+		// Withdrawals still need writing back even with nothing left to grant.
 		stored, _ := readGrantsFile(grantsPath(config.NvxHome, scope))
 		ledger.ReadExecGrants = mergeLedgerForSave(ledger.ReadExecGrants, stored, revokedNow)
 		ledger.ProjectPath = scope
 		if err := saveProjectGrants(config.NvxHome, ledger); err != nil {
-			// Worth saying out loud: the grant itself succeeded, so access is wider
-			// than before, and an unrecorded grant is one nothing can take back.
-			LogWarn("Could not record the sandbox's read grants, so nvx will not be able to withdraw them later: %v", err)
+			LogWarn("Could not update the record of the sandbox's read grants: %v", err)
+		}
+	}
+
+	for _, root := range config.ReadExecRoots {
+		granted := false
+		for _, capSID := range scopeCaps {
+			if _, err := grantSandboxReadExec(capSID, root); err != nil {
+				// The record already names this path, which is the safe direction: a
+				// record with no permission behind it is withdrawn as a no-op, while a
+				// permission with no record is invisible.
+				LogWarn("Could not grant the sandbox read access to %q: %v", root, err)
+				continue
+			}
+			granted = true
+		}
+		if granted {
+			LogInfo("Sandbox may read and execute from %s", root)
 		}
 	}
 	// Make the command reachable from inside the container BEFORE rewriting it.

@@ -122,6 +122,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variable containing its own name looped without bound and nothing launched --
   no error, no output.
 
+* **nvx no longer reports withdrawing a permission it did not withdraw.** Success
+  was taken from the exit code of `icacls`, which returns 0 whether it changed
+  anything or not — on a path it cannot find it prints "Failed processing 1 files"
+  and still succeeds. A permission is attached to a directory, so renaming one
+  carried it to the new name while the record still named the old path; the
+  withdrawal removed nothing, reported success, and the record was deleted. Every
+  "the withdrawal failed, keep the record" branch added in earlier fixes was
+  unreachable, because the condition they tested for could not occur. Grants and
+  withdrawals are now confirmed by reading the permission back, which is also
+  independent of the language Windows is running in.
+
+* **A permission is never granted before it can be recorded.** A grants file that
+  could not be written produced a warning saying nvx would not be able to withdraw
+  the grant later — and then granted it anyway, leaving a permission nothing on
+  disk named. The record is written first now, and the run stops if it cannot be.
+
+* **The read/execute answer is no longer cached.** A permission removed behind
+  nvx's back — with the very `icacls` command nvx's own messages suggest — left
+  the cache reporting it as granted for seven days: the grant was skipped, the log
+  said it had been made, and the sandbox got EPERM on a directory the policy still
+  named.
+
 * **A lost grant record no longer strands a permission for ever.** Only what a
   run had just written was recorded, and an entry from an earlier run was
   indistinguishable from someone else's, so once a record was lost — a corrupt

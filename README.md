@@ -453,8 +453,8 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   file, and the next contained run withdraws the permission. `nvx grants list`
   shows what is currently granted and `nvx grants reset` withdraws it immediately.
 
-  Two cases are not automatic, and `nvx grants reset --all` — which sweeps every
-  project — is the answer to both.
+  Three cases are not automatic. `nvx grants reset --all` — which sweeps every
+  project — clears the first two; the third it can only report.
 
   The identity is derived from the project root, so *moving* that root leaves the
   permission granted under the old identity unreconciled. The root is the nearest
@@ -464,10 +464,17 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   a run at the old root reconciles it before the contained process starts — but it
   stays on disk until such a run happens or you reset.
 
-  The other is a grant record nvx cannot read. It keeps the file, renamed to
+  The second is a grant record nvx cannot read. It keeps the file, renamed to
   `.unreadable`, and says so, but it can no longer tell what that record listed, so
   those permissions are removed with `icacls` by hand. Records are written
   atomically, so this should take deliberate corruption to reach.
+
+  The third is a granted directory that is **renamed**. The permission is attached
+  to the directory, so it travels with it, while nvx's record still names the old
+  path. nvx cannot follow it and does not pretend to: it reports that the
+  directory is gone and that the permission moved with it if it was renamed rather
+  than deleted, and leaves you to remove it at the new location with `icacls`.
+  Moving a granted directory is worth avoiding for that reason.
 
   Nothing else needs cleaning up by hand. Earlier builds of this feature left the
   permission behind entirely, with no way back but working out the capability SID

@@ -94,11 +94,36 @@ func TestAGrantIsRecordedOnceHoweverOftenItIsSeen(t *testing.T) {
 func TestResettingGrantsWithdrawsThemAll(t *testing.T) {
 	const sid = "S-1-15-3-1024-eee"
 	var revoked []string
-	r, f := revokeAllReadExecGrants(
-		[]readExecGrant{{Path: `C:\a`, SID: sid}, {Path: `C:\b`, SID: sid}},
-		recordingRevoker(&revoked, map[string]bool{`C:\b`: true}))
+	allExist := func(string) bool { return true }
+	r, f := revokeAllReadExecGrantsWithin(
+		[]readExecGrant{{Path: `C:`, SID: sid}, {Path: `C:`, SID: sid}},
+		recordingRevoker(&revoked, map[string]bool{`C:`: true}), allExist)
 	if r != 1 || f != 1 {
 		t.Fatalf("revoked=%d failed=%d, want 1 and 1", r, f)
+	}
+}
+
+// An explicit reset must be able to finish even when a recorded directory has
+// vanished. On a normal run that is a failure worth keeping the record for -- the
+// directory may have been renamed, taking the permission with it -- but a reset
+// is the user asking to clear this state, and refusing for ever would leave the
+// command permanently unable to complete.
+func TestResettingSkipsRecordsWhoseDirectoryIsGone(t *testing.T) {
+	const sid = "S-1-15-3-1024-fff"
+	var revoked []string
+	gone := func(string) bool { return false }
+	r, f := revokeAllReadExecGrantsWithin(
+		[]readExecGrant{{Path: `C:anished`, SID: sid}},
+		recordingRevoker(&revoked, nil), gone)
+
+	if len(revoked) != 0 {
+		t.Fatalf("tried to withdraw from a path that does not exist: %v", revoked)
+	}
+	if f != 0 {
+		t.Fatalf("failed=%d; a vanished directory would block the reset for ever", f)
+	}
+	if r != 0 {
+		t.Fatalf("revoked=%d; nothing was withdrawn, so nothing should be counted", r)
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -27,6 +28,10 @@ import (
 // The ledger lives with the other project grants under nvx's home, outside the
 // project tree -- code running inside the sandbox can write the working directory,
 // and must not be able to edit the record of what it was granted.
+
+// osStat is os.Stat, named so tests can reason about the check without a real
+// filesystem.
+var osStat = os.Stat
 
 // readExecGrant is one access-control entry nvx wrote, and can therefore remove.
 type readExecGrant struct {
@@ -157,8 +162,27 @@ func recordReadExecGrant(existing []readExecGrant, sid, path string) []readExecG
 
 // revokeAllReadExecGrants withdraws every grant in a ledger, for `nvx grants
 // reset`. Returns how many were withdrawn and how many could not be.
+//
+// pathExists lets the caller decide what a vanished directory means. On a normal
+// run it is a failure worth keeping the record for -- the directory may have been
+// renamed, in which case the permission moved with it and the record is the only
+// thing still naming it. On an explicit reset it is not: the user has asked to
+// clear this state, nvx can do nothing more about that path, and refusing for ever
+// would leave `grants reset` permanently unable to finish.
 func revokeAllReadExecGrants(grants []readExecGrant, revoke func(sid, path string) error) (revoked, failed int) {
+	return revokeAllReadExecGrantsWithin(grants, revoke, func(p string) bool {
+		_, err := osStat(p)
+		return err == nil
+	})
+}
+
+func revokeAllReadExecGrantsWithin(grants []readExecGrant, revoke func(sid, path string) error, pathExists func(string) bool) (revoked, failed int) {
 	for _, g := range grants {
+		if !pathExists(g.Path) {
+			LogWarn("%s no longer exists, so its permission could not be withdrawn.", g.Path)
+			LogInfo("If that directory was renamed rather than deleted, the permission moved with it; remove it there with icacls.")
+			continue
+		}
 		if err := revoke(g.SID, g.Path); err != nil {
 			LogWarn("Could not withdraw the sandbox's read access to %q: %v", g.Path, err)
 			failed++
