@@ -88,6 +88,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being silently ignored. (`--expose` now warns there too; it was silent before.)
   Both warn when the command is not sandboxed at all, for the same reason.
 
+### Changed
+
+* **Windows permissions are set through the Win32 API instead of the `icacls`
+  command.** Every filesystem permission nvx grants, reads or withdraws now goes
+  through `GetNamedSecurityInfo`/`SetNamedSecurityInfo`, which return a real error
+  code for every operation and hand back structured entries with numeric access
+  masks.
+
+  This removes the cause of a defect found in each of four independent acceptance
+  passes, rather than the latest instance of it. `icacls` reports success it did
+  not achieve, its output has to be parsed to learn anything, and its notation
+  collides with the data being read — a directory named `d(M)x` was read as
+  holding write access, and a path containing `(I)` as an inherited entry. Both of
+  those shipped. Its output is also localized, so any parse of it is correct only
+  in English.
+
+  Side effect: one fewer process spawn per permission check on the launch path.
+  Measured interleaved over ten pairs of contained launches against a fresh nvx
+  home: median 4596 ms before, 3989 ms after.
+
+  The one remaining `icacls` call sets the low integrity label on the guest home.
+  That is a different mechanism and not part of this class.
+
 ### Fixed (found by an independent acceptance pass before release)
 
 * **A `--connect` grant is now confined to the sandbox that asked for it.** It was

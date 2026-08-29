@@ -6,81 +6,74 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
-// The bug was that "is there an ACE" was used where "is it the RIGHT ACE" was
-// meant, so a pre-0.5.0 (RX) on ~/.nvx was skipped as already granted and the
-// sandbox could list nvx's own home forever. These pin the distinction.
+// The bug was that "is there an entry" was used where "is it the RIGHT entry"
+// was meant, so a pre-0.5.0 read+execute on ~/.nvx was skipped as already granted
+// and the sandbox could list nvx's own home for ever. This pins the distinction.
+//
+// It used to enumerate the orderings and spacings icacls might print ("X,RA",
+// "RA,X", "X, RA"). Masks have no orderings.
 func TestTraverseOnlyGrantIsDistinguishedFromLegacyReadExec(t *testing.T) {
-	cases := []struct {
-		rights string
-		want   bool
-	}{
-		{"X,RA", true},
-		{"RA,X", true},  // icacls prints these in either order
-		{"X, RA", true}, // and sometimes with a space
-		{"RX", false},   // the legacy grant: permits listing
-		{"R", false},
-		{"M", false},
-		{"F", false},
-		{"", false},
-		{"X", false},  // traverse without read-attributes is not what we write
-		{"RA", false}, // nor the reverse
-		{"X,RA,W", false},
+	traverseOnly := func(mask uint32) bool { return mask&^aclMaskTraverse == 0 }
+
+	if !traverseOnly(aclMaskTraverse) {
+		t.Error("the traverse grant nvx writes was not recognised as traverse-only")
 	}
-	for _, tc := range cases {
-		if got := aceIsTraverseOnly(tc.rights); got != tc.want {
-			t.Errorf("aceIsTraverseOnly(%q) = %v, want %v", tc.rights, got, tc.want)
+	for name, mask := range map[string]uint32{
+		"the legacy read+execute grant, which permits listing": aclMaskReadExec,
+		"modify":              aclMaskModify,
+		"read":                fileGenericRead,
+		"traverse plus write": aclMaskTraverse | fileGenericWrite,
+	} {
+		if traverseOnly(mask) {
+			t.Errorf("%s was accepted as traverse-only", name)
 		}
 	}
 }
 
-func TestAppContainerAceRightsReadsTheRightsNotJustPresence(t *testing.T) {
-	// A real `icacls` listing: the target SID, a similar capability SID, an
-	// inherited ACE, and a deny.
-	const sid = "S-1-15-2-125897231-4118270468-3890225265-1944594370-665964903-770884402-3722446281"
+func TestHomeAccessIsReadAsRightsNotMerePresence(t *testing.T) {
 	dir := tempDir(t)
+	sid, serr := scopeCapabilitySID(dir)
+	if serr != nil {
+		t.Skipf("cannot derive a SID here: %v", serr)
+	}
+	t.Cleanup(func() { _ = revokeACL(dir, sid) })
 
-	// Nothing granted yet: no ACE for this SID.
-	rights, err := appContainerAceRights(sid, dir)
-	if err != nil {
-		t.Fatalf("appContainerAceRights on a fresh dir: %v", err)
-	}
-	if rights != "" {
-		t.Errorf("fresh directory reported rights %q, want none", rights)
-	}
-
-	// Grant the legacy shape and confirm it is reported as (RX), not merely
-	// "present" -- that difference is the whole fix.
-	if out, err := runWinCmd(20*time.Second, "icacls", dir, "/grant", "*"+sid+":(RX)", "/c", "/q"); err != nil {
-		t.Skipf("cannot set an AppContainer ACE here: %v (%s)", err, out)
-	}
-	rights, err = appContainerAceRights(sid, dir)
-	if err != nil {
-		t.Fatalf("appContainerAceRights after granting RX: %v", err)
-	}
-	if rights != "RX" {
-		t.Fatalf("granted (RX), read back %q", rights)
-	}
-	if aceIsTraverseOnly(rights) {
-		t.Error("the legacy (RX) grant was accepted as traverse-only; it permits listing")
+	// Nothing granted yet.
+	if _, present, err := appContainerHomeAccess(sid, dir); err != nil {
+		t.Fatalf("reading a fresh directory: %v", err)
+	} else if present {
+		t.Error("a fresh directory reported an entry for this identity")
 	}
 
-	// Narrowing must leave a traverse-only ACE behind.
+	// Grant the legacy shape and confirm it is reported as read+execute, not
+	// merely "present" -- that difference is the whole fix.
+	if err := grantACL(dir, sid, aclMaskReadExec, 0); err != nil {
+		t.Skipf("cannot set a permission here: %v", err)
+	}
+	mask, present, err := appContainerHomeAccess(sid, dir)
+	if err != nil || !present {
+		t.Fatalf("after granting read/execute: mask=%#x present=%v err=%v", mask, present, err)
+	}
+	if mask&^aclMaskTraverse == 0 {
+		t.Error("the legacy read/execute grant was accepted as traverse-only; it permits listing")
+	}
+
+	// Narrowing must leave a traverse-only entry behind.
 	if err := replaceAceWithTraverseOnly(sid, dir); err != nil {
 		t.Fatalf("replaceAceWithTraverseOnly: %v", err)
 	}
-	rights, err = appContainerAceRights(sid, dir)
-	if err != nil {
-		t.Fatalf("appContainerAceRights after narrowing: %v", err)
+	mask, present, err = appContainerHomeAccess(sid, dir)
+	if err != nil || !present {
+		t.Fatalf("after narrowing: mask=%#x present=%v err=%v", mask, present, err)
 	}
-	if !aceIsTraverseOnly(rights) {
-		t.Errorf("after narrowing, rights are %q, want traverse-only (X,RA)", rights)
+	if mask&^aclMaskTraverse != 0 {
+		t.Errorf("after narrowing the mask is %#x, want traverse-only %#x", mask, aclMaskTraverse)
 	}
 }
 
-// The migration must run once and then stop, or it pays two icacls calls on
+// The migration must run once and then stop, or it pays two ACL reads on
 // every launch to re-answer a question whose answer cannot change.
 func TestHomeGrantMigrationRunsOnce(t *testing.T) {
 	const sid = "S-1-15-2-1-2-3-4-5-6-7"
