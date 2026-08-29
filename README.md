@@ -477,6 +477,14 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   than deleted, and leaves you to remove it at the new location with `icacls`.
   Moving a granted directory is worth avoiding for that reason.
 
+  A fourth case needs nothing cleaned up but is worth knowing about: if a
+  directory nvx granted read/execute is later used as a working directory by the
+  same project, nvx's own writable-root grant replaces that permission with a
+  wider one. Dropping the policy entry then leaves the wider permission in place —
+  nvx says so rather than removing it, because taking it away would remove access
+  granted for a different reason. The sandbox keeps that access until the project
+  stops using the directory.
+
   Nothing else needs cleaning up by hand. Earlier builds of this feature left the
   permission behind entirely, with no way back but working out the capability SID
   and running `icacls` yourself.

@@ -174,14 +174,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		// over it, so it is not nvx's to take back, and recording it meant `grants
 		// reset` deleted the sandbox's write access to the user's own project while
 		// reporting it had withdrawn a read/execute permission.
-		intended := ledger.ReadExecGrants
-		for _, root := range config.ReadExecRoots {
-			for _, capSID := range scopeCaps {
-				if readExecGrantWouldBeOurs(capSID, root) {
-					intended = recordReadExecGrant(intended, capSID, root)
-				}
-			}
-		}
+		intended := planReadExecRecords(ledger.ReadExecGrants, config.ReadExecRoots, scopeCaps)
 		if len(intended) != beforeCount || len(revokedNow) > 0 {
 			stored, _ := readGrantsFile(grantsPath(config.NvxHome, scope))
 			ledger.ReadExecGrants = mergeLedgerForSave(intended, stored, revokedNow)
@@ -209,7 +202,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 				// The record already names this path, which is the safe direction: a
 				// record with no permission behind it is withdrawn as a no-op, while a
 				// permission with no record is invisible.
-				LogWarn("Could not grant the sandbox read access to %q: %v", root, err)
+				LogWarn("Could not grant the sandbox read access to %s: %v", root, err)
 				continue
 			}
 			granted = true

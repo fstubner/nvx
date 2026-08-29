@@ -88,6 +88,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being silently ignored. (`--expose` now warns there too; it was silent before.)
   Both warn when the command is not sandboxed at all, for the same reason.
 
+* **A permission nvx granted that later widened is left in place, and said so
+  accurately.** nvx grants read/execute on a directory; a later run in the same
+  project uses that directory as its working directory, so nvx's own writable-root
+  grant replaces its own entry with a wider one. Dropping the policy entry then
+  reported "it is not the one nvx granted", which was false twice over — nvx had
+  granted both. It now says the permission is wider than the one recorded and
+  explains that removing it would take away more than the policy granted.
+
+* **`nvx grants reset` no longer reports withdrawing permissions that were not
+  there.** A record naming a path with no permission on it counted as a
+  withdrawal, so the command claimed to have removed something it had not.
+
+* **`nvx grants list` no longer rewrites anything.** Asking what is recorded
+  renamed a record it could not parse, as a side effect of a read-only query.
+
+* **Two refusals reached an MCP client as a silently closed pipe** — a policy that
+  would not load, and a global install that cannot be contained. Both sit before
+  the verification step that reports refusals, so neither was reported. The advice
+  for an unreadable policy was also unreachable: its reason contains the words
+  "security policy", so it matched the policy branch first and told people to edit
+  a policy nvx could not read.
+
 * **nvx no longer withdraws a filesystem permission it did not grant.** A
   directory that is both the sandbox's writable root and named in
   `allow_read_exec` was recorded as a read/execute grant, even though nvx had

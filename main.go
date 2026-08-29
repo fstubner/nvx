@@ -1229,7 +1229,7 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 	policy, err := LoadPolicy(nvxHome)
 	if err != nil {
 		LogError("Failed to load security policy: %v", err)
-		return 1, "its security policy could not be loaded"
+		return 1, "its security policy could not be read"
 	}
 
 	popularList := LoadPopularPackages(nvxHome)

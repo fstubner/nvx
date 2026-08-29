@@ -31,14 +31,14 @@ func revokeSandboxReadExec(sidStr, path string) error {
 			"if it was renamed rather than deleted, the permission moved with it: %w", err)
 	}
 
-	// Only nvx's own entry may be removed.
+	// Only nvx's own read/execute entry may be removed.
 	if !readExecEntryIsOurs(sidStr, path) {
 		if _, present, _ := appContainerHomeAccess(sidStr, path); present {
-			return fmt.Errorf("%w: %s", errPermissionNotOurs, path)
+			return fmt.Errorf("%w: %s", errPermissionBroadened, path)
 		}
-		// Nothing there for this identity at all: the record is stale, and there is
-		// nothing to remove. Report success so the caller stops tracking it.
-		return nil
+		// Nothing there for this identity at all: the record is stale and there is
+		// nothing to remove.
+		return errNothingToWithdraw
 	}
 
 	if err := revokeACL(path, sidStr); err != nil {
