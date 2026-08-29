@@ -170,18 +170,27 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   previously used nvx in is readable and writable from any sandbox until nvx runs
   there again and cleans it. nvx keeps no record of where it has run, so it cannot
   sweep them for you. See README.md for the manual command.
-- **A contained process cannot capture a child's output on Windows.** An
+- **Capturing a child's output on Windows needs help from nvx, and gets it.** An
   AppContainer may not create a named pipe, which is how Windows implements piped
-  child stdio, so a contained program that captures a subprocess's output hangs.
+  child stdio, so a contained program that captures a subprocess's output would
+  hang. Both kinds of capture are handled; what a contained process still cannot
+  do is write to a child's stdin.
 
-  **Synchronous capture is handled; streaming capture is not.** The restriction is
+  This bullet used to be headed "cannot capture a child's output", and four lines
+  later said "**Synchronous capture is handled; streaming capture is not**" —
+  while the paragraph after that explained, correctly, that streaming is handled.
+  A reader skimming the bold text got the false half of a document that
+  contradicted itself twice on one page.
+
+  **Synchronous capture goes through files.** The restriction is
   on creating a pipe, not on file descriptors, so a preload loaded into every
   contained node process redirects `spawnSync`/`execSync`/`execFileSync` through
   temp files in the guest home. Their contract is "run it, give me the output at
   the end", which a file satisfies exactly — the caller never sees a stream either
   way. `npm install esbuild` works as a result; it previously hung forever.
 
-  Asynchronous `spawn(..., { stdio: "pipe" })` is a real stream that a file cannot
+  **Streaming capture goes through pipes nvx creates.** Asynchronous
+  `spawn(..., { stdio: "pipe" })` is a real stream that a file cannot
   stand in for, and it is handled differently: nvx creates the pipes outside the
   container and the preload only opens them. Opening an existing pipe is a
   different access check from creating one, and it is permitted when the pipe's

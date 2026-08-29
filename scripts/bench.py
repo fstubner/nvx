@@ -31,6 +31,43 @@ def bench(args, env, runs):
     return statistics.median(samples)
 
 
+def resolve_real_runtime(name):
+    """Return the real runtime binary, never the nvx shim that shadows it.
+
+    On any machine where nvx is installed, `node` on PATH IS an nvx shim -- that
+    is the whole point of it. Taking the baseline from shutil.which() therefore
+    measured nvx against nvx and subtracted one from the other: run as README
+    documents it, this printed an overhead of -50.4 ms. A negative number for a
+    quantity that cannot be negative is the tell, and it survived because nobody
+    reruns a benchmark whose figure is already written down.
+
+    The binary is asked where it actually lives rather than guessed at from PATH
+    order or directory names. Through a shim that answer comes back from the real
+    runtime the shim dispatched to, which is exactly the thing to compare against.
+    """
+    found = shutil.which(name)
+    if not found:
+        sys.exit(f"{name} not found on PATH")
+    try:
+        out = subprocess.run(
+            [found, "-p", "process.execPath"],
+            capture_output=True, text=True, timeout=120,
+        )
+        real = out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        real = ""
+    if not real or not os.path.exists(real):
+        # Not a Node-like runtime, or it would not say. Fall back rather than
+        # fail, but do not let the number be read as authoritative.
+        print(f"warning: could not confirm {found} is the real runtime and not an "
+              f"nvx shim; a negative overhead below means it was a shim.",
+              file=sys.stderr)
+        return found
+    if os.path.normcase(os.path.realpath(real)) != os.path.normcase(os.path.realpath(found)):
+        print(f"note: {found} is a shim; benchmarking against {real}", file=sys.stderr)
+    return real
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--nvx", default="./nvx", help="path to the nvx binary")
@@ -38,9 +75,7 @@ def main():
     ap.add_argument("--runtime", default="node", help="runtime binary to compare against")
     opts = ap.parse_args()
 
-    runtime_bin = shutil.which(opts.runtime)
-    if not runtime_bin:
-        sys.exit(f"{opts.runtime} not found on PATH")
+    runtime_bin = resolve_real_runtime(opts.runtime)
     nvx = os.path.abspath(opts.nvx)
     if not os.path.exists(nvx):
         sys.exit(f"nvx binary not found at {nvx}")
