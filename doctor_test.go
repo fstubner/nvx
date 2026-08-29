@@ -170,6 +170,34 @@ func TestFormatDoctorReport(t *testing.T) {
 	}
 }
 
+// The healthy line must describe what was actually checked.
+//
+// It said "shim dir is first on PATH (position 53)", which contradicts itself on
+// the page and is not the test: diagnosePath only establishes that no nvx
+// raw-runtime directory sits ahead of the shim dir, and position is irrelevant
+// to that. Someone diagnosing a PATH problem was being told nvx had verified
+// something it never looked at.
+//
+// The existing healthy case above cannot catch this -- its index is 0, so
+// "first" happens to be true. A shim dir that is genuinely not first, with
+// nothing shadowing it, is the case that exposes the claim.
+func TestTheHealthyPathLineDoesNotClaimACheckThatWasNotMade(t *testing.T) {
+	out := formatDoctorReport(doctorReport{
+		shimDir:       filepath.FromSlash("/home/u/.nvx/bin"),
+		shimDirOnPath: true,
+		shimDirIndex:  53,
+	})
+	if !strings.Contains(out, "[OK]") {
+		t.Fatalf("a shim dir on PATH with nothing shadowing it is healthy:\n%s", out)
+	}
+	if strings.Contains(out, "first on PATH") {
+		t.Fatalf("claimed the shim dir is first while reporting position 53:\n%s", out)
+	}
+	if !strings.Contains(out, "53") {
+		t.Fatalf("the position is still worth reporting:\n%s", out)
+	}
+}
+
 func TestRebuildUserPath(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows user-PATH repair semantics")

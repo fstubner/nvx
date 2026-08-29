@@ -325,7 +325,12 @@ func formatDoctorReport(rep doctorReport) string {
 			fmt.Fprintf(&b, "         - %s (PATH position %d)\n", s.dir, s.index)
 		}
 	default:
-		fmt.Fprintf(&b, "  [OK]   shim dir is first on PATH (position %d)\n", rep.shimDirIndex)
+		// Not "first on PATH": nothing here checks that, and saying so while
+		// printing "position 53" contradicted itself on the page. What the branch
+		// above actually established is that no nvx raw-runtime directory sits
+		// ahead of the shim dir -- position is irrelevant, and someone diagnosing
+		// a PATH problem was being told the opposite.
+		fmt.Fprintf(&b, "  [OK]   shim dir is on PATH at position %d, with no raw-runtime dir ahead of it\n", rep.shimDirIndex)
 	}
 
 	if len(rep.missingPosixShims) > 0 {

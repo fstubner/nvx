@@ -228,7 +228,11 @@ func main() {
 				}
 			}
 		}
-		LogSuccess("Generated PATH shims in ~/.nvx/bin")
+		// The real directory, not the default spelling of it. This printed
+		// "~/.nvx/bin" whatever NVX_HOME said, so anyone running with it set --
+		// scripts/sandbox-enforcement-windows.ps1 does, on every run -- was told
+		// shims had gone somewhere they had not.
+		LogSuccess("Generated PATH shims in %s", shimDirPath(nvxHome))
 
 	case "policy":
 		if len(os.Args) < 3 {
