@@ -123,17 +123,16 @@ func windowsAncestorGrantPaths() []string {
 }
 
 func grantSidReadExecThisFolder(sidStr, path string) error {
-	out, err := runWinCmd(30*time.Second, "icacls", path, "/grant", fmt.Sprintf("*%s:(RX)", sidStr), "/c", "/q")
-	if err != nil {
-		return fmt.Errorf("icacls grant %s: %v (%s)", path, err, strings.TrimSpace(string(out)))
+	// This folder only: no inheritance flags, so nothing below it is affected.
+	if err := grantACL(path, sidStr, aclMaskReadExec, 0); err != nil {
+		return fmt.Errorf("grant read/execute on %s: %w", path, err)
 	}
 	return nil
 }
 
 func revokeSidGrant(sidStr, path string) error {
-	out, err := runWinCmd(30*time.Second, "icacls", path, "/remove:g", "*"+sidStr, "/c", "/q")
-	if err != nil {
-		return fmt.Errorf("icacls remove %s: %v (%s)", path, err, strings.TrimSpace(string(out)))
+	if err := revokeACL(path, sidStr); err != nil {
+		return fmt.Errorf("remove the permission on %s: %w", path, err)
 	}
 	return nil
 }

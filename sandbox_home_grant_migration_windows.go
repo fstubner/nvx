@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
 )
 
 // Upgraded machines keep an over-broad grant on ~/.nvx that fresh ones never get.
@@ -25,7 +23,7 @@ import (
 // on drive roots, so this narrowing is deliberately scoped to nvxHome rather than
 // applied wherever a broad ACE is found.
 //
-// Once per home, marked on disk: it is a migration, and paying an icacls read on
+// Once per home, marked on disk: it is a migration, and paying an ACL read on
 // every launch to re-answer a question that cannot change again is the kind of
 // per-launch cost that already had to be removed from the ancestor walk.
 
@@ -46,14 +44,14 @@ func narrowLegacyHomeGrant(sidStr, nvxHome string) {
 		return
 	}
 
-	rights, err := appContainerAceRights(sidStr, nvxHome)
+	mask, present, err := appContainerHomeAccess(sidStr, nvxHome)
 	if err != nil {
 		return
 	}
-	// No ACE, or already narrowed to traverse-only: nothing to do, and record it
+	// No entry, or already narrowed to traverse-only: nothing to do, and record it
 	// so the check does not run again.
-	if rights == "" || aceIsTraverseOnly(rights) {
-		_ = os.WriteFile(marker, []byte(rights+"\n"), 0o600)
+	if !present || mask&^aclMaskTraverse == 0 {
+		_ = os.WriteFile(marker, []byte(fmt.Sprintf("%#x\n", mask)), 0o600)
 		return
 	}
 
@@ -61,57 +59,33 @@ func narrowLegacyHomeGrant(sidStr, nvxHome string) {
 		return
 	}
 	LogInfo("Narrowed an old permission on %s so the sandbox can no longer list it.", nvxHome)
-	_ = os.WriteFile(marker, []byte("narrowed from "+rights+"\n"), 0o600)
+	_ = os.WriteFile(marker, []byte(fmt.Sprintf("narrowed from %#x\n", mask)), 0o600)
 }
 
-// appContainerAceRights returns the rights string of the explicit allow ACE for
-// sidStr on path -- e.g. "RX" or "X,RA" -- or "" when there is none.
-func appContainerAceRights(sidStr, path string) (string, error) {
-	out, err := runWinCmd(10*time.Second, "icacls", path)
+// appContainerHomeAccess returns the access mask of the explicit allow entry for
+// sidStr on path, and whether there is one.
+//
+// A mask rather than the rights text icacls prints. The text version had to strip
+// a leading "(I)" for inherited entries and split "X,RA" in either order, and it
+// read those from a line that begins with the directory's own path -- the same
+// shape of mistake that hid a project's first entry from the stale-grant scan.
+func appContainerHomeAccess(sidStr, path string) (uint32, bool, error) {
+	e, ok, err := aclEntryFor(path, sidStr)
 	if err != nil {
-		return "", err
+		return 0, false, err
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.Contains(line, sidStr) {
-			continue
-		}
-		if strings.Contains(strings.ToUpper(line), "(DENY)") {
-			return "", nil
-		}
-		// icacls prints "<sid>:(RX)" or "<sid>:(X,RA)"; inherited ACEs carry an
-		// extra (I) which this deliberately keeps out of the comparison.
-		_, rest, ok := strings.Cut(line, sidStr+":")
-		if !ok {
-			continue
-		}
-		rights := strings.TrimSpace(rest)
-		rights = strings.TrimPrefix(rights, "(I)")
-		rights = strings.TrimSpace(rights)
-		rights = strings.TrimPrefix(rights, "(")
-		rights = strings.TrimSuffix(rights, ")")
-		return strings.TrimSpace(rights), nil
+	if !ok || e.Deny {
+		return 0, false, nil
 	}
-	return "", nil
-}
-
-// aceIsTraverseOnly reports whether a rights string is the traverse+read-attributes
-// grant the current design uses, in either order icacls may print it.
-func aceIsTraverseOnly(rights string) bool {
-	parts := strings.Split(strings.ToUpper(strings.ReplaceAll(rights, " ", "")), ",")
-	if len(parts) != 2 {
-		return false
-	}
-	seen := map[string]bool{parts[0]: true, parts[1]: true}
-	return seen["X"] && seen["RA"]
+	return e.Mask, true, nil
 }
 
 func replaceAceWithTraverseOnly(sidStr, path string) error {
-	if out, err := runWinCmd(20*time.Second, "icacls", path, "/remove:g", "*"+sidStr, "/c", "/q"); err != nil {
-		return fmt.Errorf("icacls remove %s: %v (%s)", path, err, strings.TrimSpace(string(out)))
-	}
-	grantArg := fmt.Sprintf("*%s:(X,RA)", sidStr)
-	if out, err := runWinCmd(20*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q"); err != nil {
-		return fmt.Errorf("icacls grant %s: %v (%s)", path, err, strings.TrimSpace(string(out)))
+	// One write, not a removal followed by a grant: grantACL replaces this
+	// identity's entry outright, so there is no window in which the permission is
+	// absent and no way for the second half to fail after the first succeeded.
+	if err := grantACL(path, sidStr, aclMaskTraverse, 0); err != nil {
+		return fmt.Errorf("narrow the permission on %s: %w", path, err)
 	}
 	return nil
 }

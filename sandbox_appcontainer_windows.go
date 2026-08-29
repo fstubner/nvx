@@ -147,25 +147,22 @@ func grantSandboxReadExec(sidStr, path string) (ours bool, err error) {
 		// recorded nothing, and emptying the policy withdrew nothing.
 		return readExecEntryIsOurs(sidStr, path), nil
 	}
-	grantArg := fmt.Sprintf("*%s:%s", sidStr, nvxReadExecMask)
-	out, err := runWinCmd(45*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
-	if err != nil {
-		return false, fmt.Errorf("icacls read/execute grant for sandbox identity: %v (%s)", err, strings.TrimSpace(string(out)))
+	if err := grantACL(path, sidStr, aclMaskReadExec, nvxInheritFlags); err != nil {
+		return false, fmt.Errorf("read/execute grant for sandbox identity: %w", err)
 	}
-	// Confirm it landed. icacls exits 0 even when it wrote nothing -- on a path it
-	// cannot find it prints "Failed processing 1 files" and still returns success
-	// (measured). Reporting a grant that did not happen would tell the caller to
-	// record a permission that does not exist, and the sandbox would then fail to
-	// read a directory nvx said it had granted.
+	// Confirm it landed. Cheap, and the one thing worth keeping from the era of
+	// deciding this from a command's exit code.
 	if !readExecEntryIsOurs(sidStr, path) {
-		return false, fmt.Errorf("icacls reported success but no read/execute permission is present on %s", path)
+		return false, fmt.Errorf("no read/execute permission is present on %s after granting it", path)
 	}
 	return true, nil
 }
 
-// nvxReadExecMask is exactly what grantSandboxReadExec writes, and therefore the
-// signature that identifies an entry as nvx's own.
-const nvxReadExecMask = "(OI)(CI)(RX)"
+// nvxInheritFlags is the inheritance nvx applies to the permissions it grants:
+// the entry applies to this directory and is inherited by files and directories
+// under it. Together with an exact access mask this is the signature that
+// identifies an entry as nvx's own.
+const nvxInheritFlags = objectInheritACE | containerInheritACE
 
 // readExecEntryIsOurs reports whether path carries the precise entry
 // grantSandboxReadExec writes for sidStr.
@@ -177,19 +174,11 @@ const nvxReadExecMask = "(OI)(CI)(RX)"
 // (I) and so does not match either, which is right: it lives on an ancestor and
 // removing it here would do nothing.
 func readExecEntryIsOurs(sidStr, path string) bool {
-	out, err := runWinCmd(10*time.Second, "icacls", path)
-	if err != nil {
+	e, ok, err := aclEntryFor(path, sidStr)
+	if err != nil || !ok {
 		return false
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.Contains(line, sidStr) {
-			continue
-		}
-		if strings.EqualFold(rightsAfterSID(line, sidStr), nvxReadExecMask) {
-			return true
-		}
-	}
-	return false
+	return !e.Deny && e.Mask == aclMaskReadExec && e.Flags&^inheritedACE == nvxInheritFlags
 }
 
 // grantSandboxModify gives sidStr modify access to path and its descendants.
@@ -197,10 +186,8 @@ func grantSandboxModify(sidStr, path string) error {
 	if appContainerHasGrantFor(sidStr, path, grantModify) {
 		return nil
 	}
-	grantArg := fmt.Sprintf("*%s:(OI)(CI)(M)", sidStr)
-	out, err := runWinCmd(45*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
-	if err != nil {
-		return fmt.Errorf("icacls grant for sandbox identity: %v (%s)", err, strings.TrimSpace(string(out)))
+	if err := grantACL(path, sidStr, aclMaskModify, nvxInheritFlags); err != nil {
+		return fmt.Errorf("modify grant for sandbox identity: %w", err)
 	}
 	return nil
 }
@@ -314,66 +301,45 @@ const (
 	grantReadExec
 )
 
-// satisfies reports whether an ACE's rights cover what is being asked for.
-// Modify covers read/execute; read/execute does not cover modify.
-//
-// Takes the rights alone, never the whole icacls line. The line begins with the
-// directory's own path, and a path containing "(M)", "(RX)" or "(R)" would
-// otherwise be read as rights -- measured: a directory named with "(M)" in it
-// reported modify access from an entry that granted only (OI)(CI)(RX). It fails
-// toward "already granted", so the grant is skipped and the wrong answer cached.
-// This codebase already had rightsAfterSID for exactly this trap, after a path
-// containing "(I)" was once read as an inherited entry.
-func (k grantKind) satisfies(rights string) bool {
-	up := strings.ToUpper(rights)
-	hasModify := strings.Contains(up, "(M)") || strings.Contains(up, "(F)") || strings.Contains(up, "(W)")
-	if k == grantModify {
-		return hasModify
+// mask is the access this kind of grant requires. Comparing masks is what
+// replaced reading icacls output: a directory named "d(M)x" once reported modify
+// access from an entry granting only read and execute, because the line being
+// searched began with the path.
+func (k grantKind) mask() uint32 {
+	if k == grantReadExec {
+		return aclMaskReadExec
 	}
-	return hasModify || strings.Contains(up, "(RX)") || strings.Contains(up, "(R)")
+	return aclMaskModify
 }
 
 // appContainerHasGrantFor asks the question appContainerHasGrant should always
 // have asked: does sidStr already hold AT LEAST the access `want` on path?
 func appContainerHasGrantFor(sidStr, path string, want grantKind) bool {
-	// A grant verified recently is not re-read. That check is a process spawn,
-	// and in the steady state it is the dominant cost of a contained launch --
-	// see sandbox_grant_cache_windows.go for the measurement and for why caching
-	// only the positive answer is the safe direction.
-	//
-	// Cached per right, not per path. Recording "granted" without recording
-	// granted WHAT is what made the defect above unrecoverable even by hand:
-	// removing the read-only ACE with icacls left the cache still answering yes,
-	// so no grant was re-applied and the directory ended up with no access at all
-	// -- every contained command in it then failed before it could even chdir.
 	// Read/execute is asked afresh every time; only the modify answer is cached.
 	//
 	// The cache exists for the many ancestor and working-directory checks on the
 	// startup path. Read/execute roots are a handful of paths a policy names
-	// explicitly, so re-reading them costs one ACL read each for a feature the user
-	// opted into -- and caching the answer was actively harmful: an entry removed
-	// behind nvx's back (with the very icacls command nvx's own messages tell people
-	// to run) left the cache reporting it as granted for seven days, so the grant was
-	// skipped, the log said it had been made, and the sandbox got EPERM.
+	// explicitly, and caching that answer was actively harmful: an entry removed
+	// behind nvx's back left the cache reporting it as granted for seven days, so
+	// the grant was skipped, the log said it had been made, and the sandbox got
+	// EPERM. Reading an ACL is a syscall now rather than a process spawn, so the
+	// cache buys much less than it did.
 	if want != grantReadExec && grantCacheHas(grantIdentityFor(sidStr, want), path) {
 		return true
 	}
-	out, err := runWinCmd(10*time.Second, "icacls", path)
+	entries, err := readDACL(path)
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.Contains(line, sidStr) {
+	for _, e := range entries {
+		if !sidsEqual(e.SID, sidStr) {
 			continue
 		}
-		// An explicit deny must not be read as "already granted". Checked against
-		// the whole line on purpose: icacls prints "(DENY)" before the SID, so it is
-		// not part of the rights this cuts out below.
-		if strings.Contains(strings.ToUpper(line), "(DENY)") {
+		// An explicit deny for this identity settles it, whatever else is present.
+		if e.Deny {
 			return false
 		}
-		rights := rightsAfterSID(line, sidStr)
-		if rights == "" || !want.satisfies(rights) {
+		if !e.grantsAtLeast(want.mask()) {
 			continue
 		}
 		if want != grantReadExec {
@@ -411,10 +377,8 @@ func grantAppContainerPath(sid uintptr, path string) error {
 	if appContainerHasGrant(sidStr, path) {
 		return nil
 	}
-	grantArg := fmt.Sprintf("*%s:(OI)(CI)(M)", sidStr)
-	out, err := runWinCmd(45*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
-	if err != nil {
-		return fmt.Errorf("icacls grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
+	if err := grantACL(path, sidStr, aclMaskModify, nvxInheritFlags); err != nil {
+		return fmt.Errorf("modify grant for AppContainer: %w", err)
 	}
 	return nil
 }
@@ -602,10 +566,8 @@ func grantAppContainerPathReadExecTree(sid uintptr, path string) error {
 	if appContainerHasGrant(sidStr, path) {
 		return nil
 	}
-	grantArg := fmt.Sprintf("*%s:(OI)(CI)(RX)", sidStr)
-	out, err := runWinCmd(45*time.Second, "icacls", path, "/grant", grantArg, "/c", "/q")
-	if err != nil {
-		return fmt.Errorf("icacls RX tree grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
+	if err := grantACL(path, sidStr, aclMaskReadExec, nvxInheritFlags); err != nil {
+		return fmt.Errorf("read/execute tree grant for AppContainer: %w", err)
 	}
 	return nil
 }
@@ -640,10 +602,12 @@ func grantAppContainerPathReadExecTimeboxed(sid uintptr, path string, timeout ti
 	if appContainerHasGrant(sidStr, path) {
 		return nil
 	}
-	grantArg := fmt.Sprintf("*%s:(X,RA)", sidStr)
-	out, err := runWinCmd(timeout, "icacls", path, "/grant", grantArg, "/c", "/q")
-	if err != nil {
-		return fmt.Errorf("icacls traverse grant for AppContainer: %v (%s)", err, strings.TrimSpace(string(out)))
+	// Still timeboxed. The call is a syscall now rather than a process spawn, but
+	// the reason for the bound was never the process: on the profile root the write
+	// goes through the OneDrive and Defender filter drivers and can simply not
+	// return.
+	if err := grantACLWithin(path, sidStr, aclMaskTraverse, 0, timeout); err != nil {
+		return fmt.Errorf("traverse grant for AppContainer: %w", err)
 	}
 	return nil
 }

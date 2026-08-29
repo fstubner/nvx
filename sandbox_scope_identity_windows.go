@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 	"unsafe"
 )
 
@@ -146,9 +145,8 @@ func removeStaleAppContainerGrant(packageSIDStr, path string) {
 		return
 	}
 	for _, sid := range staleAppContainerSIDsOn(path) {
-		out, err := runWinCmd(30*time.Second, "icacls", path, "/remove:g", "*"+sid, "/c", "/q")
-		if err != nil {
-			LogWarn("Could not remove a stale sandbox permission on %q: %v (%s)", path, err, strings.TrimSpace(string(out)))
+		if err := revokeACL(path, sid); err != nil {
+			LogWarn("Could not remove a stale sandbox permission on %q: %v", path, err)
 			continue
 		}
 		LogInfo("Removed a shared sandbox permission left on %q by an earlier nvx; this project now has its own.", path)
@@ -177,55 +175,42 @@ var appContainerPackageSID = regexp.MustCompile(`S-1-15-2-[0-9]+(?:-[0-9]+)+`)
 // back will add it again. Leaving them meant a permission nvx created was never
 // cleaned up by anything.
 func staleAppContainerSIDsOn(path string) []string {
-	out, err := runWinCmd(10*time.Second, "icacls", path)
+	entries, err := readDACL(path)
 	if err != nil {
 		return nil
 	}
 	seen := map[string]bool{}
 	var sids []string
-	for _, line := range strings.Split(string(out), "\n") {
-		for _, m := range appContainerPackageSID.FindAllString(line, -1) {
-			if seen[m] {
-				continue
-			}
-			rights := rightsAfterSID(line, m)
-			// An inherited ACE cannot be removed with /remove:g, so skip it --
-			// but decide that from the rights this SID carries, not from the
-			// whole line.
-			//
-			// icacls prints the directory's path on the same line as its first
-			// ACE, so testing the line meant a project whose PATH contained the
-			// literal "(I)" hid its own first entry from both this scan and the
-			// launch-path cleanup. Such a project stayed writable by every
-			// sandbox on the machine while doctor reported it healthy and --fix
-			// did nothing. Found by an acceptance pass with a directory named
-			// with "(I)" in it; the same class of mistake as the one this
-			// function was fixed for a commit ago -- matching on text shape
-			// rather than on meaning.
-			if strings.HasPrefix(rights, "(I)") {
-				continue
-			}
-			// Match on what the ACE GRANTS, not merely on the SID being present.
-			//
-			// Matching the SID alone reported the current design's own ancestor
-			// grant as a leftover. `grantAppContainerPathReadExec` writes (X,RA) --
-			// traverse and read-attributes, non-inheritable -- on the directories
-			// above a sandbox so it can walk through them without listing them.
-			// Run nvx from a subdirectory and the project root carries one; nothing
-			// about it is stale, and it is required for the next launch.
-			//
-			// An acceptance pass caught doctor announcing that live grant as a
-			// pre-0.5.0 leftover letting "any nvx sandbox read and write this
-			// project" -- false in every clause for a traverse-only ACE -- and
-			// offering to remove it. The same scan drives the launch-path cleanup,
-			// so the bad match would also have revoked a grant nvx had just
-			// written. Legacy grants are (OI)(CI)(M) and still match.
-			if !aceGrantsMoreThanTraverse(rights) {
-				continue
-			}
-			seen[m] = true
-			sids = append(sids, m)
+	for _, e := range entries {
+		if !appContainerPackageSID.MatchString(e.SID) || seen[e.SID] {
+			continue
 		}
+		// An inherited entry lives on an ancestor; removing it here would do
+		// nothing. The flag says so directly now.
+		//
+		// It used to be read from the text icacls printed, and the directory's own
+		// path shares that line: a project whose path contained the literal "(I)"
+		// hid its own first entry from both this scan and the launch-path cleanup,
+		// staying writable by every sandbox on the machine while doctor called it
+		// healthy. That class of mistake is what reading structured entries removes.
+		if e.Inherited || e.Deny {
+			continue
+		}
+		// Match on what the entry GRANTS, not merely on the SID being present.
+		//
+		// Matching the SID alone reported the current design's own ancestor grant as
+		// a leftover: traverse and read-attributes, non-inheritable, written on the
+		// directories above a sandbox so it can walk through them without listing
+		// them. Nothing about that is stale, and doctor offered to remove it while
+		// describing it as letting "any nvx sandbox read and write this project" --
+		// false in every clause. The same scan drives the launch-path cleanup, so
+		// the bad match would also have revoked a grant nvx had just written.
+		// Legacy grants are modify and still match.
+		if e.Mask&^aclMaskTraverse == 0 {
+			continue
+		}
+		seen[e.SID] = true
+		sids = append(sids, e.SID)
 	}
 	return sids
 }

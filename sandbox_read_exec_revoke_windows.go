@@ -5,8 +5,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
-	"time"
 )
 
 // revokeSandboxReadExec removes the read/execute entry nvx granted sidStr on
@@ -33,20 +31,15 @@ func revokeSandboxReadExec(sidStr, path string) error {
 			"if it was renamed rather than deleted, the permission moved with it: %w", err)
 	}
 
-	if out, err := runWinCmd(45*time.Second, "icacls", path, "/remove:g", "*"+sidStr, "/c", "/q"); err != nil {
-		return fmt.Errorf("icacls revoke for sandbox identity: %v (%s)", err, strings.TrimSpace(string(out)))
+	if err := revokeACL(path, sidStr); err != nil {
+		return fmt.Errorf("withdraw the sandbox identity's permission: %w", err)
 	}
 
-	// Confirm against the access-control list itself rather than trusting the exit
-	// code, which is the only signal icacls gives and does not carry this.
+	// Confirm the entry is gone by reading it back.
 	//
-	// icacls exits 0 whether it changed anything or not: on a path it could not
-	// find it prints "Successfully processed 0 files; Failed processing 1 files"
-	// and still returns success (measured, for both /grant and /remove:g). Every
-	// "keep the record, the withdrawal failed" branch in this package was therefore
-	// unreachable -- the condition they test could not be produced. Reading the
-	// entry back is language-independent, unlike parsing that line, which is
-	// localized.
+	// The API reports its own failures now, so this is belt and braces rather than
+	// the only signal -- but it is the cheap half of the check that caught the
+	// original defect, and a withdrawal is exactly where a wrong answer is worst.
 	if readExecEntryIsOurs(sidStr, path) {
 		return fmt.Errorf("the read/execute permission is still on %s after icacls reported removing it", path)
 	}

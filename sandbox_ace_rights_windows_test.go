@@ -4,71 +4,75 @@ package main
 
 import "testing"
 
-// Matching an ACE by SID alone reported the current design's own ancestor grant
-// as a pre-0.5.0 leftover: `grantAppContainerPathReadExec` writes (X,RA) --
-// traverse and read-attributes -- on the directories above a sandbox, so running
-// nvx from a subdirectory leaves one on the project root. doctor announced it as
-// a grant letting "any nvx sandbox read and write this project", which is false in
-// every clause, and offered to remove it. The same scan drives the launch-path
-// cleanup, so the bad match would have revoked a grant nvx had just written.
+// Matching an entry by SID alone reported the current design's own ancestor grant
+// as a pre-0.5.0 leftover: the traverse grant nvx writes on the directories above
+// a sandbox, so running nvx from a subdirectory leaves one on the project root.
+// doctor announced it as a grant letting "any nvx sandbox read and write this
+// project", which is false in every clause, and offered to remove it. The same
+// scan drives the launch-path cleanup, so the bad match would have revoked a
+// grant nvx had just written.
 //
-// The distinction is the access mask, so that is what these pin.
-func TestAceRightsDistinguishTraverseFromRealAccess(t *testing.T) {
+// The distinction is the access mask, so that is what these pin. They used to
+// pin it against the text icacls prints, in every order and spacing it might use;
+// with real masks the orderings and the parsing are gone and only the meaning is
+// left.
+func TestTraverseAccessIsDistinguishedFromRealAccess(t *testing.T) {
+	stale := func(mask uint32) bool { return mask&^aclMaskTraverse != 0 }
+
 	cases := []struct {
-		rights string
-		stale  bool
-		why    string
+		mask  uint32
+		stale bool
+		why   string
 	}{
-		// What the current design writes on ancestors. Never stale.
-		{"(X,RA)", false, "the ancestor traverse grant nvx writes today"},
-		{"(RA,X)", false, "icacls prints the pair in either order"},
-		{"(X, RA)", false, "and sometimes with a space"},
+		{aclMaskTraverse, false, "the ancestor traverse grant nvx writes today"},
+		{fileExecute, false, "traverse alone: cannot read or write anything"},
+		{fileReadAttributes, false, "read-attributes alone: metadata, not contents"},
+		{0, false, "no access at all"},
 
-		// What a pre-0.5.0 nvx left behind. Always stale.
-		{"(OI)(CI)(M)", true, "the legacy inheritable modify grant"},
-		{"(OI)(CI)(F)", true, "full control"},
-		{"(M)", true, "modify without inheritance"},
-		{"(RX)", true, "read+execute lets another sandbox LIST the project"},
-		{"(R)", true, "read"},
-		{"(W)", true, "write"},
-
-		// Anything ADDED to the traverse pair is stale...
-		{"(X,RA,RD)", true, "adds read-data, which is a real read of the project"},
-
-		// ...but a strict subset of it is not. Neither of these is a grant nvx
-		// writes, and neither permits reading contents or writing, so neither is
-		// what this check hunts. The check exists to find grants letting another
-		// sandbox read or write a project; reporting one that does neither is the
-		// false-positive class this whole change is fixing.
-		{"(X)", false, "traverse alone: cannot read or write anything"},
-		{"(RA)", false, "read-attributes alone: metadata, not contents"},
-
-		// Unreadable rights stay quiet: this drives both a security claim shown to
-		// the user and a removal, and asserting either from an ACE we could not
-		// parse is exactly how the false positive happened.
-		{"", false, "no rights text at all"},
-		{"(OI)(CI)", false, "inheritance flags only, no access rights"},
+		{aclMaskModify, true, "the legacy modify grant"},
+		{aclMaskReadExec, true, "read+execute lets another sandbox LIST the project"},
+		{fileGenericRead, true, "read"},
+		{fileGenericWrite, true, "write"},
+		{aclMaskTraverse | fileReadData, true, "adds read-data, which is a real read of the project"},
 	}
-
 	for _, tc := range cases {
-		if got := aceGrantsMoreThanTraverse(tc.rights); got != tc.stale {
-			t.Errorf("aceGrantsMoreThanTraverse(%q) = %v, want %v -- %s", tc.rights, got, tc.stale, tc.why)
+		if got := stale(tc.mask); got != tc.stale {
+			t.Errorf("mask %#x judged stale=%v, want %v -- %s", tc.mask, got, tc.stale, tc.why)
 		}
 	}
 }
 
-func TestRightsAfterSIDExtractsTheMask(t *testing.T) {
-	const sid = "S-1-15-2-1-2-3-4-5-6-7"
-	cases := []struct{ line, want string }{
-		{`C:\proj ` + sid + `:(X,RA)`, "(X,RA)"},
-		{`        ` + sid + `:(OI)(CI)(M)`, "(OI)(CI)(M)"},
-		{`        ` + sid + `:(M)   `, "(M)"},
-		{`        NT AUTHORITY\SYSTEM:(F)`, ""},
-		{``, ""},
+// Read/execute must never satisfy a request for write access.
+//
+// It did, and the consequence was unrecoverable: a directory granted by
+// allow_read_exec and later used as a working directory kept its read-only entry
+// for ever, because the modify grant saw the identity present and skipped itself.
+// Nothing in the product could clear it -- repeat runs, `grants reset --all`,
+// `doctor --fix` and deleting the policy entry all left every write in that
+// directory failing with EPERM.
+func TestReadExecAccessIsNotMistakenForWriteAccess(t *testing.T) {
+	const sid = "S-1-15-3-1024-1111"
+	readExec := aclEntry{SID: sid, Mask: aclMaskReadExec, Flags: nvxInheritFlags}
+
+	if readExec.grantsAtLeast(grantModify.mask()) {
+		t.Error("a read/execute entry satisfied a modify grant; the modify grant would be skipped and writes would fail for ever")
 	}
-	for _, tc := range cases {
-		if got := rightsAfterSID(tc.line, sid); got != tc.want {
-			t.Errorf("rightsAfterSID(%q) = %q, want %q", tc.line, got, tc.want)
+	if !readExec.grantsAtLeast(grantReadExec.mask()) {
+		t.Error("a read/execute entry did not satisfy a read/execute grant, so it would be re-granted every launch")
+	}
+
+	// Modify covers read/execute, so a directory already writable needs no second
+	// grant to be readable.
+	modify := aclEntry{SID: sid, Mask: aclMaskModify, Flags: nvxInheritFlags}
+	for name, k := range map[string]grantKind{"modify": grantModify, "read/execute": grantReadExec} {
+		if !modify.grantsAtLeast(k.mask()) {
+			t.Errorf("a modify entry did not satisfy a %s grant", name)
 		}
+	}
+
+	// A deny satisfies nothing, whatever its mask says.
+	denied := aclEntry{SID: sid, Mask: aclMaskModify, Deny: true}
+	if denied.grantsAtLeast(grantReadExec.mask()) {
+		t.Error("a deny entry was read as granting access")
 	}
 }
