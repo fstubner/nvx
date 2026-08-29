@@ -399,7 +399,7 @@ func TestRunVerifyInstallReturnsRatherThanExiting(t *testing.T) {
 
 	// Reaching this line at all is the assertion: before the fix the process
 	// died inside the call and the test binary went with it.
-	code := runVerifyInstall([]string{"acme-internal-secret-sauce"}, home)
+	code, _ := runVerifyInstall([]string{"acme-internal-secret-sauce"}, home)
 
 	if code == 0 {
 		t.Fatalf("a blocked package returned success (%d); the policy check is not aborting", code)

@@ -641,7 +641,8 @@ func TestRunVerifyInstallFailsClosedOnMetadataFailure(t *testing.T) {
 		// os.Exit here, not inside runVerifyInstall: the function returns its
 		// exit code now so that callers can record the run before exiting. What
 		// this test asserts is unchanged -- the child must still exit non-zero.
-		os.Exit(runVerifyInstall([]string{"not-a-typo-risk"}, testNvxHomeWithTyposquattingDisabled(t)))
+		code, _ := runVerifyInstall([]string{"not-a-typo-risk"}, testNvxHomeWithTyposquattingDisabled(t))
+		os.Exit(code)
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=TestRunVerifyInstallFailsClosedOnMetadataFailure")
@@ -662,7 +663,8 @@ func TestRunVerifyInstallFailsClosedOnOSVFailure(t *testing.T) {
 		// os.Exit here, not inside runVerifyInstall: the function returns its
 		// exit code now so that callers can record the run before exiting. What
 		// this test asserts is unchanged -- the child must still exit non-zero.
-		os.Exit(runVerifyInstall([]string{"not-a-typo-risk"}, testNvxHomeWithTyposquattingDisabled(t)))
+		code, _ := runVerifyInstall([]string{"not-a-typo-risk"}, testNvxHomeWithTyposquattingDisabled(t))
+		os.Exit(code)
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=TestRunVerifyInstallFailsClosedOnOSVFailure")
