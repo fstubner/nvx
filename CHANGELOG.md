@@ -88,6 +88,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being silently ignored. (`--expose` now warns there too; it was silent before.)
   Both warn when the command is not sandboxed at all, for the same reason.
 
+* **An MCP server that nvx refuses to start now says why, instead of looking like
+  a crash.** A server spawned by an editor talks JSON-RPC over its pipes, and nvx
+  wrote its refusal to standard error and exited — so the client saw a process
+  that closed without answering and reported `-32000: Connection closed`, the
+  same message an unrelated transport bug produces. That misdiagnosis happened in
+  practice: a package published 7.3 hours earlier tripped the release-age window
+  and the failure was first attributed to a known connection bug. It also clears
+  itself after 24 hours, so the server starts working again without anyone
+  learning what happened.
+
+  On the refusal path only, nvx now answers the request the client has already
+  sent with a JSON-RPC error naming the reason, the package, and what to do about
+  it — set `NVX_YES=true` for that server, or pin the version. It never reads that
+  input on a path that goes on to launch the real server, replies only when the
+  pending input is genuinely a JSON-RPC request, and waits no more than two
+  seconds for one.
+
+  Several abort messages said "aborted by user" when nobody had been asked; they
+  now say the warning was not approved, which is what happened.
+
 ### Changed
 
 * **Windows permissions are set through the Win32 API instead of the `icacls`

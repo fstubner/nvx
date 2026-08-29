@@ -576,6 +576,33 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   none of this. Until 0.5.5 there was no way to reach a contained server at all;
   the FAQ had claimed loopback worked for dev servers, which was measured false on
   2026-08-20.
+- **A freshly published package stops an MCP server starting, for up to 24 hours.**
+  nvx holds a cooling-off window on new npm releases: a version published in the
+  last day is flagged before it installs, because supply-chain compromises are
+  usually caught inside that window. The flag is a prompt — and a server your
+  editor spawns has no one to answer it, so it is denied and the launch aborts.
+
+  Your client reports `-32000: Connection closed`, which is what it reports for
+  any server that dies before answering. nvx now replies to the client's first
+  request with the real reason instead of leaving the pipe silent, so the message
+  you see names the cooling-off window and the package rather than nothing.
+
+  This affects any MCP server installed from npm on a floating version
+  (`npx -y <pkg>` fetches the latest), and it is self-inflicted if you publish the
+  package yourself: publish in the morning and the server is unavailable until the
+  next day. Three ways out, narrowest first:
+
+  ```jsonc
+  // 1. approve nvx's warnings for this one server
+  { "command": "npx", "args": ["-y", "your-pkg"], "env": { "NVX_YES": "true" } }
+  // 2. pin to a version you have already used
+  { "command": "npx", "args": ["-y", "your-pkg@1.2.3"] }
+  ```
+
+  The third is to widen the window in policy (`release_age.min_age_hours`) or add
+  the package to `typosquatting.trusted_packages`, which exempts it — both of
+  which give up the check everywhere, so prefer the first two.
+
 - **On Windows, a contained tool needs `--connect` to reach a service running on
   your machine.** The other direction, and the same reason: the sandbox has no
   route to your loopback, and the egress proxy refuses host loopback destinations

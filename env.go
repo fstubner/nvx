@@ -805,8 +805,13 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 			// Returning rather than exiting here is what lets runShim record the
 			// abort. A blocked or refused install is a run, and the one a later
 			// review most wants to find.
-			if code := runVerifyInstall(pkgs, nvxHome); code != 0 {
-				trace.note(runModeRefused, "blocked by pre-install verification")
+			if code, reason := runVerifyInstall(pkgs, nvxHome); code != 0 {
+				trace.note(runModeRefused, "blocked by pre-install verification: "+reason)
+				// Say so to an MCP client if one is waiting. Without this the client
+				// sees a process that closed the pipe without answering and reports
+				// "Connection closed" -- the same message an unrelated transport bug
+				// produces, which is exactly how this was misdiagnosed once already.
+				reportRefusalOverStdio(reason, firstPackageLabel(pkgs))
 				return code
 			}
 		}

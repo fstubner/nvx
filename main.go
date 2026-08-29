@@ -211,7 +211,8 @@ func main() {
 			LogError("Usage: nvx verify-install <package> [package...]")
 			os.Exit(1)
 		}
-		os.Exit(runVerifyInstall(os.Args[2:], nvxHome))
+		code, _ := runVerifyInstall(os.Args[2:], nvxHome)
+		os.Exit(code)
 
 	case "init-shims":
 		if err := generateShims(nvxHome); err != nil {
@@ -1219,11 +1220,16 @@ func parsePackageQuery(query string) (string, string) {
 // recording -- policy blocks, typosquat aborts, CVE aborts, script refusals --
 // and `nvx audit --failures` could not see a single one of them. Returning the
 // code means the caller's bookkeeping runs.
-func runVerifyInstall(args []string, nvxHome string) int {
+// The second return value is a short, fixed description of why a run was
+// refused, or "" when it was not. It is developer-authored text and never
+// contains a package specifier: one can be a URL with credentials in it (see the
+// note on LogWarn), and this reason is shown to an MCP client and may be logged
+// there. See mcp_refusal.go.
+func runVerifyInstall(args []string, nvxHome string) (int, string) {
 	policy, err := LoadPolicy(nvxHome)
 	if err != nil {
 		LogError("Failed to load security policy: %v", err)
-		return 1
+		return 1, "its security policy could not be loaded"
 	}
 
 	popularList := LoadPopularPackages(nvxHome)
@@ -1238,7 +1244,7 @@ func runVerifyInstall(args []string, nvxHome string) int {
 		// 1. Policy Blocklist Check
 		if policy.IsBlocked(pkgName) {
 			LogError("Blocked by security policy: Package %q is blacklisted.", pkgName)
-			return 1
+			return 1, "the security policy blocks one of its packages"
 		}
 
 		// 2. Typosquatting Check
@@ -1264,8 +1270,8 @@ func runVerifyInstall(args []string, nvxHome string) int {
 				}
 
 				if !PromptYesNo(msg) {
-					LogError("Installation aborted by user due to typosquatting risk.")
-					return 1
+					LogError("Installation aborted: the typosquatting warning was not approved.")
+					return 1, "a package looked like a typosquat and the warning was not approved"
 				}
 			}
 		}
@@ -1276,7 +1282,7 @@ func runVerifyInstall(args []string, nvxHome string) int {
 			msg := fmt.Sprintf("Could not verify registry metadata for %s: %v. Proceed without metadata checks?", pkgName, err)
 			if !PromptYesNo(msg) {
 				LogError("Installation aborted because registry metadata could not be verified.")
-				return 1
+				return 1, "the registry metadata for a package could not be verified"
 			}
 			LogWarn("Proceeding without registry metadata checks for %s.", pkgName)
 			continue
@@ -1288,15 +1294,15 @@ func runVerifyInstall(args []string, nvxHome string) int {
 			LogWarn("Malicious packages often execute rogue code during the install phase.")
 			if policy.EnforceIgnoreScripts {
 				LogError("Blocked by security policy: Package scripts are disallowed. Please run with --ignore-scripts.")
-				return 1
+				return 1, "the security policy disallows package install scripts"
 			} else {
 				// Not "on your host": these run contained, and saying otherwise
 				// overstates the risk of approving while understating what the
 				// sandbox is doing for you.
 				msg := fmt.Sprintf("Package %s@%s contains install scripts. Run them (contained)?", pkgName, resolvedVer)
 				if !PromptYesNo(msg) {
-					LogError("Installation aborted by user due to script execution warning.")
-					return 1
+					LogError("Installation aborted: the install-script warning was not approved.")
+					return 1, "a package runs install scripts and the warning was not approved"
 				}
 			}
 		}
@@ -1308,8 +1314,8 @@ func runVerifyInstall(args []string, nvxHome string) int {
 			msg := fmt.Sprintf("Package %s@%s was published only %.1f hours ago (on %s). Supply chain compromises are often caught within %d hours. Proceed?",
 				pkgName, resolvedVer, age.Hours(), pubTime.Format("2006-01-02 15:04:05"), windowHours)
 			if !PromptYesNo(msg) {
-				LogError("Installation aborted by user due to release age warning.")
-				return 1
+				LogError("Installation aborted: the release-age warning was not approved.")
+				return 1, "a package version was published inside the release-age cooling-off window"
 			}
 		}
 
@@ -1327,7 +1333,7 @@ func runVerifyInstall(args []string, nvxHome string) int {
 			msg := fmt.Sprintf("Vulnerability database scan failed: %v. Proceed without CVE checks?", err)
 			if !PromptYesNo(msg) {
 				LogError("Installation aborted because vulnerability checks could not be completed.")
-				return 1
+				return 1, "its vulnerability checks could not be completed"
 			}
 			LogWarn("Proceeding without vulnerability database results.")
 		} else if len(vulns) > 0 {
@@ -1340,12 +1346,12 @@ func runVerifyInstall(args []string, nvxHome string) int {
 			}
 			fmt.Fprintln(os.Stderr)
 			if !PromptYesNo("Proceed with installation despite active vulnerabilities?") {
-				LogError("Installation aborted due to active package vulnerabilities.")
-				return 1
+				LogError("Installation aborted: the vulnerability warning was not approved.")
+				return 1, "a package has a known active vulnerability and the warning was not approved"
 			}
 		} else {
 			LogSuccess("Vulnerability scan clean. No active CVEs found.")
 		}
 	}
-	return 0
+	return 0, ""
 }
