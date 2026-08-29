@@ -158,6 +158,24 @@ func grantSandboxReadExec(sidStr, path string) (ours bool, err error) {
 	return true, nil
 }
 
+// readExecGrantWouldBeOurs reports whether the read/execute permission on path
+// is, or is about to be, the one nvx wrote for sidStr.
+//
+// Asked BEFORE the record is written, because the record has to be written before
+// the permission is granted -- a permission nvx cannot record is one it could
+// never withdraw -- and recording one that will not be nvx's is how a withdrawal
+// came to delete write access nvx had granted for a different reason.
+//
+// Three cases: an entry that is exactly nvx's is ours; a broader entry that
+// merely covers read and execute is not, and nvx will skip granting over it; and
+// no satisfying entry at all means nvx is about to write its own.
+func readExecGrantWouldBeOurs(sidStr, path string) bool {
+	if !appContainerHasGrantFor(sidStr, path, grantReadExec) {
+		return true
+	}
+	return readExecEntryIsOurs(sidStr, path)
+}
+
 // nvxInheritFlags is the inheritance nvx applies to the permissions it grants:
 // the entry applies to this directory and is inherited by files and directories
 // under it. Together with an exact access mask this is the signature that

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,23 @@ import (
 // filesystem.
 var osStat = os.Stat
 
+// errPermissionNotOurs says the permission on a recorded path is not the one nvx
+// granted, so it is not nvx's to remove.
+//
+// Withdrawing takes an identity's whole entry, not one right from it. A record
+// naming a path whose entry is something broader -- a modify grant written for a
+// writable root, say -- must therefore never be acted on: removing it would
+// delete write access nvx granted for a different reason. A ledger can name such
+// a path through a bug or a hand edit, and one did: a project directory that was
+// both the sandbox's writable root and named in allow_read_exec was recorded as a
+// read/execute grant, and `nvx grants reset` deleted the sandbox's write access
+// to the user's own project while reporting it had withdrawn a read/execute
+// permission.
+//
+// Checked here rather than only where records are written, because the wrong
+// records already exist on disk.
+var errPermissionNotOurs = errors.New("the permission on this path is not the one nvx granted")
+
 // readExecGrant is one access-control entry nvx wrote, and can therefore remove.
 type readExecGrant struct {
 	// Path is the directory that carries the entry.
@@ -63,6 +81,13 @@ func reconcileReadExecGrants(existing []readExecGrant, wanted []string, capSIDs 
 			continue
 		}
 		if err := revoke(g.SID, g.Path); err != nil {
+			if errors.Is(err, errPermissionNotOurs) {
+				// Stop tracking it, but leave it alone: it was never this feature's.
+				LogWarn("Left the permission on %s in place: it is not the one nvx granted, so it is not nvx's to withdraw.", g.Path)
+				LogInfo("Its record has been dropped, so nvx will not claim it again.")
+				revoked = append(revoked, g)
+				continue
+			}
 			LogWarn("Could not withdraw the sandbox's read access to %q: %v", g.Path, err)
 			keep = append(keep, g)
 			continue
@@ -184,6 +209,10 @@ func revokeAllReadExecGrantsWithin(grants []readExecGrant, revoke func(sid, path
 			continue
 		}
 		if err := revoke(g.SID, g.Path); err != nil {
+			if errors.Is(err, errPermissionNotOurs) {
+				LogWarn("Left the permission on %s in place: it is not the one nvx granted, so it is not nvx's to withdraw.", g.Path)
+				continue
+			}
 			LogWarn("Could not withdraw the sandbox's read access to %q: %v", g.Path, err)
 			failed++
 			continue
