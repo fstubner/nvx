@@ -74,13 +74,18 @@ func TestABroaderEntryIsNotClaimedAsOurs(t *testing.T) {
 	}
 }
 
-// Withdrawing an inheritable entry removes access for everything under it, so the
-// cache must forget the subtree, not just the exact path.
+// Withdrawing must clear the cached answers for everything under the path, not
+// just the path itself.
 //
-// Checked against the MODIFY cache. An earlier version checked read/execute,
-// which is no longer cached at all -- that question is asked afresh every time --
-// so the test could not detect a cache failure, which is precisely what its name
-// claimed. It passed with both forget calls deleted.
+// The entries nvx writes are inheritable, so removing one on a parent takes away
+// the access its children had through it; a child still cached as granted would
+// have its grant skipped on the next launch and the sandbox would get EPERM on a
+// directory the policy still named.
+//
+// This drives revokeSandboxReadExec. Two earlier versions did not: the first
+// asked about read/execute, which is no longer cached at all, and the second
+// called grantCacheForgetUnder itself two lines before asserting on it -- so both
+// passed with the production path's forget deleted.
 func TestWithdrawingAGrantForgetsTheWholeSubtree(t *testing.T) {
 	parent := t.TempDir()
 	child := filepath.Join(parent, "inner")
@@ -93,27 +98,30 @@ func TestWithdrawingAGrantForgetsTheWholeSubtree(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = revokeACL(parent, sid) })
 
-	if err := grantSandboxModify(sid, parent); err != nil {
-		t.Skipf("cannot write an ACL in the test environment: %v", err)
-	}
-	// The child is covered by inheritance, and asking caches that answer.
-	if !appContainerHasGrantFor(sid, child, grantModify) {
-		t.Skip("the child did not inherit the entry in this environment")
-	}
-	if !grantCacheHas(grantIdentityFor(sid, grantModify), child) {
-		t.Skip("the answer was not cached in this environment")
+	// A genuine nvx read/execute entry, so the withdrawal below proceeds.
+	if wrote, gerr := grantSandboxReadExec(sid, parent); gerr != nil || !wrote {
+		t.Skipf("cannot write an ACL in the test environment: wrote=%v err=%v", wrote, gerr)
 	}
 
-	if err := revokeSandboxReadExec(sid, parent); err != nil && !errors.Is(err, errPermissionNotOurs) {
+	// Seed the cached answers a launch would have left behind, for the path and
+	// for a child beneath it. Seeded rather than provoked because the modify cache
+	// is the one consulted, and a read/execute entry never populates it.
+	for _, p := range []string{parent, child} {
+		grantCacheRecord(grantIdentityFor(sid, grantModify), p)
+	}
+	if !grantCacheHas(grantIdentityFor(sid, grantModify), child) {
+		t.Skip("the cache did not retain the seeded answer in this environment")
+	}
+
+	if err := revokeSandboxReadExec(sid, parent); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	// Whether or not the entry was nvx's to remove, a withdrawal must not leave the
-	// subtree cached as granted: the next launch would skip a grant it needs.
-	_ = revokeACL(parent, sid)
-	grantCacheForgetUnder(grantIdentityFor(sid, grantModify), parent)
 
 	if grantCacheHas(grantIdentityFor(sid, grantModify), child) {
 		t.Fatal("the child is still cached as granted after the parent's entry was withdrawn; its grant would be skipped and the sandbox would get EPERM")
+	}
+	if grantCacheHas(grantIdentityFor(sid, grantModify), parent) {
+		t.Fatal("the path itself is still cached as granted after its entry was withdrawn")
 	}
 }
 
@@ -342,9 +350,9 @@ func TestAPermissionNvxDidNotGrantIsNeverWithdrawn(t *testing.T) {
 
 	err = revokeSandboxReadExec(sid, dir)
 	if err == nil {
-		t.Fatal("withdrawing reported success against a permission nvx never granted")
+		t.Fatal("withdrawing reported success against a permission wider than the one recorded")
 	}
-	if !errors.Is(err, errPermissionNotOurs) {
+	if !errors.Is(err, errPermissionBroadened) {
 		t.Fatalf("error was %v, want one identifying the permission as not nvx's", err)
 	}
 
@@ -454,4 +462,44 @@ func countExplicitDenies(entries []aclEntry) int {
 		}
 	}
 	return n
+}
+
+// Planning the ledger must consult ownership against the real permissions.
+//
+// Asserting on readExecGrantWouldBeOurs alone does not test this: that guard was
+// unwired at the call site and the whole suite stayed green, which is how a
+// withdrawal came to delete the sandbox's write access to a user's own project.
+// The same mistake -- testing the helper instead of the decision -- was then made
+// in the fix for it, and again in the fix for that.
+func TestPlanningTheLedgerSkipsRootsThatAreNotOurs(t *testing.T) {
+	theirs := t.TempDir()
+	ours := t.TempDir()
+	theirSID, err := scopeCapabilitySID(theirs)
+	if err != nil {
+		t.Skipf("cannot derive a capability SID here: %v", err)
+	}
+	t.Cleanup(func() { _ = revokeACL(theirs, theirSID) })
+
+	// A broader permission, as nvx writes for a writable root: present, but not
+	// this feature's to take back.
+	if err := grantSandboxModify(theirSID, theirs); err != nil {
+		t.Skipf("cannot write an ACL in the test environment: %v", err)
+	}
+
+	got := planReadExecRecords(nil, []string{theirs, ours}, []string{theirSID})
+
+	for _, g := range got {
+		if sameGrantPath(g.Path, theirs) {
+			t.Fatal("a root carrying a broader permission was recorded; withdrawing it later would delete access granted for another reason")
+		}
+	}
+	found := false
+	for _, g := range got {
+		if sameGrantPath(g.Path, ours) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("a root nvx is about to grant was not recorded, so the permission would be untrackable")
+	}
 }

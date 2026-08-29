@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -62,7 +63,17 @@ func runGrants(args []string, nvxHome string) int {
 			LogError("Could not determine the current project.")
 			return 1
 		}
-		g := loadProjectGrants(nvxHome, scope)
+		// Read without repairing. loadProjectGrants quarantines a record it cannot
+		// parse, which is right on a path that is about to write one back -- but
+		// `grants list` is a question, and answering it should not rename a file on
+		// disk. Reported by an acceptance pass after `list` renamed a corrupt record.
+		g := projectGrants{ProjectPath: scope, PolicyPins: map[string]string{}}
+		if data, rerr := os.ReadFile(grantsPath(nvxHome, scope)); rerr == nil {
+			if uerr := json.Unmarshal(data, &g); uerr != nil {
+				LogWarn("This project's grant record could not be read, so this list may be incomplete.")
+				g = projectGrants{ProjectPath: scope, PolicyPins: map[string]string{}}
+			}
+		}
 		fmt.Print(formatProjectGrants(g))
 		return 0
 

@@ -122,3 +122,38 @@ func TestOnlyAPlainPackageNameIsEchoed(t *testing.T) {
 		}
 	}
 }
+
+// The advice has to match the refusal. A policy decision has no prompt to
+// approve, so telling someone to set NVX_YES sends them to try something that
+// cannot work.
+//
+// The "could not be read" reason contains the words "security policy" as well, so
+// its branch was unreachable behind the policy case and people were told to edit
+// a policy nvx could not read.
+func TestTheRemedyMatchesTheRefusal(t *testing.T) {
+	cases := map[string]string{
+		"its security policy could not be read":                                     "nvx doctor",
+		"the security policy blocks one of its packages":                            "policy decision",
+		"the security policy disallows package install scripts":                     "policy decision",
+		"a global install cannot be run inside the sandbox":                         "outside the sandbox",
+		"a package version was published inside the release-age cooling-off window": "NVX_YES",
+		"a package looked like a typosquat and the warning was not approved":        "NVX_YES",
+	}
+	for reason, want := range cases {
+		got := remedyFor(reason)
+		if !strings.Contains(got, want) {
+			t.Errorf("reason %q got remedy %q, which does not mention %q", reason, got, want)
+		}
+	}
+
+	// A policy decision must never be answered with "approve the prompt".
+	for _, reason := range []string{
+		"the security policy blocks one of its packages",
+		"the security policy disallows package install scripts",
+		"its security policy could not be read",
+	} {
+		if strings.Contains(remedyFor(reason), "NVX_YES") {
+			t.Errorf("reason %q was answered with NVX_YES, which cannot affect a policy decision", reason)
+		}
+	}
+}

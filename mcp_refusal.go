@@ -157,10 +157,15 @@ func remedyFor(reason string) string {
 	const editPolicy = "This is a policy decision rather than a warning, so approving prompts does not affect it: " +
 		"change the policy, or start this server with a package the policy allows."
 	switch {
+	// Ordered before the policy case on purpose: this reason contains the words
+	// "security policy" too, so matching that first left this branch unreachable
+	// and sent people advice about editing a policy nvx could not even read.
+	case strings.Contains(reason, "could not be read"):
+		return "nvx could not read its own security policy. Check it with `nvx doctor`."
+	case strings.Contains(reason, "cannot be run inside the sandbox"):
+		return "Run this outside the sandbox, or install the package into the project rather than globally."
 	case strings.Contains(reason, "security policy"):
 		return editPolicy
-	case strings.Contains(reason, "could not be loaded"):
-		return "nvx could not read its own security policy. Check it with `nvx doctor`."
 	default:
 		return "Set NVX_YES=true in this server's environment to approve nvx's warnings for it, " +
 			"or pin the command to a version you have already used. " +

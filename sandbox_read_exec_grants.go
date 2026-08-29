@@ -34,8 +34,9 @@ import (
 // filesystem.
 var osStat = os.Stat
 
-// errPermissionNotOurs says the permission on a recorded path is not the one nvx
-// granted, so it is not nvx's to remove.
+// errPermissionBroadened says the permission on a recorded path is wider than the
+// read/execute entry nvx recorded, so removing it here would take away more than
+// this feature granted.
 //
 // Withdrawing takes an identity's whole entry, not one right from it. A record
 // naming a path whose entry is something broader -- a modify grant written for a
@@ -49,7 +50,13 @@ var osStat = os.Stat
 //
 // Checked here rather than only where records are written, because the wrong
 // records already exist on disk.
-var errPermissionNotOurs = errors.New("the permission on this path is not the one nvx granted")
+var errPermissionBroadened = errors.New("the permission on this path is broader than the one nvx recorded")
+
+// errNothingToWithdraw says there is no permission for this identity on the path
+// at all, so the record is stale and nothing was removed. Distinguished from a
+// real withdrawal because reporting "Withdrew 1 permission" having removed
+// nothing is a claim about the filesystem that is not true.
+var errNothingToWithdraw = errors.New("no permission for this identity on this path")
 
 // readExecGrant is one access-control entry nvx wrote, and can therefore remove.
 type readExecGrant struct {
@@ -81,14 +88,21 @@ func reconcileReadExecGrants(existing []readExecGrant, wanted []string, capSIDs 
 			continue
 		}
 		if err := revoke(g.SID, g.Path); err != nil {
-			if errors.Is(err, errPermissionNotOurs) {
-				// Stop tracking it, but leave it alone: it was never this feature's.
-				LogWarn("Left the permission on %s in place: it is not the one nvx granted, so it is not nvx's to withdraw.", g.Path)
-				LogInfo("Its record has been dropped, so nvx will not claim it again.")
+			if errors.Is(err, errNothingToWithdraw) {
+				// Nothing on disk to remove; stop tracking it, quietly.
 				revoked = append(revoked, g)
 				continue
 			}
-			LogWarn("Could not withdraw the sandbox's read access to %q: %v", g.Path, err)
+			if errors.Is(err, errPermissionBroadened) {
+				// Left in place, and the record retired: what is there now is a
+				// wider grant nvx maintains for another reason, and removing it
+				// would take that away too.
+				LogWarn("Left the permission on %s in place: it is now wider than the read/execute one nvx recorded, so withdrawing it here would remove more than this policy granted.", g.Path)
+				LogInfo("The sandbox keeps that access through the wider grant; nvx has stopped tracking it as a read/execute permission.")
+				revoked = append(revoked, g)
+				continue
+			}
+			LogWarn("Could not withdraw the sandbox's read access to %s: %v", g.Path, err)
 			keep = append(keep, g)
 			continue
 		}
@@ -175,6 +189,35 @@ func grantStillWanted(g readExecGrant, wanted []string, capSIDs []string) bool {
 	return false
 }
 
+// planReadExecRecords returns the ledger to write before any permission is
+// granted: every root this run will own, and nothing else.
+//
+// The ownership check is made here rather than passed in. An earlier version took
+// it as an argument so a test could answer it, which tested the loop but left the
+// wiring open -- handing it a function that always agrees restored the defect with
+// the suite green. Calling it directly means unwiring the guard now takes deleting
+// this function's body rather than flipping one argument, and the tests below
+// drive it against real permissions.
+//
+// The check has to happen before anything is written, because the record is
+// written before the permission is granted: a permission nvx cannot record is one
+// it could never withdraw.
+func planReadExecRecords(existing []readExecGrant, roots, capSIDs []string) []readExecGrant {
+	out := existing
+	for _, root := range roots {
+		for _, sid := range capSIDs {
+			// A root already carrying a broader permission is not nvx's to take
+			// back, so recording it would let a later withdrawal delete access
+			// granted for another reason.
+			if !readExecGrantWouldBeOurs(sid, root) {
+				continue
+			}
+			out = recordReadExecGrant(out, sid, root)
+		}
+	}
+	return out
+}
+
 // recordReadExecGrant adds a grant to the ledger if it is not already there.
 func recordReadExecGrant(existing []readExecGrant, sid, path string) []readExecGrant {
 	for _, g := range existing {
@@ -209,11 +252,14 @@ func revokeAllReadExecGrantsWithin(grants []readExecGrant, revoke func(sid, path
 			continue
 		}
 		if err := revoke(g.SID, g.Path); err != nil {
-			if errors.Is(err, errPermissionNotOurs) {
-				LogWarn("Left the permission on %s in place: it is not the one nvx granted, so it is not nvx's to withdraw.", g.Path)
+			if errors.Is(err, errNothingToWithdraw) {
+				continue // nothing was there; nothing was removed
+			}
+			if errors.Is(err, errPermissionBroadened) {
+				LogWarn("Left the permission on %s in place: it is now wider than the read/execute one nvx recorded.", g.Path)
 				continue
 			}
-			LogWarn("Could not withdraw the sandbox's read access to %q: %v", g.Path, err)
+			LogWarn("Could not withdraw the sandbox's read access to %s: %v", g.Path, err)
 			failed++
 			continue
 		}
