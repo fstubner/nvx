@@ -51,7 +51,7 @@ func revokeSandboxReadExec(sidStr, path string) error {
 	// the only signal -- but it is the cheap half of the check that caught the
 	// original defect, and a withdrawal is exactly where a wrong answer is worst.
 	if readExecEntryIsOurs(sidStr, path) {
-		return fmt.Errorf("the read/execute permission is still on %s after icacls reported removing it", path)
+		return fmt.Errorf("the read/execute permission is still on %s after it was reported removed", path)
 	}
 
 	// The whole subtree, not just this path: the entry removed was inheritable, so

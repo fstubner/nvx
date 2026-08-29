@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -370,5 +371,68 @@ func writeExec(t *testing.T, path string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0755); err != nil { // #nosec G306 -- test fixture
 		t.Fatal(err)
+	}
+}
+
+// `nvx doctor` must diagnose a policy file it cannot read.
+//
+// When a policy will not load nvx refuses to run, and the refusal an MCP client
+// receives says "Check it with `nvx doctor`". Doctor looked at PATH and shim
+// interception and nothing else, so it reported everything healthy and exited 0
+// with a broken .nvx-policy.json in the working directory -- the advice led
+// nowhere. Doctor is the one command that still works in that state, because
+// loading a policy is not on its path.
+//
+// Driven as an A/B on the exit code rather than by calling the check directly:
+// the same directory, healthy first and unhealthy only because of the policy.
+// Deleting the call from runDoctor leaves the second run reporting 0.
+func TestDoctorDiagnosesAPolicyItCannotRead(t *testing.T) {
+	nvxHome := tempDir(t)
+	project := tempDir(t)
+
+	if err := generateShims(nvxHome); err != nil {
+		t.Skipf("cannot generate shims in this environment: %v", err)
+	}
+	t.Setenv("PATH", shimDirPath(nvxHome))
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+
+	// The baseline has to be healthy or the comparison below proves nothing --
+	// runDoctor returns non-zero for several reasons.
+	if code := runDoctor(nvxHome, false); code != 0 {
+		t.Skipf("no healthy baseline in this environment (runDoctor = %d)", code)
+	}
+
+	if err := os.WriteFile(filepath.Join(project, ".nvx-policy.json"),
+		[]byte(`{"isolation":{}}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	stderr := os.Stderr
+	r, w, perr := os.Pipe()
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	os.Stderr = w
+	code := runDoctor(nvxHome, false)
+	os.Stderr = stderr
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	_ = r.Close()
+
+	if code == 0 {
+		t.Fatal("reported healthy with a policy file nvx cannot read, so the refusal's advice to run this leads nowhere")
+	}
+	// Naming the file is the point: the parse error otherwise reaches only
+	// stderr of the refused command, which is what an MCP client discards.
+	if !strings.Contains(string(out), ".nvx-policy.json") {
+		t.Fatalf("did not name the unreadable policy file:\n%s", out)
 	}
 }

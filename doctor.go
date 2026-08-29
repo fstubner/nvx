@@ -212,8 +212,21 @@ func runDoctor(nvxHome string, fix bool) int {
 		weakened = true
 	}
 
-	healthy := rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.missingPosixShims) == 0 && !weakened
-	if healthy {
+	// A policy nvx cannot read is not a weakening -- it is a refusal to run at
+	// all, which is the loudest state doctor can be asked about.
+	policyBroken := reportUnreadablePolicy(nvxHome)
+
+	// One definition, read twice: once before any repair and once after, since a
+	// --fix pass can change the answer. It was written out twice instead, and the
+	// second copy was missed when policyBroken was added -- doctor named the
+	// unreadable policy, then fell through to the second check and exited 0
+	// anyway. Closing over rep is deliberate: --fix reassigns it.
+	healthyNow := func() bool {
+		return rep.shimDirOnPath && len(rep.shadowedBy) == 0 &&
+			len(rep.missingPosixShims) == 0 && !weakened && !policyBroken
+	}
+
+	if healthyNow() {
 		LogSuccess("nvx is intercepting commands correctly.")
 		return 0
 	}
@@ -251,7 +264,7 @@ func runDoctor(nvxHome string, fix bool) int {
 
 	// After a --fix pass the shims may now be complete even though PATH still is
 	// not, so report on what is left rather than on what was found first.
-	if rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.missingPosixShims) == 0 && !weakened {
+	if healthyNow() {
 		LogSuccess("nvx is intercepting commands correctly.")
 		return 0
 	}
@@ -390,6 +403,43 @@ func dirHoldsAWrappedCommand(dir string) bool {
 		}
 	}
 	return false
+}
+
+// reportUnreadablePolicy names any policy file nvx cannot parse, and reports
+// whether it found one.
+//
+// When a policy will not load, nvx refuses to run, and the refusal an MCP client
+// receives says "Check it with `nvx doctor`". Doctor did not look at policy files
+// at all -- it reported PATH and shim interception and exited 0 with a broken
+// `.nvx-policy.json` sitting in the working directory. The path and the parse
+// error existed, but only on stderr, which is the stream an MCP client discards,
+// so the one thing the person needed was in the one place they could not see.
+// An acceptance pass followed nvx's own advice and arrived nowhere.
+//
+// Doctor is the right place for it rather than the message: it already runs when
+// everything else refuses -- loading a policy is not on its path -- so it is the
+// one command that can still answer the question.
+//
+// The errors from these two readers already name the file, so the message does
+// not repeat it.
+func reportUnreadablePolicy(nvxHome string) bool {
+	found := false
+	if _, err := loadGlobalPolicy(nvxHome); err != nil {
+		LogError("A security policy could not be read: %v", err)
+		found = true
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		for _, path := range collectProjectPolicyPaths(cwd, nvxHome) {
+			if _, _, perr := readProjectPolicyFile(path); perr != nil {
+				LogError("A security policy could not be read: %v", perr)
+				found = true
+			}
+		}
+	}
+	if found {
+		LogInfo("nvx refuses to run while a policy file cannot be read. Fix the file above, or remove it.")
+	}
+	return found
 }
 
 func pathIsShadowed(pathEnv, nvxHome string) bool {
