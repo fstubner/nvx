@@ -406,8 +406,20 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   that is when the permission grants are made and remembered.
 
   Measured on Windows 11: ~2.4s for a project's first contained run, ~390ms for
-  every one after, of which ~210ms is Node's own startup. Before 0.5.6 the steady
-  state was ~650ms here and has been measured at ~1s and ~2.2s on other machines —
+  every one after. Re-measured 2026-08-29 on a second Windows 11 machine: 2.9s
+  first, 785ms steady (median of 8 runs), with the same Node binary taking 58ms
+  when run directly. Plan against "a few hundred milliseconds to about a second"
+  rather than either figure — the steady state moves by roughly a factor of two
+  between machines, while the first-run cost reproduced closely.
+
+  This used to add "of which ~210ms is Node's own startup". That decomposition is
+  gone rather than re-guessed: it does not reproduce (58ms here), and subtracting
+  it left ~180ms for nvx against the ~370ms this section quoted for nvx's own
+  setup, so the two figures could not both be right. That second figure has been
+  replaced with a measurement too.
+
+  Before 0.5.6 the steady state was ~650ms here, and has been measured at ~1s and
+  ~2.2s on other machines —
   nvx re-read every access-control entry on every launch, seventeen `icacls`
   processes a command, and now remembers the ones it has already verified.
 
@@ -419,7 +431,9 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   The same load uncontained is ~500ms, so **steady-state containment costs
   essentially nothing here** — the one-off is the filesystem and antivirus caches
   filling while a sandboxed process reads thousands of files for the first time,
-  not work nvx is doing. nvx's own setup is ~370ms, measured separately.
+  not work nvx is doing. That is the marginal cost of a large file tree, not the
+  cost of containing a command at all: on the machine re-measured above, an empty
+  contained run took 785ms against 92ms for the same command uncontained.
 
   It matters only where something is waiting with a timeout. If you are wiring a
   contained command into a tool that gives up after a few seconds, run it once by

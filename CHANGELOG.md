@@ -103,6 +103,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
+* **`nvx init-shims` names the directory it wrote to.** It printed `~/.nvx/bin`
+  whatever `NVX_HOME` was set to, so anyone running with it set — the Windows
+  enforcement script does, every run — was told the shims had gone somewhere they
+  had not.
+
+* **`nvx doctor` no longer reports a check it did not make.** The healthy line
+  read `shim dir is first on PATH (position 53)`, which contradicts itself. Being
+  first is not the test: what is checked is that no nvx raw-runtime directory sits
+  ahead of the shim dir, and position does not enter into it. The line now says
+  that. The verdict was right all along; the explanation was not, which is worse
+  than useless to someone diagnosing a PATH problem.
+
+* **Two timing figures in the README could not both be true, and one did not
+  reproduce.** The steady-state contained run was given as ~390ms "of which
+  ~210ms is Node's own startup", leaving ~180ms for nvx — against ~370ms quoted
+  for nvx's own setup in the next bullet. Re-measured 2026-08-29 on a second
+  Windows 11 machine: 2.9s first contained run, 785ms steady (median of 8), 58ms
+  for the same Node binary run directly, 92ms for the same command uncontained.
+  The first-run cost reproduced; the steady state is about twice the published
+  figure and Node's own startup about a quarter of it. Both claims are replaced
+  with measurements, and the decomposition that created the contradiction is gone
+  rather than re-guessed.
+
 * **Three refusals reached an MCP client as a silently closed pipe** — a project
   policy file that cannot be parsed, a policy that would not load, and a global
   install that cannot be contained. All three sit before the verification step
