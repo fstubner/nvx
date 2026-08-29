@@ -772,17 +772,11 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	hintIfShadowed(nvxHome)
 
 	if err := ensureProjectPolicyTrust(nvxHome); err != nil {
-		LogError("Failed to load security policy: %v", err)
-		return 1
+		return refuseUnreadablePolicy(err)
 	}
 	policy, err := LoadPolicy(nvxHome)
 	if err != nil {
-		LogError("Failed to load security policy: %v", err)
-		// A refusal here reached an MCP client as a silently closed pipe, which is
-		// the symptom this reporter exists to remove. It sits before verification,
-		// so it is reported separately.
-		reportRefusalOverStdio("its security policy could not be read", "")
-		return 1
+		return refuseUnreadablePolicy(err)
 	}
 
 	// Refuse a contained global install BEFORE verifying anything.

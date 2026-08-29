@@ -103,12 +103,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
-* **Two refusals reached an MCP client as a silently closed pipe** — a policy that
-  would not load, and a global install that cannot be contained. Both sit before
-  the verification step that reports refusals, so neither was reported. The advice
-  for an unreadable policy was also unreachable: its reason contains the words
-  "security policy", so it matched the policy branch first and told people to edit
-  a policy nvx could not read.
+* **Three refusals reached an MCP client as a silently closed pipe** — a project
+  policy file that cannot be parsed, a policy that would not load, and a global
+  install that cannot be contained. All three sit before the verification step
+  that reports refusals, so none was reported. The advice for an unreadable policy
+  was also unreachable: its reason contains the words "security policy", so it
+  matched the policy branch first and told people to edit a policy nvx could not
+  read.
+
+  The first of those was still silent after the other two were fixed, and an
+  acceptance pass caught it. Two code paths can meet an unreadable policy — the
+  trust check parses every project policy file before anything else, and building
+  the effective policy parses them again — and only the second reported. The
+  first is the one a person actually reaches, because it runs earlier: a
+  hand-edited `.nvx-policy.json` with a brace missing, or the byte-order mark
+  fixed below. Both paths now go through one function, and the test drives a
+  refused run rather than the reporter, which is what the five existing tests did
+  while this went unnoticed.
 
 * **nvx no longer withdraws a filesystem permission it did not grant.** A
   directory that is both the sandbox's writable root and named in

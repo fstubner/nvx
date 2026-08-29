@@ -146,6 +146,28 @@ func reportRefusalOverStdio(reason, pkg string) bool {
 	return true
 }
 
+// refuseUnreadablePolicy reports a policy nvx could not read, and returns the
+// exit code for it.
+//
+// Two paths reach one, and they must behave the same. The trust check parses
+// every project policy file before anything else runs; LoadPolicy parses them
+// again to build the effective policy. Only the second told a waiting MCP
+// client anything -- so a malformed or byte-order-marked `.nvx-policy.json`,
+// which the trust check meets first, still closed the pipe without a word. That
+// is the case a person actually hits, and it was the one still silent in the
+// release that added this reporter.
+//
+// A helper rather than the same three lines twice, because the two must not
+// drift apart again. ensureProjectPolicyTrust returns an error only when a
+// policy file cannot be read -- a trust prompt that is declined skips the file
+// and returns nil -- so this reason is right for every error either path
+// produces, and no caller has to decide.
+func refuseUnreadablePolicy(err error) int {
+	LogError("Failed to load security policy: %v", err)
+	reportRefusalOverStdio("its security policy could not be read", "")
+	return 1
+}
+
 // remedyFor returns advice that matches the refusal.
 //
 // One fixed remedy was wrong for three of the seven reasons. A policy blocklist,
