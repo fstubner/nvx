@@ -288,9 +288,14 @@ File descriptors are not restricted, so `sandbox_stdio_shim.js` -- preloaded int
 every contained node process via `NODE_OPTIONS --require` -- routes the
 synchronous capture APIs through temp files in the guest home. `npm install
 esbuild` now completes in seconds and the resulting binary works. Async
-`spawn(..., {stdio:"pipe"})` is a genuine stream a file cannot substitute for and
-still hangs; that remains under Known limitations, with the two-minute hint
-(`sandbox_hang_hint_windows.go`) naming it. The smoke fixture's postinstall now
+`spawn(..., {stdio:"pipe"})` is a genuine stream a file cannot substitute for, and
+it works too: nvx creates the pipes outside the container and the preload only
+opens them, which Windows permits. Measured 2026-08-29 inside a real
+AppContainer -- `spawn` with piped stdio returned its child's output and exit
+code. This file said it "still hangs" for weeks after that stopped being true,
+which matters more here than elsewhere because PRODUCT.md names this file as the
+authority. What remains under Known limitations is narrower: writing to a
+contained child's stdin, which is `null` rather than a stream. The smoke fixture's postinstall now
 captures a subprocess and asserts the captured text, so the case that shipped
 broken is the case it tests -- verified by disabling the preload and watching the
 smoke hang.

@@ -8,11 +8,17 @@ import (
 	"time"
 )
 
-// `npm install esbuild` inside the sandbox hangs forever and prints nothing,
-// because esbuild's postinstall captures a subprocess and a contained process
-// cannot create the named pipe that needs. nvx cannot fix the restriction, so the
-// property worth pinning is that the silence is broken -- a user who sees nothing
-// concludes nvx is broken, rather than that one package needs --no-sandbox.
+// An install that sits there forever must not do so silently: a user who sees
+// nothing concludes nvx is broken, rather than that this one command needs
+// --no-sandbox.
+//
+// This used to assert the hint contained "install script captures", pinning a
+// specific cause -- subprocess output capture -- that has since been fixed. The
+// hint went on naming it for weeks, and the test would have gone on holding it
+// there. So the assertions are now on what stays true whatever the cause: the
+// symptom is reported, and the escape hatch is named. The cause the hint offers
+// is prose, and prose that names a fixed bug as the live one is what an
+// acceptance pass caught here.
 func TestSlowContainedInstallGetsADiagnosis(t *testing.T) {
 	orig := hangHintDelay
 	hangHintDelay = 20 * time.Millisecond
@@ -24,7 +30,7 @@ func TestSlowContainedInstallGetsADiagnosis(t *testing.T) {
 		stop()
 	})
 
-	if !strings.Contains(out, "install script captures") {
+	if !strings.Contains(out, "has been running") {
 		t.Errorf("a stuck install produced no diagnosis; stderr was:\n%s", out)
 	}
 	if !strings.Contains(out, "--no-sandbox") {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -262,7 +263,7 @@ func formatAuditEntry(e map[string]string) string {
 		line += fmt.Sprintf("  (%s)", r)
 	}
 	if w := e["warnings"]; w != "" {
-		line += "\n            ⚠ " + strings.ReplaceAll(w, " | ", "\n            ⚠ ")
+		line += "\n            ⚠ " + strings.ReplaceAll(redactFormatVerbs(w), " | ", "\n            ⚠ ")
 	}
 	return line
 }
@@ -375,7 +376,7 @@ func printAuditSummary(entries []map[string]string) {
 	if len(warnings) > 0 {
 		fmt.Println("\nWarnings:")
 		for _, kv := range rankCounts(warnings) {
-			fmt.Printf("  %4d  %s\n", kv.n, kv.key)
+			fmt.Printf("  %4d  %s\n", kv.n, redactFormatVerbs(kv.key))
 		}
 	}
 }
@@ -408,4 +409,26 @@ func rankCounts(m map[string]int) []countedKey {
 		return out[i].key < out[j].key
 	})
 	return out
+}
+
+// formatVerb matches a printf verb, so `nvx audit` can show what was withheld
+// instead of the verb itself.
+var formatVerb = regexp.MustCompile(`%[-+# 0']*[0-9*]*(?:\.[0-9*]*)?[a-zA-Z]`)
+
+// redactFormatVerbs replaces printf verbs in a recorded warning with "[…]".
+//
+// The audit log stores each warning's FORMAT STRING, never the rendered text --
+// deliberately, because rendering once put a live password in the log (see
+// LogWarn). The consequence was that `nvx audit` printed lines like "Ignoring
+// project policy %s: it loosens nvx security settings", and a reader sees a bug
+// rather than a redaction.
+//
+// Applied when reading, not when recording: the stored bytes keep their exact
+// aggregation key, and records already on disk read correctly too. An escaped
+// %% is left alone -- it is a literal percent sign, not withheld data.
+func redactFormatVerbs(s string) string {
+	const escaped = "\x00nvx-percent\x00"
+	s = strings.ReplaceAll(s, "%%", escaped)
+	s = formatVerb.ReplaceAllString(s, "[…]")
+	return strings.ReplaceAll(s, escaped, "%%")
 }

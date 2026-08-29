@@ -103,6 +103,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
+* **Three places said a contained process cannot stream a child's output. It
+  can.** `docs/enforcement-matrix.md` said async `spawn(..., {stdio:"pipe"})`
+  "still hangs"; `SECURITY.md` headed the bullet "a contained process cannot
+  capture a child's output" and then bolded "streaming capture is not" four lines
+  before explaining that it is; and the two-minute hint a user sees when an
+  install is slow named esbuild as a package that "blocks forever". All three
+  were fixed weeks ago and README said so. Measured 2026-08-29 inside a real
+  AppContainer: `spawn` with piped stdio returned its child's output and exit
+  code. This matters most in the matrix, which `PRODUCT.md` names as the
+  authority, and in the hint, which is the one of the three a user meets at the
+  worst moment. The hint no longer asserts a cause at all — it reports the
+  symptom, names the one restriction that is still real (writing to a child's
+  stdin), and offers `--no-sandbox`. Its test asserted the old wording, so it
+  would have held the stale claim in place; it now asserts what stays true.
+
+* **`scripts/bench.py` reported a negative overhead.** Run exactly as `README.md`
+  documents, it printed `=> nvx dispatch overhead : -50.4 ms`. It took its
+  baseline from `shutil.which("node")`, which on any machine with nvx installed
+  is the nvx shim — so it measured nvx against itself and subtracted. It now asks
+  the binary where it actually lives and says so when PATH gave it a shim. This
+  is the same defect swept out of the shell scripts one release earlier; that
+  sweep globbed `*.ps1` and `*.sh` and missed the one `.py` file in the same
+  directory.
+
+* **`nvx audit` no longer shows the reader raw `%s` and `%d`.** The log stores
+  each warning's format string and never the rendered text — deliberately, since
+  rendering once wrote a live password into it — but that meant audit output read
+  like a formatting bug rather than a redaction. Withheld values now render as
+  `[…]`. Applied when reading, so the stored bytes keep their aggregation key and
+  records already on disk read correctly too.
+
+* **`nvx doctor --fix` printed a mangled path.** `%q` escapes every backslash, so
+  one line reported `"C:\\Users\\..."` while every other path in the same output
+  was clean.
+
 * **`nvx doctor` now diagnoses a policy file it cannot read.** When a policy will
   not load nvx refuses to run, and the refusal an MCP client receives says "Check
   it with `nvx doctor`" — but doctor looked at PATH and shim interception and

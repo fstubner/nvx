@@ -149,7 +149,10 @@ func removeStaleAppContainerGrant(packageSIDStr, path string) {
 			LogWarn("Could not remove a stale sandbox permission on %q: %v", path, err)
 			continue
 		}
-		LogInfo("Removed a shared sandbox permission left on %q by an earlier nvx; this project now has its own.", path)
+		// %s, not %q: Go's quoted form escapes every backslash, so a Windows path
+		// printed as C:\\Users\\Felix\\... next to the clean paths in the rest of
+		// this command's output.
+		LogInfo("Removed a shared sandbox permission left on %s by an earlier nvx; this project now has its own.", path)
 	}
 }
 
