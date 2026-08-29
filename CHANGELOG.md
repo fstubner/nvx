@@ -103,6 +103,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
+* **`nvx doctor` now diagnoses a policy file it cannot read.** When a policy will
+  not load nvx refuses to run, and the refusal an MCP client receives says "Check
+  it with `nvx doctor`" — but doctor looked at PATH and shim interception and
+  nothing else, so it reported everything healthy and exited 0 with a broken
+  `.nvx-policy.json` in the working directory. The path and the parse error
+  existed only on stderr, which is the stream an MCP client discards, so the one
+  thing the reader needed was in the one place they could not see. Doctor is the
+  right place for it: it still works when everything else refuses, because
+  loading a policy is not on its path. It now names the file and the parse error
+  and exits non-zero.
+
+* **`scripts/sandbox-smoke-egress.ps1` got the two fixes its siblings got.** It
+  still exited 1 under Windows PowerShell 5.1, still ran `init-shims` against the
+  developer's real `~/.nvx`, still tried to overwrite the installed `nvx.exe`,
+  and still left `~/nvx-egress-smoke` behind — the earlier fix was applied to one
+  script and not swept across the rest. It now uses a throwaway `NVX_HOME` and
+  cleans up after itself. Its "an allowlisted host is reachable" half also no
+  longer skips on any machine whose `node` predates 24: it installs the runtime
+  it needs instead of probing PATH for one. `scripts/sandbox-smoke-macos.sh` had
+  the same real-`~/.nvx` problem and is fixed with it.
+
 * **`npm run` no longer warns that commands may be bypassing nvx when they are
   not.** Every `npm run` printed "A runtime dir is ahead of nvx's shim dir on
   PATH; some commands may bypass nvx. Run: nvx doctor" — and `nvx doctor`, run

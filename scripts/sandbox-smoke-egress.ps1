@@ -7,6 +7,25 @@ $nvx = Join-Path $root "nvx.exe"
 if (-not (Test-Path $nvx)) {
     Write-Error "Build nvx.exe first (go build -o nvx.exe .)"
 }
+
+# Capturing a native command's stderr is incompatible with
+# $ErrorActionPreference = 'Stop' in Windows PowerShell: `2>&1` turns every stderr
+# line into an ErrorRecord and 'Stop' makes the first one terminate the script.
+# nvx writes its progress lines to stderr, so this exited 1 at the AppContainer
+# probe below under powershell 5.1 -- the default shell -- while passing under
+# pwsh 7, which is what ci.yml pins. Both sibling scripts had this and were fixed
+# first; this one was missed, so the sweep is worth stating: every script under
+# scripts/ that sets 'Stop' and redirects a native command's stderr needs this.
+#
+# Relaxed per call, not globally, so the exit-code checks below keep their teeth:
+# $ErrorActionPreference is scoped dynamically, so setting it inside this function
+# covers the call and nothing else.
+function Invoke-NativeCapture {
+    param([Parameter(Mandatory)][string]$Exe, [string[]]$Arguments = @())
+    $ErrorActionPreference = 'Continue'
+    $out = & $Exe @Arguments 2>&1 | Out-String
+    return [pscustomobject]@{ Output = $out; ExitCode = $LASTEXITCODE }
+}
 if ($env:NVX_SMOKE_SKIP_APPCONTAINER -eq '1') {
     Write-Host "NVX_SMOKE_SKIP_APPCONTAINER=1 set; skipping egress smoke."
     exit 0
@@ -48,27 +67,41 @@ function Write-PolicyFile {
 $target = "registry.npmjs.org"
 $fetch = "require('https').get('https://$target/left-pad',r=>process.exit(0)).on('error',()=>process.exit(1))"
 
-$ver = & node -p "process.version.slice(1)"
-if ([int]($ver.Split('.')[0]) -lt 24) {
-    # Node core ignores HTTP_PROXY without --use-env-proxy (Node 24+). On an older
-    # node the allowlisted half can never pass, because the request would go direct
-    # -- which the sandbox correctly refuses. Skip rather than report that as a
-    # product failure.
-    Write-Host "node $ver has no --use-env-proxy (needs 24+); skipping the egress assertions."
-    Set-Location $startLocation
-    exit 0
-}
-
-$proj = Join-Path $env:USERPROFILE "nvx-egress-smoke"
+# Everything this script creates lives under one root the finally block removes,
+# and it runs against a throwaway NVX_HOME.
+#
+# It used to work in $env:USERPROFILE\nvx-egress-smoke -- left behind on every
+# run -- against the developer's REAL ~/.nvx: it ran `init-shims` there,
+# overwriting the installed shims with the build under test, and tried to
+# overwrite the installed nvx.exe, which succeeds on any machine where nvx is not
+# currently running. It also mirrored a Node distribution into the real versions
+# directory by resolving `node` through PATH, where on a machine with nvx
+# installed `node` IS the nvx shim. Its sibling was fixed first and this one was
+# missed.
+$probeRoot = Join-Path $env:USERPROFILE ".nvx-egress-smoke-probe"
+Remove-Item $probeRoot -Recurse -Force -ErrorAction SilentlyContinue
+$proj = Join-Path $probeRoot "wd"
 New-Item -ItemType Directory -Force -Path $proj | Out-Null
+
+$env:NVX_HOME = Join-Path $probeRoot "nvxhome"
+New-Item -ItemType Directory -Force -Path $env:NVX_HOME | Out-Null
+
+try {
 Set-Location $proj
 
-$nvxVer = "v$ver"
-$nodeSrc = Split-Path (Get-Command node).Source -Parent
-$nvxNode = Join-Path $env:USERPROFILE ".nvx\versions\node\$nvxVer"
-if (-not (Test-Path (Join-Path $nvxNode "node.exe"))) {
-    New-Item -ItemType Directory -Force -Path $nvxNode | Out-Null
-    Copy-Item -Path "$nodeSrc\*" -Destination $nvxNode -Recurse -Force
+# Node 24 specifically, and installed rather than discovered: Node core ignores
+# HTTP_PROXY without --use-env-proxy, which arrived in 24, so on anything older
+# the allowlisted half could never pass -- the request would go direct and the
+# sandbox would correctly refuse it. This used to probe the version on PATH and
+# skip when it was too old, which meant the half that tells enforcement from
+# breakage was silently not run on most machines. Pinning the runtime removes the
+# skip rather than reporting it.
+Write-Host "Installing an nvx-managed runtime..."
+$installCode = (Invoke-NativeCapture $nvx @('-y', 'install', '24')).ExitCode
+$defaultCode = (Invoke-NativeCapture $nvx @('-y', 'default', '24')).ExitCode
+if ($installCode -ne 0 -or $defaultCode -ne 0) {
+    Write-Host "FAIL: could not install an nvx-managed runtime (install=$installCode default=$defaultCode)." -ForegroundColor Red
+    exit 1
 }
 
 # isolation.level is "strict" in both policies below because `node` is your own
@@ -79,10 +112,6 @@ if (-not (Test-Path (Join-Path $nvxNode "node.exe"))) {
 # enforcement.
 @'
 {
-  "runtime": {
-    "default": "node",
-    "versions": { "node": "PLACEHOLDER" }
-  },
   "isolation": {
     "enabled": true,
     "level": "strict",
@@ -93,7 +122,7 @@ if (-not (Test-Path (Join-Path $nvxNode "node.exe"))) {
     }
   }
 }
-'@.Replace("PLACEHOLDER", $ver) | Write-PolicyFile
+'@ | Write-PolicyFile
 
 & $nvx init-shims | Out-Null
 
@@ -105,18 +134,16 @@ $env:NVX_YES = "true"
 # Can this host create an AppContainer at all? GitHub-hosted Windows runners cannot
 # (see the sibling smoke script). Probe once and skip with that reason, so the
 # environment's limitation is not reported as a product failure.
-$probe = & $nvx shim node -e "process.exit(0)" 2>&1 | Out-String
+$probe = (Invoke-NativeCapture $nvx @('shim', 'node', '-e', 'process.exit(0)')).Output
 if ($probe -match 'AppContainer launch failed') {
     Write-Host "This host cannot create AppContainer children; skipping the egress assertions."
     Write-Host ("  " + $probe.Trim())
-    Set-Location $startLocation
     exit 0
 }
 
 Write-Host "Testing blocked egress via sandboxed node..."
-& $nvx shim node --use-env-proxy -e $fetch 2>&1 | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    Set-Location $startLocation
+$blocked = Invoke-NativeCapture $nvx @('shim', 'node', '--use-env-proxy', '-e', $fetch)
+if ($blocked.ExitCode -eq 0) {
     Write-Error "expected blocked egress to fail, got exit 0"
 }
 
@@ -126,7 +153,6 @@ if ($LASTEXITCODE -eq 0) {
 Write-Host "Testing allowlisted egress via sandboxed node..."
 @'
 {
-  "runtime": { "default": "node", "versions": { "node": "PLACEHOLDER" } },
   "isolation": {
     "enabled": true,
     "level": "strict",
@@ -137,13 +163,19 @@ Write-Host "Testing allowlisted egress via sandboxed node..."
     }
   }
 }
-'@.Replace("PLACEHOLDER", $ver).Replace("TARGET", $target) | Write-PolicyFile
+'@.Replace("TARGET", $target) | Write-PolicyFile
 
-& $nvx shim node --use-env-proxy -e $fetch 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Set-Location $startLocation
+$allowed = Invoke-NativeCapture $nvx @('shim', 'node', '--use-env-proxy', '-e', $fetch)
+if ($allowed.ExitCode -ne 0) {
     Write-Error "an allowlisted host was blocked; the sandbox is denying everything rather than enforcing a policy (this phase needs outbound network access)"
 }
 
-Set-Location $startLocation
 Write-Host "Egress smoke passed: denied what it should, allowed what it should." -ForegroundColor Green
+}
+finally {
+    # Set-Location changes the SESSION's location, so every exit path has to put it
+    # back or the next script in the same CI step cannot be found. Nothing this
+    # script made outlives it.
+    Set-Location $startLocation
+    Remove-Item $probeRoot -Recurse -Force -ErrorAction SilentlyContinue
+}

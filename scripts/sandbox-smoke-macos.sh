@@ -24,6 +24,14 @@ PROJ="$(mktemp -d)"
 trap 'rm -rf "$PROJ"' EXIT
 cd "$PROJ"
 
+# A throwaway NVX_HOME, the way sandbox-smoke.sh already does it. Without one,
+# `init-shims` below writes into the developer's real ~/.nvx and replaces the
+# installed shims with the build under test. The Windows siblings did the same
+# and were fixed first; this was found by sweeping the rest rather than by
+# running it, since it needs macOS.
+export NVX_HOME="$PROJ/nvxhome"
+mkdir -p "$NVX_HOME"
+
 "$NVX" init-shims >/dev/null
 
 echo "Testing sandboxed node via shim..."
