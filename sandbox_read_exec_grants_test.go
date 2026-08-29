@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"testing"
 )
 
@@ -83,9 +84,17 @@ func TestAnotherIdentitysGrantIsLeftAlone(t *testing.T) {
 
 func TestAGrantIsRecordedOnceHoweverOftenItIsSeen(t *testing.T) {
 	const sid = "S-1-15-3-1024-ddd"
-	g := recordReadExecGrant(nil, sid, `C:\x`)
-	g = recordReadExecGrant(g, sid, `C:\x`)
-	g = recordReadExecGrant(g, sid, `C:\X\`) // same directory, spelled differently
+	// Paths built for the running platform. Hardcoded Windows paths passed here on
+	// Windows and failed the Linux and macOS CI jobs for thirteen commits:
+	// sameGrantPath normalises with filepath.Clean, and a backslash is an ordinary
+	// character off Windows, so "C:\X\" and "C:\x" never converged there.
+	dir := filepath.Join("some", "granted", "dir")
+	g := recordReadExecGrant(nil, sid, dir)
+	g = recordReadExecGrant(g, sid, dir)
+	// The same directory spelled differently: a redundant element and a trailing
+	// separator, both of which Clean removes on any platform.
+	g = recordReadExecGrant(g, sid,
+		filepath.Join("some", "granted", "extra", "..", "dir")+string(filepath.Separator))
 	if len(g) != 1 {
 		t.Fatalf("recorded %d entries for one directory: %+v", len(g), g)
 	}
@@ -96,8 +105,8 @@ func TestResettingGrantsWithdrawsThemAll(t *testing.T) {
 	var revoked []string
 	allExist := func(string) bool { return true }
 	r, f := revokeAllReadExecGrantsWithin(
-		[]readExecGrant{{Path: `C:`, SID: sid}, {Path: `C:`, SID: sid}},
-		recordingRevoker(&revoked, map[string]bool{`C:`: true}), allExist)
+		[]readExecGrant{{Path: `C:\a`, SID: sid}, {Path: `C:\b`, SID: sid}},
+		recordingRevoker(&revoked, map[string]bool{`C:\b`: true}), allExist)
 	if r != 1 || f != 1 {
 		t.Fatalf("revoked=%d failed=%d, want 1 and 1", r, f)
 	}
@@ -113,7 +122,7 @@ func TestResettingSkipsRecordsWhoseDirectoryIsGone(t *testing.T) {
 	var revoked []string
 	gone := func(string) bool { return false }
 	r, f := revokeAllReadExecGrantsWithin(
-		[]readExecGrant{{Path: `C:anished`, SID: sid}},
+		[]readExecGrant{{Path: `C:\vanished`, SID: sid}},
 		recordingRevoker(&revoked, nil), gone)
 
 	if len(revoked) != 0 {

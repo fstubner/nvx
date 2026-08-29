@@ -139,7 +139,7 @@ func grantCacheForgetUnder(sidStr, root string) {
 	changed := false
 	for key := range grantCacheEntries {
 		// Either the directory itself, or something below it. The separator check
-		// keeps "C:b" from matching an entry for "C:bc".
+		// keeps "C:\ab" from matching an entry for "C:\abc".
 		if key == prefix || strings.HasPrefix(key, prefix+string(filepath.Separator)) {
 			delete(grantCacheEntries, key)
 			changed = true
