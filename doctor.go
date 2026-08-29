@@ -126,7 +126,7 @@ func diagnosePath(pathEnv, nvxHome string, shimCmds []string) doctorReport {
 		}
 		ce := filepath.Clean(e)
 		for _, root := range roots {
-			if dirWithin(ce, root) {
+			if dirWithin(ce, root) && dirHoldsAWrappedCommand(ce) {
 				rep.shadowedBy = append(rep.shadowedBy, pathShadow{dir: ce, index: i})
 				break
 			}
@@ -357,6 +357,41 @@ func formatDoctorReport(rep doctorReport) string {
 
 // pathIsShadowed reports whether a raw-runtime dir precedes the shim dir on the
 // given PATH (a partially-broken interception setup).
+// dirHoldsAWrappedCommand reports whether a directory actually contains one of
+// the commands nvx intercepts.
+//
+// Being inside a runtime tree is not enough. `npm run` puts
+// `<runtime>/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin`
+// on the child's PATH, ahead of the shim dir -- measured at index 7 against the
+// shim dir's 61. It is inside the runtime, so it counted as shadowing, and every
+// `npm run` warned that "some commands may bypass nvx" and pointed at `nvx
+// doctor`, which then reported the PATH healthy because it reads the user's PATH
+// where that entry does not exist. The user was told to run a diagnostic that
+// contradicted the warning, about a PATH entry nvx's own child process had
+// inherited from npm.
+//
+// That directory holds `node-gyp` and nothing else, so it cannot shadow
+// anything. Asking what a directory contains is the question that was meant all
+// along -- "is it under a runtime root" was a proxy for it, and the proxy was
+// wrong. Only directories already inside a runtime root reach here, so this is
+// at most a handful of stats on a path that usually finds none.
+func dirHoldsAWrappedCommand(dir string) bool {
+	for _, c := range allShimCommands() {
+		if _, err := os.Stat(filepath.Join(dir, c)); err == nil {
+			return true
+		}
+		if runtime.GOOS == "windows" {
+			if _, err := os.Stat(filepath.Join(dir, c+".exe")); err == nil {
+				return true
+			}
+			if _, err := os.Stat(filepath.Join(dir, c+".cmd")); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func pathIsShadowed(pathEnv, nvxHome string) bool {
 	rep := diagnosePath(pathEnv, nvxHome, nil)
 	return rep.shimDirOnPath && len(rep.shadowedBy) > 0

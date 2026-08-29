@@ -83,27 +83,33 @@ ACE hides a secret, that one session cannot read another's guest home, and that
 the relay does not expose host loopback services — roughly twenty end-to-end
 containment assertions that skip on hosted CI and run here.
 
-Expect **0 failures and exactly these 4 top-level skips**. `go test -v` also
-prints a fifth `--- SKIP` line for the subtest
+Expect **0 failures and exactly these 5 top-level skips**. `go test -v` also
+prints a further `--- SKIP` line for the subtest
 `TestStageAppContainerExecutableThroughALinkedDirectory/symlink`, which has the
 same Developer Mode cause as the third row — count top-level skips, or a reader
 following this literally goes looking for a phantom:
 
 | Skip | Why it is expected |
 |---|---|
-| flaky feasibility prototype | excluded on purpose; needs `NVX_PROBE_PROTOTYPES=1` |
-| internal child for the launch timing probe | a helper, not a test |
-| creating symlinks needs Developer Mode | environment, not product |
-| this machine has no nvx loopback exemption | the healthy state; the exempt branch is covered by `sandbox_loopback_exemption_seam_windows_test.go` |
+| `TestReverseRelayReachesAServerInsideTheContainer` | flaky feasibility prototype, excluded on purpose; needs `NVX_PROBE_PROTOTYPES=1` |
+| `TestMeasureContainedLaunchPhasesNoOpChild` | internal child for the launch timing probe — a helper, not a test |
+| `TestExtractTarGzAllowsInternalSymlink` | creating symlinks needs Developer Mode; environment, not product |
+| `TestExemptMachineIsWarnedAbout` | this machine has no nvx loopback exemption — the healthy state; the exempt branch is covered by `sandbox_loopback_exemption_seam_windows_test.go` |
+| `TestPipedStdioReachesRealAppContainerChild` | needs write access to the DACL on `C:\WINDOWS\System32\cmd.exe`, which an unelevated account does not have. **Expected on a normal run**, since nvx is meant to be used without elevation — run the gate elevated to make this one assert. |
 
-A fifth means something is quietly not being checked — go and look at it rather
-than at this table. Last measured on Windows 11, 2026-08-28: **337 passing** in
-about 4½ minutes.
+A sixth means something is quietly not being checked — go and look at it rather
+than at this table. Last measured on Windows 11, 2026-08-29, unelevated:
+**392 passing, 5 skipping, 0 failing** in 724s (~12 minutes).
 
-That number is a tripwire and it has already caught something. It read "3 skips"
+That number is a tripwire and it has twice caught something. It read "3 skips"
 while the real count was 4, and the extra one was the loopback-exemption check
-verifying nothing on a healthy machine — found by an acceptance pass noticing the
-mismatch, not by anyone re-reading the tests.
+verifying nothing on a healthy machine. Then it read "4 skips" and "337 passing"
+while an unelevated run — the normal way to run this, since nvx is built not to
+need elevation — produced 5 and 392: the `cmd.exe` row was missing, so the table
+told a maintainer on a clean checkout that something was quietly not being
+checked. Both were found by an acceptance pass noticing the mismatch, not by
+anyone re-reading the tests. Rows are named now, so a mismatch says which one
+rather than only how many.
 
 That is why `docs/enforcement-matrix.md` says **measured** for the Windows
 column and **CI** for the other two. Running both is what keeps the word
