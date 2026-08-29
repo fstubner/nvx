@@ -454,7 +454,8 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   shows what is currently granted and `nvx grants reset` withdraws it immediately.
 
   Three cases are not automatic. `nvx grants reset --all` — which sweeps every
-  project — clears the first two; the third it can only report.
+  project — clears the first; the other two it can only report, because in both
+  it no longer knows which permission it would be removing.
 
   The identity is derived from the project root, so *moving* that root leaves the
   permission granted under the old identity unreconciled. The root is the nearest

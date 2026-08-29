@@ -132,9 +132,7 @@ func reportRefusalOverStdio(reason, pkg string) bool {
 			"code":    -32000,
 			"message": message,
 			"data": map[string]any{
-				"remedy": "Set NVX_YES=true in this server's environment to approve nvx's warnings for it, " +
-					"or pin the command to a version you have already used. " +
-					"The full reason is on this server's error output and in nvx's audit log.",
+				"remedy": remedyFor(reason),
 			},
 		},
 	}
@@ -146,6 +144,28 @@ func reportRefusalOverStdio(reason, pkg string) bool {
 		return false
 	}
 	return true
+}
+
+// remedyFor returns advice that matches the refusal.
+//
+// One fixed remedy was wrong for three of the seven reasons. A policy blocklist,
+// a policy that disallows install scripts, and a policy that would not load are
+// not warnings and have no prompt to approve: NVX_YES does nothing for any of
+// them, and telling someone to set it sends them to try something that cannot
+// work. Only the reasons that come from a prompt can be approved.
+func remedyFor(reason string) string {
+	const editPolicy = "This is a policy decision rather than a warning, so approving prompts does not affect it: " +
+		"change the policy, or start this server with a package the policy allows."
+	switch {
+	case strings.Contains(reason, "security policy"):
+		return editPolicy
+	case strings.Contains(reason, "could not be loaded"):
+		return "nvx could not read its own security policy. Check it with `nvx doctor`."
+	default:
+		return "Set NVX_YES=true in this server's environment to approve nvx's warnings for it, " +
+			"or pin the command to a version you have already used. " +
+			"The full reason is on this server's error output and in nvx's audit log."
+	}
 }
 
 // readPendingJSONRPCRequest reads one line and returns it if it is a JSON-RPC

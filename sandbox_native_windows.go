@@ -168,10 +168,18 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// This way round the failure is harmless in the other direction: a record whose
 	// permission was never written costs one no-op withdrawal on some later run.
 	if len(config.ReadExecRoots) > 0 && scope != "" {
+		// Only what will actually be nvx's own entry. A root that already carries a
+		// broader permission -- the project directory itself is both a writable root
+		// and a plausible allow_read_exec entry -- is left out: nvx will not write
+		// over it, so it is not nvx's to take back, and recording it meant `grants
+		// reset` deleted the sandbox's write access to the user's own project while
+		// reporting it had withdrawn a read/execute permission.
 		intended := ledger.ReadExecGrants
 		for _, root := range config.ReadExecRoots {
 			for _, capSID := range scopeCaps {
-				intended = recordReadExecGrant(intended, capSID, root)
+				if readExecGrantWouldBeOurs(capSID, root) {
+					intended = recordReadExecGrant(intended, capSID, root)
+				}
 			}
 		}
 		if len(intended) != beforeCount || len(revokedNow) > 0 {

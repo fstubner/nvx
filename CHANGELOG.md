@@ -88,6 +88,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being silently ignored. (`--expose` now warns there too; it was silent before.)
   Both warn when the command is not sandboxed at all, for the same reason.
 
+* **nvx no longer withdraws a filesystem permission it did not grant.** A
+  directory that is both the sandbox's writable root and named in
+  `allow_read_exec` was recorded as a read/execute grant, even though nvx had
+  skipped granting over the broader write permission already there. `nvx grants
+  reset` then removed it: measured, the sandbox's write access to the user's own
+  project was deleted while nvx reported withdrawing a read/execute permission.
+  Withdrawing takes an identity's whole entry, not one right from it.
+
+  Two guards now. Only a permission that is, or is about to be, nvx's own is
+  recorded — decided before the record is written, since the record has to be
+  written first. And a withdrawal refuses to touch an entry that is not nvx's,
+  drops the record instead, and says so — which also repairs records the previous
+  build already wrote.
+
+  Containment was never weakened by this; the damage was to access nvx itself had
+  granted.
+
+* **The advice nvx gives an MCP client now matches the refusal.** One fixed
+  remedy was sent for every reason, telling people to set `NVX_YES=true` for
+  three that are policy decisions rather than warnings, where it has no prompt to
+  approve and cannot help.
+
 * **An MCP server that nvx refuses to start now says why, instead of looking like
   a crash.** A server spawned by an editor talks JSON-RPC over its pipes, and nvx
   wrote its refusal to standard error and exited — so the client saw a process

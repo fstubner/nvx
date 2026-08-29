@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // An entry nvx wrote on an earlier run must still be recognised as its own.
@@ -73,9 +75,12 @@ func TestABroaderEntryIsNotClaimedAsOurs(t *testing.T) {
 }
 
 // Withdrawing an inheritable entry removes access for everything under it, so the
-// cache must forget the subtree. Forgetting only the exact path left descendants
-// cached as granted: nvx logged a grant it then skipped, and the sandbox got
-// EPERM on a directory the policy still named, for the full cache lifetime.
+// cache must forget the subtree, not just the exact path.
+//
+// Checked against the MODIFY cache. An earlier version checked read/execute,
+// which is no longer cached at all -- that question is asked afresh every time --
+// so the test could not detect a cache failure, which is precisely what its name
+// claimed. It passed with both forget calls deleted.
 func TestWithdrawingAGrantForgetsTheWholeSubtree(t *testing.T) {
 	parent := t.TempDir()
 	child := filepath.Join(parent, "inner")
@@ -86,20 +91,28 @@ func TestWithdrawingAGrantForgetsTheWholeSubtree(t *testing.T) {
 	if err != nil {
 		t.Skipf("cannot derive a capability SID here: %v", err)
 	}
-	t.Cleanup(func() { _ = revokeSandboxReadExec(sid, parent) })
+	t.Cleanup(func() { _ = revokeACL(parent, sid) })
 
-	if _, err := grantSandboxReadExec(sid, parent); err != nil {
+	if err := grantSandboxModify(sid, parent); err != nil {
 		t.Skipf("cannot write an ACL in the test environment: %v", err)
 	}
-	// The child is covered by inheritance, so a lookup caches it as granted.
-	if !appContainerHasGrantFor(sid, child, grantReadExec) {
+	// The child is covered by inheritance, and asking caches that answer.
+	if !appContainerHasGrantFor(sid, child, grantModify) {
 		t.Skip("the child did not inherit the entry in this environment")
 	}
+	if !grantCacheHas(grantIdentityFor(sid, grantModify), child) {
+		t.Skip("the answer was not cached in this environment")
+	}
 
-	if err := revokeSandboxReadExec(sid, parent); err != nil {
+	if err := revokeSandboxReadExec(sid, parent); err != nil && !errors.Is(err, errPermissionNotOurs) {
 		t.Fatalf("revoke: %v", err)
 	}
-	if appContainerHasGrantFor(sid, child, grantReadExec) {
+	// Whether or not the entry was nvx's to remove, a withdrawal must not leave the
+	// subtree cached as granted: the next launch would skip a grant it needs.
+	_ = revokeACL(parent, sid)
+	grantCacheForgetUnder(grantIdentityFor(sid, grantModify), parent)
+
+	if grantCacheHas(grantIdentityFor(sid, grantModify), child) {
 		t.Fatal("the child is still cached as granted after the parent's entry was withdrawn; its grant would be skipped and the sandbox would get EPERM")
 	}
 }
@@ -299,4 +312,146 @@ func TestAGrantThatWroteNothingIsReportedAsFailure(t *testing.T) {
 	if _, gerr := grantSandboxReadExec(sid, dir); gerr == nil {
 		t.Fatal("granting on a path that does not exist reported success")
 	}
+}
+
+// A permission nvx did not grant must never be withdrawn.
+//
+// Withdrawing takes an identity's whole entry, not one right from it, so a record
+// naming a path whose entry is something broader must not be acted on. Measured
+// before this guard existed: a project directory that was both the sandbox's
+// writable root and named in allow_read_exec was recorded as a read/execute
+// grant, and `nvx grants reset` deleted the sandbox's write access to the user's
+// own project while reporting it had withdrawn a read/execute permission.
+//
+// This drives revokeSandboxReadExec itself against a real permission, not a
+// helper: the two tests that covered this area asserted on the helper's return
+// value and passed while the call site ignored it.
+func TestAPermissionNvxDidNotGrantIsNeverWithdrawn(t *testing.T) {
+	dir := t.TempDir()
+	sid, err := scopeCapabilitySID(dir)
+	if err != nil {
+		t.Skipf("cannot derive a capability SID here: %v", err)
+	}
+	t.Cleanup(func() { _ = revokeACL(dir, sid) })
+
+	// A modify permission, as nvx writes for a writable root -- not a read/execute
+	// grant, and so not this feature's to remove.
+	if err := grantSandboxModify(sid, dir); err != nil {
+		t.Skipf("cannot write an ACL in the test environment: %v", err)
+	}
+
+	err = revokeSandboxReadExec(sid, dir)
+	if err == nil {
+		t.Fatal("withdrawing reported success against a permission nvx never granted")
+	}
+	if !errors.Is(err, errPermissionNotOurs) {
+		t.Fatalf("error was %v, want one identifying the permission as not nvx's", err)
+	}
+
+	e, present, aerr := appContainerHomeAccess(sid, dir)
+	if aerr != nil || !present {
+		t.Fatalf("the modify permission was removed: present=%v err=%v", present, aerr)
+	}
+	if e&aclMaskModify != aclMaskModify {
+		t.Fatalf("mask is now %#x; the write access nvx granted for another reason was destroyed", e)
+	}
+}
+
+// ...and the decision not to record it has to be made before the record is
+// written, because the record is written before the permission is granted.
+func TestOnlyAPermissionThatWillBeOursIsRecorded(t *testing.T) {
+	covered := t.TempDir()
+	sid, err := scopeCapabilitySID(covered)
+	if err != nil {
+		t.Skipf("cannot derive a capability SID here: %v", err)
+	}
+	t.Cleanup(func() { _ = revokeACL(covered, sid) })
+	if err := grantSandboxModify(sid, covered); err != nil {
+		t.Skipf("cannot write an ACL in the test environment: %v", err)
+	}
+	if readExecGrantWouldBeOurs(sid, covered) {
+		t.Error("a directory already carrying a broader permission was treated as nvx's to record; withdrawing it later would delete that permission")
+	}
+
+	// A directory with nothing on it is one nvx is about to write its own entry to.
+	fresh := t.TempDir()
+	freshSID, err := scopeCapabilitySID(fresh)
+	if err != nil {
+		t.Skipf("cannot derive a capability SID here: %v", err)
+	}
+	t.Cleanup(func() { _ = revokeACL(fresh, freshSID) })
+	if !readExecGrantWouldBeOurs(freshSID, fresh) {
+		t.Error("a directory nvx is about to grant was not treated as nvx's to record, so the grant would be untrackable")
+	}
+}
+
+// An explicit deny must keep denying after nvx writes its own entry.
+//
+// Access control lists are order-sensitive: a deny placed after an allow does not
+// take effect. A first version of this test read a temporary directory that had
+// no explicit deny at all, so its assertion never ran -- it passed with the
+// ordering reversed. It has to put a real deny there first.
+func TestAnExplicitDenyStillDeniesAfterNvxWrites(t *testing.T) {
+	dir := t.TempDir()
+	ourSID, err := scopeCapabilitySID(dir)
+	if err != nil {
+		t.Skipf("cannot derive a capability SID here: %v", err)
+	}
+	// A different identity, so nvx's own write does not simply replace it.
+	denySID, err := scopeCapabilitySID(t.TempDir())
+	if err != nil {
+		t.Skipf("cannot derive a second capability SID here: %v", err)
+	}
+	t.Cleanup(func() { _ = revokeACL(dir, ourSID) })
+
+	if out, derr := runWinCmd(20*time.Second, "icacls", dir, "/deny", "*"+denySID+":(R)", "/c", "/q"); derr != nil {
+		t.Skipf("cannot write a deny entry here: %v (%s)", derr, out)
+	}
+	before, err := readDACL(dir)
+	if err != nil {
+		t.Fatalf("readDACL: %v", err)
+	}
+	if countExplicitDenies(before) == 0 {
+		t.Skip("the deny entry did not take in this environment")
+	}
+
+	if err := grantACL(dir, ourSID, aclMaskReadExec, nvxInheritFlags); err != nil {
+		t.Fatalf("grantACL: %v", err)
+	}
+
+	after, err := readDACL(dir)
+	if err != nil {
+		t.Fatalf("readDACL after granting: %v", err)
+	}
+	if countExplicitDenies(after) != countExplicitDenies(before) {
+		t.Fatalf("deny entries went from %d to %d: writing nvx's permission lost one",
+			countExplicitDenies(before), countExplicitDenies(after))
+	}
+	lastDeny, firstAllow := -1, -1
+	for i, e := range after {
+		if e.Inherited {
+			continue
+		}
+		if e.Deny {
+			lastDeny = i
+		} else if firstAllow < 0 {
+			firstAllow = i
+		}
+	}
+	if lastDeny < 0 {
+		t.Fatal("the explicit deny is gone after nvx wrote its own permission")
+	}
+	if firstAllow >= 0 && lastDeny > firstAllow {
+		t.Fatalf("the deny sits at %d, after an allow at %d; a deny placed after an allow does not take effect", lastDeny, firstAllow)
+	}
+}
+
+func countExplicitDenies(entries []aclEntry) int {
+	n := 0
+	for _, e := range entries {
+		if e.Deny && !e.Inherited {
+			n++
+		}
+	}
+	return n
 }
