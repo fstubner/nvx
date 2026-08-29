@@ -138,6 +138,16 @@ func runGrants(args []string, nvxHome string) int {
 			if unreadable > 0 {
 				LogWarn("%d grant record(s) could not be read and were kept; directory permissions they list must be removed with icacls.", unreadable)
 			}
+			// "Reset all project grants" has to mean all of them. A record left in
+			// place -- unreadable, or naming a permission that could not be
+			// withdrawn -- means a filesystem permission nvx granted is still on
+			// disk. This printed that success and exited 0 two lines after warning
+			// it had skipped a record, so a cleanup script had no way to tell the
+			// difference. The single-project form already reported this correctly.
+			if failed > 0 || unreadable > 0 {
+				LogError("Did not reset all project grants: %d record(s) were left in place, and the permissions they name were not withdrawn.", failed+unreadable)
+				return 1
+			}
 			LogSuccess("Reset all project grants.")
 			return 0
 		}

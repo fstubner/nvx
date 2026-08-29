@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -343,6 +344,25 @@ func (p Policy) NetworkAllowlist(provider RuntimeProvider) []string {
 	return out
 }
 
+// withoutUTF8BOM drops a leading UTF-8 byte-order mark.
+//
+// Windows produces one by default: Notepad writes it, and so does PowerShell's
+// `Set-Content -Encoding utf8` on Windows PowerShell 5.1. Go's JSON parser does
+// not skip it, so a policy file written either of those ways failed with
+// "invalid character 'ï' looking for beginning of value" -- and because nvx
+// refuses to run when it cannot read its own policy, the whole command was
+// refused. Found when the Windows enforcement gate was repaired and reached its
+// assertions for the first time: the gate wrote its own policy with Set-Content
+// and nvx would not read it.
+//
+// The stripped bytes are what everything downstream sees, including the hash
+// that pins a trusted project policy. That is deliberate: the mark carries no
+// content, so adding or removing one should not read as a policy change the
+// user has to re-approve.
+func withoutUTF8BOM(data []byte) []byte {
+	return bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
+}
+
 func markPolicyFieldPresence(data []byte, p *Policy) {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {
@@ -386,6 +406,7 @@ func loadGlobalPolicy(nvxHome string) (Policy, error) {
 		}
 		return policy, fmt.Errorf("read global policy %s: %w", globalPolicyPath, err)
 	}
+	data = withoutUTF8BOM(data)
 	if err := json.Unmarshal(data, &policy); err != nil {
 		return policy, fmt.Errorf("parse global policy %s: %w", globalPolicyPath, err)
 	}
@@ -426,6 +447,7 @@ func readProjectPolicyFile(path string) (Policy, []byte, error) {
 	if err != nil {
 		return lp, nil, fmt.Errorf("read local policy %s: %w", path, err)
 	}
+	data = withoutUTF8BOM(data)
 	if err := json.Unmarshal(data, &lp); err != nil {
 		return lp, nil, fmt.Errorf("parse local policy %s: %w", path, err)
 	}

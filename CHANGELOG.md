@@ -177,6 +177,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (found by an independent acceptance pass before release)
 
+* **A policy file with a UTF-8 byte-order mark now loads.** Windows writes one by
+  default — Notepad does, and so does PowerShell's `Set-Content -Encoding utf8` —
+  and Go's JSON parser does not skip it, so a policy written the ordinary Windows
+  way failed with `invalid character 'ï' looking for beginning of value`. Because
+  nvx refuses to run when it cannot read its own policy, the whole command was
+  refused, with a message about the policy rather than about the encoding. The
+  mark is now stripped before the file is parsed, and before the bytes that pin a
+  trusted project policy are hashed, so adding or removing one is not a change the
+  user has to re-approve.
+
+* **`nvx grants reset --all` no longer reports a success it did not achieve.** A
+  grant record it cannot read is left in place, and so is every filesystem
+  permission that record names — which is right, since deleting it would destroy
+  the only trace those permissions exist. But it then printed `Reset all project
+  grants.` and exited 0 anyway, two lines after warning it had skipped the record.
+  A script that runs this to clear a machine's sandbox permissions read that as
+  done. It now reports what was left behind and exits non-zero; the
+  single-project form already did.
+
+* **The Windows containment gate can run.** `scripts/sandbox-enforcement-windows.ps1`
+  aborted before making a single assertion, on every invocation since it was
+  written, and exited with a PowerShell error rather than one of its own `FAIL`
+  messages. Cause: the script sets `$ErrorActionPreference = 'Stop'`, and `2>&1`
+  turns a native command's stderr into error records, so nvx's ordinary progress
+  output terminated the script at the runtime install. Its careful exit-code check
+  never got to run. Capturing output now goes through a helper that relaxes the
+  preference for that call alone, which fixes the three other capture sites that
+  had the same trap — including the probe that decides whether a host can create
+  AppContainers at all. `docs/enforcement-matrix.md` cites this script as the
+  source of the word "measured" in its Windows column. The BOM defect above was
+  found the first time the repaired gate reached its assertions.
+
 * **A `--connect` grant is now confined to the sandbox that asked for it.** It was
   not. Windows permits loopback within an AppContainer package and every nvx
   sandbox shares one package identity, so the in-sandbox listener was reachable

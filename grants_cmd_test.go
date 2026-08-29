@@ -82,6 +82,54 @@ func TestRunGrantsResetRemovesGrantFile(t *testing.T) {
 	}
 }
 
+// `grants reset --all` must not report success it did not achieve.
+//
+// A record it cannot read is left in place, and so is every filesystem
+// permission that record names -- which is the right call, since deleting it
+// would destroy the only trace those permissions exist. What was wrong is that
+// it then printed "Reset all project grants." and exited 0 anyway, two lines
+// after warning it had skipped the record. A script that runs this to clear a
+// machine's sandbox permissions read that as done.
+func TestResettingAllReportsFailureWhenARecordWasLeftBehind(t *testing.T) {
+	nvxHome := filepath.Join(tempDir(t), ".nvx")
+	dir := grantsDir(nvxHome)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	stuck := filepath.Join(dir, "0123456789abcdef.json")
+	if err := os.WriteFile(stuck, []byte("this is not json {{{"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := runGrants([]string{"reset", "--all"}, nvxHome); code == 0 {
+		t.Fatal("reported success after leaving a record, and the permissions it names, in place")
+	}
+	if _, err := os.Stat(stuck); err != nil {
+		t.Fatalf("the unreadable record was not kept: %v", err)
+	}
+}
+
+// ...and it must still succeed when there is genuinely nothing left, or the
+// check above would be satisfied by a command that always fails.
+func TestResettingAllSucceedsWhenEveryRecordWasCleared(t *testing.T) {
+	nvxHome := filepath.Join(tempDir(t), ".nvx")
+	dir := grantsDir(nvxHome)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	readable := filepath.Join(dir, "0123456789abcdef.json")
+	if err := os.WriteFile(readable, []byte(`{"project_path":"C:\\p"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := runGrants([]string{"reset", "--all"}, nvxHome); code != 0 {
+		t.Fatalf("exit code = %d, want 0: nothing was left behind", code)
+	}
+	if _, err := os.Stat(readable); !os.IsNotExist(err) {
+		t.Fatalf("the record was not removed, stat err=%v", err)
+	}
+}
+
 func containsAll(s string, subs ...string) bool {
 	for _, sub := range subs {
 		found := false

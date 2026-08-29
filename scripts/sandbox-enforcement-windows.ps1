@@ -21,6 +21,29 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $nvx = Join-Path $root "nvx.exe"
 
+# Capturing a native command's stderr is incompatible with
+# $ErrorActionPreference = 'Stop': `2>&1` turns every stderr line into an
+# ErrorRecord, and 'Stop' makes the first one terminate the script. nvx writes
+# its ordinary progress lines to stderr, so this gate aborted at the runtime
+# install below having asserted nothing, and did so with a PowerShell error
+# rather than one of its own FAIL messages. It had been that way since the
+# script was written, through two releases, while the enforcement matrix cited
+# it as where the word "measured" comes from.
+#
+# The install already had a careful $LASTEXITCODE check that never got to run.
+# Relaxing the preference globally would disarm that check and every other one,
+# so it is relaxed per call instead: $ErrorActionPreference is scoped
+# dynamically, and setting it inside this function applies to the call and
+# nothing else. Every site that captures output goes through here; the two bare
+# invocations that let stderr through to the console are unaffected and stay as
+# they are.
+function Invoke-NativeCapture {
+    param([Parameter(Mandatory)][string]$Exe, [string[]]$Arguments = @())
+    $ErrorActionPreference = 'Continue'
+    $out = & $Exe @Arguments 2>&1 | Out-String
+    return [pscustomobject]@{ Output = $out; ExitCode = $LASTEXITCODE }
+}
+
 if (-not (Test-Path $nvx)) {
     Write-Error "Build nvx.exe first (go build -o nvx.exe .)"
 }
@@ -71,10 +94,8 @@ try {
     # same warn-instead-of-fail shape that let three Linux checks report success
     # for months, and that ci.yml was changed to reject.
     Write-Host "Installing an nvx-managed runtime..."
-    & $nvx -y install 22 2>&1 | Out-Null
-    $installCode = $LASTEXITCODE
-    & $nvx -y default 22 2>&1 | Out-Null
-    $defaultCode = $LASTEXITCODE
+    $installCode = (Invoke-NativeCapture $nvx @('-y', 'install', '22')).ExitCode
+    $defaultCode = (Invoke-NativeCapture $nvx @('-y', 'default', '22')).ExitCode
     if ($installCode -ne 0 -or $defaultCode -ne 0) {
         Write-Host "FAIL: could not install an nvx-managed runtime (install=$installCode default=$defaultCode)." -ForegroundColor Red
         Write-Host "      Without one the sandbox has nothing it is permitted to execute, so this gate"
@@ -102,7 +123,7 @@ try {
     # This is why Windows is the one platform whose enforcement is not gated in
     # hosted CI, and why the matrix says "measured" for it rather than "CI". Run
     # this script on a real Windows machine before cutting a release.
-    $launch = & $nvx shim node -e "process.exit(0)" 2>&1 | Out-String
+    $launch = (Invoke-NativeCapture $nvx @('shim', 'node', '-e', 'process.exit(0)')).Output
     if ($launch -match 'AppContainer launch failed') {
         # Only the two shapes a HOST refusal takes, not any launch failure.
         #
@@ -233,7 +254,7 @@ function done() {
     # nvx exemption had just been removed and which still carried four unrelated
     # ones (a Windows WebView host and three orphans from uninstalled apps). It
     # told the maintainer he still had the problem he had just fixed.
-    $exempt = (& CheckNetIsolation LoopbackExempt -s 2>&1 | Out-String)
+    $exempt = (Invoke-NativeCapture 'CheckNetIsolation' @('LoopbackExempt', '-s')).Output
     if ($exempt -match 'nvx') {
         Write-Host "note: an nvx loopback exemption is registered on this machine. Egress denial above" -ForegroundColor Yellow
         Write-Host "      is direct-connection only; loopback-forwarded egress is NOT asserted here." -ForegroundColor Yellow
