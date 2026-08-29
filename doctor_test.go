@@ -43,14 +43,33 @@ func TestResolveCommandOnPath(t *testing.T) {
 	}
 }
 
+// makeRuntimeDirWithNode creates a runtime directory holding a node binary.
+//
+// The fixtures below used to be empty directories, which is not the situation
+// they model: `~/.nvx/current` shadows the shim dir because it CONTAINS node,
+// and an empty directory ahead of the shim dir shadows nothing at all. That
+// stopped mattering once shadowing was decided by what a directory holds rather
+// than by where it sits.
+func makeRuntimeDirWithNode(t *testing.T, dir string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil { // #nosec G301 -- test fixture
+		t.Fatal(err)
+	}
+	name := "node"
+	if runtime.GOOS == "windows" {
+		name = "node.exe"
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestDiagnosePath(t *testing.T) {
 	nvxHome := tempDir(t)
 	shimDir := filepath.Join(nvxHome, "bin")
-	current := filepath.Join(nvxHome, "current")
+	current := makeRuntimeDirWithNode(t, filepath.Join(nvxHome, "current"))
 	if err := os.MkdirAll(shimDir, 0755); err != nil { // #nosec G301 -- test fixture
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(current, 0755); err != nil { // #nosec G301 -- test fixture
 		t.Fatal(err)
 	}
 
@@ -198,6 +217,62 @@ func TestTheHealthyPathLineDoesNotClaimACheckThatWasNotMade(t *testing.T) {
 	}
 }
 
+// A runtime subdirectory that holds none of the wrapped commands shadows
+// nothing, and must not be reported as shadowing.
+//
+// `npm run` puts <runtime>/node_modules/npm/node_modules/@npmcli/run-script/
+// lib/node-gyp-bin on the child's PATH ahead of the shim dir. It holds
+// `node-gyp` and nothing else. Being inside a runtime root was treated as
+// shadowing on its own, so every `npm run` warned that "some commands may
+// bypass nvx" and sent the user to `nvx doctor` -- which reads the user's PATH,
+// does not see that entry, and reports the PATH healthy. A warning answered by
+// a diagnostic that contradicts it.
+//
+// Both directions are asserted. Without the second case the check would be
+// satisfied by never reporting shadowing at all, which is the actual failure
+// this guard exists to catch.
+func TestARuntimeDirWithNothingNvxWrapsDoesNotShadow(t *testing.T) {
+	nvxHome := tempDir(t)
+	shimDir := filepath.Join(nvxHome, "bin")
+	runtimeRoot := filepath.Join(nvxHome, "versions", "node", "v24.14.1")
+
+	gypBin := filepath.Join(runtimeRoot, "node_modules", "npm", "node_modules",
+		"@npmcli", "run-script", "lib", "node-gyp-bin")
+	if err := os.MkdirAll(gypBin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"node-gyp", "node-gyp.cmd"} {
+		if err := os.WriteFile(filepath.Join(gypBin, f), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(shimDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sep := string(os.PathListSeparator)
+	if pathIsShadowed(gypBin+sep+shimDir, nvxHome) {
+		t.Fatalf("%s holds only node-gyp, so it cannot shadow a command nvx wraps, "+
+			"but it was reported as doing so", gypBin)
+	}
+
+	// A runtime directory that really does hold node must still be caught.
+	realShadow := filepath.Join(runtimeRoot, "bin")
+	if err := os.MkdirAll(realShadow, 0755); err != nil {
+		t.Fatal(err)
+	}
+	nodeName := "node"
+	if runtime.GOOS == "windows" {
+		nodeName = "node.exe"
+	}
+	if err := os.WriteFile(filepath.Join(realShadow, nodeName), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !pathIsShadowed(realShadow+sep+shimDir, nvxHome) {
+		t.Fatalf("%s holds node ahead of the shim dir and was not reported as shadowing", realShadow)
+	}
+}
+
 func TestRebuildUserPath(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows user-PATH repair semantics")
@@ -223,7 +298,7 @@ func TestRebuildUserPath(t *testing.T) {
 func TestPathIsShadowed(t *testing.T) {
 	nvxHome := tempDir(t)
 	shimDir := filepath.Join(nvxHome, "bin")
-	current := filepath.Join(nvxHome, "current")
+	current := makeRuntimeDirWithNode(t, filepath.Join(nvxHome, "current"))
 	sep := string(os.PathListSeparator)
 
 	if pathIsShadowed(shimDir+sep+current, nvxHome) {
@@ -251,7 +326,7 @@ func TestPathIsShadowed(t *testing.T) {
 func TestHintIfShadowedPersistsAcrossProcessesAndRearms(t *testing.T) {
 	nvxHome := tempDir(t)
 	shimDir := filepath.Join(nvxHome, "bin")
-	current := filepath.Join(nvxHome, "current")
+	current := makeRuntimeDirWithNode(t, filepath.Join(nvxHome, "current"))
 	sep := string(os.PathListSeparator)
 	shadowedPath := current + sep + shimDir
 	healthyPath := shimDir + sep + current

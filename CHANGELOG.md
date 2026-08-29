@@ -103,6 +103,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
+* **`npm run` no longer warns that commands may be bypassing nvx when they are
+  not.** Every `npm run` printed "A runtime dir is ahead of nvx's shim dir on
+  PATH; some commands may bypass nvx. Run: nvx doctor" — and `nvx doctor`, run
+  immediately after, reported the PATH healthy. npm puts
+  `<runtime>/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin`
+  on the child's PATH ahead of the shim dir (measured at index 7 against the shim
+  dir's 61), and anything inside a runtime tree counted as shadowing. That
+  directory holds `node-gyp` and nothing else, so it cannot shadow a command nvx
+  wraps. The check now asks what a directory actually contains, which is the
+  question "is it under a runtime root" was standing in for.
+
+* **`scripts/sandbox-smoke.ps1` no longer runs under the default Windows shell
+  and no longer edits the developer's nvx install.** Two defects in the script
+  CONTRIBUTING tells a maintainer to run by hand:
+
+  It exited 1 under Windows PowerShell 5.1 while passing under `pwsh` 7, which is
+  what CI pins — `$ErrorActionPreference = 'Stop'` plus a native command's stderr
+  redirection, the same trap fixed in its sibling. A maintainer following the
+  documented gate got a red result that was not a product failure.
+
+  And it worked against the real `~/.nvx`: it ran `init-shims` there, overwriting
+  the installed shims, tried to overwrite the installed `nvx.exe` (failing only
+  because the file was in use), and mirrored a Node distribution into the real
+  versions directory by resolving `node` through PATH. On a machine with nvx
+  installed, `node` *is* the nvx shim — so it copied `~/.nvx/bin`, `nvx.exe`
+  included, to `~/.nvx/versions/node/v`, which then appeared in `nvx list` as an
+  installed version. It also left `~/nvx-smoke-wd` behind on every run. It now
+  uses a throwaway `NVX_HOME`, takes its runtime from nvx rather than from PATH,
+  and removes everything it created.
+
+* **CONTRIBUTING's Windows release gate no longer fails on a clean checkout.**
+  It said to expect "0 failures and exactly these 4 top-level skips… 337
+  passing", and warned that a fifth "means something is quietly not being
+  checked". An unelevated run — the normal way to run it, since nvx is built not
+  to need elevation — produces five. The fifth needs write access to the DACL on
+  `C:\WINDOWS\System32\cmd.exe`, which an unelevated account never has. Both
+  numbers were also a day stale. Re-measured 2026-08-29, unelevated: **392
+  passing, 5 skipping, 0 failing in 724s**. Each skip is now named, so a mismatch
+  says which one rather than only how many.
+
 * **`nvx init-shims` names the directory it wrote to.** It printed `~/.nvx/bin`
   whatever `NVX_HOME` was set to, so anyone running with it set — the Windows
   enforcement script does, every run — was told the shims had gone somewhere they
