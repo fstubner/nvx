@@ -103,6 +103,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
+* **Logs rescued from failed runs are now reclaimed.** When a contained run
+  fails, nvx copies npm's debug log out of the guest home before deleting it, so
+  the path the error points at still exists. Nothing ever removed those copies —
+  guest homes have a sweep and package profiles have a sweep, and these did not,
+  so they accumulated for the life of the installation. Measured on the
+  development machine: **3,146 folders, 181 MB**, and `nvx cleanup` left every
+  one. They are swept after 14 days, automatically after a command and in full on
+  `nvx cleanup`.
+
+* **The Windows release gate now runs under `-race`, and a data race it could
+  never have seen is fixed.** CI's unit step used `-race` but not `NVX_PROBE`;
+  CI's probe step used `NVX_PROBE` but not `-race`; and CONTRIBUTING's manual
+  gate matched the latter. The two were never combined, so no gate could observe
+  a race in a probe test — and one was there: `TestExposedPortIsReachableFromTheHost`
+  shared a `strings.Builder` between `os/exec`'s copier goroutines and its own
+  poll loop. Found by an acceptance pass running both flags together, one commit
+  after a sweep titled "Fix the race CI caught" missed it.
+
+* **`scripts/bench.py` no longer crashes in the case its own docstring claimed to
+  have fixed.** It preferred `nvx.exe` on Windows but fell back to `nvx` — and
+  this repo's tree carries a gitignored macOS build under that name, so the
+  fallback handed Windows a Mach-O file and it died with the same unhandled
+  `OSError: [WinError 193]` the docstring described as gone. Preferring the right
+  *name* is not the same as checking the file runs here; it now checks.
+
 * **Stalled permission writes no longer accumulate for the life of the process.**
   Writing an ACL on the user profile root can block indefinitely behind the
   OneDrive and Defender filter drivers, so nvx bounds each write with a deadline

@@ -70,7 +70,9 @@ http.createServer((q, s) => s.end('SERVED-FROM-CONTAINER egress=' + egress))
 		"--expose", fmt.Sprintf("%d:%d", insidePort, hostPort),
 		"-y", "--strict", "shim", "node", "server.js")
 	cmd.Dir = proj
-	var out strings.Builder
+	// Synchronised: os/exec writes this from its copier goroutines while the poll
+	// loop below reads it, which is a data race with a plain strings.Builder.
+	var out syncBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	if err := cmd.Start(); err != nil {

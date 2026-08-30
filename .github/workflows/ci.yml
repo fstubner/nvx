@@ -86,8 +86,16 @@ jobs:
       #
       # PASS/SKIP/FAIL here are TOP-LEVEL tests. `go test -v` also prints
       # subtest lines, which is why a hand count and this one disagree.
+      #
+      # -race, because without it nothing in this project ever ran the probe
+      # tests under the detector: the unit step above runs -race but not
+      # NVX_PROBE, this step ran NVX_PROBE but not -race, and CONTRIBUTING's
+      # manual gate matched this step. A probe test could therefore hold a data
+      # race indefinitely, and one did -- a strings.Builder shared between
+      # os/exec's copier goroutines and a poll loop, found only when an
+      # acceptance pass combined the two flags by hand.
       run: |
-        go test -v ./... 2>&1 | Tee-Object -FilePath probe.log
+        go test -v -race ./... 2>&1 | Tee-Object -FilePath probe.log
         $code = $LASTEXITCODE
         $pass = (Select-String -Path probe.log -Pattern '^--- PASS' ).Count
         $skip = (Select-String -Path probe.log -Pattern '^--- SKIP' ).Count

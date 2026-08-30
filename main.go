@@ -277,6 +277,10 @@ func main() {
 		if pkgs := sweepOrphanedSandboxPackages(nvxHome, 0); pkgs > 0 {
 			LogInfo("Removed %d unused sandbox package profile(s).", pkgs)
 		}
+		// Logs kept from failed runs, past the window in which anyone reads them.
+		if logs := sweepRescuedLogs(nvxHome, 0); logs > 0 {
+			LogInfo("Removed %d old rescued log folder(s) from failed runs.", logs)
+		}
 		LogSuccess("Sandbox cleanup complete.")
 
 	case "doctor":

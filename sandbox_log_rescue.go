@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // A failing contained install tells you to read a log that no longer exists.
@@ -129,4 +130,50 @@ func copyLogFile(src, dst string) error {
 		return err
 	}
 	return out.Close()
+}
+
+// rescuedLogRetention is how long a failed run's logs are kept.
+//
+// They exist to be read after a failure, which happens in the minutes or days
+// after it, not the months. Nothing else reclaims them: guest homes and package
+// profiles each have a sweep and these did not, so they accumulated for as long
+// as nvx had been installed. Measured on the development machine 2026-08-30,
+// found by an acceptance pass: 3,146 directories, 181 MB, and `nvx cleanup` left
+// every one of them.
+const rescuedLogRetention = 14 * 24 * time.Hour
+
+// sweepRescuedLogs deletes rescued log directories older than the retention
+// window and reports how many went. A budget of 0 means no limit.
+//
+// Age is the whole rule, deliberately. A rescued log belongs to a run that has
+// already ended -- that is what rescuing means -- so unlike a guest home or a
+// package profile there is no live owner to check for, and nothing here can be
+// in use.
+func sweepRescuedLogs(nvxHome string, budget int) int {
+	if nvxHome == "" {
+		return 0
+	}
+	root := filepath.Join(nvxHome, "logs")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	now := time.Now()
+	removed := 0
+	for _, e := range entries {
+		if budget > 0 && removed >= budget {
+			break
+		}
+		if !e.IsDir() {
+			continue
+		}
+		info, ierr := e.Info()
+		if ierr != nil || now.Sub(info.ModTime()) < rescuedLogRetention {
+			continue
+		}
+		if os.RemoveAll(filepath.Join(root, e.Name())) == nil {
+			removed++
+		}
+	}
+	return removed
 }

@@ -67,8 +67,16 @@ go build -o nvx.exe .
 ```
 
 ```powershell
-$env:NVX_PROBE=1; go test -timeout 40m .
+$env:NVX_PROBE=1; go test -race -timeout 40m .
 ```
+
+**`-race` is part of the gate, not an optional extra.** Without it, nothing in
+this project ever ran the probe tests under the detector: CI's unit step uses
+`-race` but not `NVX_PROBE`, and CI's probe step used `NVX_PROBE` but not
+`-race`, so the two were never combined and this line matched the latter. A
+probe test held a data race indefinitely as a result — a `strings.Builder`
+shared between `os/exec`'s copier goroutines and a poll loop — and it took an
+acceptance pass running both flags together to see it. Both now use `-race`.
 
 This is the one platform gate CI cannot run. GitHub-hosted Windows runners
 refuse to create AppContainer children — `CreateProcess` returns "Access is
@@ -99,7 +107,7 @@ following this literally goes looking for a phantom:
 
 A sixth means something is quietly not being checked — go and look at it rather
 than at this table. Last measured on Windows 11, 2026-08-30, unelevated:
-**400 passing, 5 skipping, 0 failing**, in about 105s.
+**402 passing, 5 skipping, 0 failing**, in about 250s under -race (about 105s without it; the detector roughly doubles it).
 
 That duration used to be nine to twelve minutes, and the drop is a fix rather
 than a shortcut: nearly all of it was this binary waiting out the same stalled
@@ -120,7 +128,7 @@ runners; it ran normally on the next attempt.
 
 **Adding a test? Update the pass count in the same commit.** The skip list is the
 tripwire; the pass count is a fact with a short shelf life, and it has now gone
-stale four times — at 337, 392, 394 and 397, each time because a test
+stale five times — at 337, 392, 394, 397 and 400, each time because a test
 was added in the commit after the count was written. A number nobody maintains
 teaches the reader to ignore the table it sits in.
 
