@@ -99,7 +99,7 @@ following this literally goes looking for a phantom:
 
 A sixth means something is quietly not being checked — go and look at it rather
 than at this table. Last measured on Windows 11, 2026-08-29, unelevated:
-**394 passing, 5 skipping, 0 failing** in 668s (~11 minutes).
+**394 passing, 5 skipping, 0 failing**, in nine to twelve minutes (measured at 535s and 668s on the same machine, so treat the duration as a range and the counts as exact).
 
 **Adding a test? Update the pass count in the same commit.** The skip list is the
 tripwire; the pass count is a fact with a short shelf life, and it has now gone

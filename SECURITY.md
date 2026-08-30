@@ -119,6 +119,24 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   What a macOS runner confirms is that egress is denied with an empty allowlist,
   which does not by itself prove the per-mode loopback scoping — nothing stands up
   a loopback listener on macOS and checks which modes reach it.
+- **On Windows, two sandboxes in the SAME project can reach each other's
+  loopback listeners.** Windows permits loopback within an AppContainer package,
+  and nvx gives each project one package. Two concurrent runs of the same project
+  therefore share a package and can connect to each other; runs in different
+  projects cannot, and neither can anything on the host. That is the boundary
+  this draws: same project means same dependencies and same policy, so it is one
+  trust domain rather than two.
+
+  Until 2026-08-29 there was one package for the whole machine, which made this
+  far wider: **any** contained process could reach a listener inside **any**
+  other nvx sandbox, across unrelated projects. That defeated the egress
+  allowlist — a sandbox with a permissive allowlist relays for one without —
+  and joined two projects the per-project filesystem identity keeps apart.
+  Measured with both controls: the host could not reach a sandbox's listener and
+  a sandbox could not reach the host's, while sandbox-to-sandbox succeeded.
+  `scripts/sandbox-enforcement-windows.ps1` now asserts the cross-project
+  refusal, with the same-project connection as its positive control.
+
 - **On Windows, a loopback exemption left by a pre-0.5.0 `nvx setup` opens every
   service on 127.0.0.1** to contained code, whatever the allowlist says — local
   databases, daemon ports, other dev servers. 0.5.0 never registers one and

@@ -268,6 +268,20 @@ func main() {
 		// than on the launch path, where deleting one could race a sandbox about
 		// to execute it.
 		pruneUnusedSupervisors(nvxHome)
+		// Per-project AppContainer profiles, on Windows. One is registered for
+		// every project nvx has contained, and nothing else ever removes them.
+		// Only when no session is still running: deleting a profile out from
+		// under a live container is the one way this could do harm, and the
+		// skipped count is exactly the signal for it. They are recreated on
+		// demand, so removing one costs the next run in that project nothing
+		// more than registering it again.
+		if skipped == 0 {
+			if pkgs := cleanupSandboxPackages(); pkgs > 0 {
+				LogInfo("Removed %d unused sandbox package profile(s).", pkgs)
+			}
+		} else {
+			LogInfo("Left the sandbox package profiles alone while sessions are running.")
+		}
 		LogSuccess("Sandbox cleanup complete.")
 
 	case "doctor":

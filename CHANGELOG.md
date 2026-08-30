@@ -103,6 +103,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
+* **One nvx sandbox could reach another's loopback services, defeating the egress
+  allowlist.** Windows permits loopback within an AppContainer package, and every
+  nvx sandbox on a machine shared one. So any port a contained process bound was
+  reachable from every other contained process — a different project, an empty
+  allowlist, no `--connect`, no `--expose`, no loopback exemption. An acceptance
+  pass used it to complete a TLS exchange with a host the calling project had
+  never allowlisted, by relaying through a second sandbox.
+
+  Measured with both controls, which is what makes it specific: a true host
+  process could not reach a sandbox's listener, and a sandbox could not reach a
+  listener on the host — only sandbox-to-sandbox worked.
+
+  **nvx now gives each project its own AppContainer package.** Cross-project
+  connections are refused; two runs of the *same* project still reach each other,
+  which is one trust domain and is documented in SECURITY.md rather than claimed
+  away. `nvx setup`'s elevated drive-root grant moved from the package to a
+  capability every launch carries, because per-project packages cannot be named
+  in advance by a command that runs once; `--undo` revokes both, so an older
+  setup is still undone. The profiles this registers are swept by `nvx cleanup`,
+  which leaves them alone while any session is running.
+
+  `scripts/sandbox-enforcement-windows.ps1` asserts it end to end now — the
+  cross-project connection must be refused and the same-project one must succeed,
+  so a sandbox that refuses everything cannot pass.
+
 * **Three places said a contained process cannot stream a child's output. It
   can.** `docs/enforcement-matrix.md` said async `spawn(..., {stdio:"pipe"})`
   "still hangs"; `SECURITY.md` headed the bullet "a contained process cannot
