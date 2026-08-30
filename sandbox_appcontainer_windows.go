@@ -57,6 +57,27 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	}
 	caps := []string{capSID}
 
+	// Windows grants the same pair sandboxWritableRoots declares, but cannot share
+	// its loop: the guest home is required and takes an integrity label, while the
+	// working directory is best-effort and skipped at the profile root. Writing the
+	// pair out again is what let the two drift -- an acceptance pass widened
+	// sandboxWritableRoots to include the working directory's PARENT, watched the
+	// unit tests go red, and watched the real Windows containment probe stay green,
+	// because nothing on this path read the declaration.
+	//
+	// So the declaration is read here, and anything in it this function does not
+	// know how to grant is a hard failure. That is the F22 shape -- two callers
+	// disagreeing about what may be written -- caught on Windows too, and caught
+	// fail-closed: a writable root nvx cannot implement must stop the launch, not
+	// silently make Windows narrower than the platform whose behaviour the tests
+	// describe.
+	for _, root := range sandboxWritableRoots(guestHome, workDir) {
+		if !dirsEqual(root, guestHome) && !dirsEqual(root, workDir) {
+			return nil, fmt.Errorf("sandboxWritableRoots declares %q writable and the Windows sandbox "+
+				"does not implement it; refusing to launch narrower than the declared policy", root)
+		}
+	}
+
 	// The guest home must be writable; it is nvx-owned and safe to grant.
 	if guestHome != "" {
 		if err := grantSandboxModify(capSID, guestHome); err != nil {
