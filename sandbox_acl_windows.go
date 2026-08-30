@@ -389,10 +389,23 @@ var (
 // answering, and the walk is optional.
 const maxAbandonedACLWrites = 8
 
-// aclWrite is the write grantACLWithin bounds, held in a variable so a test can
-// supply one that stalls. The bounds below are about what happens when a write
-// does not return, and a test that cannot produce that case cannot check them.
-var aclWrite = writeDACLEntry
+// aclWrite is the write grantACLWithin bounds, replaceable so a test can supply
+// one that stalls: the bounds below are about what happens when a write does not
+// return, and a test that cannot produce that case cannot check them.
+//
+// Held atomically rather than as a plain var. An abandoned write outlives the
+// call that started it by definition, so a test restoring the previous function
+// races a goroutine still reading it -- which is not hypothetical, it is what CI
+// caught under -race. One atomic load per ACL write is not a cost worth
+// reasoning about.
+var aclWriteFn atomic.Pointer[func(path, sidStr string, mask uint32, flags uint8) error]
+
+func aclWrite(path, sidStr string, mask uint32, flags uint8) error {
+	if fn := aclWriteFn.Load(); fn != nil {
+		return (*fn)(path, sidStr, mask, flags)
+	}
+	return writeDACLEntry(path, sidStr, mask, flags)
+}
 
 func grantACLWithin(path, sidStr string, mask uint32, flags uint8, timeout time.Duration) error {
 	key := strings.ToLower(filepath.Clean(path))

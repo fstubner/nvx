@@ -3,56 +3,105 @@
 package main
 
 import (
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// stalledACLWrites installs a write that blocks until the returned release is
-// called, and clears the per-process state grantACLWithin accumulates.
-//
-// The draining matters, and getting it wrong is what this comment is for: an
-// earlier version released the blocked writes from t.Cleanup and reset the
-// counter immediately. Those goroutines then finished AFTER the reset and
-// decremented from zero, so the next test read `outstanding = -3` and failed --
-// a defect in the tests that looked exactly like a defect in the counter. The
-// release must therefore complete before the state is reset, which means waiting
-// for the goroutines rather than assuming they are gone.
-func stalledACLWrites(t *testing.T, attempts *atomic.Int32) (release func()) {
+// waitFor polls until cond holds, or fails the test saying what did not happen.
+func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
-	prev := aclWrite
-	unblock := make(chan struct{})
-	var running sync.WaitGroup
-
-	aclStalledPaths = sync.Map{}
-	aclAbandoned.Store(0)
-	aclWrite = func(path, sidStr string, mask uint32, flags uint8) error {
-		running.Add(1)
-		defer running.Done()
-		if attempts != nil {
-			attempts.Add(1)
-		}
-		<-unblock // never returns within the deadline, like a driver-blocked write
-		return nil
-	}
-
-	released := false
-	release = func() {
-		if released {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
 			return
 		}
-		released = true
-		close(unblock)
-		running.Wait()
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal(what)
+}
+
+// stallHarness owns everything the blocking write touches.
+//
+// A struct rather than captured locals, because the two closures involved --
+// the blocking write and the release -- were sharing one closure allocation,
+// and the race detector reports a write to any of it against a read of any of
+// it. Fields here are only ever mutated through their own synchronisation
+// (a channel close or an atomic), so there is nothing left to race.
+//
+// Not a WaitGroup: Add runs inside the write, which production code calls, so it
+// can start after Wait has begun -- the documented misuse, and what -race
+// reported after the closure sharing above was fixed.
+type stallHarness struct {
+	unblock  chan struct{}
+	inflight atomic.Int32
+	attempts *atomic.Int32
+	closed   atomic.Bool
+}
+
+func (h *stallHarness) write(path, sidStr string, mask uint32, flags uint8) error {
+	h.inflight.Add(1)
+	defer h.inflight.Add(-1)
+	if h.attempts != nil {
+		h.attempts.Add(1)
+	}
+	<-h.unblock // never returns within the deadline, like a driver-blocked write
+	return nil
+}
+
+func stalledACLWrites(t *testing.T, attempts *atomic.Int32) (release func()) {
+	t.Helper()
+	h := &stallHarness{unblock: make(chan struct{}), attempts: attempts}
+
+	clearACLBounds()
+	fn := h.write
+	aclWriteFn.Store(&fn)
+
+	release = func() {
+		if h.closed.CompareAndSwap(false, true) {
+			close(h.unblock)
+		}
+		waitFor(t, func() bool { return h.inflight.Load() == 0 }, "blocked writes did not return")
+		// That only covers the write itself. grantACLWithin's goroutine
+		// carries on afterwards to claim the outcome and, if it was abandoned, to
+		// give its slot back -- so waiting for the write alone leaves that tail
+		// running, and whatever the test does next races it.
+		waitForACLDrain(t)
 	}
 	t.Cleanup(func() {
 		release()
-		aclWrite = prev
-		aclStalledPaths = sync.Map{}
-		aclAbandoned.Store(0)
+		aclWriteFn.Store(nil)
+		clearACLBounds()
 	})
 	return release
+}
+
+// clearACLBounds empties the shared state without REPLACING the sync.Map.
+//
+// Assigning a fresh sync.Map over the variable is itself a write to a variable
+// that abandoned goroutines are still reading, which is a data race however
+// carefully the values are managed. Range/Delete uses the map's own
+// synchronisation instead.
+func clearACLBounds() {
+	aclStalledPaths.Range(func(k, _ any) bool {
+		aclStalledPaths.Delete(k)
+		return true
+	})
+	aclAbandoned.Store(0)
+}
+
+// waitForACLDrain blocks until no abandoned write is outstanding, which is the
+// last thing grantACLWithin's goroutine touches.
+func waitForACLDrain(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if aclAbandoned.Load() == 0 {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("abandoned ACL writes did not drain: %d still outstanding", aclAbandoned.Load())
 }
 
 // A path whose permission write stalls must not be attempted again in this
