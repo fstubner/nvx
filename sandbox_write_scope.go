@@ -1,14 +1,23 @@
 package main
 
-// sandboxWritableRoots is the single declaration of what a contained process may
-// write, for every platform and every isolation provider.
+// sandboxWritableRoots declares what a contained process may write.
 //
 // It exists because F22 was caused by two callers disagreeing: one granted the
 // guest home and the working directory, the other also granted nvxHome and the
 // runtime binary directory, and nothing in the type system or the test suite
-// objected. Each platform still applies this its own way -- Seatbelt profile text,
-// AppContainer ACLs, Landlock path rules -- but they no longer each decide the
-// policy independently.
+// objected. Seatbelt and Landlock each apply this its own way -- profile text,
+// path rules -- but they no longer decide the policy independently.
+//
+// **Windows does not call this**, and the header used to claim it did ("the
+// single declaration ... for every platform and every isolation provider").
+// prepareAppContainerFilesystem grants the same pair from its own code, and its
+// comment names this function without calling it. An acceptance pass proved the
+// gap by widening this to include the working directory's parent: the unit tests
+// went red, and the real Windows containment probe stayed green, because nothing
+// on that path reads this. So the F22 shape -- two callers disagreeing -- is
+// prevented on two platforms of three, and the third is guarded only by its own
+// separate tests. Said here rather than left as a claim that reads as broader
+// than it is.
 //
 // ~/.nvx is nvx's control plane: policy.json (the trust baseline every project
 // policy is compared against), grants/ (policy pins, approved egress hosts,

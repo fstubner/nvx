@@ -15,10 +15,6 @@ import (
 	"unsafe"
 )
 
-const (
-	appContainerNamePrefix = "nvx.sandbox"
-)
-
 var (
 	modUserenv = syscall.NewLazyDLL("userenv.dll")
 
