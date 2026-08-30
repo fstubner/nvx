@@ -187,16 +187,48 @@ func deriveAppContainerSIDString(profileName string) (string, error) {
 // this command keeps being caught by. Removing the exemption needs elevation, but
 // it is one command and doctor prints it.
 func reportSandboxWeakeners(nvxHome string) bool {
+	weakened := reportStrandedSetupGrant(nvxHome)
+
 	sidStr, err := deriveAppContainerSIDString(stableSandboxProfile)
 	if err != nil {
-		return false
+		return weakened
 	}
 	exempt, err := sandboxIsLoopbackExempt(nvxHome, sidStr)
 	if err != nil || !exempt {
-		return false
+		return weakened
 	}
 	fmt.Println("  [FAIL] the sandbox has a loopback exemption from an older 'nvx setup'")
 	fmt.Println("         contained code can reach any service on 127.0.0.1, whatever the egress allowlist says")
 	fmt.Printf("         remove it from an Administrator terminal: CheckNetIsolation LoopbackExempt -d -p=%s\n", sidStr)
+	return true
+}
+
+// reportStrandedSetupGrant reports a completed `nvx setup` whose grants sit on an
+// identity nothing launches under any more.
+//
+// `nvx setup` granted the AppContainer package SID until packages became per
+// project. Those grants are still on disk and still name that old package, so
+// they admit nothing: measured 2026-08-30, `npx` on such a machine fails with
+// "EPERM: operation not permitted, lstat 'C:\\Users'" from npm's own dependency
+// walker, while the same command succeeds on the released build. nvx said
+// nothing, and doctor called the machine healthy.
+//
+// Reported here rather than only at launch because doctor is where someone looks
+// after a command failed in a way they cannot read, and because the launch
+// advisory is deliberately shown once per identity -- useful the first time, and
+// gone by the time anyone goes looking.
+func reportStrandedSetupGrant(nvxHome string) bool {
+	prev, ok := readWindowsSetupState(nvxHome)
+	if !ok || prev.AppContainerSID == "" {
+		return false // setup was never run here; nothing to be stranded
+	}
+	current, err := deriveCapabilitySIDString(setupCapabilityName)
+	if err != nil || strings.EqualFold(prev.AppContainerSID, current) {
+		return false
+	}
+	fmt.Println("  [FAIL] an earlier 'nvx setup' granted an identity nvx no longer uses")
+	fmt.Println("         those drive-root grants no longer apply, so a tool that walks up to a")
+	fmt.Println("         drive root -- npx does -- fails there with EPERM")
+	fmt.Println("         re-run 'nvx setup' from an Administrator terminal to move them")
 	return true
 }

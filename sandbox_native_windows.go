@@ -509,15 +509,31 @@ func prependPath(env []string, dir string) []string {
 	return append(env, "PATH="+dir)
 }
 
-// noteMissingElevatedGrants reports which drive roots the sandbox cannot read,
+// noteMissingElevatedGrants reports which host paths the sandbox cannot read,
 // based on the actual ACLs rather than on whether a setup marker file exists --
 // so it stays accurate if setup was undone, or if a project sits on a volume a
-// previous setup did not cover. Purely informational: these grants are optional
-// (see the caller), and only an elevated `nvx setup` can add them.
+// previous setup did not cover. Only an elevated `nvx setup` can add them.
 //
-// Reported once per drive root so a normal session is not narrated on every run.
+// Checked against the identity `nvx setup` GRANTS, not against this run's
+// package. Those were the same thing while one package served the whole machine.
+// They stopped being the same when packages became per project, and the gap is
+// not cosmetic: on a machine set up before that change the grant sits on a
+// package nothing launches under any more, so `npx` fails with a raw
+// "EPERM: operation not permitted, lstat" out of npm's own dependency walker and
+// nvx says nothing at all. Measured 2026-08-30 -- the same command succeeds on
+// 0.5.7 and fails on this build, on an account whose windows-setup.json records
+// the older package SID.
+//
+// Every path setup grants is checked, not only drive roots. Setup grants the
+// system drive root and the profile parent, and it is the profile parent that
+// npm's walk actually trips over; checking only the root reported nothing while
+// the failing path was unreadable.
+//
+// The "already told you" marker is keyed by identity as well as path, so an
+// upgrade that changes which identity needs the grant re-arms the notice rather
+// than inheriting a tick from the old one.
 func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
-	sidStr, err := appContainerSidToString(sid)
+	sidStr, err := deriveCapabilitySIDString(setupCapabilityName)
 	if err != nil {
 		return
 	}
@@ -527,14 +543,14 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 		sysDrive = "C:"
 	}
 
-	roots := []string{sysDrive + `\`}
+	roots := windowsAncestorGrantPaths()
 	if vol := filepath.VolumeName(workDir); vol != "" && !strings.EqualFold(vol, sysDrive) {
 		roots = append(roots, vol+`\`)
 	}
 
 	var missing []string
 	for _, r := range roots {
-		if !appContainerHasGrant(sidStr, r) && !driveRootNoticeSeen(nvxHome, r) {
+		if !appContainerHasGrant(sidStr, r) && !driveRootNoticeSeen(nvxHome, sidStr, r) {
 			missing = append(missing, r)
 		}
 	}
@@ -542,10 +558,18 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 		return
 	}
 
-	LogWarn("The sandbox cannot read %s. Most workflows are unaffected.", strings.Join(missing, " or "))
-	LogInfo("A tool that resolves paths all the way to a drive root may fail there. To grant it: 'nvx setup' from an Administrator terminal (optional; it covers every fixed drive).")
+	// A machine that ran setup before per-project packages has the grant on an
+	// identity nothing carries now. Telling that user to "run nvx setup" without
+	// saying it was already run reads as advice they have already followed.
+	if prev, ok := readWindowsSetupState(nvxHome); ok && !strings.EqualFold(prev.AppContainerSID, sidStr) {
+		LogWarn("An earlier 'nvx setup' granted %s to a sandbox identity nvx no longer uses, so that grant no longer applies.", strings.Join(missing, " or "))
+		LogInfo("Re-run 'nvx setup' from an Administrator terminal to move it. Until then a tool that walks up to those paths -- npx does -- fails there with EPERM.")
+	} else {
+		LogWarn("The sandbox cannot read %s. Most workflows are unaffected.", strings.Join(missing, " or "))
+		LogInfo("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal (optional; it covers every fixed drive).")
+	}
 	for _, r := range missing {
-		markDriveRootNoticeSeen(nvxHome, r)
+		markDriveRootNoticeSeen(nvxHome, sidStr, r)
 	}
 }
 
@@ -556,7 +580,7 @@ func driveRootNoticeFile(nvxHome string) string {
 // driveRootNoticeSeen reports whether the advisory for root has already been
 // shown. Best-effort: an unreadable/corrupt file just means the notice repeats,
 // which is strictly better than suppressing it wrongly.
-func driveRootNoticeSeen(nvxHome, root string) bool {
+func driveRootNoticeSeen(nvxHome, sidStr, root string) bool {
 	data, err := os.ReadFile(driveRootNoticeFile(nvxHome))
 	if err != nil {
 		return false
@@ -566,24 +590,24 @@ func driveRootNoticeSeen(nvxHome, root string) bool {
 		return false
 	}
 	for _, s := range seen {
-		if strings.EqualFold(s, root) {
+		if strings.EqualFold(s, sidStr+"|"+root) {
 			return true
 		}
 	}
 	return false
 }
 
-func markDriveRootNoticeSeen(nvxHome, root string) {
+func markDriveRootNoticeSeen(nvxHome, sidStr, root string) {
 	var seen []string
 	if data, err := os.ReadFile(driveRootNoticeFile(nvxHome)); err == nil {
 		_ = json.Unmarshal(data, &seen)
 	}
 	for _, s := range seen {
-		if strings.EqualFold(s, root) {
+		if strings.EqualFold(s, sidStr+"|"+root) {
 			return
 		}
 	}
-	seen = append(seen, root)
+	seen = append(seen, sidStr+"|"+root)
 	data, err := json.Marshal(seen)
 	if err != nil {
 		return
