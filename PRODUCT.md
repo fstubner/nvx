@@ -86,6 +86,23 @@ Deferred with intent, not built:
 - **No elevation.** Containment must work for an ordinary user account. An
   elevated `nvx setup` may add optional conveniences; it may not be required for
   any security guarantee.
+
+  **This constraint is currently violated on Windows, for `npx` only.** npm's
+  dependency walker stats every ancestor of its `_npx` staging directory, and an
+  AppContainer cannot read `C:\Users` without a grant only an Administrator can
+  make. So contained `npx` needs `nvx setup`; `node`, `npm install` and
+  `npm run` do not, and are unaffected. It fails closed — `npx` refuses rather
+  than running uncontained — so no security guarantee is weakened, which is the
+  second sentence holding while the first does not.
+
+  Recorded here rather than quietly reworded, because a constraint edited to
+  match what the code does stops being a constraint. Measured 2026-08-30, and
+  three unelevated escapes were tried and failed: relocating npm's cache into the
+  guest home, adding a package boundary at the guest home root, and moving
+  `NVX_HOME` to another volume. The walk fails wherever it starts, because the
+  guest home sits under `~/.nvx`, which nvx deliberately keeps unreadable to a
+  sandbox — making it walkable would expose nvx's own control plane, which is a
+  worse trade than requiring elevation for one command.
 - **Overhead must stay invisible.** nvx sits in front of every npm invocation;
   measured dispatch overhead is ~3 ms Linux, ~4 ms macOS, and single-digit to
   tens of milliseconds on Windows — 9 ms, 38 ms and 57 ms on three machines with

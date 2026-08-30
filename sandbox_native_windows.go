@@ -548,26 +548,44 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 		roots = append(roots, vol+`\`)
 	}
 
+	// A machine that ran setup before per-project packages has the grant on an
+	// identity nothing carries now. That case is not advisory -- it BREAKS `npx`,
+	// today, with an error from npm that says nothing about nvx -- so it is not
+	// suppressed after one showing.
+	//
+	// It was. The marker is keyed to a machine-wide identity, so the first run
+	// anywhere consumed it and every project afterwards got npm's raw EPERM in
+	// silence; an acceptance pass found a brand-new project getting no explanation
+	// at all, in the commit titled "Say why npx fails after an upgrade". Once per
+	// machine is right for "you never ran setup and probably do not need to" and
+	// wrong for "the thing you are running is about to fail until you act".
+	prev, hadSetup := readWindowsSetupState(nvxHome)
+	stranded := hadSetup && !strings.EqualFold(prev.AppContainerSID, sidStr)
+
 	var missing []string
 	for _, r := range roots {
-		if !appContainerHasGrant(sidStr, r) && !driveRootNoticeSeen(nvxHome, sidStr, r) {
-			missing = append(missing, r)
+		if appContainerHasGrant(sidStr, r) {
+			continue
 		}
+		if !stranded && driveRootNoticeSeen(nvxHome, sidStr, r) {
+			continue
+		}
+		missing = append(missing, r)
 	}
 	if len(missing) == 0 {
 		return
 	}
 
-	// A machine that ran setup before per-project packages has the grant on an
-	// identity nothing carries now. Telling that user to "run nvx setup" without
-	// saying it was already run reads as advice they have already followed.
-	if prev, ok := readWindowsSetupState(nvxHome); ok && !strings.EqualFold(prev.AppContainerSID, sidStr) {
+	if stranded {
 		LogWarn("An earlier 'nvx setup' granted %s to a sandbox identity nvx no longer uses, so that grant no longer applies.", strings.Join(missing, " or "))
 		LogInfo("Re-run 'nvx setup' from an Administrator terminal to move it. Until then a tool that walks up to those paths -- npx does -- fails there with EPERM.")
-	} else {
-		LogWarn("The sandbox cannot read %s. Most workflows are unaffected.", strings.Join(missing, " or "))
-		LogInfo("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal (optional; it covers every fixed drive).")
+		// Deliberately not marked as seen: it repeats until setup is re-run, which
+		// is what clears the condition.
+		return
 	}
+
+	LogWarn("The sandbox cannot read %s. Most workflows are unaffected.", strings.Join(missing, " or "))
+	LogInfo("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal (it covers every fixed drive).")
 	for _, r := range missing {
 		markDriveRootNoticeSeen(nvxHome, sidStr, r)
 	}

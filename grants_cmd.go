@@ -33,6 +33,17 @@ func formatProjectGrants(g projectGrants) string {
 	} else {
 		b.WriteString("  trusted project policy files:\n")
 		for path := range g.PolicyPins {
+			// A pin outlives the file it pins, and listing it plainly reads as
+			// "this file is trusted" when there is no file. The record is kept on
+			// purpose -- the pin is a content hash, so a file that comes back
+			// unchanged is still trusted and one that comes back different
+			// re-prompts -- but the reader is owed the difference. Annotated rather
+			// than removed: `grants list` answers a question and must not rewrite
+			// anything to do it.
+			if _, err := osStat(path); err != nil && os.IsNotExist(err) {
+				fmt.Fprintf(&b, "    - %s (file no longer present; the pin applies again if it returns unchanged)\n", path)
+				continue
+			}
 			fmt.Fprintf(&b, "    - %s\n", path)
 		}
 	}

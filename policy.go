@@ -460,6 +460,29 @@ func readProjectPolicyFile(path string) (Policy, []byte, error) {
 // loosen the accumulated settings is applied only when its current contents
 // have been trusted for this project (see ensureProjectPolicyTrust); otherwise
 // it is ignored so that untrusted, in-tree settings cannot weaken protection.
+// ignoredPolicyWarned remembers which untrusted policy files this process has
+// already complained about.
+//
+// A CONTAINED command loads the policy twice -- once on the shim path to decide
+// whether to sandbox, and again inside runSandbox -- so one command produced two
+// identical warnings, which reads as two separate problems with two separate
+// files. Keyed by path, so two genuinely different untrusted files still produce
+// two warnings; only the repeat of the same one is dropped.
+//
+// Measured wrong once, and worth saying how: counting the line on an UNCONTAINED
+// run shows one, because at the default level `node` is your own code, runSandbox
+// never runs, and the policy is loaded once. The duplicate only appears when the
+// command is actually contained. An acceptance pass reported it, I measured the
+// uncontained case, and concluded it did not exist.
+var ignoredPolicyWarned sync.Map
+
+func warnIgnoredPolicyOnce(path string) {
+	if _, seen := ignoredPolicyWarned.LoadOrStore(filepath.Clean(path), true); seen {
+		return
+	}
+	LogWarn("Ignoring project policy %s: it loosens nvx security settings and has not been trusted for this project.", path)
+}
+
 func LoadPolicy(nvxHome string) (Policy, error) {
 	policy, err := loadGlobalPolicy(nvxHome)
 	if err != nil {
@@ -481,7 +504,7 @@ func LoadPolicy(nvxHome string) (Policy, error) {
 			if policyLoosens(policy, candidate) {
 				hash, ok := hashPolicyFile(localPath)
 				if !ok || grants.PolicyPins[filepath.Clean(localPath)] != hash {
-					LogWarn("Ignoring project policy %s: it loosens nvx security settings and has not been trusted for this project.", localPath)
+					warnIgnoredPolicyOnce(localPath)
 					continue
 				}
 			}
