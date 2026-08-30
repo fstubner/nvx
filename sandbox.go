@@ -585,4 +585,15 @@ func reclaimStaleSandboxes(nvxHome string) {
 		return
 	}
 	cleanupStaleSandboxes(nvxHome, reclaimBudgetPerRun)
+	// AppContainer package profiles, on Windows. Swept here rather than only
+	// from `nvx cleanup` for the same reason guest homes are: a command nobody
+	// runs reclaims nothing. One profile is registered per project nvx has ever
+	// contained, and the first version of this swept only on an explicit cleanup
+	// AND only when no session at all was running -- which on a machine with a
+	// couple of long-lived MCP servers is never.
+	//
+	// Safe unprompted on the same terms: a package held by a live session is
+	// skipped, and one used inside the retention window is left alone so the
+	// common case never pays to re-register a profile it is about to use again.
+	sweepOrphanedSandboxPackages(nvxHome, reclaimBudgetPerRun)
 }

@@ -106,6 +106,14 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// is available here; for a trusted tool it is that tool's persistent profile
 	// key, which is equally unique to one project and tool.
 	pkgName := sandboxPackageName(scope, filepath.Base(guestHome))
+
+	// Claim the package BEFORE registering it, so no profile ever exists that
+	// nothing is recorded as using. Registering first would leave a window in
+	// which a concurrent sweep sees an unattributed profile -- which is precisely
+	// the moment it would decide the profile is orphaned.
+	writeGuestHomePackage(guestHome, pkgName)
+	noteSandboxPackageUse(config.NvxHome, pkgName)
+
 	sid, err := ensureAppContainerSID(pkgName)
 	if err != nil {
 		LogError("AppContainer profile unavailable: %v", err)

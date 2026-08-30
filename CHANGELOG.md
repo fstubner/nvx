@@ -121,8 +121,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   away. `nvx setup`'s elevated drive-root grant moved from the package to a
   capability every launch carries, because per-project packages cannot be named
   in advance by a command that runs once; `--undo` revokes both, so an older
-  setup is still undone. The profiles this registers are swept by `nvx cleanup`,
-  which leaves them alone while any session is running.
+  setup is still undone.
+
+  The profiles this registers are reclaimed automatically, after a contained
+  command, a few at a time — the same terms as the guest-home sweep, which
+  exists because a command nobody runs cleans nothing up. A profile is kept
+  while any live session holds it, and for a week after its last use so that
+  working in a project does not re-register its profile on every run. `nvx
+  cleanup` does the same sweep without the per-run limit.
 
   `scripts/sandbox-enforcement-windows.ps1` asserts it end to end now — the
   cross-project connection must be refused and the same-project one must succeed,
