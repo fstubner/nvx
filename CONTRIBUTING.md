@@ -99,15 +99,28 @@ following this literally goes looking for a phantom:
 
 A sixth means something is quietly not being checked — go and look at it rather
 than at this table. Last measured on Windows 11, 2026-08-30, unelevated:
-**397 passing, 5 skipping, 0 failing**, in nine to twelve minutes. Treat the
-counts as exact and the duration as a range: repeated runs on the same machine
-have taken 535s, 561s, 668s and 724s, so quoting any one of them as *the*
-duration is what once made this page and the CHANGELOG look like they
-disagreed.
+**400 passing, 5 skipping, 0 failing**, in about 105s.
+
+That duration used to be nine to twelve minutes, and the drop is a fix rather
+than a shortcut: nearly all of it was this binary waiting out the same stalled
+ACL writes over and over. A permission write that overruns its deadline is
+abandoned, and a path that has stalled once is not retried now, so the hundreds
+of launches in one test process no longer each pay the timeout. An acceptance
+pass found that accumulation the other way round — as a run that died with
+`runtime: SetWaitableTimer failed`, with 49 of 83 goroutines blocked in that
+write.
+
+**If you see this take many minutes again, that is the regression**, not a slow
+machine.
+
+A seventh skip appeared once and is not in the table:
+`TestDenyACEHidesSecretFromAppContainer` self-skips when it cannot stage the test
+binary as a contained child. The test documents that as intermittent on hosted
+runners; it ran normally on the next attempt.
 
 **Adding a test? Update the pass count in the same commit.** The skip list is the
 tripwire; the pass count is a fact with a short shelf life, and it has now gone
-stale three times — at 337, at 392 and at 394, each time because a test
+stale four times — at 337, 392, 394 and 397, each time because a test
 was added in the commit after the count was written. A number nobody maintains
 teaches the reader to ignore the table it sits in.
 

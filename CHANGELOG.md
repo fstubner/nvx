@@ -103,6 +103,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
+* **Stalled permission writes no longer accumulate for the life of the process.**
+  Writing an ACL on the user profile root can block indefinitely behind the
+  OneDrive and Defender filter drivers, so nvx bounds each write with a deadline
+  and abandons one that overruns — a blocked syscall cannot be cancelled. The
+  reasoning for that was "the ancestor walk's own budget bounds how many can be
+  outstanding", which is true of one walk and false of a process that performs
+  hundreds, because each abandoned goroutine pins an OS thread.
+
+  An acceptance pass measured the consequence where nvx is long-lived — the
+  release-gate test binary. A run that died with `runtime: SetWaitableTimer
+  failed; errno= 5` had **49 of 83 goroutines blocked in that write**, all from
+  the ancestor walk, 34 of them for over a minute. The same binary separately
+  failed a containment test with `CreateProcess(AppContainer) ... The handle is
+  invalid`, and the gate failed two runs in four. Both are what thread and handle
+  exhaustion look like.
+
+  Two per-process bounds now: a path whose write has already stalled is not
+  attempted again, and there is a hard ceiling on outstanding abandoned writes.
+  Both make the grant *less* likely to be applied, which is the right direction —
+  these ancestor grants are already best-effort and already skipped for speed, and
+  a process that stays alive is worth more than one of them.
+
+* **`nvx doctor` no longer offers a PATH repair for problems that are not the
+  PATH.** On a machine with a healthy PATH and a stale `nvx setup` grant it
+  printed "[OK] shim dir is on PATH" and then, three lines later, told the user to
+  repair their PATH with `nvx doctor --fix` — which regenerates shims and cannot
+  touch a grant needing an Administrator terminal. Following it changed the user's
+  PATH and left the report red.
+
+* **`nvx policy init` rejects unknown flags.** `nvx policy init --nope` wrote the
+  file and exited 0. The flags decide *where* a security policy is written, so
+  ignoring one silently writes it somewhere the user did not ask for and reports
+  success.
+
+* **The Windows dispatch-overhead figure is published as a range.** A fourth
+  machine measured 0.9–8.6 ms, below the "9–57 ms" floor stated a commit earlier —
+  which was itself a correction of a flat "~38 ms". Samples now span 0.9 to 57 ms
+  across several machines and both documents quote the range.
+
+* **Removed `windowsSandboxSetupDone`.** It answered "has setup run" by testing
+  for a loopback exemption — a state setup no longer creates and actively removes
+  — so it could only return false. Nothing called it.
+
 * **`PRODUCT.md` records that its "No elevation" constraint is currently violated
   on Windows, for `npx` only.** Contained `npx` needs `nvx setup`; `node`,
   `npm install` and `npm run` do not. It fails closed rather than running
