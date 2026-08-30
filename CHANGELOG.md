@@ -103,6 +103,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
+* **Upgrading requires re-running `nvx setup` on Windows, if you ever ran it.**
+  Per-project sandbox identities (below) mean the drive-root grants an earlier
+  `nvx setup` made now name an identity nothing launches under, so they stop
+  applying. The visible symptom is `npx`: it fails with `EPERM: operation not
+  permitted, lstat 'C:\Users'` out of npm's own dependency walker, which stats
+  every ancestor up to the drive root. `npm install`, `npm run` and `node` do not
+  make that walk and are unaffected.
+
+  Found by an acceptance pass, which measured the same command succeeding on
+  0.5.7 and failing on this build. nvx said nothing at the time — it checked only
+  drive roots, not `C:\Users`, checked them against the wrong identity, and
+  suppressed the advisory it did have because the machine had seen it once years
+  earlier. All three are fixed: the check now uses the identity `nvx setup`
+  actually grants, covers every path it grants, and re-arms when that identity
+  changes. `nvx doctor` reports a stranded setup and exits non-zero.
+
+  Worth stating plainly, because the documentation did not: contained `npx` has
+  always needed `nvx setup`. The elevated step was described as optional, and for
+  `npx` it never was.
+
 * **One nvx sandbox could reach another's loopback services, defeating the egress
   allowlist.** Windows permits loopback within an AppContainer package, and every
   nvx sandbox on a machine shared one. So any port a contained process bound was

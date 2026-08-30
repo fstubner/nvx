@@ -132,9 +132,10 @@ Commands:
                            --limit=N, --all)
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;
                            every run reclaims some automatically)
-  setup [--undo]           (Windows, optional) One-time elevated setup adding
-                           drive-root access and removing a loopback exemption an
-                           older nvx left behind. Egress is allowlisted either way
+  setup [--undo]           (Windows) One-time elevated setup adding drive-root
+                           access and removing a loopback exemption an older nvx
+                           left behind. Egress is allowlisted either way; `npx`
+                           needs it (see below). Re-run it after upgrading
   verify-install <pkgs>    Verify package safety before installing (called by shims)
   shim <cmd> [args]        Internal shim router (called by generated wrappers)
   version, -v              Print version info
@@ -374,6 +375,19 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   `C:\`, `C:\Users` and the profile root *also* carry a read+execute grant that nvx
   added itself — an earlier version of this entry said nvx never adds it, which was
   wrong. `nvx setup --undo` removes those.
+- **Contained `npx` needs `nvx setup`, and after upgrading to 0.5.8 you must run
+  it again.** npm's dependency walker stats every ancestor directory up to the
+  drive root, and an AppContainer cannot read `C:\` or `C:\Users` unless something
+  granted it — which is what `nvx setup` does, from an Administrator terminal.
+  Without it `npx` fails with `EPERM: operation not permitted, lstat 'C:\Users'`
+  from npm rather than from nvx. `npm install`, `npm run` and `node` are
+  unaffected; they do not make that walk.
+
+  0.5.8 gives each project its own sandbox identity, so grants made by an earlier
+  `nvx setup` name an identity nothing launches under any more and stop applying.
+  nvx now says so on the first affected run and `nvx doctor` reports it; the fix
+  is to re-run `nvx setup`. Measured 2026-08-30 on a machine set up in July.
+
 - **A loopback exemption left by a pre-0.5.0 `nvx setup` lets contained code reach
   every service on 127.0.0.1.** Local databases, daemon ports, another project's
   dev server — none of them need an `allow_hosts` entry while it is registered.
