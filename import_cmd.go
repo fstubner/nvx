@@ -7,12 +7,52 @@ import (
 	"strings"
 )
 
-// runImport scans existing nvm, fnm, and volta installation paths for Node.js versions
-// and installs any missing versions into nvx's version store.
-func runImport(source string, nvxHome string) {
+// `nvx import` scans nvm, fnm and volta for the Node versions they have, and
+// installs those versions into nvx's own store.
+//
+// It reads version NUMBERS, not files: each one is downloaded from nodejs.org
+// and checksum-verified like any other `nvx install`. Nothing is copied out of
+// the other manager and nothing about it is changed. The messages used to say
+// "Importing Node.js v22.11.0 from nvm-windows", which reads as a copy from a
+// source nvx never opened.
+
+// normalizeImportSource makes the name comparable: case and surrounding spaces
+// must not turn a source nvx supports into one it rejects, now that rejecting is
+// an error rather than an empty result.
+func normalizeImportSource(source string) string {
 	source = strings.ToLower(strings.TrimSpace(source))
 	if source == "" {
-		source = "all"
+		return "all"
+	}
+	return source
+}
+
+func containsFold(list []string, want string) bool {
+	for _, s := range list {
+		if strings.EqualFold(s, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// importSources are the version managers nvx can read versions from. Named in
+// one place so an unknown one can be rejected rather than quietly matching
+// nothing.
+var importSources = []string{"nvm", "fnm", "volta"}
+
+// runImport adopts the Node versions another version manager has, and returns an
+// exit code.
+//
+// It returns one at all because `nvx import bogus` used to print "No previous
+// Node.js installations found for source 'bogus'." and exit 0 -- a typo read as
+// success, and as evidence that the named manager had nothing, which nvx had not
+// checked. Every other unknown-argument path in the CLI exits 1.
+func runImport(source string, nvxHome string) int {
+	source = normalizeImportSource(source)
+	if source != "all" && !containsFold(importSources, source) {
+		LogError("Unknown import source %q. Known sources: %s, or 'all'.", source, strings.Join(importSources, ", "))
+		return 1
 	}
 
 	discovered := make(map[string]string) // version -> source
@@ -29,8 +69,15 @@ func runImport(source string, nvxHome string) {
 
 	if len(discovered) == 0 {
 		LogInfo("No previous Node.js installations found for source '%s'.", source)
-		return
+		return 0
 	}
+
+	// Said once, up front, because the per-version lines below cannot help
+	// sounding like a copy and this is the only place to correct that. nvx reads
+	// which VERSIONS another manager has and installs those versions itself,
+	// downloading and checksum-verifying each from nodejs.org. Nothing is copied
+	// out of the other manager, and nothing about it is changed.
+	LogInfo("Reading which Node.js versions your other version managers have; nvx downloads its own verified copy of each.")
 
 	provider := Providers["node"]
 	installedCount := 0
@@ -54,17 +101,18 @@ func runImport(source string, nvxHome string) {
 			continue
 		}
 
-		LogInfo("Importing Node.js v%s from %s...", cleanVer, src)
+		LogInfo("Installing Node.js v%s, found in %s...", cleanVer, src)
 		err := provider.Install(cleanVer, nvxHome)
 		if err != nil {
 			LogError("Failed to import Node.js v%s: %v", cleanVer, err)
 		} else {
-			LogSuccess("Successfully imported Node.js v%s from %s.", cleanVer, src)
+			LogSuccess("Installed Node.js v%s (%s has it too).", cleanVer, src)
 			installedCount++
 		}
 	}
 
-	LogSuccess("Import complete: %d imported, %d already present.", installedCount, alreadyInstalled)
+	LogSuccess("Import complete: %d installed, %d already present.", installedCount, alreadyInstalled)
+	return 0
 }
 
 func importNvm(discovered map[string]string) {

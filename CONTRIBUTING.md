@@ -98,24 +98,30 @@ following this literally goes looking for a phantom:
 | `TestPipedStdioReachesRealAppContainerChild` | needs write access to the DACL on `C:\WINDOWS\System32\cmd.exe`, which an unelevated account does not have. **Expected on a normal run**, since nvx is meant to be used without elevation — run the gate elevated to make this one assert. |
 
 A sixth means something is quietly not being checked — go and look at it rather
-than at this table. Last measured on Windows 11, 2026-08-29, unelevated:
-**394 passing, 5 skipping, 0 failing**, in nine to twelve minutes (measured at 535s and 668s on the same machine, so treat the duration as a range and the counts as exact).
+than at this table. Last measured on Windows 11, 2026-08-30, unelevated:
+**397 passing, 5 skipping, 0 failing**, in nine to twelve minutes. Treat the
+counts as exact and the duration as a range: repeated runs on the same machine
+have taken 535s, 561s, 668s and 724s, so quoting any one of them as *the*
+duration is what once made this page and the CHANGELOG look like they
+disagreed.
 
 **Adding a test? Update the pass count in the same commit.** The skip list is the
 tripwire; the pass count is a fact with a short shelf life, and it has now gone
-stale twice within a day — once at 337 and once at 392, each time because a test
+stale three times — at 337, at 392 and at 394, each time because a test
 was added in the commit after the count was written. A number nobody maintains
 teaches the reader to ignore the table it sits in.
 
-That number is a tripwire and it has twice caught something. It read "3 skips"
+That number is a tripwire and it has caught something three times. It read "3 skips"
 while the real count was 4, and the extra one was the loopback-exemption check
 verifying nothing on a healthy machine. Then it read "4 skips" and "337 passing"
 while an unelevated run — the normal way to run this, since nvx is built not to
 need elevation — produced 5 and 392: the `cmd.exe` row was missing, so the table
 told a maintainer on a clean checkout that something was quietly not being
-checked. Both were found by an acceptance pass noticing the mismatch, not by
-anyone re-reading the tests. Rows are named now, so a mismatch says which one
-rather than only how many.
+checked. All three were found by an acceptance pass noticing the mismatch, not
+by anyone re-reading the tests. The third time it read 394 against a real 396,
+again because tests were added after it was written -- which is what the note
+above is now for. Rows are named, so a mismatch says which one rather than only
+how many.
 
 That is why `docs/enforcement-matrix.md` says **measured** for the Windows
 column and **CI** for the other two. Running both is what keeps the word

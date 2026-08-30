@@ -204,7 +204,7 @@ func main() {
 		if len(os.Args) >= 3 {
 			source = os.Args[2]
 		}
-		runImport(source, nvxHome)
+		os.Exit(runImport(source, nvxHome))
 
 	case "verify-install":
 		if len(os.Args) < 3 {

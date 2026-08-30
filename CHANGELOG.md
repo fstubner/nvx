@@ -103,6 +103,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
+* **`nvx import <unknown-source>` no longer exits 0.** `nvx import bogus` printed
+  "No previous Node.js installations found for source 'bogus'." and reported
+  success — so a typo read as "that version manager had nothing installed", which
+  nvx had never checked, because no scanner matched the name. Unknown sources are
+  now named and rejected with exit 1.
+
+  Its messages were misleading in the same direction. `import` reads which
+  *versions* another manager has and installs those versions itself, downloading
+  and checksum-verifying each from nodejs.org; nothing is copied out of the other
+  manager. It said "Importing Node.js v22.11.0 from nvm-windows", which reads as
+  a copy from a source nvx never opened. It now says what it is doing.
+
+* **`scripts/bench.py` can be run the way README says to run it.** Its `--nvx`
+  default was `./nvx` on every platform, so `python scripts/bench.py` on Windows
+  — the exact command README gives — failed, either with "nvx binary not found"
+  or, in a tree that also holds a macOS build named `nvx`, an unhandled OSError
+  as Windows refused to execute a Mach-O file. It picks the right name per
+  platform now, and says how to build one when there is none.
+
+* **`PRODUCT.md` stated Windows dispatch overhead as a constant.** It said
+  "~38 ms Windows" flatly; measured with the project's own tool it is 9 ms, 38 ms
+  and 57 ms on three machines. It is the one of the three platform figures that
+  moves, and it now says so.
+
 * **Upgrading requires re-running `nvx setup` on Windows, if you ever ran it.**
   Per-project sandbox identities (below) mean the drive-root grants an earlier
   `nvx setup` made now name an identity nothing launches under, so they stop
@@ -247,8 +271,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to need elevation — produces five. The fifth needs write access to the DACL on
   `C:\WINDOWS\System32\cmd.exe`, which an unelevated account never has. Both
   numbers were also a day stale. Re-measured 2026-08-29, unelevated: **392
-  passing, 5 skipping, 0 failing in 724s**. Each skip is now named, so a mismatch
-  says which one rather than only how many.
+  passing, 5 skipping, 0 failing**, that run taking 724s. Each skip is now named,
+  so a mismatch says which one rather than only how many. CONTRIBUTING carries
+  the current counts and a duration range rather than a single figure — repeated
+  runs on this machine span 535s to 724s, so quoting one of them as *the*
+  duration is what made these two documents look like they disagreed.
 
 * **`nvx init-shims` names the directory it wrote to.** It printed `~/.nvx/bin`
   whatever `NVX_HOME` was set to, so anyone running with it set — the Windows

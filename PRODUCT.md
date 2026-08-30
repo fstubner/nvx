@@ -87,7 +87,10 @@ Deferred with intent, not built:
   elevated `nvx setup` may add optional conveniences; it may not be required for
   any security guarantee.
 - **Overhead must stay invisible.** nvx sits in front of every npm invocation;
-  measured dispatch overhead is ~3 ms Linux, ~4 ms macOS, ~38 ms Windows.
+  measured dispatch overhead is ~3 ms Linux, ~4 ms macOS, and single-digit to
+  tens of milliseconds on Windows — 9 ms, 38 ms and 57 ms on three machines with
+  `scripts/bench.py`. This used to say "~38 ms Windows" flatly, which reads as a
+  constant and is the one figure of the three that moves.
 - **Pre-1.0.** Breaking changes are acceptable between minor versions; silently
   weakening a documented security guarantee is not.
 - **Three platforms are not equal, and the differences are published.** Windows

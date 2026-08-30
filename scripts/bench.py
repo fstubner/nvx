@@ -68,17 +68,44 @@ def resolve_real_runtime(name):
     return real
 
 
+def resolve_nvx(given):
+    """Return the nvx binary to benchmark, defaulting to the right name per OS.
+
+    The default was "./nvx" on every platform, so running this the way README
+    documents it -- `python scripts/bench.py`, no arguments -- could not work on
+    Windows, where the build is nvx.exe. It failed one of two ways: "nvx binary
+    not found", or, in a tree that also holds a macOS build named `nvx`, an
+    unhandled OSError as Windows refused to execute a Mach-O file.
+
+    An explicit --nvx is used exactly as given, so pointing it at an unusual
+    build still fails loudly rather than silently benchmarking something else.
+    """
+    if given is not None:
+        path = os.path.abspath(given)
+        if not os.path.exists(path):
+            sys.exit(f"nvx binary not found at {path}")
+        return path
+
+    names = ["nvx.exe", "nvx"] if os.name == "nt" else ["nvx", "nvx.exe"]
+    for name in names:
+        path = os.path.abspath(name)
+        if os.path.exists(path):
+            return path
+    sys.exit(
+        f"no nvx binary here (looked for {' and '.join(names)} in {os.getcwd()}).\n"
+        f"Build one first:  go build -o {names[0]} ."
+    )
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--nvx", default="./nvx", help="path to the nvx binary")
+    ap.add_argument("--nvx", default=None, help="path to the nvx binary (default: ./nvx.exe on Windows, ./nvx elsewhere)")
     ap.add_argument("--runs", type=int, default=40)
     ap.add_argument("--runtime", default="node", help="runtime binary to compare against")
     opts = ap.parse_args()
 
     runtime_bin = resolve_real_runtime(opts.runtime)
-    nvx = os.path.abspath(opts.nvx)
-    if not os.path.exists(nvx):
-        sys.exit(f"nvx binary not found at {nvx}")
+    nvx = resolve_nvx(opts.nvx)
 
     home = tempfile.mkdtemp(prefix="nvx-bench-")
     with open(os.path.join(home, "policy.json"), "w") as f:
