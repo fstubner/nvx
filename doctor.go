@@ -244,23 +244,35 @@ func runDoctor(nvxHome string, fix bool) int {
 		LogInfo("Run 'nvx doctor --fix' (or 'nvx init-shims') to write them.")
 	}
 
-	// Persistent-PATH repair (Windows); POSIX is a no-op. Only applied with --fix.
+	// Persistent-PATH repair (Windows); POSIX is a no-op. Only applied with --fix,
+	// and only offered when the PATH is actually what is wrong -- see below.
+	pathIsWrong := !rep.shimDirOnPath || len(rep.shadowedBy) > 0
 	if available, err := repairPersistentPath(nvxHome, fix); err != nil {
 		LogWarn("Could not repair the persistent PATH automatically: %v", err)
 	} else if available && fix {
 		LogSuccess("Repaired your persistent PATH. Open a new terminal for it to take effect.")
-	} else if available {
+	} else if available && pathIsWrong {
 		LogInfo("Your persistent PATH can be repaired automatically: run 'nvx doctor --fix'.")
 		LogInfo("It edits your user PATH, so nvx does not do it unless you ask.")
 	}
 
-	LogInfo("To fix the current shell now, run:")
-	if runtime.GOOS == "windows" {
-		LogInfo(`  $env:PATH = "%s;$env:PATH"`, shimDirPath(nvxHome))
-	} else {
-		LogInfo(`  export PATH="%s:$PATH"`, shimDirPath(nvxHome))
+	// PATH advice only when PATH is what is wrong.
+	//
+	// This block ran whenever anything at all was unhealthy, so a machine with a
+	// perfectly good PATH and a stale `nvx setup` grant was told, three lines after
+	// "[OK] shim dir is on PATH", to repair its PATH and run `nvx doctor --fix` --
+	// which regenerates shims and cannot touch a grant that needs an Administrator
+	// terminal. Someone following it lands back on the same red report, having
+	// changed their PATH for no reason.
+	if !rep.shimDirOnPath || len(rep.shadowedBy) > 0 || len(rep.missingPosixShims) > 0 {
+		LogInfo("To fix the current shell now, run:")
+		if runtime.GOOS == "windows" {
+			LogInfo(`  $env:PATH = "%s;$env:PATH"`, shimDirPath(nvxHome))
+		} else {
+			LogInfo(`  export PATH="%s:$PATH"`, shimDirPath(nvxHome))
+		}
+		LogInfo("Ensure your shell profile contains:  eval \"$(nvx env)\"  (or the PowerShell equivalent).")
 	}
-	LogInfo("Ensure your shell profile contains:  eval \"$(nvx env)\"  (or the PowerShell equivalent).")
 
 	// After a --fix pass the shims may now be complete even though PATH still is
 	// not, so report on what is left rather than on what was found first.

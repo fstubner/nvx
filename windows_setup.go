@@ -91,12 +91,17 @@ func windowsSetupMarkerPath(nvxHome string) string {
 	return filepath.Join(nvxHome, "windows-setup.json")
 }
 
-// windowsSandboxSetupDone reports whether `nvx setup` has completed (the
-// AppContainer has ancestor-stat grants and the loopback exemption).
-func windowsSandboxSetupDone(nvxHome string) bool {
-	s, ok := readWindowsSetupState(nvxHome)
-	return ok && s.LoopbackExempt
-}
+// windowsSandboxSetupDone is deliberately absent.
+//
+// It reported whether `nvx setup` had completed, by testing LoopbackExempt --
+// a state setup no longer creates, and deliberately removes. So it answered
+// "has setup run" with "does this machine still carry the thing setup exists to
+// take away", which by now can only be false. Nothing called it, and anything
+// that started to would have been reading a wrong answer confidently.
+//
+// What replaced it is not a boolean: whether the grants setup made still apply
+// is a question about the CURRENT sandbox identity, which noteMissingElevatedGrants
+// and reportStrandedSetupGrant each ask against the real ACLs.
 
 func readWindowsSetupState(nvxHome string) (windowsSetupState, bool) {
 	data, err := os.ReadFile(windowsSetupMarkerPath(nvxHome))

@@ -4,6 +4,10 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -346,16 +350,94 @@ func grantACL(path, sidStr string, mask uint32, flags uint8) error {
 // this exists rather than a plain call.
 //
 // A write that overruns is abandoned, not cancelled: there is no way to interrupt
-// a blocked syscall, and the goroutine ends whenever the driver lets go. That is
-// the same trade the previous version made by killing a process it had spawned,
-// and the ancestor walk's own budget bounds how many can be outstanding.
+// a blocked syscall, and the goroutine ends whenever the driver lets go.
+//
+// That abandonment has to be bounded per PROCESS, and this used to reason that
+// "the ancestor walk's own budget bounds how many can be outstanding" -- true of
+// one walk, and false of a process that performs hundreds. A goroutine blocked in
+// a syscall pins an OS thread, so they accumulate.
+//
+// An acceptance pass measured the consequence in the one place nvx is long-lived:
+// the release-gate test binary. In a goroutine dump from a run that died with
+// "runtime: SetWaitableTimer failed; errno= 5 / fatal error: runtime: netpoll
+// failed", 49 of 83 goroutines were blocked in writeDACLEntry, all created here,
+// 34 of them for over a minute of a two-minute run. The same binary also failed a
+// containment test with "CreateProcess(AppContainer) ... The handle is invalid".
+// Both are what thread and handle exhaustion look like, and the gate failed two
+// runs in four.
+//
+// So two bounds, both per process:
+//
+//   - A path that has already stalled is not attempted again. The ancestor walk
+//     meets the same few directories every launch -- the profile root above all --
+//     so without this the leak grows with the number of launches rather than with
+//     the number of troublesome paths.
+//   - A hard ceiling on outstanding abandoned writes, as a backstop for anything
+//     the first rule does not cover.
+//
+// Both make the grant less likely to be applied, which is the right way to fail
+// here: these ancestor grants are already best-effort and already skipped for
+// speed, and the caller treats an error as "carry on without it". Trading a
+// best-effort grant for a process that stays alive is not a close call.
+var (
+	aclStalledPaths sync.Map     // path -> struct{}, paths whose write overran in this process
+	aclAbandoned    atomic.Int64 // writes still outstanding after their deadline
+)
+
+// maxAbandonedACLWrites caps the OS threads that can be pinned in stalled ACL
+// writes at any moment. Small: reaching it at all means the filesystem is not
+// answering, and the walk is optional.
+const maxAbandonedACLWrites = 8
+
+// aclWrite is the write grantACLWithin bounds, held in a variable so a test can
+// supply one that stalls. The bounds below are about what happens when a write
+// does not return, and a test that cannot produce that case cannot check them.
+var aclWrite = writeDACLEntry
+
 func grantACLWithin(path, sidStr string, mask uint32, flags uint8, timeout time.Duration) error {
+	key := strings.ToLower(filepath.Clean(path))
+	if _, stalled := aclStalledPaths.Load(key); stalled {
+		return fmt.Errorf("setting permissions on %s stalled earlier in this process; not retried", path)
+	}
+	if aclAbandoned.Load() >= maxAbandonedACLWrites {
+		return fmt.Errorf("setting permissions on %s skipped: %d earlier writes are still blocked",
+			path, maxAbandonedACLWrites)
+	}
+
+	// Exactly one of the two sides claims the outcome. A buffered channel alone
+	// cannot express this: the send always succeeds, so the writer could never tell
+	// that the reader had already given up, and the abandoned count would only ever
+	// rise -- which would wedge every later grant behind the ceiling above.
+	const (
+		pending   = 0
+		delivered = 1
+		abandoned = 2
+	)
+	var state atomic.Int32
 	done := make(chan error, 1)
-	go func() { done <- writeDACLEntry(path, sidStr, mask, flags) }()
+
+	go func() {
+		err := aclWrite(path, sidStr, mask, flags)
+		if state.CompareAndSwap(pending, delivered) {
+			done <- err
+			return
+		}
+		// The reader gave up on this one. It has come back after all, so the thread
+		// is free again and the path is not permanently stalled.
+		aclAbandoned.Add(-1)
+		aclStalledPaths.Delete(key)
+	}()
+
 	select {
 	case err := <-done:
 		return err
 	case <-time.After(timeout):
+		if !state.CompareAndSwap(pending, abandoned) {
+			// It finished in the gap between the deadline firing and this claim.
+			return <-done
+		}
+		aclAbandoned.Add(1)
+		aclStalledPaths.Store(key, struct{}{})
 		return fmt.Errorf("setting permissions on %s did not complete within %s", path, timeout)
 	}
 }

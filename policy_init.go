@@ -11,6 +11,13 @@ func runPolicyInit(args []string, nvxHome string) int {
 	global := false
 	project := false
 	force := false
+	// An unrecognised flag is an error, not something to skip.
+	//
+	// `nvx policy init --nope` wrote the file and exited 0, so a mistyped or
+	// misremembered flag looked like it had been honoured. That matters more here
+	// than in most commands: the flags decide WHERE the policy is written, so
+	// silently ignoring one writes a security policy somewhere the user did not
+	// ask for and reports success.
 	for _, arg := range args {
 		switch arg {
 		case "--global":
@@ -19,6 +26,10 @@ func runPolicyInit(args []string, nvxHome string) int {
 			project = true
 		case "--force", "-f":
 			force = true
+		default:
+			LogError("Unknown option for nvx policy init: %s", arg)
+			LogInfo("Valid options: --global, --project, --force/-f")
+			return 1
 		}
 	}
 	if !global && !project {
