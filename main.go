@@ -489,10 +489,11 @@ Commands:
   shim <cmd> [args]        Internal shim router for package managers
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;
                            every run reclaims some automatically)
-  setup                    (Windows, optional) One-time elevated setup adding
-                           drive-root access, and removing a loopback exemption
-                           an older nvx left behind. Egress is allowlisted with
-                           or without it. 'setup --undo' reverses it
+  setup                    (Windows) One-time elevated setup adding drive-root
+                           access, and removing a loopback exemption an older
+                           nvx left behind. Contained 'npx' needs it; egress is
+                           allowlisted with or without it. Re-run it after
+                           upgrading. 'setup --undo' reverses it
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
   grants list              Show this project's approved egress hosts, trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)

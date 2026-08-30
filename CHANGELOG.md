@@ -103,6 +103,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
+* **`PRODUCT.md` records that its "No elevation" constraint is currently violated
+  on Windows, for `npx` only.** Contained `npx` needs `nvx setup`; `node`,
+  `npm install` and `npm run` do not. It fails closed rather than running
+  uncontained, so no security guarantee is weakened — the constraint's second
+  sentence holds while its first does not. Written down rather than reworded to
+  match the code, because a constraint edited to fit the implementation stops
+  being a constraint. Three unelevated fixes were tried and measured to fail.
+
+* **The "why npx failed" explanation no longer goes silent after one run.** Its
+  once-per-machine marker meant the first affected run anywhere consumed it and
+  every project afterwards got npm's raw EPERM with nothing from nvx — including
+  brand-new projects, in the release whose commit was titled "Say why npx fails
+  after an upgrade". The stranded-setup case now repeats until `nvx setup` is
+  re-run, which is what clears it; the ordinary "you never ran setup" advisory is
+  still shown once.
+
+* **`SECURITY.md` still described a containment weakness that measurement
+  disproves.** It said a contained process can list "your home directory,
+  `C:\Users` and `C:\`". Only the home directory is listable; the other two need
+  an elevated grant. README and the enforcement matrix were corrected for this
+  and this file was missed — a partial sweep, which is how the same wrong
+  sentence survives in one place after being fixed in two.
+
+* **`nvx import` asks before downloading.** With no arguments it went straight to
+  installing every version found across nvm, fnm and volta — three full runtimes
+  on the machine that caught it — from a command whose name suggests reading. It
+  now lists what it found and asks; `-y` approves.
+
+* **`nvx grants list` no longer presents a pin whose file is gone as if the file
+  were there.** The record is kept deliberately (the pin is a content hash, so an
+  unchanged file returning is still trusted) but the line now says the file is
+  absent. Annotated rather than removed: `list` answers a question and must not
+  rewrite anything to do it.
+
+* **A warning about an untrusted project policy printed twice per contained
+  run.** A contained command loads the policy twice — once to decide whether to
+  sandbox, once inside the sandbox launch — so one problem was reported as two.
+  Reported by an acceptance pass, dismissed after measuring the *uncontained*
+  case (where it correctly prints once), and confirmed on re-measurement.
+
 * **Windows now fails closed if the writable-roots declaration and the sandbox
   disagree.** `sandboxWritableRoots` is where nvx declares what a contained
   process may write; Seatbelt and Landlock read it, and Windows did not — it

@@ -164,12 +164,28 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   Linux. **On macOS they do not**: the Seatbelt profile allows filesystem reads
   (see `docs/enforcement-matrix.md` note 2), so macOS contains writes and egress
   but not credential reads.
-- **Directory names outside the project are visible on Windows, contents are not.**
-  A contained process can list your home directory, `C:\Users` and `C:\`, which is
-  enough to learn which credential stores exist. The profile root carries an ACE
-  Windows ships for all AppContainers, which nvx cannot revoke. Where an elevated
-  `nvx setup` has run, `C:\`, `C:\Users` and the profile root also carry a
-  read+execute grant nvx added itself; `nvx setup --undo` removes those.
+- **Your home directory's names are visible on Windows, contents are not.**
+  A contained process can list your profile directory — enough to learn which
+  credential stores exist — because it carries an ACE Windows ships for all
+  AppContainers, which nvx cannot revoke.
+
+  `C:\` and `C:\Users` are **not** listable by default; they carry no such ACE.
+  They become listable where an elevated `nvx setup` has run, which grants them
+  so that tools walking up to a drive root work. `nvx setup --undo` removes what
+  nvx added. Measured 2026-08-30 in a real container, with an uncontained control
+  of the same script:
+
+  ```
+                         contained        uncontained
+  LIST[C:\]              DENIED:EPERM     OK, 40 entries
+  LIST[C:\Users]         DENIED:EPERM     OK, 14 entries
+  LIST[C:\Users\Felix]   OK, 203 entries  OK, 203 entries
+  ```
+
+  This entry used to name all three as always-visible, crediting the shipped ACE
+  for all of them. README and `docs/enforcement-matrix.md` were corrected and this
+  file was missed — a partial sweep, which is how the same wrong sentence survives
+  in one place after being fixed in two.
 - **`audit.log` is a record, not evidence against a local attacker.** Anything
   running as you can append to it, and that includes code nvx deliberately does
   not contain: at the default `standard` level your own code — `npm run build`,

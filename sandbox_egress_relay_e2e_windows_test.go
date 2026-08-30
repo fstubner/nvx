@@ -185,7 +185,13 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 
 	// 2. Allowlisted traffic reaches its destination through the relay...
 	if !strings.Contains(got, "PROXY_ALLOWED=200") {
-		t.Errorf("allowlisted %s did not tunnel through the relay; the sandbox blocks everything, which is not the same as enforcing an allowlist:\n%s", allowedTarget, got)
+		hint := "the relay did not answer twice, so this is not a dropped connection"
+		if strings.Contains(got, "PROXY_ALLOWED_RETRY=200") {
+			hint = "a RETRY of the same connection succeeded, so the relay was alive and one " +
+				"connection was dropped -- look for contention or a startup race, not a broken allowlist"
+		}
+		t.Errorf("allowlisted %s did not tunnel through the relay; the sandbox blocks everything, "+
+			"which is not the same as enforcing an allowlist (%s):\n%s", allowedTarget, hint, got)
 	}
 	// ...and the tunnel actually carries bytes once established. A CONNECT that
 	// returns 200 and then stalls looks identical to success at the status line,
@@ -259,6 +265,24 @@ func runRelayTargetChild() {
 	status, payload := connectAndEcho(proxyAddr, allowed, cred)
 	fmt.Printf("PROXY_ALLOWED=%s\n", status)
 	fmt.Printf("PROXY_PAYLOAD=%s\n", payload)
+	// A second attempt, reported and never asserted on.
+	//
+	// This assertion failed once in two full-suite runs with READ_FAILED:EOF --
+	// the relay closing before it sent a status line -- and passed 6/6 run alone,
+	// which is the signature of contention rather than a product race. That is a
+	// guess either way, and "PROXY_ALLOWED=READ_FAILED:EOF" alone cannot settle
+	// it. So the next failure carries the evidence: if the retry succeeds, one
+	// connection was dropped and the relay is alive; if it fails the same way, the
+	// relay is gone and this is not transient.
+	//
+	// Deliberately NOT used to satisfy the check. A retry that rescues the
+	// assertion would turn a real regression into a slow one, and this is the
+	// control that separates "allowlist enforced" from "blocks everything".
+	if status != "200" {
+		retryStatus, retryPayload := connectAndEcho(proxyAddr, allowed, cred)
+		fmt.Printf("PROXY_ALLOWED_RETRY=%s\n", retryStatus)
+		fmt.Printf("PROXY_PAYLOAD_RETRY=%s\n", retryPayload)
+	}
 	blockedStatus, _ := connectAndEcho(proxyAddr, blocked, cred)
 	fmt.Printf("PROXY_BLOCKED=%s\n", blockedStatus)
 	// A client inside the same container that does NOT have the credential must be

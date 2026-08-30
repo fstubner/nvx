@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -78,6 +80,29 @@ func runImport(source string, nvxHome string) int {
 	// downloading and checksum-verifying each from nodejs.org. Nothing is copied
 	// out of the other manager, and nothing about it is changed.
 	LogInfo("Reading which Node.js versions your other version managers have; nvx downloads its own verified copy of each.")
+
+	// Ask before downloading. `nvx import` with no arguments went straight to
+	// installing every version it found across nvm, fnm and volta -- on an
+	// acceptance pass that was three full Node runtimes, hundreds of megabytes,
+	// from a command whose name suggests reading rather than fetching. Naming them
+	// first is also the only chance to notice it found something unexpected.
+	//
+	// -y / NVX_YES approves it, as everywhere else. This is a convenience prompt,
+	// not a trust-boundary one: it downloads checksum-verified runtimes from the
+	// same place `nvx install` does, so it is not in the class that deliberately
+	// refuses -y.
+	pending := make([]string, 0, len(discovered))
+	for ver, src := range discovered {
+		pending = append(pending, fmt.Sprintf("v%s (found in %s)", strings.TrimPrefix(strings.ToLower(ver), "v"), src))
+	}
+	sort.Strings(pending)
+	for _, p := range pending {
+		LogInfo("  %s", p)
+	}
+	if !PromptYesNo(fmt.Sprintf("Download and install %d Node.js version(s) into nvx?", len(pending))) {
+		LogInfo("Nothing was installed.")
+		return 0
+	}
 
 	provider := Providers["node"]
 	installedCount := 0
