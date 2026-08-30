@@ -103,6 +103,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
+* **Windows now fails closed if the writable-roots declaration and the sandbox
+  disagree.** `sandboxWritableRoots` is where nvx declares what a contained
+  process may write; Seatbelt and Landlock read it, and Windows did not — it
+  granted the same pair from its own code. An acceptance pass proved the drift
+  was live by widening the declaration to include the working directory's
+  *parent*: the unit tests went red and the real Windows containment probe stayed
+  green. Windows now reads the declaration and refuses to launch, naming the
+  path, if it lists a root the AppContainer path does not implement. The same
+  sabotage now stops the launch.
+
+* **README described a containment weakness that is narrower than stated.** It
+  said a contained process can list "your home directory, `C:\Users` and `C:\`",
+  attributing all three to an ACE Windows ships. Measured in a real container:
+  the home directory is listable (that ACE is real and nvx cannot revoke it),
+  and `C:\` and `C:\Users` are **not** — they carry no such entry and are
+  readable only where an elevated `nvx setup` has granted them. The entry
+  overstated the weakness, which is the safe direction to be wrong in and still
+  wrong.
+
+* **README named a version that does not exist.** Two limitations described
+  behaviour as shipping in "0.5.8" while `appVersion` is 0.5.7, the latest tag is
+  v0.5.7, and the work sits under `[Unreleased]`. They now say "the next
+  release", so nothing published names a version that never was.
+
 * **`nvx import <unknown-source>` no longer exits 0.** `nvx import bogus` printed
   "No previous Node.js installations found for source 'bogus'." and reported
   success — so a typo read as "that version manager had nothing installed", which

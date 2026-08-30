@@ -32,7 +32,7 @@ Along the way, I wanted to tackle a few other common frustrations:
 
   **Two limits worth stating plainly.** A `.env` file *inside the project* is readable by a contained install, because the project directory has to be readable for the install to work at all — see [Known limitations](#known-limitations). And containment covers installs and ad-hoc tools, not your own code: `npm run build` runs uncontained by default, so a dependency your own code imports is not sandboxed. `isolation.level: strict` extends containment to your own code.
 - **Process Isolation**: I wanted a sandbox to run untrusted stuff (like `npx` packages) with a clean slate: a throwaway `HOME`, scrubbed env secrets, and writes locked to the project.
-- **Thin wrapper**: A single static Go binary with no runtime dependencies. Each wrapped command runs through one extra short-lived process; resolved binary paths are cached (keyed by `PATH`) so the shim doesn't rescan `PATH` on every call. Measured dispatch overhead: **~3 ms on Linux, ~4 ms on macOS, ~38 ms on Windows** (process creation is costlier there) — imperceptible next to the commands you actually wait on like `npm install`. Reproduce it with [`scripts/bench.py`](scripts/bench.py), which reported 56.8 ms on a second Windows machine on 2026-08-29; treat the Windows figure as tens of milliseconds rather than a constant.
+- **Thin wrapper**: A single static Go binary with no runtime dependencies. Each wrapped command runs through one extra short-lived process; resolved binary paths are cached (keyed by `PATH`) so the shim doesn't rescan `PATH` on every call. Measured dispatch overhead: **~3 ms on Linux, ~4 ms on macOS, and 9–57 ms on Windows** (process creation is costlier there, and varies far more between machines — 9 ms, 11 ms, 38 ms and 57 ms across four runs on three machines with [`scripts/bench.py`](scripts/bench.py)). Imperceptible either way next to the commands you actually wait on, like `npm install`.
 - **Clean UX**: Polished CLI output and automatic shell integration hooks for PowerShell, bash, and zsh.
 
 
@@ -365,17 +365,29 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   a *system* command being shadowed; it does not make a project-local tool's
   contents trustworthy. `strict` contains them.
 - **A contained process can see directory NAMES outside the project, though not
-  their contents.** On Windows it can list your home directory, `C:\Users` and
-  `C:\` — enough to learn that `.ssh`, `.aws` or `.1password` exist. File contents
-  in those places stay unreadable.
+  their contents.** On Windows it can list **your home directory** — enough to
+  learn that `.ssh`, `.aws` or `.1password` exist. File contents in those places
+  stay unreadable.
 
-  Two sources, and only one of them is Windows. The profile root carries an ACE for
-  ALL APPLICATION PACKAGES that Windows ships and nvx cannot revoke (deny rules were
-  measured not to override it). On a machine where an elevated `nvx setup` has run,
-  `C:\`, `C:\Users` and the profile root *also* carry a read+execute grant that nvx
-  added itself — an earlier version of this entry said nvx never adds it, which was
-  wrong. `nvx setup --undo` removes those.
-- **Contained `npx` needs `nvx setup`, and after upgrading to 0.5.8 you must run
+  That one is Windows, not nvx: your profile directory carries an ACE for ALL
+  APPLICATION PACKAGES that Windows ships and nvx cannot revoke (deny rules were
+  measured not to override it).
+
+  `C:\` and `C:\Users` are a separate matter, and this entry used to lump them in
+  with the home directory as though the same ACE covered them. It does not — they
+  carry no ALL APPLICATION PACKAGES entry. They are listable only where an
+  elevated `nvx setup` has granted them, which it does so that tools walking up to
+  a drive root can work. Measured 2026-08-30 in a real container:
+
+  ```
+  LIST[C:\]            DENIED:EPERM     (OK where setup's grant applies)
+  LIST[C:\Users]       DENIED:EPERM     (OK where setup's grant applies)
+  LIST[C:\Users\Felix] OK, 203 entries  (always — the shipped ACE)
+  ```
+
+  `nvx setup --undo` removes the grants nvx added; the shipped ACE on your profile
+  stays either way.
+- **Contained `npx` needs `nvx setup`, and after upgrading past 0.5.7 you must run
   it again.** npm's dependency walker stats every ancestor directory up to the
   drive root, and an AppContainer cannot read `C:\` or `C:\Users` unless something
   granted it — which is what `nvx setup` does, from an Administrator terminal.
@@ -383,8 +395,9 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   from npm rather than from nvx. `npm install`, `npm run` and `node` are
   unaffected; they do not make that walk.
 
-  0.5.8 gives each project its own sandbox identity, so grants made by an earlier
-  `nvx setup` name an identity nothing launches under any more and stop applying.
+  The next release gives each project its own sandbox identity, so grants made by
+  an earlier `nvx setup` name an identity nothing launches under any more and stop
+  applying.
   nvx now says so on the first affected run and `nvx doctor` reports it; the fix
   is to re-run `nvx setup`. Measured 2026-08-30 on a machine set up in July.
 
