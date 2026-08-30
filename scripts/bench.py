@@ -77,22 +77,53 @@ def resolve_nvx(given):
     not found", or, in a tree that also holds a macOS build named `nvx`, an
     unhandled OSError as Windows refused to execute a Mach-O file.
 
-    An explicit --nvx is used exactly as given, so pointing it at an unusual
-    build still fails loudly rather than silently benchmarking something else.
+    Existing is not enough; it has to RUN. This repo's own tree carries a
+    gitignored macOS build named `nvx`, so on Windows with no nvx.exe the
+    fallback picked a Mach-O file and the script died with an unhandled
+    "OSError: [WinError 193] %1 is not a valid Win32 application" -- which is
+    verbatim the failure this docstring already claimed to have fixed. Preferring
+    the right NAME is not the same as checking the file is for this platform, and
+    an acceptance pass found the difference by running it in this very tree.
+
+    An explicit --nvx is checked the same way, so pointing it at a build for
+    another OS fails with a sentence rather than a traceback.
     """
+    def usable(path):
+        """True if this binary can actually be executed here."""
+        try:
+            subprocess.run([path, "version"], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=60)
+            return True
+        except OSError:
+            return False
+        except subprocess.SubprocessError:
+            # It ran and misbehaved, which is not this function's problem.
+            return True
+
     if given is not None:
         path = os.path.abspath(given)
         if not os.path.exists(path):
             sys.exit(f"nvx binary not found at {path}")
+        if not usable(path):
+            sys.exit(f"{path} exists but cannot be executed here; is it built for this OS?")
         return path
 
     names = ["nvx.exe", "nvx"] if os.name == "nt" else ["nvx", "nvx.exe"]
+    found_unusable = []
     for name in names:
         path = os.path.abspath(name)
-        if os.path.exists(path):
+        if not os.path.exists(path):
+            continue
+        if usable(path):
             return path
+        found_unusable.append(path)
+
+    detail = ""
+    if found_unusable:
+        detail = ("\nFound " + ", ".join(found_unusable) +
+                  ", but nothing there can be executed here; built for another OS?")
     sys.exit(
-        f"no nvx binary here (looked for {' and '.join(names)} in {os.getcwd()}).\n"
+        f"no runnable nvx binary here (looked for {' and '.join(names)} in {os.getcwd()}).{detail}\n"
         f"Build one first:  go build -o {names[0]} ."
     )
 

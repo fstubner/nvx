@@ -596,4 +596,8 @@ func reclaimStaleSandboxes(nvxHome string) {
 	// skipped, and one used inside the retention window is left alone so the
 	// common case never pays to re-register a profile it is about to use again.
 	sweepOrphanedSandboxPackages(nvxHome, reclaimBudgetPerRun)
+	// Logs rescued from failed runs. They had no sweep at all, so they
+	// accumulated for the life of the installation -- 3,146 directories and
+	// 181 MB on the development machine, which `nvx cleanup` also left alone.
+	sweepRescuedLogs(nvxHome, reclaimBudgetPerRun)
 }
