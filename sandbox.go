@@ -134,7 +134,10 @@ func createProfileSkeleton(guestHome string) error {
 		// inside the sandbox was a path that did not exist and every mkdtemp there
 		// failed with ENOENT. That breaks any contained tool that writes a scratch
 		// file, which is most of them; it surfaced while diagnosing something else.
-		subdirs = append(subdirs, filepath.Join("AppData", "Local", "Packages", stableSandboxProfile, "AC", "Temp"))
+		//
+		// The leaf is created by the Windows launch path now, not here: the package
+		// name became per-project, and this function does not know the project.
+		subdirs = append(subdirs, filepath.Join("AppData", "Local", "Packages"))
 	} else {
 		subdirs = append(subdirs, filepath.Join(".local", "share"))
 	}

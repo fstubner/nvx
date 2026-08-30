@@ -93,16 +93,36 @@ func resolveSandboxNodeExe(nvxHome string) string {
 // Isolation setup is fail-closed: if AppContainer cannot be applied, the command
 // is not executed.
 func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath string, cleanEnv []string, netCtx NetworkLaunchContext) int {
-	// Use the stable profile so its SID is a durable target for `nvx setup`
-	// grants (ancestor stat + loopback exemption). It is intentionally not
-	// deleted after the run; isolation comes from the ephemeral guest home,
-	// capability restrictions, and filesystem ACLs, not SID uniqueness.
-	sid, err := ensureAppContainerSID(stableSandboxProfile)
+	// One AppContainer package per project.
+	//
+	// This used to be one package for the whole machine, on the reasoning that
+	// "isolation comes from the ephemeral guest home, capability restrictions, and
+	// filesystem ACLs, not SID uniqueness". That is true of the filesystem and
+	// false of the network: Windows permits loopback within a package, so every
+	// port a contained process bound was reachable from every other nvx sandbox on
+	// the machine. See sandbox_packages_windows.go for the measurement.
+	scope := sandboxScopeForWorkDir(workDir)
+	// The guest home is named after the session id, which is the only place it
+	// is available here; for a trusted tool it is that tool's persistent profile
+	// key, which is equally unique to one project and tool.
+	pkgName := sandboxPackageName(scope, filepath.Base(guestHome))
+	sid, err := ensureAppContainerSID(pkgName)
 	if err != nil {
 		LogError("AppContainer profile unavailable: %v", err)
 		return 1
 	}
 	defer syscall.LocalFree(syscall.Handle(sid))
+
+	// Windows redirects an AppContainer's temp to
+	// <LOCALAPPDATA>\Packages\<package>\AC\Temp, and LOCALAPPDATA points into the
+	// guest home. The directory has to exist or os.tmpdir() inside the sandbox is a
+	// path that is not there and every mkdtemp fails with ENOENT. It was created by
+	// createProfileSkeleton while the package name was a constant; now that the
+	// name is known only here, it is created here.
+	if err := os.MkdirAll(filepath.Join(guestHome, "AppData", "Local", "Packages", pkgName, "AC", "Temp"), 0700); err != nil {
+		LogError("Could not create the sandbox temp directory: %v", err)
+		return 1
+	}
 
 	// Package-manager workflows used to require the elevated `nvx setup` grants,
 	// because node resolved its entry point by realpath'ing up to the drive root
@@ -127,7 +147,6 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// Access is denied". Doing it first means prepareAppContainerFilesystem
 	// re-establishes whatever this run actually needs, after anything the policy no
 	// longer asks for is gone.
-	scope := sandboxScopeForWorkDir(workDir)
 	ledger := loadProjectGrants(config.NvxHome, scope)
 	beforeCount := len(ledger.ReadExecGrants)
 	var revokedNow []readExecGrant
@@ -307,6 +326,15 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// at all; without it the container holds the package SID only, which no longer
 	// grants the guest home or the working directory.
 	capabilitySIDs := append(scopeCaps, networkCaps...)
+
+	// The identity `nvx setup` grants drive-root stat access to, carried by every
+	// launch. Setup is elevated and runs once, long before any particular project
+	// exists, so it cannot grant per-project packages; it grants this instead. A
+	// machine that never ran setup simply holds a capability nothing has granted
+	// anything to, which costs nothing and grants nothing.
+	if setupCap, err := deriveCapabilitySIDString(setupCapabilityName); err == nil {
+		capabilitySIDs = append(capabilitySIDs, setupCap)
+	}
 
 	// Publishing a port needs the in-container supervisor too, since the tunnels
 	// are dialled from in there. In the default proxy mode it is already running

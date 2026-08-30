@@ -237,6 +237,110 @@ function done() {
     Expect "READ_INSIDE=ALLOWED"  "a contained process could not read its own project, so 'reads are restricted' cannot be told apart from a sandbox that reads nothing"
     Expect "EGRESS=DENIED"        "a contained process reached a host with an empty allowlist"
 
+    # ------------------------------------------------------------------
+    # One sandbox must not reach a service inside another project's sandbox.
+    #
+    # Windows permits loopback WITHIN an AppContainer package. While every nvx
+    # sandbox shared one package, any port a contained process bound was
+    # reachable from every other contained process on the machine: measured
+    # 2026-08-29, a sandbox in an unrelated project with an empty allowlist read
+    # a listener inside another project's sandbox, while the same sandbox could
+    # not reach a listener on the host. That turns the egress allowlist into a
+    # suggestion -- one sandbox relays for another -- and hands two projects a
+    # channel the filesystem isolation exists to deny.
+    #
+    # Packages are per project now. This asserts it end to end rather than
+    # trusting the naming: the whole defect was that the naming looked fine and
+    # the network did not care.
+    #
+    # The positive control is what makes the denial mean anything. A listener
+    # that never started, or a client that cannot run, also produces "refused".
+    # So the same connection is made from the listener's OWN project, where it
+    # must succeed -- same project, same package, same trust domain, which is the
+    # boundary this draws rather than one it hides.
+    Write-Host "Testing cross-sandbox loopback..."
+    $other = Join-Path $probeRoot "otherproject"
+    New-Item -ItemType Directory -Force -Path $other | Out-Null
+    Copy-Item (Join-Path $proj ".nvx-policy.json") (Join-Path $other ".nvx-policy.json")
+    $utf8n = New-Object System.Text.UTF8Encoding $false
+
+    $ready = Join-Path $proj "listener-ready.txt"
+    [System.IO.File]::WriteAllText((Join-Path $proj "listener.js"), @'
+const net = require('net');
+const fs = require('fs');
+net.createServer(s => s.end('SANDBOX_A_SECRET'))
+   .listen(20781, '127.0.0.1', () => fs.writeFileSync(process.argv[2], 'ready'));
+setTimeout(() => process.exit(0), 120000);
+'@, $utf8n)
+
+    $clientJs = @'
+const net = require('net');
+const fs = require('fs');
+const s = net.connect(20781, '127.0.0.1');
+let b = '';
+s.on('data', d => b += d);
+s.on('end', () => { fs.writeFileSync(process.argv[2], 'REACHED:' + b.trim()); process.exit(0); });
+s.on('error', e => { fs.writeFileSync(process.argv[2], 'REFUSED:' + e.code); process.exit(0); });
+setTimeout(() => { fs.writeFileSync(process.argv[2], 'REFUSED:TIMEOUT'); process.exit(0); }, 15000);
+'@
+    [System.IO.File]::WriteAllText((Join-Path $other "client.js"), $clientJs, $utf8n)
+    [System.IO.File]::WriteAllText((Join-Path $proj "client.js"), $clientJs, $utf8n)
+
+    Remove-Item $ready -Force -ErrorAction SilentlyContinue
+    # The job's output is kept, not discarded. "The listener never started" with
+    # no reason is the kind of failure that costs an hour; this is a gate, and a
+    # gate that cannot say why it failed is only half a gate.
+    $listenerLog = Join-Path $probeRoot "listener.log"
+    $listener = Start-Job -ScriptBlock {
+        param($nvxPath, $dir, $home2, $readyPath, $logPath)
+        Set-Location $dir
+        $env:NVX_HOME = $home2
+        $env:NVX_YES = "true"
+        & $nvxPath -y --strict shim node listener.js $readyPath *>&1 |
+            Out-File -FilePath $logPath -Encoding utf8
+    } -ArgumentList $nvx, $proj, $env:NVX_HOME, $ready, $listenerLog
+
+    for ($i = 0; $i -lt 120 -and -not (Test-Path $ready); $i++) { Start-Sleep -Milliseconds 500 }
+    if (-not (Test-Path $ready)) {
+        Stop-Job $listener -ErrorAction SilentlyContinue
+        Remove-Job $listener -Force -ErrorAction SilentlyContinue
+        Write-Host "FAIL: the contained listener never started, so nothing below could be asserted." -ForegroundColor Red
+        if (Test-Path $listenerLog) {
+            Write-Host "      Its output:"
+            Get-Content $listenerLog | Select-Object -Last 12 | ForEach-Object { Write-Host "        $_" }
+        } else {
+            Write-Host "      It produced no output at all."
+        }
+        $fail = $true
+    } else {
+        $crossReport = Join-Path $other "cross.txt"
+        Set-Location $other
+        $null = Invoke-NativeCapture $nvx @('-y', '--strict', 'shim', 'node', 'client.js', $crossReport)
+        $sameReport = Join-Path $proj "same.txt"
+        Set-Location $proj
+        $null = Invoke-NativeCapture $nvx @('-y', '--strict', 'shim', 'node', 'client.js', $sameReport)
+
+        Stop-Job $listener -ErrorAction SilentlyContinue
+        Remove-Job $listener -Force -ErrorAction SilentlyContinue
+
+        $cross = if (Test-Path $crossReport) { (Get-Content $crossReport -Raw).Trim() } else { "(no report)" }
+        $same  = if (Test-Path $sameReport)  { (Get-Content $sameReport -Raw).Trim() }  else { "(no report)" }
+        Write-Host "  cross-project: $cross"
+        Write-Host "  same-project : $same"
+
+        if (-not $cross.StartsWith("REFUSED")) {
+            Write-Host "FAIL: a sandbox in another project reached this sandbox's loopback listener ($cross)." -ForegroundColor Red
+            Write-Host "      That defeats the egress allowlist by relay and joins two projects that must stay apart."
+            $fail = $true
+        }
+        if (-not $same.StartsWith("REACHED")) {
+            Write-Host "FAIL: a sandbox in the listener's OWN project could not reach it ($same)." -ForegroundColor Red
+            Write-Host "      Without this the refusal above proves nothing: a listener that never accepted"
+            Write-Host "      any connection would satisfy it."
+            $fail = $true
+        }
+    }
+
     # What EGRESS=DENIED does NOT cover, stated because this script passed on a
     # machine that was printing the loopback-exemption warning at the time.
     #

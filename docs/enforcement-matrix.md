@@ -32,6 +32,7 @@ running system and which are not.
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
 | Any loopback service reachable | Only with a leftover exemption³ | No (loopback-only netns) | No⁶ (proxy port only) |
 | One named host service reachable | Only via `--connect`⁹ | No | No |
+| Another project's sandbox reachable over loopback | No¹⁰ (per-project package) | No (each has its own netns) | Untested |
 | A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
 
@@ -487,3 +488,34 @@ than for the namespace, because the two answers differ and only the first one
 decides whether the test can run. CI relaxes
 `kernel.apparmor_restrict_unprivileged_userns` before the smoke and enforcement
 steps, which is why those do run unprivileged there.
+
+¹⁰ **One AppContainer package per project, because loopback is package-scoped.**
+
+Windows permits loopback *within* an AppContainer package. Until 2026-08-29 nvx
+ran every sandbox on a machine under one package, so any port a contained
+process bound was reachable from every other contained process — across
+unrelated projects, with an empty allowlist and no `--connect`.
+
+Measured with both controls, which is what pins it to the package rather than to
+loopback generally:
+
+| from | to | result |
+|---|---|---|
+| true host process | sandbox A's listener | DENIED (ETIMEDOUT) |
+| sandbox B | a listener on the host | DENIED (ETIMEDOUT) |
+| sandbox B (different project) | sandbox A's listener | **GOT the payload** |
+
+Confirmed to be the package identity by varying only the profile name: the same
+connection was refused for two different names and succeeded when both sides
+shared one.
+
+Packages are per project now. **Two runs of the same project still reach each
+other** — same package, same dependencies, same policy, one trust domain — and
+that is the boundary rather than an oversight. `scripts/sandbox-enforcement-windows.ps1`
+asserts the cross-project refusal with the same-project connection as its
+positive control, so a sandbox that refuses everything cannot pass it.
+
+The Linux column is No for a different reason: each contained process gets its
+own loopback-only network namespace, so there is no shared loopback to meet on.
+macOS is Untested — Seatbelt does not namespace the network, and nothing here
+stands up two contained listeners on macOS to check.

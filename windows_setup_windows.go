@@ -165,17 +165,31 @@ func runWindowsSetup(nvxHome string, undo bool) int {
 		return 1
 	}
 
-	LogInfo("Preparing the nvx sandbox profile ...")
-	sid, err := ensureAppContainerSID(stableSandboxProfile)
+	LogInfo("Preparing the nvx sandbox identity ...")
+
+	// Granted to a CAPABILITY, not to an AppContainer package.
+	//
+	// This used to grant the package SID, which worked only while every sandbox on
+	// the machine shared one package. Packages are per-project now -- that is what
+	// stops one sandbox reaching another's loopback listeners -- so a grant made
+	// here could not name them; they do not exist until a project is first run.
+	// Every launch carries this capability, so one elevated grant still covers all
+	// of them.
+	sidStr, err := deriveCapabilitySIDString(setupCapabilityName)
 	if err != nil {
-		LogError("Could not create the nvx AppContainer profile: %v", err)
+		LogError("Could not derive the nvx sandbox capability: %v", err)
 		return 1
 	}
-	defer syscall.LocalFree(syscall.Handle(sid))
-	sidStr, err := appContainerSidToString(sid)
-	if err != nil {
-		LogError("Could not read the AppContainer SID: %v", err)
-		return 1
+
+	// The package identity older versions granted. Nothing launches under it any
+	// more, but --undo has to be able to take back what an older setup gave, so it
+	// is derived here for the revoke sweep below and for nothing else.
+	legacySidStr := ""
+	if legacySid, lerr := ensureAppContainerSID(stableSandboxProfile); lerr == nil {
+		defer syscall.LocalFree(syscall.Handle(legacySid))
+		if s, serr := appContainerSidToString(legacySid); serr == nil {
+			legacySidStr = s
+		}
 	}
 
 	if undo {
@@ -189,9 +203,19 @@ func runWindowsSetup(nvxHome string, undo bool) int {
 			if err := revokeSidGrant(sidStr, p); err != nil {
 				LogWarn("Could not remove grant on %s: %v", p, err)
 			}
+			// Anyone who ran an older setup has the grant on the package identity
+			// instead. Removing only the capability would leave that one behind,
+			// and --undo is documented as removing what setup added.
+			if legacySidStr != "" {
+				if err := revokeSidGrant(legacySidStr, p); err != nil {
+					LogWarn("Could not remove the older grant on %s: %v", p, err)
+				}
+			}
 		}
-		if err := setLoopbackExempt(false, sidStr); err != nil {
-			LogWarn("Could not remove loopback exemption: %v", err)
+		if legacySidStr != "" {
+			if err := setLoopbackExempt(false, legacySidStr); err != nil {
+				LogWarn("Could not remove loopback exemption: %v", err)
+			}
 		}
 		if err := clearWindowsSetupState(nvxHome); err != nil {
 			LogWarn("Could not clear setup state: %v", err)
@@ -218,8 +242,10 @@ func runWindowsSetup(nvxHome string, undo bool) int {
 	// lets the sandbox reach every other loopback listener on the machine. Remove
 	// it, including for users who ran an earlier setup. Best-effort: on a machine
 	// that never had it, CheckNetIsolation simply reports nothing to delete.
-	if err := setLoopbackExempt(false, sidStr); err != nil {
-		LogInfo("No loopback exemption to remove (the sandbox no longer needs one).")
+	if legacySidStr != "" {
+		if err := setLoopbackExempt(false, legacySidStr); err != nil {
+			LogInfo("No loopback exemption to remove (the sandbox no longer needs one).")
+		}
 	}
 	if err := writeWindowsSetupState(nvxHome, windowsSetupState{
 		AppContainerSID: sidStr,
