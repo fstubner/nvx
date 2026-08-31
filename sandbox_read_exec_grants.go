@@ -237,7 +237,30 @@ func recordReadExecGrant(existing []readExecGrant, sid, path string) []readExecG
 // thing still naming it. On an explicit reset it is not: the user has asked to
 // clear this state, nvx can do nothing more about that path, and refusing for ever
 // would leave `grants reset` permanently unable to finish.
-func revokeAllReadExecGrants(grants []readExecGrant, revoke func(sid, path string) error) (revoked, failed, stranded int) {
+// revokeOutcome is what a reset achieved, split by what the caller must do about
+// it. Four counters that always travel together and were previously returned as
+// loose ints; naming them is what makes "finished but not clean" expressible.
+type revokeOutcome struct {
+	// Revoked was withdrawn and the removal confirmed by reading the ACL back.
+	Revoked int
+	// Failed could not be withdrawn and may work later. The record is KEPT so a
+	// later reset retries.
+	Failed int
+	// Stranded had no directory at the recorded path. The record is dropped -- see
+	// revokeAllReadExecGrantsWithin -- so the reset finishes.
+	Stranded int
+	// Broadened was left in place on purpose: the permission there is wider than
+	// the read/execute one nvx recorded, so nvx will not touch it. The record is
+	// dropped with the others.
+	Broadened int
+}
+
+// Unaccounted is the count of permissions that may still be on disk with nothing
+// left tracking them. Stranded and Broadened both drop their record, so this is
+// the caller's last chance to say so.
+func (o revokeOutcome) Unaccounted() int { return o.Stranded + o.Broadened }
+
+func revokeAllReadExecGrants(grants []readExecGrant, revoke func(sid, path string) error) revokeOutcome {
 	return revokeAllReadExecGrantsWithin(grants, revoke, func(p string) bool {
 		_, err := osStat(p)
 		return err == nil
@@ -261,13 +284,14 @@ func revokeAllReadExecGrants(grants []readExecGrant, revoke func(sid, path strin
 // Counting it separately lets the caller do both things that are true at once:
 // finish the reset, and refuse to call it a success. The SID and old path go to
 // the terminal, because after this the ledger no longer has them.
-func revokeAllReadExecGrantsWithin(grants []readExecGrant, revoke func(sid, path string) error, pathExists func(string) bool) (revoked, failed, stranded int) {
+func revokeAllReadExecGrantsWithin(grants []readExecGrant, revoke func(sid, path string) error, pathExists func(string) bool) revokeOutcome {
+	var out revokeOutcome
 	for _, g := range grants {
 		if !pathExists(g.Path) {
 			LogWarn("%s no longer exists, so its permission could not be withdrawn.", g.Path)
 			LogInfo("If that directory was renamed rather than deleted, the permission moved with it and is still in force. "+
 				"Remove it there with: icacls \"<new path>\" /remove:g *%s", g.SID)
-			stranded++
+			out.Stranded++
 			continue
 		}
 		if err := revoke(g.SID, g.Path); err != nil {
@@ -275,14 +299,27 @@ func revokeAllReadExecGrantsWithin(grants []readExecGrant, revoke func(sid, path
 				continue // nothing was there; nothing was removed
 			}
 			if errors.Is(err, errPermissionBroadened) {
+				// Counted, not merely warned about.
+				//
+				// This branch sat three lines below the stranded one and had the same
+				// defect it was just fixed for: it warned that a permission was being
+				// left on disk, returned nothing, and the caller deleted the record and
+				// exited 0. An acceptance pass found it immediately afterwards.
+				//
+				// Not Failed, for the same reason Stranded is not: retrying cannot help.
+				// nvx refuses to remove an entry wider than the one it recorded, so a
+				// later reset would refuse identically and the record would be kept for
+				// ever. It is dropped, and reported.
 				LogWarn("Left the permission on %s in place: it is now wider than the read/execute one nvx recorded.", g.Path)
+				LogInfo("nvx only withdraws the exact entry it granted. Remove it yourself with: icacls %q /remove:g *%s", g.Path, g.SID)
+				out.Broadened++
 				continue
 			}
 			LogWarn("Could not withdraw the sandbox's read access to %s: %v", g.Path, err)
-			failed++
+			out.Failed++
 			continue
 		}
-		revoked++
+		out.Revoked++
 	}
-	return revoked, failed, stranded
+	return out
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -104,11 +105,11 @@ func TestResettingGrantsWithdrawsThemAll(t *testing.T) {
 	const sid = "S-1-15-3-1024-eee"
 	var revoked []string
 	allExist := func(string) bool { return true }
-	r, f, s := revokeAllReadExecGrantsWithin(
+	out := revokeAllReadExecGrantsWithin(
 		[]readExecGrant{{Path: `C:\a`, SID: sid}, {Path: `C:\b`, SID: sid}},
 		recordingRevoker(&revoked, map[string]bool{`C:\b`: true}), allExist)
-	if r != 1 || f != 1 || s != 0 {
-		t.Fatalf("revoked=%d failed=%d stranded=%d, want 1, 1 and 0", r, f, s)
+	if out.Revoked != 1 || out.Failed != 1 || out.Unaccounted() != 0 {
+		t.Fatalf("%+v, want Revoked 1, Failed 1, Unaccounted 0", out)
 	}
 }
 
@@ -126,43 +127,61 @@ func TestResettingSkipsRecordsWhoseDirectoryIsGone(t *testing.T) {
 	const sid = "S-1-15-3-1024-fff"
 	var revoked []string
 	gone := func(string) bool { return false }
-	r, f, s := revokeAllReadExecGrantsWithin(
+	out := revokeAllReadExecGrantsWithin(
 		[]readExecGrant{{Path: `C:\vanished`, SID: sid}},
 		recordingRevoker(&revoked, nil), gone)
 
 	if len(revoked) != 0 {
 		t.Fatalf("tried to withdraw from a path that does not exist: %v", revoked)
 	}
-	if f != 0 {
-		t.Fatalf("failed=%d; a vanished directory would block the reset for ever", f)
+	if out.Failed != 0 {
+		t.Fatalf("Failed=%d; a vanished directory would block the reset for ever", out.Failed)
 	}
-	if r != 0 {
-		t.Fatalf("revoked=%d; nothing was withdrawn, so nothing should be counted", r)
+	if out.Revoked != 0 {
+		t.Fatalf("Revoked=%d; nothing was withdrawn, so nothing should be counted", out.Revoked)
 	}
-	if s != 1 {
-		t.Fatalf("stranded=%d, want 1; without it the caller cannot tell this run apart "+
-			"from one that withdrew everything, and prints a tick at exit 0", s)
+	if out.Stranded != 1 {
+		t.Fatalf("Stranded=%d, want 1; without it the caller cannot tell this run apart "+
+			"from one that withdrew everything, and prints a tick at exit 0", out.Stranded)
 	}
 }
 
-// A mixture: one withdrawn, one refused, one vanished. Each has a different
-// consequence for the caller -- keep the record, drop it, exit code -- so they
-// must not be conflated into a single "something went wrong" count.
-func TestRevokeAccountingKeepsTheThreeOutcomesApart(t *testing.T) {
+// A mixture: one withdrawn, one refused, one vanished, one widened since nvx
+// granted it. Each has a different consequence for the caller -- keep the record,
+// drop it, exit code -- so they must not be conflated into a single "something
+// went wrong" count.
+func TestRevokeAccountingKeepsTheFourOutcomesApart(t *testing.T) {
 	const sid = "S-1-15-3-1024-abc"
 	var revoked []string
 	exists := func(p string) bool { return p != `C:\vanished` }
 
-	r, f, s := revokeAllReadExecGrantsWithin(
+	revoker := func(sidStr, path string) error {
+		switch path {
+		case `C:\refused`:
+			return errors.New("access denied")
+		case `C:\widened`:
+			return errPermissionBroadened
+		}
+		revoked = append(revoked, path)
+		return nil
+	}
+
+	out := revokeAllReadExecGrantsWithin(
 		[]readExecGrant{
 			{Path: `C:\ok`, SID: sid},
 			{Path: `C:\refused`, SID: sid},
 			{Path: `C:\vanished`, SID: sid},
-		},
-		recordingRevoker(&revoked, map[string]bool{`C:\refused`: true}), exists)
+			{Path: `C:\widened`, SID: sid},
+		}, revoker, exists)
 
-	if r != 1 || f != 1 || s != 1 {
-		t.Fatalf("revoked=%d failed=%d stranded=%d, want 1, 1 and 1", r, f, s)
+	if out.Revoked != 1 || out.Failed != 1 || out.Stranded != 1 || out.Broadened != 1 {
+		t.Fatalf("%+v, want one of each", out)
+	}
+	// Stranded and Broadened both drop their record, so both must reach the
+	// caller's "finished, but something is unaccounted for" branch.
+	if out.Unaccounted() != 2 {
+		t.Fatalf("Unaccounted()=%d, want 2; a permission left on disk with its record "+
+			"deleted has to reach the exit code", out.Unaccounted())
 	}
 	// The vanished path must never be handed to the revoker: on Windows that call
 	// is what reports success having removed nothing.

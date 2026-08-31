@@ -132,14 +132,30 @@ func saveProjectGrants(nvxHome string, g projectGrants) error {
 	return nil
 }
 
-// hashPolicyFile returns the hex sha256 of a policy file's contents.
+// hashPolicyBytes is the pin: the hex sha256 of a policy file's raw bytes,
+// exactly as read, before any byte-order mark is stripped.
+//
+// One function so the production path and the tests that seed a pin cannot
+// disagree about what a pin is made of. Every pin already written to disk was
+// computed this way, so the input must stay the raw bytes.
+func hashPolicyBytes(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+// hashPolicyFile hashes a policy file by path.
+//
+// Production reads the file and hashes what it parsed in one step -- see
+// readAndHashProjectPolicyFile -- so this remains for tests that need to compute
+// the expected pin for a file they just wrote. Keeping it delegating to
+// hashPolicyBytes is what stops those tests drifting into their own definition of
+// a pin and passing against a product that computes a different one.
 func hashPolicyFile(path string) (string, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", false
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), true
+	return hashPolicyBytes(data), true
 }
 
 // Nothing writes AllowHosts into the grants store any more.

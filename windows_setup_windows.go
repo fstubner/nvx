@@ -193,35 +193,8 @@ func runWindowsSetup(nvxHome string, undo bool) int {
 	}
 
 	if undo {
-		// The profile root is deliberately excluded from the GRANT sweep (its ACL
-		// write stalls behind the OneDrive/Defender filter driver), but earlier
-		// versions did grant it, and README/SECURITY.md tell users --undo removes
-		// it. Revoking is cheap where nothing was granted, so sweep it here even
-		// though it is not granted here.
-		undoPaths := append(windowsAncestorGrantPaths(), filepath.Clean(os.Getenv("USERPROFILE")))
-		for _, p := range undoPaths {
-			if err := revokeSidGrant(sidStr, p); err != nil {
-				LogWarn("Could not remove grant on %s: %v", p, err)
-			}
-			// Anyone who ran an older setup has the grant on the package identity
-			// instead. Removing only the capability would leave that one behind,
-			// and --undo is documented as removing what setup added.
-			if legacySidStr != "" {
-				if err := revokeSidGrant(legacySidStr, p); err != nil {
-					LogWarn("Could not remove the older grant on %s: %v", p, err)
-				}
-			}
-		}
-		if legacySidStr != "" {
-			if err := setLoopbackExempt(false, legacySidStr); err != nil {
-				LogWarn("Could not remove loopback exemption: %v", err)
-			}
-		}
-		if err := clearWindowsSetupState(nvxHome); err != nil {
-			LogWarn("Could not clear setup state: %v", err)
-		}
-		LogSuccess("nvx sandbox setup removed.")
-		return 0
+		return runWindowsSetupUndo(nvxHome, sidStr, legacySidStr,
+			revokeSidGrant, setLoopbackExempt, clearWindowsSetupState)
 	}
 
 	paths := windowsAncestorGrantPaths()
@@ -258,5 +231,73 @@ func runWindowsSetup(nvxHome string, undo bool) int {
 	LogSuccess("nvx sandbox setup complete.")
 	LogInfo("Drive-root access granted, for tools that resolve paths that far. Undo with: nvx setup --undo (elevated).")
 	LogInfo("Egress is allowlisted with or without this step; setup is not required for it.")
+	return 0
+}
+
+// runWindowsSetupUndo takes back what setup granted, and reports whether it
+// managed to.
+//
+// The three operations are parameters so this can be tested with them failing.
+// Without that the counting below is unverifiable: undo needs an Administrator
+// terminal, so the path where a revoke fails cannot be exercised in the gate at
+// all, and it is exactly the path that used to print a tick regardless.
+func runWindowsSetupUndo(
+	nvxHome, sidStr, legacySidStr string,
+	revokeGrant func(sid, path string) error,
+	setExempt func(bool, string) error,
+	clearState func(string) error,
+) int {
+	// The profile root is deliberately excluded from the GRANT sweep (its ACL
+	// write propagates over the whole profile tree and cannot finish in any budget
+	// nvx would accept), but earlier versions did grant it, and README/SECURITY.md
+	// tell users --undo removes it. Revoking is cheap where nothing was granted,
+	// so sweep it here even though it is not granted here.
+	//
+	// Every failure below is counted, and any of them makes this command fail.
+	//
+	// It used to warn on each one and then print "nvx sandbox setup removed."
+	// at exit 0 regardless. The loopback exemption is the worst of them to be
+	// wrong about: while it is registered, this codebase's own words are that
+	// the egress allowlist is bypassable -- so a user could run --undo, see a
+	// tick, and still be exempt. That is the same fail-open already closed for
+	// `grants reset --all`, which returns 1 when it leaves a record behind.
+	//
+	// Reported per item as well as counted, because "3 things could not be
+	// removed" without saying which leaves the user no way to finish the job by
+	// hand.
+	failures := 0
+	undoPaths := append(windowsAncestorGrantPaths(), filepath.Clean(os.Getenv("USERPROFILE")))
+	for _, p := range undoPaths {
+		if err := revokeGrant(sidStr, p); err != nil {
+			LogWarn("Could not remove grant on %s: %v", p, err)
+			failures++
+		}
+		// Anyone who ran an older setup has the grant on the package identity
+		// instead. Removing only the capability would leave that one behind,
+		// and --undo is documented as removing what setup added.
+		if legacySidStr != "" {
+			if err := revokeGrant(legacySidStr, p); err != nil {
+				LogWarn("Could not remove the older grant on %s: %v", p, err)
+				failures++
+			}
+		}
+	}
+	if legacySidStr != "" {
+		if err := setExempt(false, legacySidStr); err != nil {
+			LogWarn("Could not remove loopback exemption: %v", err)
+			LogWarn("While it is registered the egress allowlist can be bypassed through any reachable loopback service.")
+			failures++
+		}
+	}
+	if err := clearState(nvxHome); err != nil {
+		LogWarn("Could not clear setup state: %v", err)
+		failures++
+	}
+	if failures > 0 {
+		LogError("nvx sandbox setup was NOT fully removed: %d item(s) above could not be undone.", failures)
+		LogInfo("Re-run in an Administrator terminal, or remove the entries named above by hand.")
+		return 1
+	}
+	LogSuccess("nvx sandbox setup removed.")
 	return 0
 }
