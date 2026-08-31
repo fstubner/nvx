@@ -342,15 +342,20 @@ func grantACL(path, sidStr string, mask uint32, flags uint8) error {
 
 // grantACLWithin is grantACL with a deadline, for the ancestor walk.
 //
-// Writing an ACL is a syscall rather than a process, but a syscall can still
-// block: on the user profile root it goes through the OneDrive and Defender
-// filter drivers and does not come back. Dropping the timebox on the assumption
-// that "a syscall is fast" hung every contained launch on this machine, before
-// the sandbox printed anything past its first line -- measured, and the reason
-// this exists rather than a plain call.
+// Writing an ACL is a syscall rather than a process, but a syscall can still take
+// minutes. SetNamedSecurityInfoW on a directory runs Windows' auto-inheritance
+// propagation across everything beneath it, at a cost linear in the number of
+// entries -- measured 2026-08-31 on this machine: 1ms empty, 773ms at 5000
+// entries, 3.108s at 20000, and 3m45s on AppData\Local\Temp, which holds 748,317.
+// Dropping the timebox on the assumption that "a syscall is fast" hung every
+// contained launch on this machine before the sandbox printed anything past its
+// first line -- measured, and the reason this exists rather than a plain call.
 //
 // A write that overruns is abandoned, not cancelled: there is no way to interrupt
-// a blocked syscall, and the goroutine ends whenever the driver lets go.
+// it, and the goroutine ends when the propagation finishes. It usually does
+// finish, and it usually SUCCEEDS -- minutes after the caller recorded a failure.
+// That is survivable only because appContainerHasGrant finds the landed entry on
+// the next launch rather than the walk having to be right the first time.
 //
 // That abandonment has to be bounded per PROCESS, and this used to reason that
 // "the ancestor walk's own budget bounds how many can be outstanding" -- true of

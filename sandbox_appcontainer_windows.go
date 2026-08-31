@@ -90,8 +90,8 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	}
 
 	// The working-directory grant is best-effort. Many commands (e.g. npx) never
-	// write the cwd, and the profile root both cannot be granted (its ACL write
-	// hangs behind the OneDrive/Defender filter driver) and already grants ALL
+	// write the cwd, and the profile root both cannot be granted in any useful time
+	// (its ACL write propagates over the whole profile tree) and already grants ALL
 	// APPLICATION PACKAGES for stat/traverse. Sandbox writes go to the guest home
 	// regardless, so a failed workdir grant should not abort the run.
 	if workDir != "" && !isProfileRoot(workDir) {
@@ -236,7 +236,7 @@ func isProfileRoot(dir string) bool {
 // directory of workDir that sits strictly below the user profile root, so tools
 // that stat ancestors (npm walking up to find a project root) succeed. It stops
 // at the profile root: that root already grants ALL APPLICATION PACKAGES (and
-// writing its ACL hangs behind the OneDrive/Defender filter driver), and C:\ /
+// writing its ACL propagates over the entire profile, which takes minutes), and C:\ /
 // C:\Users are handled once by `nvx setup`. Best-effort and time-boxed.
 // grantWorkdirAncestors returns how many ancestor grants it attempted and how many
 // were eligible, so the caller can report once for the whole launch rather than
@@ -638,9 +638,9 @@ func grantAppContainerPathReadExecTimeboxed(sid uintptr, path string, timeout ti
 		return nil
 	}
 	// Still timeboxed. The call is a syscall now rather than a process spawn, but
-	// the reason for the bound was never the process: on the profile root the write
-	// goes through the OneDrive and Defender filter drivers and can simply not
-	// return.
+	// the reason for the bound was never the process: writing a directory's ACL
+	// costs time linear in the entries beneath it, and the chain above a project
+	// reaches directories with hundreds of thousands of them. See grantACLWithin.
 	if err := grantACLWithin(path, sidStr, aclMaskTraverse, 0, timeout); err != nil {
 		return fmt.Errorf("traverse grant for AppContainer: %w", err)
 	}
