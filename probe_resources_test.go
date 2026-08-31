@@ -39,6 +39,13 @@ var exhaustionSignatures = []struct{ substr, meaning string }{
 	{"0xc0000142", "STATUS_DLL_INIT_FAILED: a child process could not initialise, which on this host means it could not get memory"},
 	{"error code: 1455", "ERROR_COMMITMENT_LIMIT reported by the race detector's allocator"},
 	{"failed to allocate", "an allocator refused a reservation"},
+	// The Go runtime's own words when the OS refuses it memory. Added after a gate
+	// run died with "fatal error: runtime: cannot allocate memory" and zero tests
+	// executed, on a machine measured at 1,902MB of free commit out of 65,447 --
+	// the same exhaustion as the rest of this list, in the one wording it did not
+	// cover. Deliberately this exact phrase rather than "out of memory", which
+	// appears in plenty of text that is not this.
+	{"cannot allocate memory", "the Go runtime was refused memory by the OS"},
 }
 
 // resourceExhaustionHint returns a non-empty explanation when err is the host
