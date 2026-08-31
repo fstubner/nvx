@@ -237,18 +237,37 @@ func recordReadExecGrant(existing []readExecGrant, sid, path string) []readExecG
 // thing still naming it. On an explicit reset it is not: the user has asked to
 // clear this state, nvx can do nothing more about that path, and refusing for ever
 // would leave `grants reset` permanently unable to finish.
-func revokeAllReadExecGrants(grants []readExecGrant, revoke func(sid, path string) error) (revoked, failed int) {
+func revokeAllReadExecGrants(grants []readExecGrant, revoke func(sid, path string) error) (revoked, failed, stranded int) {
 	return revokeAllReadExecGrantsWithin(grants, revoke, func(p string) bool {
 		_, err := osStat(p)
 		return err == nil
 	})
 }
 
-func revokeAllReadExecGrantsWithin(grants []readExecGrant, revoke func(sid, path string) error, pathExists func(string) bool) (revoked, failed int) {
+// revokeAllReadExecGrantsWithin returns three counts, not two.
+//
+// stranded is a directory that is no longer at its recorded path. That case is
+// deliberately NOT counted as failed: failed keeps the record so a later reset
+// can retry, and a vanished directory would keep the record for ever, leaving
+// `nvx grants reset` permanently unable to complete. That reasoning is older than
+// this comment and still holds.
+//
+// What it left out is that a reset then deleted the record and printed success at
+// exit 0, having withdrawn nothing -- and an access-control entry travels with a
+// renamed directory, so the permission may well still be in force somewhere nvx
+// can no longer name. An acceptance pass demonstrated it: rename the directory,
+// reset, and the entry is still on disk under the new name with the ledger gone.
+//
+// Counting it separately lets the caller do both things that are true at once:
+// finish the reset, and refuse to call it a success. The SID and old path go to
+// the terminal, because after this the ledger no longer has them.
+func revokeAllReadExecGrantsWithin(grants []readExecGrant, revoke func(sid, path string) error, pathExists func(string) bool) (revoked, failed, stranded int) {
 	for _, g := range grants {
 		if !pathExists(g.Path) {
 			LogWarn("%s no longer exists, so its permission could not be withdrawn.", g.Path)
-			LogInfo("If that directory was renamed rather than deleted, the permission moved with it; remove it there with icacls.")
+			LogInfo("If that directory was renamed rather than deleted, the permission moved with it and is still in force. "+
+				"Remove it there with: icacls \"<new path>\" /remove:g *%s", g.SID)
+			stranded++
 			continue
 		}
 		if err := revoke(g.SID, g.Path); err != nil {
@@ -265,5 +284,5 @@ func revokeAllReadExecGrantsWithin(grants []readExecGrant, revoke func(sid, path
 		}
 		revoked++
 	}
-	return revoked, failed
+	return revoked, failed, stranded
 }

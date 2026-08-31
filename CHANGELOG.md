@@ -528,6 +528,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx grants reset` no longer reports success when it could not take a
+  permission back.** If a directory nvx had granted access to was renamed, the
+  permission moved with it — Windows attaches it to the directory, not the path —
+  so there was nothing to remove at the recorded location. The reset warned about
+  that, then printed a tick and exited 0 anyway, having deleted the only record of
+  which permission it was and where it had been.
+
+  The reset still finishes, so running it again is clean and the command cannot
+  get stuck. What changes is that this run now says what it could not account for,
+  prints the identity and the old path, and exits non-zero so a script can tell.
+
 * **On Linux, a stray space in `network.mode` turned the network containment
   off.** A project policy asking for `"offline "` — with a trailing space —
   silently got the full host network, and the prompt that exists to catch a
