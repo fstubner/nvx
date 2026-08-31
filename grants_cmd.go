@@ -110,7 +110,7 @@ func runGrants(args []string, nvxHome string) int {
 			// them. Deleting the ledger first would leave the access-control entries
 			// on disk with nothing left that knows they exist -- which is what
 			// "reset" was quietly doing before.
-			revoked, failed, unreadable, stranded := 0, 0, 0, 0
+			revoked, failed, unreadable, unaccounted := 0, 0, 0, 0
 			for _, e := range entries {
 				path := filepath.Join(dir, e.Name())
 				// Preserved records of permissions nvx can no longer account for.
@@ -128,11 +128,11 @@ func runGrants(args []string, nvxHome string) int {
 					unreadable++
 					continue
 				}
-				r, f, s := revokeAllReadExecGrants(grants, revokeSandboxReadExec)
-				revoked += r
-				failed += f
-				stranded += s
-				if f > 0 {
+				out := revokeAllReadExecGrants(grants, revokeSandboxReadExec)
+				revoked += out.Revoked
+				failed += out.Failed
+				unaccounted += out.Unaccounted()
+				if out.Failed > 0 {
 					// Keep the record of whatever could not be withdrawn; removing it
 					// would strand those entries permanently.
 					continue
@@ -160,14 +160,14 @@ func runGrants(args []string, nvxHome string) int {
 				LogError("Did not reset all project grants: %d record(s) were left in place, and the permissions they name were not withdrawn.", failed+unreadable)
 				return 1
 			}
-			// A vanished directory does not keep its record -- see
-			// revokeAllReadExecGrantsWithin -- so the records are gone and the reset
-			// is finished. It is still not a success: an access-control entry follows
-			// a renamed directory, so one may be in force under a name nvx no longer
-			// knows, and this is the last moment anything can say so.
-			if stranded > 0 {
-				LogError("Reset all project grants, but %d permission(s) could not be withdrawn because their directory is no longer at the recorded path.", stranded)
-				LogInfo("Their identities and old paths are in the warnings above; nothing records them now.")
+			// Neither a vanished directory nor a widened permission keeps its record
+			// -- see revokeAllReadExecGrantsWithin -- so the records are gone and the
+			// reset is finished. It is still not a success: those permissions may be
+			// in force with nothing left naming them, and this is the last moment
+			// anything can say so.
+			if unaccounted > 0 {
+				LogError("Reset all project grants, but %d permission(s) could not be withdrawn and are no longer recorded.", unaccounted)
+				LogInfo("Their identities and paths are in the warnings above, with the icacls line to remove each one.")
 				return 1
 			}
 			LogSuccess("Reset all project grants.")
@@ -188,12 +188,12 @@ func runGrants(args []string, nvxHome string) int {
 				return 1
 			}
 		}
-		revoked, failed, stranded := revokeAllReadExecGrants(grants, revokeSandboxReadExec)
-		if revoked > 0 {
-			LogInfo("Withdrew %d read/execute directory permission(s).", revoked)
+		out := revokeAllReadExecGrants(grants, revokeSandboxReadExec)
+		if out.Revoked > 0 {
+			LogInfo("Withdrew %d read/execute directory permission(s).", out.Revoked)
 		}
-		if failed > 0 {
-			LogWarn("Could not withdraw %d permission(s); the record was kept so a later reset can retry.", failed)
+		if out.Failed > 0 {
+			LogWarn("Could not withdraw %d permission(s); the record was kept so a later reset can retry.", out.Failed)
 			return 1
 		}
 		if err := os.Remove(path); err != nil {
@@ -205,14 +205,15 @@ func runGrants(args []string, nvxHome string) int {
 			return 1
 		}
 		// The record is gone and the reset is finished, so running it again is
-		// clean -- but this run withdrew something it could not find, and saying
-		// "Reset grants for this project" at exit 0 was how that disappeared. An
-		// acceptance pass renamed a granted directory, ran this, got the tick and a
-		// zero exit, and found the access-control entry still on the directory with
-		// nothing left that knew about it.
-		if stranded > 0 {
-			LogError("Reset grants for this project, but %d permission(s) could not be withdrawn because their directory is no longer at the recorded path.", stranded)
-			LogInfo("Their identities and old paths are in the warnings above; nothing records them now.")
+		// clean -- but this run left something behind it could not withdraw, and
+		// saying "Reset grants for this project" at exit 0 was how that
+		// disappeared. An acceptance pass renamed a granted directory, ran this,
+		// got the tick and a zero exit, and found the access-control entry still on
+		// the directory with nothing left that knew about it. A second pass found
+		// the same hole for a permission widened since nvx granted it.
+		if out.Unaccounted() > 0 {
+			LogError("Reset grants for this project, but %d permission(s) could not be withdrawn and are no longer recorded.", out.Unaccounted())
+			LogInfo("Their identities and paths are in the warnings above, with the icacls line to remove each one.")
 			return 1
 		}
 		LogSuccess("Reset grants for this project.")

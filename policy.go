@@ -378,10 +378,16 @@ func (p Policy) NetworkAllowlist(provider RuntimeProvider) []string {
 // assertions for the first time: the gate wrote its own policy with Set-Content
 // and nvx would not read it.
 //
-// The stripped bytes are what everything downstream sees, including the hash
-// that pins a trusted project policy. That is deliberate: the mark carries no
-// content, so adding or removing one should not read as a policy change the
-// user has to re-approve.
+// The stripped bytes are what everything downstream PARSES, and what
+// field-presence detection re-reads. They are NOT what pins a trusted project
+// policy: that hash is taken over the raw bytes, before this runs, so adding or
+// removing a mark does change the pin and does cost one re-approval.
+//
+// This comment claimed the opposite until an acceptance pass checked it. The
+// behaviour it described is arguably the better one -- a mark carries no content
+// -- but every pin on disk was computed from raw bytes, and quietly changing the
+// basis would invalidate them all and re-prompt users who had already decided.
+// Stating what is true beats implementing what was written.
 func withoutUTF8BOM(data []byte) []byte {
 	return bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 }
@@ -464,18 +470,44 @@ func collectProjectPolicyPaths(cwd, nvxHome string) []string {
 }
 
 func readProjectPolicyFile(path string) (Policy, []byte, error) {
+	lp, body, _, err := readAndHashProjectPolicyFile(path)
+	return lp, body, err
+}
+
+// readAndHashProjectPolicyFile reads the file ONCE and returns both what was
+// parsed and the hash that pins it.
+//
+// The two used to come from two reads: the caller parsed via
+// readProjectPolicyFile, discarded the bytes, and then hashPolicyFile opened the
+// same path again. Anything able to write the project directory between them --
+// which contained code is, since the working directory is writable in every
+// sandbox -- could have the loosened version parsed while the pinned version was
+// hashed, and a policy the user never trusted would be accepted. Policy
+// tampering is named in SECURITY.md's scope, so this is in the threat model
+// rather than adjacent to it.
+//
+// The hash is taken over the RAW bytes, before the byte-order mark is stripped,
+// because that is what hashPolicyFile did and what every pin already on disk was
+// computed from. Hashing the parsed bytes instead would be tidier and would
+// silently invalidate every existing pin on a file Windows wrote with a BOM,
+// re-prompting users who had already decided. The comment above
+// markPolicyFieldPresence claimed the stripped bytes were "what pins a trusted
+// project policy"; they never were, and it now says so.
+func readAndHashProjectPolicyFile(path string) (Policy, []byte, string, error) {
 	var lp Policy
 	lp.Typosquatting.Enabled = true
-	data, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return lp, nil, fmt.Errorf("read local policy %s: %w", path, err)
+		return lp, nil, "", fmt.Errorf("read local policy %s: %w", path, err)
 	}
-	data = withoutUTF8BOM(data)
+	hash := hashPolicyBytes(raw)
+
+	data := withoutUTF8BOM(raw)
 	if err := json.Unmarshal(data, &lp); err != nil {
-		return lp, nil, fmt.Errorf("parse local policy %s: %w", path, err)
+		return lp, nil, "", fmt.Errorf("parse local policy %s: %w", path, err)
 	}
 	markPolicyFieldPresence(data, &lp)
-	return lp, data, nil
+	return lp, data, hash, nil
 }
 
 // LoadPolicy builds the effective policy from the global policy, the project
@@ -519,14 +551,15 @@ func LoadPolicy(nvxHome string) (Policy, error) {
 
 		for i := len(localPaths) - 1; i >= 0; i-- {
 			localPath := localPaths[i]
-			localPolicy, _, err := readProjectPolicyFile(localPath)
+			// One read: the bytes hashed are the bytes parsed. See
+			// readAndHashProjectPolicyFile.
+			localPolicy, _, hash, err := readAndHashProjectPolicyFile(localPath)
 			if err != nil {
 				return policy, err
 			}
 			candidate := MergePolicies(policy, localPolicy)
 			if policyLoosens(policy, candidate) {
-				hash, ok := hashPolicyFile(localPath)
-				if !ok || grants.PolicyPins[filepath.Clean(localPath)] != hash {
+				if grants.PolicyPins[filepath.Clean(localPath)] != hash {
 					warnIgnoredPolicyOnce(localPath)
 					continue
 				}
@@ -571,13 +604,15 @@ func ensureProjectPolicyTrust(nvxHome string) error {
 
 	for i := len(localPaths) - 1; i >= 0; i-- {
 		localPath := localPaths[i]
-		localPolicy, _, err := readProjectPolicyFile(localPath)
+		// One read here too, and for a second reason: this is where the pin is
+		// WRITTEN. Hashing a different read than the one the user was shown and
+		// approved would record a pin for bytes nobody agreed to.
+		localPolicy, _, hash, err := readAndHashProjectPolicyFile(localPath)
 		if err != nil {
 			return err
 		}
 		candidate := MergePolicies(baseline, localPolicy)
 		if policyLoosens(baseline, candidate) {
-			hash, _ := hashPolicyFile(localPath)
 			cleanPath := filepath.Clean(localPath)
 			if grants.PolicyPins[cleanPath] != hash {
 				if !PromptTrustBoundary("Project policy " + localPath + " loosens nvx security settings. Trust it for this project?") {

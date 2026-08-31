@@ -528,6 +528,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A project policy can no longer be swapped between being read and being
+  checked.** When a project's `.nvx-policy.json` asks for something more
+  permissive than the defaults, nvx checks it against the version you approved
+  before honouring it. It read the file twice to do that — once to understand it,
+  once to check it — and anything able to write the project folder in between
+  could have the permissive version obeyed while the approved version was
+  checked. Contained code can write that folder, which is the whole point of it.
+  The file is now read once.
+
+* **`nvx setup --undo` no longer says it removed things it could not remove.**
+  It warned about each failure and then printed success and exited 0 anyway. The
+  one that matters most is the loopback exemption: while that is present, nvx's
+  own documentation says the network allowlist can be worked around — so you
+  could run the cleanup, see a tick, and still be exposed. It now names what it
+  could not undo and fails.
+
+* **`nvx grants reset` no longer quietly drops a permission that grew.** If a
+  folder's permission had been widened beyond what nvx originally gave it, nvx
+  deliberately left it alone — correctly, since it is no longer nvx's to remove —
+  but then deleted its own record of it and reported success. It now tells you
+  what it left behind and how to remove it, and fails. This is the same defect as
+  the renamed-folder one below; both were found by review rather than in use.
+
 * **`nvx doctor --fix` no longer changes your permanent PATH without saying so
   first, and will never put a temporary folder there.**
 
