@@ -113,10 +113,11 @@ func TestPipedStdioReachesRealAppContainerChild(t *testing.T) {
 // worse than no probe.
 func stageProbeChild(t *testing.T, guestHome, name string) string {
 	t.Helper()
-	self, err := os.Executable()
-	if err != nil {
-		t.Skipf("cannot locate the test binary to stage as the contained child: %v", err)
-	}
+	// Not always this binary: under -race it is an uninstrumented rebuild, because
+	// a ThreadSanitizer child per contained launch is what made the gate flaky.
+	// See probe_child_test.go.
+	self := requireProbeChildBinary(t)
+	var err error
 	// Retried before giving up. This read fails intermittently with "The handle is
 	// invalid" -- on hosted runners, and on a developer machine under the load of
 	// the full probe suite -- and skipping on the first failure means a SECURITY
@@ -158,11 +159,16 @@ func stageProbeChild(t *testing.T, guestHome, name string) string {
 // A skip is therefore correct on such a host -- but only for THAT error. Skipping on
 // any launch failure, which two of these probes previously did, would silently
 // swallow a genuine regression in the launcher. Anything else is a failure.
-func requireAppContainerLaunch(t *testing.T, err error) {
+func requireAppContainerLaunch(t launchT, err error) {
 	t.Helper()
 	if err == nil {
 		return
 	}
+	// Before anything else: a host that is out of memory refuses launches too, and
+	// two of the refusal texts below are indistinguishable from a host that simply
+	// cannot make AppContainers. Skipping on those would hide the real reason and
+	// report a clean run, so exhaustion is named and fails first.
+	failIfHostIsOutOfMemory(t, "an AppContainer launch", err)
 	// Two refusal shapes, not one. A host that cannot create AppContainer
 	// children reports either "Access is denied" or "The system cannot find the
 	// file specified" -- the second seen on GitHub-hosted runners launching
@@ -179,7 +185,18 @@ func requireAppContainerLaunch(t *testing.T, err error) {
 	msg := err.Error()
 	if strings.Contains(msg, "Access is denied") ||
 		strings.Contains(msg, "The system cannot find the file specified") {
-		t.Skipf("this host cannot create AppContainer children (%v); GitHub-hosted Windows runners are known to refuse, so the probe cannot run here", err)
+		// Asked, not assumed. A host that has already run a control AppContainer
+		// launch in this process is a host that can create them, so this refusal is
+		// a finding. Skipping here regardless is what let a whole run's containment
+		// probes disappear into the skip count with the gate still green -- see
+		// probe_appcontainer_capability_windows_test.go.
+		if capable, _ := hostAppContainerCapability(); capable {
+			t.Fatalf("AppContainer launch refused (%v), but this host DOES create AppContainer children: "+
+				"a control launch of cmd.exe succeeded in this same run. This is a real refusal, not an "+
+				"environment that cannot run the probe.%s", err, hostMemoryNote())
+		}
+		_, why := hostAppContainerCapability()
+		t.Skipf("this host cannot create AppContainer children (%v); the control launch agrees: %s", err, why)
 	}
 	t.Fatalf("AppContainer launch failed for a reason other than the host refusing it: %v", err)
 }

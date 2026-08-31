@@ -56,9 +56,16 @@ func nonLoopbackListener(t *testing.T) net.Listener {
 		candidates = append(candidates, v4)
 	}
 
+	// Why the last error is kept rather than dropped: every candidate failing used
+	// to skip with "no reachable non-loopback IPv4 address available", which reads
+	// as a host without a usable network. On a host that was out of memory it was
+	// instead net.Listen failing on each address in turn, and this test plus the
+	// credential one below silently did not run while the gate reported success.
+	var lastErr error
 	for _, ip := range append(candidates, lastResort...) {
 		ln, lerr := net.Listen("tcp", net.JoinHostPort(ip.String(), "0"))
 		if lerr != nil {
+			lastErr = lerr
 			continue
 		}
 		// Bindable is not the same as reachable. Proving it here turns "this
@@ -66,13 +73,18 @@ func nonLoopbackListener(t *testing.T) net.Listener {
 		// containment.
 		c, derr := net.DialTimeout("tcp", ln.Addr().String(), 2*time.Second)
 		if derr != nil {
+			lastErr = derr
 			_ = ln.Close()
 			continue
 		}
 		_ = c.Close()
 		return ln
 	}
-	t.Skip("no reachable non-loopback IPv4 address available")
+	failIfHostIsOutOfMemory(t, "binding a non-loopback listener", lastErr)
+	if lastErr != nil {
+		t.Skipf("no reachable non-loopback IPv4 address available; last attempt failed with: %v", lastErr)
+	}
+	t.Skipf("no reachable non-loopback IPv4 address available: none of this host's %d addresses were candidates", len(addrs))
 	return nil
 }
 
