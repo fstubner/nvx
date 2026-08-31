@@ -528,6 +528,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx doctor --fix` no longer changes your permanent PATH without saying so
+  first, and will never put a temporary folder there.**
+
+  `--fix` edited the persistent user PATH whenever it could, while the offer to
+  do it was only shown when the PATH was the thing that looked wrong. So a
+  machine with a healthy PATH and some unrelated problem was never told, ran
+  `--fix` for the other problem, and had its PATH changed and announced
+  afterwards. It now only applies what it has already reported.
+
+  Separately, `--fix` would happily write whatever `NVX_HOME` pointed at into
+  that permanent PATH — including a temporary folder, which is how machines end
+  up with a dead `...\Temp\...\bin` entry on their search path long after the
+  folder is gone. That is refused now, with an explanation.
+
 * **`nvx grants reset` no longer reports success when it could not take a
   permission back.** If a directory nvx had granted access to was renamed, the
   permission moved with it — Windows attaches it to the directory, not the path —

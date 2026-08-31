@@ -244,15 +244,37 @@ func runDoctor(nvxHome string, fix bool) int {
 		LogInfo("Run 'nvx doctor --fix' (or 'nvx init-shims') to write them.")
 	}
 
-	// Persistent-PATH repair (Windows); POSIX is a no-op. Only applied with --fix,
-	// and only offered when the PATH is actually what is wrong -- see below.
-	pathIsWrong := !rep.shimDirOnPath || len(rep.shadowedBy) > 0
-	if available, err := repairPersistentPath(nvxHome, fix); err != nil {
-		LogWarn("Could not repair the persistent PATH automatically: %v", err)
-	} else if available && fix {
-		LogSuccess("Repaired your persistent PATH. Open a new terminal for it to take effect.")
-	} else if available && pathIsWrong {
-		LogInfo("Your persistent PATH can be repaired automatically: run 'nvx doctor --fix'.")
+	// Persistent-PATH repair (Windows); POSIX is a no-op.
+	//
+	// Asked first, applied second, and the apply is conditional on the same answer
+	// the report used. It used to call repairPersistentPath(nvxHome, fix)
+	// directly, so --fix wrote the User PATH whenever a repair was possible, while
+	// the OFFER was gated on the PATH being the thing that was wrong. A machine
+	// with a healthy PATH and one unrelated failure -- a stale `nvx setup` grant,
+	// say -- was therefore never told its persistent PATH would be touched, ran
+	// --fix for the other problem, and had its User PATH edited and announced
+	// after the fact. That is F71 again, which this comment used to claim was
+	// closed: the second half of "only offered when the PATH is actually what is
+	// wrong" was true of the offer and false of the apply.
+	//
+	// Not gated on pathIsWrong, which is the tempting one-line fix and is wrong:
+	// pathIsWrong describes THIS PROCESS's PATH, and the repair acts on the
+	// persistent one. They disagree routinely -- a shell that prepended the shim
+	// dir by hand has a healthy process PATH and a broken persistent one -- so
+	// gating on it would refuse the repair exactly when it is needed. The rule is
+	// "apply only what was reported", not "apply only when the live PATH is bad".
+	available, err := repairPersistentPath(nvxHome, false)
+	switch {
+	case err != nil:
+		LogWarn("Could not check the persistent PATH: %v", err)
+	case available && fix:
+		if _, applyErr := repairPersistentPath(nvxHome, true); applyErr != nil {
+			LogWarn("Could not repair the persistent PATH automatically: %v", applyErr)
+		} else {
+			LogSuccess("Repaired your persistent PATH. Open a new terminal for it to take effect.")
+		}
+	case available:
+		LogInfo("Your persistent PATH does not front nvx's shim directory; it can be repaired automatically: run 'nvx doctor --fix'.")
 		LogInfo("It edits your user PATH, so nvx does not do it unless you ask.")
 	}
 

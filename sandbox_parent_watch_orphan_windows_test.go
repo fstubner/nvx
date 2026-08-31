@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,13 +71,22 @@ func TestWatchdogExitsWhenTheParentIsGoneAndSomethingElseHoldsThePipe(t *testing
 		"NVX_ORPHAN_SELF="+os.Args[0],
 	)
 	launcher.Stdin = pipeR
+	// Captured so a failure can say why. Without this the launcher's stderr went
+	// nowhere and the test reported a bare "exit status 2" -- which is what a Go
+	// binary returns for "fatal error: runtime: cannot allocate memory", so a
+	// machine out of commit charge read as this watchdog being broken. Measured:
+	// the same run's stderr said exactly that, and the host had 1,902MB of free
+	// commit left out of 65,447.
+	var launcherErr bytes.Buffer
+	launcher.Stderr = &launcherErr
 	if err := launcher.Start(); err != nil {
 		t.Fatalf("start launcher: %v", err)
 	}
 	// The launcher exits as soon as it has spawned the watcher. After this the
 	// watcher is an orphan whose stdin pipe is still very much alive.
 	if err := launcher.Wait(); err != nil {
-		t.Fatalf("launcher did not exit cleanly: %v", err)
+		failIfHostIsOutOfMemory(t, "the orphan-watchdog launcher", errors.New(launcherErr.String()))
+		t.Fatalf("launcher did not exit cleanly: %v\nlauncher stderr:\n%s", err, launcherErr.String())
 	}
 
 	deadline := time.Now().Add(45 * time.Second)

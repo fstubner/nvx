@@ -87,3 +87,24 @@ func TestOrdinaryFailuresAreNotBlamedOnTheHost(t *testing.T) {
 		}
 	}
 }
+
+// The Go runtime's own wording, added after a full gate run died with it and
+// zero tests executed while the host had 1,902MB of free commit out of 65,447.
+// A run that dies before any test runs is the case with the least evidence in the
+// log, so the one line it does print has to be recognised.
+func TestTheGoRuntimesOwnAllocationFailureIsRecognised(t *testing.T) {
+	err := errors.New("fatal error: runtime: cannot allocate memory")
+	if hint := resourceExhaustionHint(err); hint == "" {
+		t.Fatal("the Go runtime's allocation failure was not recognised as the host running out of memory")
+	}
+	// ...and the near-miss stays a near-miss: this must not swallow ordinary
+	// failures that merely mention memory.
+	for _, ordinary := range []string{
+		"cannot allocate a new session id",
+		"the sandbox could not allocate a port",
+	} {
+		if hint := resourceExhaustionHint(errors.New(ordinary)); hint != "" {
+			t.Errorf("%q was blamed on the host: %s", ordinary, hint)
+		}
+	}
+}
