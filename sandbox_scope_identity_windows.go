@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -144,7 +145,24 @@ func removeStaleAppContainerGrant(packageSIDStr, path string) {
 	if path == "" {
 		return
 	}
+	ours := nvxPackageSIDs()
 	for _, sid := range staleAppContainerSIDsOn(path) {
+		// Only nvx's own. This removed EVERY AppContainer package ACE it found and
+		// then said each one had been "left by an earlier nvx" -- a false statement
+		// about a permission it had just deleted, if the ACE belonged to some other
+		// sandboxing tool. The widening was argued as safe because "in practice
+		// these are nvx's own", which was an assumption at the time and is now
+		// checkable: every nvx package is named nvx.sandbox*, and Windows keeps a
+		// folder per registered profile, so the set can be enumerated and each SID
+		// derived from its name.
+		//
+		// Reported rather than removed when it is not ours. Another application's
+		// permission is not nvx's to withdraw, and someone reading this line would
+		// want to know it exists.
+		if !ours[strings.ToLower(sid)] {
+			LogWarn("%s carries a sandbox permission for an AppContainer that is not nvx's (%s); leaving it alone.", path, sid)
+			continue
+		}
 		if err := revokeACL(path, sid); err != nil {
 			LogWarn("Could not remove a stale sandbox permission on %q: %v", path, err)
 			continue
@@ -154,6 +172,40 @@ func removeStaleAppContainerGrant(packageSIDStr, path string) {
 		// this command's output.
 		LogInfo("Removed a shared sandbox permission left on %s by an earlier nvx; this project now has its own.", path)
 	}
+}
+
+// nvxPackageSIDs is the set of AppContainer package SIDs belonging to nvx, keyed
+// lowercase.
+//
+// Built from the profile folders Windows creates under %LOCALAPPDATA%\Packages,
+// which is the same list the package sweep walks: every nvx package is named
+// stableSandboxProfile or stableSandboxProfile + "." + <project hash>, and a SID
+// derives deterministically from a profile name. The legacy shared profile is
+// included by name so a pre-0.5.0 grant is still recognised as nvx's on a machine
+// whose folder for it has already been removed.
+func nvxPackageSIDs() map[string]bool {
+	out := map[string]bool{}
+	add := func(name string) {
+		if sid, err := deriveAppContainerSIDString(name); err == nil {
+			out[strings.ToLower(sid)] = true
+		}
+	}
+	add(stableSandboxProfile)
+
+	local := os.Getenv("LOCALAPPDATA")
+	if local == "" {
+		return out
+	}
+	entries, err := os.ReadDir(filepath.Join(local, "Packages"))
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), nvxPackagePrefix) {
+			add(e.Name())
+		}
+	}
+	return out
 }
 
 // appContainerPackageSID matches an AppContainer package SID (S-1-15-2-...), the

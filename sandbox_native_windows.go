@@ -427,7 +427,39 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		LogError("AppContainer launch failed: %v", err)
 		return 1
 	}
+	// Say it again, last, when the command failed and a stranded setup is why it
+	// probably failed.
+	//
+	// The advisory is printed before the child runs, which is the right place for
+	// it -- and then npm prints twenty-odd lines of its own on the way out, ending
+	// with advice to check your antivirus and re-run "as root/Administrator".
+	// Running elevated is not the fix; `nvx setup` is, once. The commit that added
+	// the advisory was titled "instead of letting npm say EPERM", and what shipped
+	// was a prefix: an acceptance pass pointed out that the last twenty-five lines
+	// a person reads are still npm's, and wrong.
+	if exitCode != 0 && isPackageManagerCommand(config.Command) {
+		remindAboutStrandedSetup(config.NvxHome)
+	}
 	return exitCode
+}
+
+// remindAboutStrandedSetup repeats the stranded-grant advice after a failed
+// package-manager run, so the correct remedy is the last thing on screen.
+//
+// Only when the condition actually holds, and only after a failure: a warning
+// printed after every successful install would be noise, and this one has to stay
+// worth reading.
+func remindAboutStrandedSetup(nvxHome string) {
+	current, err := deriveCapabilitySIDString(setupCapabilityName)
+	if err != nil {
+		return
+	}
+	prev, ok := readWindowsSetupState(nvxHome)
+	if !ok || strings.EqualFold(prev.AppContainerSID, current) {
+		return
+	}
+	LogWarn("That command failed, and an earlier 'nvx setup' no longer applies to this sandbox.")
+	LogInfo("If the error above mentions EPERM on a path like C:\\Users, the fix is 'nvx setup' from an Administrator terminal -- not re-running this as Administrator.")
 }
 
 // windowsSandboxNetwork decides the AppContainer's network capabilities and

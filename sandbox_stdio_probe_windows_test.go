@@ -19,6 +19,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 var procSetStdHandleTest = modKernel32.NewProc("SetStdHandle")
@@ -116,9 +117,27 @@ func stageProbeChild(t *testing.T, guestHome, name string) string {
 	if err != nil {
 		t.Skipf("cannot locate the test binary to stage as the contained child: %v", err)
 	}
-	data, err := os.ReadFile(self)
+	// Retried before giving up. This read fails intermittently with "The handle is
+	// invalid" -- on hosted runners, and on a developer machine under the load of
+	// the full probe suite -- and skipping on the first failure means a SECURITY
+	// probe quietly does not run while the gate still reports success. Measured on
+	// two separate acceptance passes, each time a different test: once the
+	// deny-ACE probe, once the cross-session one, and each time the run reported
+	// "0 failures" with a containment assertion that had never executed.
+	//
+	// Copying the binary is not the thing under test, so a transient failure to do
+	// it is worth retrying. Everything the probe then asserts still fails loudly:
+	// only the copy is forgiven, and only briefly.
+	var data []byte
+	for attempt := 0; attempt < 5; attempt++ {
+		if data, err = os.ReadFile(self); err == nil {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 	if err != nil {
-		t.Skipf("cannot read the test binary to stage as the contained child (%v); the hosted Windows runners fail this intermittently, so the probe cannot run here", err)
+		t.Skipf("cannot read the test binary to stage as the contained child after 5 attempts (%v); "+
+			"a containment assertion is NOT being checked in this run", err)
 	}
 	childExe := filepath.Join(guestHome, name)
 	if err := os.WriteFile(childExe, data, 0o700); err != nil {

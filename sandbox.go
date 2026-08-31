@@ -599,5 +599,11 @@ func reclaimStaleSandboxes(nvxHome string) {
 	// Logs rescued from failed runs. They had no sweep at all, so they
 	// accumulated for the life of the installation -- 3,146 directories and
 	// 181 MB on the development machine, which `nvx cleanup` also left alone.
-	sweepRescuedLogs(nvxHome, reclaimBudgetPerRun)
+	//
+	// A larger budget than the sweeps above, because the work is not comparable: a
+	// guest home may hold a large tree and a package profile costs a registry
+	// write, while these are small directories of log files. At eight per run a
+	// three-thousand-folder backlog needs some four hundred commands to clear,
+	// which is not a reclaim so much as a rumour of one.
+	sweepRescuedLogs(nvxHome, rescuedLogBudgetPerRun)
 }
