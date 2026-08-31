@@ -27,8 +27,18 @@ func bringUpLoopback() error {
 	return nil
 }
 
+// networkModeRequiresNamespace reports whether mode needs a loopback-only
+// network namespace.
+//
+// TrimSpace as well as ToLower, and the default arm is the open one, so an
+// unrecognised string here means no containment. normalizePolicy now guarantees a
+// canonical value, but this is the reader that turns the guarantee into an OS
+// boundary: it read `strings.ToLower(mode)` alone, and a policy asking for
+// "offline " with a trailing space fell through to default and got no namespace
+// at all. Trimming here costs nothing and removes the dependency on every caller
+// having normalised first.
 func networkModeRequiresNamespace(mode string) bool {
-	switch strings.ToLower(mode) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "proxy", "offline", "loopback":
 		return true
 	default:
