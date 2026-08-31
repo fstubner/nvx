@@ -23,7 +23,7 @@ running system and which are not.
 
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
-| Host filesystem write blocked (outside workdir + guest home) | Yes, except pre-0.5.0 projects⁷ | Yes⁸ | Yes⁵ |
+| Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |
 | Host filesystem read restricted | Yes⁴ | Yes⁸ | No² (confirmed⁵) |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
@@ -143,13 +143,29 @@ profile. A macOS runner now confirms that egress is denied with an empty allowli
 stands up a loopback listener on macOS and checks which modes can reach it, so
 this particular row stays "profile only" in the sense that matters to it.
 
-⁷ **A directory nvx used before 0.5.0 is still writable by every sandbox on the
-machine.** Up to 0.5.0 every sandbox ran as one shared package identity and the
-`(OI)(CI)(M)` grants it wrote were never revoked, so a contained install in
-project A can write into project B. `removeStaleAppContainerGrant` clears them,
-but only for the working directory of the session currently running -- a project
-cleans itself the next time you use nvx there, and a project you never revisit
-stays exposed indefinitely.
+⁷ **A directory nvx used before 0.5.0 carries a dead permission, and it stopped
+being exploitable on 2026-08-29.** Up to 0.5.0 every sandbox ran as one shared
+package identity and the `(OI)(CI)(M)` grants it wrote were never revoked, so a
+contained install in project A could write into project B.
+`removeStaleAppContainerGrant` clears them, but only for the working directory of
+the session currently running -- a project cleans itself the next time you use
+nvx there, and a project you never revisit keeps the ACE indefinitely.
+
+What changed is who can satisfy it. Sandboxes now run under a per-project
+AppContainer package, so no current session holds the shared identity those old
+grants name. Measured 2026-08-31 by recreating the exact condition this footnote
+describes -- the real `nvx.sandbox` package SID granted `(OI)(CI)(M)` on a fresh
+directory, then a contained process from an unrelated project run against it:
+
+```
+LEGACY_WRITE=DENIED EPERM
+LEGACY_LIST=DENIED EPERM
+```
+
+So the ACE is litter rather than an opening. This entry said "still writable by
+every sandbox on the machine" for two days after that stopped being true, which
+is the safe direction to be wrong in and still worth correcting: an acceptance
+pass reproduced the scenario expecting to confirm a hole and found none.
 
 README has disclosed this under Known limitations since 0.5.0; this row said an
 unqualified "Yes" until 2026-08-20, which an acceptance pass caught by writing

@@ -103,6 +103,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **`nvx grants list` no longer rewrites anything.** Asking what is recorded
   renamed a record it could not parse, as a side effect of a read-only query.
 
+* **A containment probe could silently skip itself while the gate reported
+  success.** Staging the test binary as the contained child fails intermittently
+  with "The handle is invalid", and the helper skipped on the first failure — so
+  a run could report "0 failures" with cross-session isolation, or the deny-ACE
+  check, never having executed. Both happened, on two separate acceptance passes,
+  each time a different test. The read is retried now, and the skip message says
+  outright that a containment assertion is not being checked.
+
+* **The pre-0.5.0 legacy-grant weakness is closed, and the documents that still
+  described it as live are corrected.** Up to 0.5.0 every sandbox ran as one
+  shared identity, so the permissions nvx left on a project were satisfied by a
+  sandbox running in any other project. Per-project AppContainer packages ended
+  that: nothing holds the shared identity any more. Measured 2026-08-31 by
+  recreating the exact scenario the enforcement matrix describes — the real
+  shared package SID granted `(OI)(CI)(M)` on a directory, then a contained
+  process from an unrelated project run against it: `EPERM` on both write and
+  list. The matrix cell and README's limitation said "still writable by every
+  sandbox on the machine" for two days after that stopped being true.
+
+* **nvx no longer deletes AppContainer permissions that are not its own.** When
+  clearing legacy grants it removed *every* AppContainer package ACE on the
+  working directory and logged each as "left on … by an earlier nvx" — a false
+  statement about a permission it had just deleted, if the entry belonged to
+  another sandboxing tool. The widening was argued as safe because "in practice
+  these are nvx's own", which is now checkable rather than assumed: nvx's package
+  names are enumerable, so it identifies its own and leaves anything else alone,
+  reporting what it found.
+
+* **A failed contained install ends with nvx's advice, not npm's.** nvx explains
+  the stranded-`setup` problem before the command runs, and then npm prints
+  twenty-odd lines ending with "try running the command again as
+  root/Administrator" — which is not the fix. The explanation is repeated after a
+  failed package-manager run, so the correct remedy is the last thing on screen.
+
 * **Logs rescued from failed runs are now reclaimed.** When a contained run
   fails, nvx copies npm's debug log out of the guest home before deleting it, so
   the path the error points at still exists. Nothing ever removed those copies —

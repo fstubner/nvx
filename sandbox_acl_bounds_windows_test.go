@@ -9,9 +9,16 @@ import (
 )
 
 // waitFor polls until cond holds, or fails the test saying what did not happen.
+//
+// Deadlines here are deliberately far longer than the work needs. What these
+// tests assert is that a slot is eventually released and a path eventually
+// retried -- outcomes, not latencies -- so a bound tight enough to expire under
+// the load of the full probe suite converts a correctness check into a timing
+// check and reports a scheduling delay as a broken counter. Measured: the whole
+// file passes in isolation and one of these failed inside a full -race gate run.
 func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
@@ -94,7 +101,7 @@ func clearACLBounds() {
 // last thing grantACLWithin's goroutine touches.
 func waitForACLDrain(t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		if aclAbandoned.Load() == 0 {
 			return
@@ -124,7 +131,7 @@ func TestAStalledPathIsNotRetriedInThisProcess(t *testing.T) {
 
 	const path = `C:\Users\someone`
 	for i := 0; i < 5; i++ {
-		if err := grantACLWithin(path, "S-1-15-3-1024-x", aclMaskTraverse, 0, 20*time.Millisecond); err == nil {
+		if err := grantACLWithin(path, "S-1-15-3-1024-x", aclMaskTraverse, 0, 500*time.Millisecond); err == nil {
 			t.Fatalf("attempt %d reported success while the write was still blocked", i)
 		}
 	}
@@ -146,7 +153,7 @@ func TestOutstandingStalledWritesAreCapped(t *testing.T) {
 
 	for i := 0; i < maxAbandonedACLWrites*3; i++ {
 		unique := `C:\Users\someone\` + string(rune('a'+i%26)) + string(rune('a'+i/26))
-		_ = grantACLWithin(unique, "S-1-15-3-1024-x", aclMaskTraverse, 0, 20*time.Millisecond)
+		_ = grantACLWithin(unique, "S-1-15-3-1024-x", aclMaskTraverse, 0, 500*time.Millisecond)
 	}
 	if got := attempts.Load(); got > maxAbandonedACLWrites {
 		t.Fatalf("started %d blocked writes with a ceiling of %d", got, maxAbandonedACLWrites)
@@ -159,7 +166,7 @@ func TestASlowWriteThatFinishesReleasesItsSlot(t *testing.T) {
 	release := stalledACLWrites(t, nil)
 
 	const path = `C:\Users\someone\slow`
-	if err := grantACLWithin(path, "S-1-15-3-1024-x", aclMaskTraverse, 0, 20*time.Millisecond); err == nil {
+	if err := grantACLWithin(path, "S-1-15-3-1024-x", aclMaskTraverse, 0, 500*time.Millisecond); err == nil {
 		t.Fatal("expected the deadline to fire")
 	}
 	if aclAbandoned.Load() != 1 {
@@ -167,7 +174,7 @@ func TestASlowWriteThatFinishesReleasesItsSlot(t *testing.T) {
 	}
 
 	release() // the driver lets go, and this waits for the write to actually finish
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		if aclAbandoned.Load() == 0 {
 			break

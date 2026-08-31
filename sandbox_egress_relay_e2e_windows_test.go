@@ -197,7 +197,13 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 	// returns 200 and then stalls looks identical to success at the status line,
 	// and is what a real request would hang on.
 	if !strings.Contains(got, "PROXY_PAYLOAD=echo:PING") {
-		t.Errorf("the established tunnel did not carry data end to end; a real request would hang here:\n%s", got)
+		hint := "a retry carried nothing either, so this is not merely a slow tunnel"
+		if strings.Contains(got, "PROXY_PAYLOAD_RETRY=echo:PING") {
+			hint = "a RETRY carried the data, so the tunnel works and the first attempt was " +
+				"slow -- look for contention rather than a broken relay"
+		}
+		t.Errorf("the established tunnel did not carry data end to end; a real request would "+
+			"hang here (%s):\n%s", hint, got)
 	}
 
 	// 3. Non-allowlisted traffic is refused by the proxy at the far end.
@@ -278,7 +284,11 @@ func runRelayTargetChild() {
 	// Deliberately NOT used to satisfy the check. A retry that rescues the
 	// assertion would turn a real regression into a slow one, and this is the
 	// control that separates "allowlist enforced" from "blocks everything".
-	if status != "200" {
+	// Retried when EITHER half failed. The first version keyed only on the status
+	// line, so when a later run failed on the PAYLOAD instead -- CONNECT 200 and
+	// then a read timeout -- no diagnostic ran at all and the report said only
+	// that the tunnel had carried nothing.
+	if status != "200" || payload != "echo:PING" {
 		retryStatus, retryPayload := connectAndEcho(proxyAddr, allowed, cred)
 		fmt.Printf("PROXY_ALLOWED_RETRY=%s\n", retryStatus)
 		fmt.Printf("PROXY_PAYLOAD_RETRY=%s\n", retryPayload)
@@ -306,7 +316,13 @@ func connectAndEcho(proxyAddr, target, cred string) (status, payload string) {
 		return "DIAL_FAILED:" + err.Error(), ""
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	// Generous on purpose. What this test asserts is that an allowlisted host is
+	// REACHABLE, not that it is reachable quickly -- so a deadline tight enough to
+	// expire under load turns a correctness check into a latency check, and reports
+	// the failure as "the tunnel did not carry data end to end". It did; it was
+	// slow. Measured twice by acceptance passes, on the full suite only, never in
+	// four isolated runs.
+	_ = conn.SetDeadline(time.Now().Add(45 * time.Second))
 	authHeader := ""
 	if cred != "" {
 		authHeader = "Proxy-Authorization: Basic " +

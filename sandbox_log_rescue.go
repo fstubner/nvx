@@ -142,6 +142,12 @@ func copyLogFile(src, dst string) error {
 // every one of them.
 const rescuedLogRetention = 14 * 24 * time.Hour
 
+// rescuedLogBudgetPerRun bounds one command's share of the backlog. Higher than
+// the guest-home and package budgets because removing a small folder of log files
+// is cheaper than either of those, and a backlog measured in thousands needs to
+// drain in tens of commands rather than hundreds.
+const rescuedLogBudgetPerRun = 64
+
 // sweepRescuedLogs deletes rescued log directories older than the retention
 // window and reports how many went. A budget of 0 means no limit.
 //

@@ -418,12 +418,20 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   external host from inside a sandbox, through a CONNECT proxy on 127.0.0.1.
   nvx warns on every affected launch and `nvx doctor` reports it; removing it is
   one elevated command, which both of them print.
-- **Projects granted by nvx before 0.5.0 stay reachable until nvx runs in them
-  again.** Up to 0.5.0 every sandbox shared one identity and the permissions nvx
-  granted were never revoked, so any project you used nvx in is readable and
-  writable from any sandbox. The old permissions are removed the first time nvx runs
-  in that project — but nvx has no list of where it has been, so the ones you do not
-  revisit stay. To clean one by hand:
+- **Projects granted by nvx before 0.5.0 keep a dead permission until nvx runs in
+  them again.** Up to 0.5.0 every sandbox shared one identity and the permissions
+  nvx granted were never revoked, so any project you had used nvx in was readable
+  and writable from any sandbox.
+
+  **That is no longer exploitable.** Sandboxes now run under a per-project
+  AppContainer package, so nothing holds the shared identity those old permissions
+  name. Measured 2026-08-31 by recreating it exactly — the old identity granted
+  modify access on a directory, then a contained process from an unrelated project
+  run against it: `EPERM` on both write and list.
+
+  What remains is litter. nvx removes it the first time it runs in that project,
+  but it keeps no list of where it has been, so a project you do not revisit keeps
+  the entry. To clean one by hand:
   `icacls <project> /remove:g *S-1-15-2-...` for each such entry `icacls <project>`
   lists.
 - **A contained command costs a few hundred milliseconds, and the first one after a
