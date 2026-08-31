@@ -52,7 +52,7 @@ func (h *stallHarness) write(path, sidStr string, mask uint32, flags uint8) erro
 	if h.attempts != nil {
 		h.attempts.Add(1)
 	}
-	<-h.unblock // never returns within the deadline, like a driver-blocked write
+	<-h.unblock // never returns within the deadline, like a write propagating over a huge tree
 	return nil
 }
 
@@ -114,8 +114,10 @@ func waitForACLDrain(t *testing.T) {
 // A path whose permission write stalls must not be attempted again in this
 // process.
 //
-// A goroutine blocked in a syscall pins an OS thread, and an abandoned write can
-// only end when the filter driver lets go. The ancestor walk meets the same few
+// A goroutine blocked in a syscall pins an OS thread, and an abandoned write only
+// ends when Windows finishes propagating the ACL over everything below the
+// directory -- measured at 3m45s for AppData\Local\Temp and its 748,317 entries,
+// against the walk's 1500ms budget. The ancestor walk meets the same few
 // directories on every launch -- the user profile root above all -- so retrying
 // one that has already stalled grows the pinned-thread count with the number of
 // LAUNCHES rather than the number of troublesome paths.
@@ -137,7 +139,7 @@ func TestAStalledPathIsNotRetriedInThisProcess(t *testing.T) {
 	}
 	if got := attempts.Load(); got != 1 {
 		t.Fatalf("started %d writes for one stalling path; each one pins an OS thread "+
-			"for as long as the driver holds it, so this grows with launches", got)
+			"for as long as the propagation runs, so this grows with launches", got)
 	}
 }
 
@@ -173,7 +175,7 @@ func TestASlowWriteThatFinishesReleasesItsSlot(t *testing.T) {
 		t.Fatalf("outstanding = %d, want 1 after one abandoned write", aclAbandoned.Load())
 	}
 
-	release() // the driver lets go, and this waits for the write to actually finish
+	release() // the write finishes at last, and this waits for it to actually return
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		if aclAbandoned.Load() == 0 {

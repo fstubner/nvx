@@ -528,6 +528,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **Why the first contained launch in some projects is slow, corrected.** nvx
+  gives the sandbox permission to walk through the folders above your project,
+  and on some machines those writes take so long nvx gives up on them and carries
+  on without. That much was already true and already handled.
+
+  What nvx said about the cause was wrong. It blamed OneDrive and antivirus, and
+  on that basis expected the problem to clear up by itself one day. Measured: the
+  cost is simply how much is inside the folder. Setting permissions on a folder
+  makes Windows walk everything beneath it — about a second per five thousand
+  items — and on this machine `AppData\Local\Temp` holds 748,317 items and
+  `AppData` over two million. One of those writes, given no deadline, took three
+  minutes and forty-five seconds and then succeeded.
+
+  So it is not a stall waiting on a driver, and it will not fix itself: profile
+  folders only grow. Nothing about how nvx behaves changes here — it already gave
+  up quickly and remembered not to retry — but the explanation a maintainer reads,
+  and the reasoning behind how long it remembers, now match what was measured.
+
 * **Windows permissions are set through the Win32 API instead of the `icacls`
   command.** Every filesystem permission nvx grants, reads or withdraws now goes
   through `GetNamedSecurityInfo`/`SetNamedSecurityInfo`, which return a real error

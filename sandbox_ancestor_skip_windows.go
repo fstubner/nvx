@@ -14,11 +14,30 @@ import (
 //
 // The walk grants traverse rights on the directories above the working directory
 // and the guest home. On some chains -- measured on AppData\Local\Temp,
-// AppData\Local and AppData -- the icacls write never completes and is killed at
-// the per-path timeout. The cheap has-grant read then answers "not granted"
-// forever, because the grant it is looking for never landed, so the next launch
-// tried again, and the next. Measured cost: 3057ms cold and 3054ms warm, against
-// tens of milliseconds for every other phase of a launch.
+// AppData\Local and AppData -- the write does not complete and is killed at the
+// per-path timeout. The cheap has-grant read then answers "not granted", so the
+// next launch tried again, and the next. Measured cost: 3057ms cold and 3054ms
+// warm, against tens of milliseconds for every other phase of a launch.
+//
+// Why those three and not others, measured 2026-08-31: the cost is the size of
+// the subtree, not the identity of the directory. SetNamedSecurityInfoW on a
+// directory runs Windows' auto-inheritance propagation over everything beneath
+// it, and it is linear in the number of entries -- 1ms empty, 92ms at 500
+// entries, 773ms at 5000, 3.108s at 20000. This profile holds 748,317 entries
+// under AppData\Local\Temp and over 2,000,000 under each of AppData\Local and
+// AppData. A 1500ms budget is not attainable at that size and never will be.
+//
+// Two things follow that the earlier "a filter driver, an antivirus policy"
+// reading got wrong. The write is not hung: given no deadline, AppData\Local\Temp
+// returned success after 3m45s (and revoking it took 2m52s), while the other two
+// were still running at 5m. So an abandoned grant does land, minutes after the
+// caller gave up and recorded it as failed -- which is harmless only because
+// appContainerHasGrant finds it on the next launch. And the environment cannot
+// "start working" again: profile trees grow.
+//
+// Passing DACL_SECURITY_INFORMATION without UNPROTECTED_DACL_SECURITY_INFORMATION
+// was tried as a way to skip the propagation. It does not: 3.084s against 3.13s
+// on the same 20000-entry tree. There is no cheap flag here.
 //
 // What made the retry pointless rather than merely slow: the grants are not
 // needed. With the ancestor walk skipped entirely, a contained process still
@@ -27,12 +46,18 @@ import (
 // were buying nothing and costing three seconds a command.
 //
 // Failures are therefore remembered and not retried for a while. A time limit
-// rather than forever, because the cause is environmental -- a filter driver, an
-// antivirus policy -- and those change; an environment that starts working should
-// recover on its own rather than needing someone to know about a cache file.
+// rather than forever, so a path that stops being expensive is picked up again
+// without anyone having to know a cache file exists -- a working directory moves,
+// a huge Temp gets cleared, the chain above a project is simply smaller.
 //
-// A month rather than a week. The retry exists for a change of environment, and
-// those are rare enough that re-testing weekly bought nothing while costing a
+// The retry is kept even though the usual cause, subtree size, does not reverse
+// on its own. It costs one timeout a month for one path, and it is the only
+// thing that would notice a chain becoming cheap; deleting it would trade that
+// for nothing worth having. What it is NOT is a wait for a filter driver or an
+// antivirus policy to change, which is what this comment used to claim and what
+// the measurement above disproves.
+//
+// A month rather than a week: re-testing weekly bought nothing while costing a
 // visibly slower command each time it came round. Paired with re-testing one
 // path per run rather than all of them, the recurring cost of remembering a
 // failure is now about a second a month instead of three seconds a week.
