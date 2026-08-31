@@ -407,8 +407,19 @@ func TestPersistedAllowHostsMergeWithoutDisablingDefaultProtections(t *testing.T
 	// Nothing writes AllowHosts any more -- an approval is for one run -- but the
 	// READ path still has to merge grants an older nvx persisted, without that
 	// merge switching anything else off. That is what this checks.
+	//
+	// Keyed by projectScopeDir() rather than by projectDir, because that is what
+	// the reader resolves and the two are not the same string everywhere: on macOS
+	// /var is a symlink to /private/var, so MkdirTemp hands back an unresolved path
+	// while Getwd after the chdir returns the resolved one. Using the literal
+	// filed the grant under a key LoadPolicy never looks up, and the test passed on
+	// Windows -- where the paths do match -- and failed on macOS CI.
+	scope := projectScopeDir()
+	if scope == "" {
+		t.Fatal("projectScopeDir() is empty, so the grant cannot be filed where the reader will look")
+	}
 	if err := saveProjectGrants(nvxHome, projectGrants{
-		ProjectPath: projectDir,
+		ProjectPath: scope,
 		AllowHosts:  []string{"example.com:443"},
 	}); err != nil {
 		t.Fatalf("saveProjectGrants: %v", err)
