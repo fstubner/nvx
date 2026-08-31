@@ -17,16 +17,27 @@ import (
 // is Windows-only, and a comparison that changes shape by platform is a thing to
 // get wrong later for no benefit here.
 func underTempDir(path string) bool {
-	tmp := os.TempDir()
-	if tmp == "" || path == "" {
+	return underDir(path, os.TempDir())
+}
+
+// underDir is the comparison, with the directory passed in.
+//
+// Separated from os.TempDir() so it can be tested against a directory spelled
+// both ways. os.TempDir() ends with a separator on macOS and does not on Windows,
+// which is not a detail a test should have to know: the first version of this
+// test built its "sibling that merely starts with the same name" case as
+// os.TempDir()+"2", which is a sibling on Windows and a CHILD on macOS, and duly
+// passed here and failed macOS CI.
+func underDir(path, dir string) bool {
+	if dir == "" || path == "" {
 		return false
 	}
-	tmp = filepath.Clean(tmp)
+	dir = filepath.Clean(dir)
 	path = filepath.Clean(path)
-	if strings.EqualFold(path, tmp) {
+	if strings.EqualFold(path, dir) {
 		return true
 	}
-	prefix := tmp
+	prefix := dir
 	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
 		prefix += string(filepath.Separator)
 	}

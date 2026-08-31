@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -99,25 +100,50 @@ func TestATemporaryNvxHomeIsNeverWrittenToThePersistentPath(t *testing.T) {
 
 // ...and the check has to discriminate, or it would refuse every repair and the
 // test above would pass against a function that never works.
+//
+// The directory is spelled out rather than taken from os.TempDir(), and both with
+// and without a trailing separator, because that is the difference between the
+// platforms and it is not something a test should be guessing at.
+//
+// Every path is assembled with filepath.Join and filepath.Separator, never
+// written as a literal. A backslash is a separator on Windows and an ordinary
+// character everywhere else, so a literal `C:\a\b` is one path element on Linux
+// and this table would assert the opposite of what it means there.
 func TestARealNvxHomeIsStillEligibleForPersistentPathRepair(t *testing.T) {
+	sep := string(filepath.Separator)
+	tmp := filepath.Join("home", "someone", "tmp")
+	tmpSlash := tmp + sep // how macOS spells os.TempDir(); Windows does not
+
 	cases := []struct {
 		name string
+		dir  string
 		path string
 		want bool
 	}{
-		{"inside temp", filepath.Join(os.TempDir(), "nvxa", "bin"), true},
-		{"the temp dir itself", os.TempDir(), true},
-		{"a real home", filepath.Join("C:\\", "Users", "someone", ".nvx", "bin"), false},
-		// A sibling whose name merely starts with the temp directory's must not
-		// match: prefix comparison without a separator says it does.
-		{"temp-like sibling", os.TempDir() + "2", false},
-		{"empty", "", false},
+		{"inside temp", tmp, filepath.Join(tmp, "nvxa", "bin"), true},
+		{"inside temp, dir has trailing separator", tmpSlash, filepath.Join(tmp, "nvxa", "bin"), true},
+		{"the temp dir itself", tmp, tmp, true},
+		{"the temp dir itself, spelled with a separator", tmpSlash, tmp, true},
+		{"a real home", tmp, filepath.Join("home", "someone", ".nvx", "bin"), false},
+		// A sibling whose name merely starts with the directory's must not match:
+		// a prefix comparison without a separator says it does.
+		{"temp-like sibling", tmp, filepath.Join(tmp+"2", "bin"), false},
+		{"temp-like sibling, dir has trailing separator", tmpSlash, filepath.Join(tmp+"2", "bin"), false},
+		{"case differs", tmp, filepath.Join(strings.ToUpper(tmp), "nvxa"), true},
+		{"empty path", tmp, "", false},
+		{"empty dir", "", filepath.Join(tmp, "nvxa"), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := underTempDir(tc.path); got != tc.want {
-				t.Fatalf("underTempDir(%q) = %v, want %v", tc.path, got, tc.want)
+			if got := underDir(tc.path, tc.dir); got != tc.want {
+				t.Fatalf("underDir(%q, %q) = %v, want %v", tc.path, tc.dir, got, tc.want)
 			}
 		})
+	}
+
+	// One check that the wiring reaches the real temp directory at all, so the
+	// table above cannot be passing against a function nothing calls.
+	if !underTempDir(filepath.Join(os.TempDir(), "nvxa", "bin")) {
+		t.Error("underTempDir did not recognise a path inside the real temp directory")
 	}
 }
