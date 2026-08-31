@@ -212,19 +212,42 @@ func normalizePolicy(p *Policy) {
 	// no longer defaulted into every written policy. See PromptsPolicy above.
 	if p.Isolation.Network.Mode == "" {
 		p.Isolation.Network.Mode = "proxy"
-	} else if mode, ok := parseNetworkMode(p.Isolation.Network.Mode); !ok {
-		// A typo in this field used to pass silently and bucket as proxy, so a
-		// policy asking for "offlin" got a live egress proxy while the user
-		// believed they had asked for no network at all. The neighbouring
-		// isolation.level already warns on an unrecognised value; this is the same
-		// treatment for the field where getting it wrong hands out more access.
+	} else {
+		mode, ok := parseNetworkMode(p.Isolation.Network.Mode)
+		if !ok {
+			// A typo in this field used to pass silently and bucket as proxy, so a
+			// policy asking for "offlin" got a live egress proxy while the user
+			// believed they had asked for no network at all. The neighbouring
+			// isolation.level already warns on an unrecognised value; this is the same
+			// treatment for the field where getting it wrong hands out more access.
+			//
+			// Normalised rather than refused, matching isolation.level, and because
+			// proxy is the restrictive default rather than an open one -- the user
+			// asked for stricter than the default and gets the default, loudly.
+			warnUnknownNetworkModeOnce(p.Isolation.Network.Mode)
+		}
+		// Written back on BOTH branches, which is the fix for a fail-open.
 		//
-		// Normalised rather than refused, matching isolation.level, and because
-		// proxy is the restrictive default rather than an open one -- the user
-		// asked for stricter than the default and gets the default, loudly. The
-		// value is rewritten so every downstream reader sees something valid
-		// instead of falling into its own default arm.
-		warnUnknownNetworkModeOnce(p.Isolation.Network.Mode)
+		// parseNetworkMode trims and lowercases before it validates, so "offline "
+		// is a VALID mode and returns ok -- and the write-back used to live only on
+		// the !ok arm, so the padded string survived into the policy. Downstream
+		// readers are not uniform about that: networkModeRank trims, so the policy
+		// ranked as stricter than the default and merged with no trust prompt,
+		// while networkModeRequiresNamespace and applyLinuxNetworkSeccomp lowercase
+		// without trimming and fell through to their default arms -- no network
+		// namespace, and a seccomp filter reported as installed that was never
+		// built.
+		//
+		// Net effect on Linux: a checked-in .nvx-policy.json asking for something
+		// apparently STRICTER than the default silently got unrestricted host
+		// network, and the trust prompt that exists to catch a policy widening
+		// access never fired, because by its own measure nothing had widened.
+		// Windows and macOS were unaffected -- neither keys containment off this
+		// string -- which is why nothing caught it.
+		//
+		// Normalising here rather than trimming at each reader: there are six
+		// consumers of this field and two of them were wrong, so the value that
+		// leaves normalizePolicy is now canonical and no reader has to remember.
 		p.Isolation.Network.Mode = mode
 	}
 	if len(p.Isolation.Network.DefaultAllow) == 0 && !p.Isolation.Network.DefaultAllowSet {

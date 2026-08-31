@@ -60,7 +60,7 @@ type EgressProxy struct {
 }
 
 func startEgressProxy(ctx context.Context, policy Policy, provider RuntimeProvider, nvxHome string) (*EgressProxy, error) {
-	mode := strings.ToLower(policy.Isolation.Network.Mode)
+	mode := strings.ToLower(strings.TrimSpace(policy.Isolation.Network.Mode))
 	if mode == "open" {
 		return nil, nil
 	}

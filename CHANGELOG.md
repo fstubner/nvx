@@ -526,6 +526,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Several abort messages said "aborted by user" when nobody had been asked; they
   now say the warning was not approved, which is what happened.
 
+### Fixed
+
+* **On Linux, a stray space in `network.mode` turned the network containment
+  off.** A project policy asking for `"offline "` — with a trailing space —
+  silently got the full host network, and the prompt that exists to catch a
+  project loosening nvx's settings did not fire, because by its own measure the
+  project had asked for something *stricter* than the default.
+
+  The value was checked with the space trimmed off and then stored with the space
+  still on. After that the readers disagreed: the one that ranks how strict a
+  policy is trimmed and saw "offline", while the two that actually build the
+  Linux network sandbox did not, matched nothing, and quietly did nothing — no
+  network namespace, and a syscall filter reported as installed that was never
+  built. Windows and macOS were unaffected; neither uses this value to decide
+  what to contain.
+
+  The value is now cleaned up once, when the policy is read, so every part of nvx
+  sees the same thing. The two Linux readers also clean it themselves, because
+  both of them fail *open* if they do not recognise what they are given, and one
+  guard is not enough for that.
+
 ### Changed
 
 * **Every prompt now defaults to "no", and answering one no longer grants
