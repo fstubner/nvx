@@ -383,7 +383,7 @@ func TestShellEnvAssignmentEscapesPowerShellValues(t *testing.T) {
 	}
 }
 
-func TestPersistNetworkAllowHostDoesNotDisableDefaultProtections(t *testing.T) {
+func TestPersistedAllowHostsMergeWithoutDisablingDefaultProtections(t *testing.T) {
 	tmp := tempDir(t)
 	projectDir := filepath.Join(tmp, "project")
 	nvxHome := filepath.Join(tmp, ".nvx")
@@ -403,7 +403,16 @@ func TestPersistNetworkAllowHostDoesNotDisableDefaultProtections(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	persistNetworkAllowHost(nvxHome, "example.com:443")
+	// Written through the store directly rather than through the egress prompt.
+	// Nothing writes AllowHosts any more -- an approval is for one run -- but the
+	// READ path still has to merge grants an older nvx persisted, without that
+	// merge switching anything else off. That is what this checks.
+	if err := saveProjectGrants(nvxHome, projectGrants{
+		ProjectPath: projectDir,
+		AllowHosts:  []string{"example.com:443"},
+	}); err != nil {
+		t.Fatalf("saveProjectGrants: %v", err)
+	}
 
 	// The grant must be stored under nvxHome, never written into the project tree.
 	if _, err := os.Stat(filepath.Join(projectDir, ".nvx-policy.json")); err == nil {

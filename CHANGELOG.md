@@ -528,6 +528,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **Every prompt now defaults to "no", and answering one no longer grants
+  anything for ever.** Two changes to the same moment, both found by an
+  independent review rather than by anyone being bitten.
+
+  Pressing Enter at a prompt used to mean yes. Every question nvx asks is about
+  whether to permit something — trust a project policy that loosens settings,
+  allow an outbound connection, grant a tool access, install despite known
+  vulnerabilities — so a stray newline in the console was an approval. It now
+  reads `[y/N]` and only an explicit `y` approves.
+
+  Approving an outbound connection also used to record that host permanently.
+  The prompt said "allow outbound connection to X?", said nothing about
+  persistence, and a reviewer approved a host once and then reached it in a later
+  run with no prompt at all. An approval now lasts for the run in progress. To
+  allow a host durably, put it in `isolation.network.allow_hosts`, where it is
+  written down and can be read in a diff. Hosts persisted by an earlier version
+  keep working, still show in `nvx grants list`, and are still removed by
+  `nvx grants reset`.
+
+* **nvx will not offer a local service through a prompt.** Reaching
+  `localhost` from a sandbox is supported and unchanged when the project policy
+  asks for it — `"allow_hosts": ["localhost:5432"]` — and `--connect` still grants
+  one port for one run.
+
+  What is gone is the path where the sandbox's own contents cause the question to
+  be asked. The prompt is triggered by whatever is running inside, which is the
+  untrusted code, and the services listening on localhost are the ones that take
+  no credentials because they assume anything local is trusted: databases, dev
+  servers, other agents' tooling. A package's install script must not be able to
+  ask the developer for their database. Such a request is now refused outright,
+  with a message naming the two deliberate ways to allow it.
+
+  `docs/enforcement-matrix.md` claimed a local service was reachable "only with a
+  leftover exemption" and "only via `--connect`". That was true before the egress
+  relay and has not been since — the proxy runs outside the containment and dials
+  on the sandbox's behalf, so an allowlisted destination is reachable whether or
+  not it is local. The table and `SECURITY.md` now say what the code does.
+
 * **Why the first contained launch in some projects is slow, corrected.** nvx
   gives the sandbox permission to walk through the folders above your project,
   and on some machines those writes take so long nvx gives up on them and carries

@@ -30,8 +30,8 @@ running system and which are not.
 | Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes⁵ (TCP and UDP; UDP refused at bind) |
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
-| Any loopback service reachable | Only with a leftover exemption³ | No (loopback-only netns) | No⁶ (proxy port only) |
-| One named host service reachable | Only via `--connect`⁹ | No | No |
+| Any loopback service reachable | No, unless the policy lists it¹¹ | No (loopback-only netns) | No⁶ (proxy port only) |
+| One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | No | No |
 | Another project's sandbox reachable over loopback | No¹⁰ (per-project package) | No (each has its own netns) | Untested |
 | A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
@@ -535,3 +535,32 @@ The Linux column is No for a different reason: each contained process gets its
 own loopback-only network namespace, so there is no shared loopback to meet on.
 macOS is Untested — Seatbelt does not namespace the network, and nothing here
 stands up two contained listeners on macOS to check.
+
+¹¹ **Loopback is reachable when the policy says so, and only then. This table
+claimed otherwise until 2026-08-31.**
+
+The rows above used to read "only with a leftover exemption" and "only via
+`--connect`". Both were true of the pre-relay design and neither survived it. The
+egress proxy runs in the parent, *outside* the containment, and dials on the
+contained process's behalf — so a destination the allowlist permits is reachable
+whether or not it is loopback, exemption or no exemption. An acceptance pass
+demonstrated it: a listener on `127.0.0.1:51997`, no exemption on the machine, no
+`--connect`, and the payload came back through nvx's own proxy.
+
+That behaviour is intended and is what `README.md` documents
+(`"allow_hosts": ["localhost:5432"]`). A developer whose project talks to a local
+Postgres or a local registry needs it, and the alternative they reach for is
+`--no-sandbox`, which is worse. `PRODUCT.md` scopes the guarantee to "a host
+outside the policy allowlist", and a host inside `allow_hosts` is inside it.
+
+**What is not offered is loopback by prompt.** The unknown-host prompt is raised
+by whatever the sandbox is running, which is the untrusted code, so a postinstall
+could ask on its own behalf for the developer's local database — and localhost is
+exactly where the services that take no credentials live. A loopback destination
+that is not already allowlisted is now refused without asking, pointing at
+`allow_hosts` and `--connect`. Approving any other host at the prompt lasts for
+that run only; it used to be written into the grants store for ever.
+
+So `--connect` is no longer "the only route to a host service" — it is the only
+*ephemeral, peer-verified* one. `allow_hosts` is the durable form, and being
+durable is why it has to be written down rather than agreed to at a prompt.

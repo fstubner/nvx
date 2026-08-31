@@ -15,7 +15,7 @@ import (
 //	ℹ Verifying package "npm"...
 //	ℹ Scanning OSV database for known vulnerabilities...
 //	✘ Vulnerability Scan Alert: Found active vulnerabilities!
-//	? Proceed with installation despite active vulnerabilities? [Y/n]: y
+//	? Proceed with installation despite active vulnerabilities? [y/N]: y
 //	✘ Global installs (-g) can't run inside the sandbox.
 //
 // The refusal depends only on the flags, so it was knowable before any of that.

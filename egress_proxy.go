@@ -332,6 +332,29 @@ func (p *EgressProxy) allowed(hp hostPort) bool {
 		return false
 	}
 
+	// A loopback destination is never grantable by prompt -- only by policy file.
+	//
+	// Reaching localhost when the policy says so is a supported case and stays
+	// one: a dev server, a local registry, `allow_hosts: ["localhost:5432"]` in
+	// README. What is withdrawn is the path where the CONTAINED PROCESS causes the
+	// question to be asked. The prompt is triggered by whatever the sandbox is
+	// running, which is the untrusted code, at a moment the developer is not
+	// expecting a security question -- so a postinstall could ask, on its own
+	// behalf, for access to the developer's local database.
+	//
+	// Loopback is where that matters most: the services listening there are the
+	// ones that assume anything local is trusted and take no credentials --
+	// Postgres, Redis, dev servers, other agents' MCP servers. An allowlist entry
+	// someone typed into a policy file is a decision that can be read and diffed;
+	// an answer to a prompt raised by untrusted code is not.
+	if isLoopback(hp.host) {
+		LogWarn("Blocked egress to a local service: %s", key)
+		LogInfo("nvx does not offer local services through a prompt, because the contained process is what triggers it. "+
+			"If this is meant, add %q to isolation.network.allow_hosts in the project policy, or use --connect for one run.", key)
+		auditLog(p.nvxHome, "egress_deny_loopback_prompt", map[string]string{"host": key})
+		return false
+	}
+
 	p.promptMu.Lock()
 	defer p.promptMu.Unlock()
 	if p.prompted[key] {
@@ -339,14 +362,22 @@ func (p *EgressProxy) allowed(hp hostPort) bool {
 	}
 	p.prompted[key] = true
 
-	msg := fmt.Sprintf("Allow outbound connection to %s?", key)
+	msg := fmt.Sprintf("Allow outbound connection to %s for the rest of this run?", key)
 	if !PromptTrustBoundary(msg) {
 		LogWarn("Blocked egress: %s", key)
 		auditLog(p.nvxHome, "egress_deny", map[string]string{"host": key})
 		return false
 	}
+	// This run only. It used to also write the host into the project policy, so a
+	// single yes was a permanent grant -- the prompt said "allow outbound
+	// connection to X?", mentioned no persistence, and the field it set is called
+	// `session`. An acceptance pass approved one host, then reached it in a later
+	// run with no prompt and no trust environment at all.
+	//
+	// Persisting is still available and is now only the deliberate form: write the
+	// host into isolation.network.allow_hosts, where it can be reviewed in a diff
+	// like every other policy decision.
 	p.session[key] = true
-	persistNetworkAllowHost(p.nvxHome, key)
 	auditLog(p.nvxHome, "egress_allow_prompted", map[string]string{"host": key})
 	return true
 }
