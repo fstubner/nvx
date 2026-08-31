@@ -77,6 +77,9 @@ func TestContainmentNotDisprovedInsideRealAppContainer(t *testing.T) {
 	t.Logf("child exit=%d err=%v output=%q", exitCode, launchErr, out)
 	switch {
 	case launchErr != nil:
+		// A launch that failed because the machine was full used to skip here, so a
+		// run could report success with this containment probe never executed.
+		failIfHostIsOutOfMemory(t, "the contained marker probe", launchErr)
 		t.Skipf("could not launch the contained probe: %v", launchErr)
 	case contains(out, "containment=NOT_DISPROVED"):
 		t.Log("correct: inside a real AppContainer the check does not claim to disprove containment, so a legitimate nested nvx still skips re-sandboxing")

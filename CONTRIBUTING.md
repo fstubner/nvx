@@ -91,7 +91,7 @@ ACE hides a secret, that one session cannot read another's guest home, and that
 the relay does not expose host loopback services — roughly twenty end-to-end
 containment assertions that skip on hosted CI and run here.
 
-Expect **0 failures and exactly these 5 top-level skips**. `go test -v` also
+Expect **0 failures and exactly these 6 top-level skips**. `go test -v` also
 prints a further `--- SKIP` line for the subtest
 `TestStageAppContainerExecutableThroughALinkedDirectory/symlink`, which has the
 same Developer Mode cause as the third row — count top-level skips, or a reader
@@ -104,10 +104,11 @@ following this literally goes looking for a phantom:
 | `TestExtractTarGzAllowsInternalSymlink` | creating symlinks needs Developer Mode; environment, not product |
 | `TestExemptMachineIsWarnedAbout` | this machine has no nvx loopback exemption — the healthy state; the exempt branch is covered by `sandbox_loopback_exemption_seam_windows_test.go` |
 | `TestPipedStdioReachesRealAppContainerChild` | needs write access to the DACL on `C:\WINDOWS\System32\cmd.exe`, which an unelevated account does not have. **Expected on a normal run**, since nvx is meant to be used without elevation — run the gate elevated to make this one assert. |
+| `TestReportsItsOwnRaceBuildTag` | the child half of the uninstrumented-probe-child check — it only does anything when run as a child with `NVX_REPORT_RACE=1`, so in the parent it is a helper, not a test |
 
-A sixth means something is quietly not being checked — go and look at it rather
-than at this table. Last measured on Windows 11, 2026-08-30, unelevated:
-**402 passing, 5 skipping, 0 failing**, in about 250s under -race (about 105s without it; the detector roughly doubles it).
+A seventh means something is quietly not being checked — go and look at it rather
+than at this table. Last measured on Windows 11, 2026-08-31, unelevated:
+**410 passing, 6 skipping, 0 failing**, in about 250s under -race (about 105s without it; the detector roughly doubles it).
 
 That duration used to be nine to twelve minutes, and the drop is a fix rather
 than a shortcut: nearly all of it was this binary waiting out the same stalled
@@ -121,7 +122,30 @@ write.
 **If you see this take many minutes again, that is the regression**, not a slow
 machine.
 
-A seventh skip appeared once and is not in the table:
+### The gate needs free memory, and says so when it does not
+
+The probes run a copy of the test binary inside each AppContainer. Under `-race`
+that child used to be race-instrumented too, which made a gate run cost several
+gigabytes of commit charge in bursts; on a machine near its commit limit, whatever
+happened to be allocating at that moment failed instead. Measured: three of ten
+`-race` runs failed against none of ten without it, wearing five different faces —
+"The paging file is too small for this operation to complete", `error code: 1455`
+(ERROR_COMMITMENT_LIMIT), `exit status 0xc0000142` (STATUS_DLL_INIT_FAILED), a
+`net.Listen` refusing, and interface enumeration coming back empty. Two of those
+five arrived as SKIPS, so a run could go green having checked no containment at
+all.
+
+Two things now stop that. The child is rebuilt once per run without
+instrumentation, which is worth 212.5MB against 54.0MB of peak commit per child on
+the same workload — the parent keeps `-race`, which is the half that catches real
+races. And a refused AppContainer launch is only excused after a control launch
+has shown this host genuinely cannot create them; on a host that can, a refusal is
+a failure with the machine's commit headroom printed next to it.
+
+**A run whose skip count exceeds the table above has not checked what it claims**,
+whatever the failure count says. That is the number to read first.
+
+An extra skip beyond the table appeared once and is not in it:
 `TestDenyACEHidesSecretFromAppContainer` self-skips when it cannot stage the test
 binary as a contained child. The test documents that as intermittent on hosted
 runners; it ran normally on the next attempt.
