@@ -528,6 +528,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The typosquat check no longer quietly shrinks to a fraction of its
+  dictionary.** nvx compares the package you are installing against a list of
+  around 2,000 popular names, refreshed weekly. Once that copy was a week old it
+  was thrown away and the check ran against a built-in list of **33** names
+  instead, while the refresh happened in the background for next time — and the
+  output said "Verifying package" either way.
+
+  The old copy is now used while the new one downloads. The list it comes from is
+  updated quarterly, so a week-old copy is almost always the same list; the
+  built-in 33 are for having nothing at all, not for having something slightly
+  out of date. On the machine this was found on, the check was a day away from
+  dropping from 2,000 names to 33.
+
+* **A vulnerability scan that could not finish no longer reports as clean.** If
+  the vulnerability database answered for fewer packages than were asked about,
+  the unanswered ones were treated as having nothing against them and the run
+  printed "Vulnerability scan clean. No active CVEs found." The same happened
+  when the database had more advisories for a package than fit in one answer.
+  Both now report that the check could not be completed, which asks you whether
+  to continue — the choice nvx already offered when the database was
+  unreachable.
+
 * **A project policy can no longer be swapped between being read and being
   checked.** When a project's `.nvx-policy.json` asks for something more
   permissive than the defaults, nvx checks it against the version you approved
