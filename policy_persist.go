@@ -142,34 +142,19 @@ func hashPolicyFile(path string) (string, bool) {
 	return hex.EncodeToString(sum[:]), true
 }
 
-// persistNetworkAllowHost records a user-approved egress host in the project's
-// grant file under nvxHome. It never writes into the project tree, and it can
-// only add an allow host — it cannot alter any other policy setting.
-func persistNetworkAllowHost(nvxHome, hostPort string) {
-	hostPort = strings.TrimSpace(strings.ToLower(hostPort))
-	if hostPort == "" || nvxHome == "" {
-		return
-	}
-	scope := projectScopeDir()
-	if scope == "" {
-		return
-	}
-
-	g := loadProjectGrants(nvxHome, scope)
-	for _, existing := range g.AllowHosts {
-		if strings.EqualFold(strings.TrimSpace(existing), hostPort) {
-			return
-		}
-	}
-	g.AllowHosts = append(g.AllowHosts, hostPort)
-	g.ProjectPath = scope
-
-	if err := saveProjectGrants(nvxHome, g); err != nil {
-		LogWarn("Failed to persist network allow host to grants: %v", err)
-		return
-	}
-	auditLog(nvxHome, "grant_added", map[string]string{"host": hostPort, "project": scope})
-}
+// Nothing writes AllowHosts into the grants store any more.
+//
+// persistNetworkAllowHost lived here and was called from the egress prompt, so
+// answering one "allow outbound connection to X?" granted that host for ever.
+// Approving is now for the run in progress only; the durable form is an entry in
+// isolation.network.allow_hosts, which is a decision someone wrote down rather
+// than one the contained process asked for.
+//
+// The READ side is deliberately untouched: loadProjectGrants still returns
+// AllowHosts and LoadPolicy still merges them, so hosts persisted by an earlier
+// version keep working and stay visible to `nvx grants list` and removable by
+// `nvx grants reset`. Dropping the reader would have stranded them — granted, in
+// force, and no longer listed.
 
 // readGrantsFile loads one grants file by path, for callers walking the grants
 // directory rather than resolving a project. Returns nothing if it cannot be

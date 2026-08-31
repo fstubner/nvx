@@ -137,6 +137,23 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   `scripts/sandbox-enforcement-windows.ps1` now asserts the cross-project
   refusal, with the same-project connection as its positive control.
 
+- **A local service is reachable from a sandbox when the policy allowlists it.**
+  `"allow_hosts": ["localhost:5432"]` means what it says on every platform where
+  the proxy mediates egress: the proxy runs outside the containment and dials on
+  the contained process's behalf, so a permitted destination is permitted whether
+  or not it is loopback. This is intended — a project that talks to a local
+  database or registry needs it. What it costs is that anything reachable on
+  loopback which *forwards* traffic (a debugging proxy, `ssh -D`, a dev-server
+  proxy route) makes egress arbitrary, so allowlist a local port with the same
+  care as a remote one.
+
+  nvx will not grant loopback through the unknown-host prompt, only through the
+  policy file or `--connect`. The prompt is raised by whatever the sandbox is
+  running — the untrusted code — and localhost is where the services that take no
+  credentials listen, so a postinstall must not be able to ask for the developer's
+  database. Approving any other host at that prompt lasts for the current run and
+  is no longer recorded.
+
 - **On Windows, a loopback exemption left by a pre-0.5.0 `nvx setup` opens every
   service on 127.0.0.1** to contained code, whatever the allowlist says — local
   databases, daemon ports, other dev servers. 0.5.0 never registers one and

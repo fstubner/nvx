@@ -108,7 +108,15 @@ following this literally goes looking for a phantom:
 
 A seventh means something is quietly not being checked — go and look at it rather
 than at this table. Last measured on Windows 11, 2026-08-31, unelevated:
-**410 passing, 6 skipping, 0 failing**, in about 250s under -race (about 105s without it; the detector roughly doubles it).
+**416 passing, 6 skipping, 0 failing**. Measured on this machine: 163–209s under
+-race and 154s without, so the detector costs roughly a quarter, not the double
+this line claimed until an acceptance pass measured it.
+
+The summary line must read `ok github.com/fstubner/nvx <time>` and nothing else.
+`[no tests to run]` appended to it means a child process wrote to the test
+binary's stdout and `go test` attributed it to the package — the gate's headline
+then reads exactly like a run in which nothing executed. See
+`probe_control_child_silent_test.go`.
 
 That duration used to be nine to twelve minutes, and the drop is a fix rather
 than a shortcut: nearly all of it was this binary waiting out the same stalled

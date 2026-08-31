@@ -98,12 +98,18 @@ func runAppContainerControlLaunch() (bool, string) {
 		return false, fmt.Sprintf("could not stage the control child: %v", err)
 	}
 
-	// A test pattern that matches nothing: the binary starts, runs no test and
-	// exits 0. All this asks is whether CreateProcess can start a process inside an
+	// NVX_HOST_CONTROL_CHILD makes the child exit 0 from TestMain before the
+	// testing package runs or prints anything -- see main_test.go. A -test.run
+	// pattern matching no test was the obvious way to do this and the wrong one:
+	// the child still reached the testing package, still wrote to the stdout this
+	// process shares with it, and cmd/go put "[no tests to run]" on the gate's
+	// summary line for the whole package.
+	//
+	// All this asks is whether CreateProcess can start a process inside an
 	// AppContainer at all, which is the only thing the verdict is about.
-	exitCode, launchErr := launchAppContainerProcess(childExe,
-		[]string{"-test.run=NvxHostControlMatchesNoTest"},
-		scrubEnvironment(guestHome), workDir, sid, 0, scopeCaps)
+	exitCode, launchErr := launchAppContainerProcess(childExe, nil,
+		append(scrubEnvironment(guestHome), "NVX_HOST_CONTROL_CHILD=1"),
+		workDir, sid, 0, scopeCaps)
 	if launchErr != nil {
 		return false, fmt.Sprintf("the control launch was refused: %v", launchErr)
 	}

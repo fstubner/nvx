@@ -1188,19 +1188,41 @@ func promptConsoleYesNo(message string) bool {
 		ttyOut = tty
 	}
 
-	fmt.Fprintf(ttyOut, "\x1b[33m?\x1b[0m %s [Y/n]: ", message)
+	// [y/N], and a bare Enter denies.
+	//
+	// This read `[Y/n]` and treated \r and \n as approval, so the default answer
+	// to every question nvx asks was yes -- including "this project policy loosens
+	// nvx security settings, trust it?", "allow outbound connection to X?",
+	// trusted-tool approval, and "proceed with installation despite active
+	// vulnerabilities?". Every caller of both prompt functions is a question about
+	// whether to permit something; none of them is a routine confirmation.
+	//
+	// That made a stray newline in the console buffer an approval, which is a
+	// strange way to lose a security decision, and it was the one place on this
+	// path that did not fail closed: non-interactive denies, -y/--agent-mode/
+	// NVX_YES deliberately do not approve, only NVX_TRUST_YES does. An acceptance
+	// pass found it by reading the two lines rather than by being bitten.
+	//
+	// Approval is now an explicit y. Anything else -- Enter, n, a stray byte, a
+	// short read -- denies, so the failure modes all land on the safe side.
+	fmt.Fprintf(ttyOut, "\x1b[33m?\x1b[0m %s [y/N]: ", message)
 
 	var buf [10]byte
 	n, err := ttyIn.Read(buf[:])
-	if err != nil || n == 0 {
+	return promptAnswerApproves(buf[:], n, err)
+}
+
+// promptAnswerApproves decides whether what the console returned is a yes.
+//
+// Split out from the read so it can be tested: promptConsoleYesNo opens CONIN$ or
+// /dev/tty, which a test cannot supply, so the decision that actually matters had
+// no coverage while the enclosing function had plenty. That is how it went
+// unnoticed that Enter meant yes.
+func promptAnswerApproves(buf []byte, n int, err error) bool {
+	if err != nil || n == 0 || len(buf) == 0 {
 		return false
 	}
-
-	char := strings.ToLower(string(buf[0]))
-	if char == "y" || buf[0] == '\r' || buf[0] == '\n' {
-		return true
-	}
-	return false
+	return strings.ToLower(string(buf[0])) == "y"
 }
 
 // parsePackageQuery splits a package install query (e.g. lodash@4.17.21 or @types/node@18.0.0)
