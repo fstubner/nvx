@@ -104,11 +104,11 @@ func TestResettingGrantsWithdrawsThemAll(t *testing.T) {
 	const sid = "S-1-15-3-1024-eee"
 	var revoked []string
 	allExist := func(string) bool { return true }
-	r, f := revokeAllReadExecGrantsWithin(
+	r, f, s := revokeAllReadExecGrantsWithin(
 		[]readExecGrant{{Path: `C:\a`, SID: sid}, {Path: `C:\b`, SID: sid}},
 		recordingRevoker(&revoked, map[string]bool{`C:\b`: true}), allExist)
-	if r != 1 || f != 1 {
-		t.Fatalf("revoked=%d failed=%d, want 1 and 1", r, f)
+	if r != 1 || f != 1 || s != 0 {
+		t.Fatalf("revoked=%d failed=%d stranded=%d, want 1, 1 and 0", r, f, s)
 	}
 }
 
@@ -117,11 +117,16 @@ func TestResettingGrantsWithdrawsThemAll(t *testing.T) {
 // directory may have been renamed, taking the permission with it -- but a reset
 // is the user asking to clear this state, and refusing for ever would leave the
 // command permanently unable to complete.
+//
+// So it is still not counted as failed, and the record is still dropped. What was
+// missing is the other half: it is not a success either, and it used to be
+// reported as one. The vanished entry now comes back as `stranded`, which is what
+// the caller uses to finish the reset and still exit non-zero.
 func TestResettingSkipsRecordsWhoseDirectoryIsGone(t *testing.T) {
 	const sid = "S-1-15-3-1024-fff"
 	var revoked []string
 	gone := func(string) bool { return false }
-	r, f := revokeAllReadExecGrantsWithin(
+	r, f, s := revokeAllReadExecGrantsWithin(
 		[]readExecGrant{{Path: `C:\vanished`, SID: sid}},
 		recordingRevoker(&revoked, nil), gone)
 
@@ -133,6 +138,38 @@ func TestResettingSkipsRecordsWhoseDirectoryIsGone(t *testing.T) {
 	}
 	if r != 0 {
 		t.Fatalf("revoked=%d; nothing was withdrawn, so nothing should be counted", r)
+	}
+	if s != 1 {
+		t.Fatalf("stranded=%d, want 1; without it the caller cannot tell this run apart "+
+			"from one that withdrew everything, and prints a tick at exit 0", s)
+	}
+}
+
+// A mixture: one withdrawn, one refused, one vanished. Each has a different
+// consequence for the caller -- keep the record, drop it, exit code -- so they
+// must not be conflated into a single "something went wrong" count.
+func TestRevokeAccountingKeepsTheThreeOutcomesApart(t *testing.T) {
+	const sid = "S-1-15-3-1024-abc"
+	var revoked []string
+	exists := func(p string) bool { return p != `C:\vanished` }
+
+	r, f, s := revokeAllReadExecGrantsWithin(
+		[]readExecGrant{
+			{Path: `C:\ok`, SID: sid},
+			{Path: `C:\refused`, SID: sid},
+			{Path: `C:\vanished`, SID: sid},
+		},
+		recordingRevoker(&revoked, map[string]bool{`C:\refused`: true}), exists)
+
+	if r != 1 || f != 1 || s != 1 {
+		t.Fatalf("revoked=%d failed=%d stranded=%d, want 1, 1 and 1", r, f, s)
+	}
+	// The vanished path must never be handed to the revoker: on Windows that call
+	// is what reports success having removed nothing.
+	for _, p := range revoked {
+		if p == `C:\vanished` {
+			t.Error("attempted to withdraw from a path that does not exist")
+		}
 	}
 }
 

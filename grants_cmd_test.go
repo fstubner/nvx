@@ -145,3 +145,62 @@ func containsAll(s string, subs ...string) bool {
 	}
 	return true
 }
+
+// `nvx grants reset` must not print a tick and exit 0 when it could not withdraw
+// a permission because the directory moved.
+//
+// An access-control entry follows a renamed directory, so the permission is still
+// in force under the new name -- and the reset deletes the record, which is the
+// only thing that knew the identity and the original path. An acceptance pass did
+// exactly this: renamed a granted directory, ran reset, got
+// "✔ Reset grants for this project." at exit 0, and found the entry still on disk.
+//
+// The record is still dropped and the reset still finishes, so running it again is
+// clean; what changes is that this run reports what it could not account for.
+func TestResetReportsAPermissionItCouldNotWithdraw(t *testing.T) {
+	tmp := tempDir(t)
+	projectDir := filepath.Join(tmp, "project")
+	nvxHome := filepath.Join(tmp, ".nvx")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nvxHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+
+	scope := projectScopeDir()
+	g := loadProjectGrants(nvxHome, scope)
+	g.ProjectPath = scope
+	// A recorded grant on a directory that is not there. Never created, which is
+	// the same state the ledger is in after the directory is renamed away.
+	g.ReadExecGrants = append(g.ReadExecGrants, readExecGrant{
+		Path: filepath.Join(tmp, "granted-then-renamed"),
+		SID:  "S-1-15-3-1024-deadbeef",
+	})
+	if err := saveProjectGrants(nvxHome, g); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := runGrants([]string{"reset"}, nvxHome); code == 0 {
+		t.Fatal("reset exited 0 while a recorded permission could not be withdrawn; " +
+			"a cleanup script cannot tell this from a clean reset")
+	}
+
+	// It still has to have finished: the record is gone, so a second run is clean
+	// rather than the command being stuck reporting this for ever.
+	if _, err := os.Stat(grantsPath(nvxHome, scope)); !os.IsNotExist(err) {
+		t.Fatalf("the grant record survived the reset (err=%v); the reset did not complete", err)
+	}
+	if code := runGrants([]string{"reset"}, nvxHome); code != 0 {
+		t.Fatalf("a second reset returned %d; the command is stuck rather than finished", code)
+	}
+}
