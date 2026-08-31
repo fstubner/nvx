@@ -108,7 +108,7 @@ following this literally goes looking for a phantom:
 
 A seventh means something is quietly not being checked — go and look at it rather
 than at this table. Last measured on Windows 11, 2026-08-31, unelevated:
-**429 passing, 6 skipping, 0 failing** on Windows (Linux adds two more: the network-mode readers only build there). Measured on this machine: 163–209s under
+**433 passing, 6 skipping, 0 failing** on Windows (Linux adds two more: the network-mode readers only build there). Measured on this machine: 163–209s under
 -race and 154s without, so the detector costs roughly a quarter, not the double
 this line claimed until an acceptance pass measured it.
 

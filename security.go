@@ -74,43 +74,72 @@ func LevenshteinDistance(s, t string) int {
 	return d[len(s)][len(t)]
 }
 
-// LoadPopularPackages returns the typosquatting checklist, syncing from a remote source if outdated
+// popularPackagesTTL is when the cached dictionary is refreshed in the
+// background. It is NOT when the cache stops being used -- see
+// LoadPopularPackages.
+const popularPackagesTTL = 7 * 24 * time.Hour
+
+// readPopularPackagesCache returns the cached dictionary, and whether it is
+// usable at all. A file that cannot be read or parsed is not usable; an old one
+// is.
+func readPopularPackagesCache(cachePath string) ([]string, bool) {
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return nil, false
+	}
+	var list []string
+	if err := json.Unmarshal(data, &list); err != nil || len(list) == 0 {
+		return nil, false
+	}
+	return list, true
+}
+
+// LoadPopularPackages returns the typosquatting checklist, refreshing it in the
+// background once the cache is older than popularPackagesTTL.
+//
+// A stale cache is still used. It used to be discarded the moment it passed
+// seven days, falling back to EmbeddedPopularPackages -- 33 names against the
+// 2000 on disk -- while the sync that would have replaced it ran in the
+// background for NEXT time and the user still saw "Verifying package". A
+// typosquat check comparing against 33 names instead of 2000 is a different
+// check, and nothing said so.
+//
+// Measured on the machine this was found on: the cache held 2000 entries, six
+// days old, and would have dropped to 33 the following afternoon.
+//
+// Seven days was never a correctness boundary either. The source dataset
+// (npm-high-impact, see popularPackagesURL) is refreshed quarterly, so a
+// week-old copy and a fresh one are almost always the same list. The TTL is
+// there to keep the copy current, not to decide whether it can be trusted, and
+// the embedded list is for having nothing at all rather than for having
+// something slightly old.
 func LoadPopularPackages(nvxHome string) []string {
 	cachePath := filepath.Join(nvxHome, "popular_packages.json")
+	cached, usable := readPopularPackagesCache(cachePath)
 
-	// Check if local cache is fresh (less than 7 days old)
-	if info, err := os.Stat(cachePath); err == nil && time.Since(info.ModTime()) < 7*24*time.Hour {
-		data, err := os.ReadFile(cachePath)
-		if err == nil {
-			var list []string
-			if err := json.Unmarshal(data, &list); err == nil && len(list) > 0 {
-				return list
-			}
-		}
+	fresh := false
+	if info, err := os.Stat(cachePath); err == nil && time.Since(info.ModTime()) < popularPackagesTTL {
+		fresh = true
+	}
+	if usable && fresh {
+		return cached
 	}
 
-	// Dynamic update in the background (or fallback synchronously if file missing)
-	// We will attempt to fetch a curated list of top 100 packages.
-	// For reliable fallback, if it doesn't exist, we download it.
-	syncNeeded := false
-	if _, err := os.Stat(cachePath); os.IsNotExist(err) {
-		syncNeeded = true
-	}
-
-	if syncNeeded {
-		// Sync synchronously on first run to populate the cache
-		list, err := syncPopularPackages(cachePath)
-		if err == nil {
+	if !usable {
+		// Nothing to fall back on but the embedded list, so it is worth blocking
+		// briefly to get the real one. This is the first run, or a corrupt cache.
+		if list, err := syncPopularPackages(cachePath); err == nil {
 			return list
 		}
-	} else {
-		// Sync asynchronously in the background if we have an old cache, so we don't block the developer
-		go func() {
-			_, _ = syncPopularPackages(cachePath)
-		}()
+		return EmbeddedPopularPackages
 	}
 
-	return EmbeddedPopularPackages
+	// Stale but usable: refresh for next time, and check against what we have
+	// rather than against a twentieth of it.
+	go func() {
+		_, _ = syncPopularPackages(cachePath)
+	}()
+	return cached
 }
 
 // popularPackagesURL points at the npm-high-impact dataset (top npm packages
@@ -319,6 +348,11 @@ type OSVResponseBatch struct {
 
 type OSVResult struct {
 	Vulns []OSVVuln `json:"vulns"`
+	// NextPageToken is set when OSV has more advisories for this query than it
+	// returned. Parsed so its presence can be reported; nvx does not follow it,
+	// and silently keeping the first page would understate a package that has
+	// enough vulnerabilities to need paging.
+	NextPageToken string `json:"next_page_token,omitempty"`
 }
 
 type OSVVuln struct {
@@ -354,14 +388,38 @@ func ScanVulnerabilitiesBatch(packages []OSVQuery) (map[string][]OSVVuln, error)
 		return nil, err
 	}
 
+	// A short result list is an error, not an absence of vulnerabilities.
+	//
+	// This was `if i < len(batchResp.Results)`, so any query the API did not answer
+	// was skipped and the package came back with nothing against it -- and the
+	// caller prints "Vulnerability scan clean. No active CVEs found." for an empty
+	// map. "Could not check" and "checked, nothing found" are the two answers that
+	// must never be confused in a security tool, and this rendered the first as the
+	// second.
+	//
+	// Returning an error is not a new failure mode: the caller already handles one
+	// by asking "Proceed without CVE checks?" and aborting the install if the user
+	// declines. That path existed and this simply reaches it.
+	if len(batchResp.Results) != len(payload.Queries) {
+		return nil, fmt.Errorf("OSV returned %d results for %d queries; some packages were not checked",
+			len(batchResp.Results), len(payload.Queries))
+	}
+
 	results := make(map[string][]OSVVuln)
 	for i, query := range payload.Queries {
-		if i < len(batchResp.Results) {
-			vulns := batchResp.Results[i].Vulns
-			if len(vulns) > 0 {
-				key := fmt.Sprintf("%s@%s", query.Package.Name, query.Version)
-				results[key] = fillVulnSummaries(client, vulns)
-			}
+		res := batchResp.Results[i]
+		// A paged answer means this package has more advisories than one response
+		// carries. nvx does not follow the pages, so say so rather than reporting
+		// the first page as the whole answer -- the package is already known to
+		// have vulnerabilities at that point, so the honest outcome is an error the
+		// user is asked about.
+		if res.NextPageToken != "" {
+			return nil, fmt.Errorf("OSV paginated its answer for %s@%s; nvx cannot yet read past the first page, so the result would be incomplete",
+				query.Package.Name, query.Version)
+		}
+		if len(res.Vulns) > 0 {
+			key := fmt.Sprintf("%s@%s", query.Package.Name, query.Version)
+			results[key] = fillVulnSummaries(client, res.Vulns)
 		}
 	}
 	return results, nil
