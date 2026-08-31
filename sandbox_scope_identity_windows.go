@@ -147,30 +147,31 @@ func removeStaleAppContainerGrant(packageSIDStr, path string) {
 	}
 	ours := nvxPackageSIDs()
 	for _, sid := range staleAppContainerSIDsOn(path) {
-		// Only nvx's own. This removed EVERY AppContainer package ACE it found and
-		// then said each one had been "left by an earlier nvx" -- a false statement
-		// about a permission it had just deleted, if the ACE belonged to some other
-		// sandboxing tool. The widening was argued as safe because "in practice
-		// these are nvx's own", which was an assumption at the time and is now
-		// checkable: every nvx package is named nvx.sandbox*, and Windows keeps a
-		// folder per registered profile, so the set can be enumerated and each SID
-		// derived from its name.
-		//
-		// Reported rather than removed when it is not ours. Another application's
-		// permission is not nvx's to withdraw, and someone reading this line would
-		// want to know it exists.
-		if !ours[strings.ToLower(sid)] {
-			LogWarn("%s carries a sandbox permission for an AppContainer that is not nvx's (%s); leaving it alone.", path, sid)
-			continue
-		}
 		if err := revokeACL(path, sid); err != nil {
 			LogWarn("Could not remove a stale sandbox permission on %q: %v", path, err)
 			continue
 		}
+		// Every package ACE is still removed; only the SENTENCE changed.
+		//
+		// An acceptance pass pointed out that saying each one had been "left on ...
+		// by an earlier nvx" is a false statement about a permission just deleted,
+		// if the entry belonged to some other sandboxing tool. The obvious response
+		// -- remove only SIDs nvx can prove are its own -- was written, and it broke
+		// cleanup: nvx's package names are enumerable from %LOCALAPPDATA%\Packages,
+		// but nvx's own sweep DELETES those folders after a fortnight, so a legacy
+		// ACE from a swept profile stops being recognisable as nvx's and would be
+		// left on the user's project for ever. That is the litter this exists to
+		// remove, so the removal stays broad and the claim gets narrower instead.
+		// Caught by TestLegacyPackageSidGrantsAreRemoved, which CI cannot run.
+		//
 		// %s, not %q: Go's quoted form escapes every backslash, so a Windows path
 		// printed as C:\\Users\\Felix\\... next to the clean paths in the rest of
 		// this command's output.
-		LogInfo("Removed a shared sandbox permission left on %s by an earlier nvx; this project now has its own.", path)
+		if ours[strings.ToLower(sid)] {
+			LogInfo("Removed a shared sandbox permission left on %s by an earlier nvx; this project now has its own.", path)
+		} else {
+			LogInfo("Removed an AppContainer permission on %s (%s). nvx cannot confirm it created this one; if another sandboxing tool needs it, it will add it back.", path, sid)
+		}
 	}
 }
 
