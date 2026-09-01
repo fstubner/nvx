@@ -333,16 +333,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// The project capability is what makes this session's writable roots reachable
 	// at all; without it the container holds the package SID only, which no longer
 	// grants the guest home or the working directory.
-	capabilitySIDs := append(scopeCaps, networkCaps...)
-
-	// The identity `nvx setup` grants drive-root stat access to, carried by every
-	// launch. Setup is elevated and runs once, long before any particular project
-	// exists, so it cannot grant per-project packages; it grants this instead. A
-	// machine that never ran setup simply holds a capability nothing has granted
-	// anything to, which costs nothing and grants nothing.
-	if setupCap, err := deriveCapabilitySIDString(setupCapabilityName); err == nil {
-		capabilitySIDs = append(capabilitySIDs, setupCap)
-	}
+	capabilitySIDs := launchCapabilitySIDs(scopeCaps, networkCaps)
 
 	// Publishing a port needs the in-container supervisor too, since the tunnels
 	// are dialled from in there. In the default proxy mode it is already running
@@ -729,4 +720,25 @@ func stripProxyEnv(env []string) []string {
 		out = append(out, e)
 	}
 	return out
+}
+
+// launchCapabilitySIDs is the capability set every contained launch carries.
+//
+// Extracted so it can be asserted. The setup capability appended here is the
+// identity `nvx setup` writes drive-root ACEs for, and the two are only useful
+// together: if this stops appending it, an elevated setup grants access to
+// something no launch holds, contained `npx` keeps failing, and the machine's
+// owner has done exactly what they were told with nothing to show for it. That
+// failure is invisible from both sides -- setup reports success because the ACE
+// was written, and the launch reports EPERM because it does not hold the
+// identity.
+//
+// A machine that never ran setup simply carries a capability nothing has granted
+// anything to, which costs nothing and grants nothing.
+func launchCapabilitySIDs(scopeCaps, networkCaps []string) []string {
+	caps := append(append([]string{}, scopeCaps...), networkCaps...)
+	if setupCap, err := deriveCapabilitySIDString(setupCapabilityName); err == nil {
+		caps = append(caps, setupCap)
+	}
+	return caps
 }
