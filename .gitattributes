@@ -1,0 +1,25 @@
+# Go source is stored with LF, whatever the checkout does locally.
+#
+# This repo is developed on Windows with core.autocrlf=true, so the working tree
+# has CRLF and `gofmt -l` lists most files — noise that is purely local, since the
+# committed bytes are LF and gofmt-clean. That is fine until someone with
+# autocrlf=false commits, at which point CRLF enters the history and the noise
+# stops being local: gofmt would then be right, and the diff would be every line
+# of the file.
+#
+# Declaring it here makes the stored form a property of the repo rather than of
+# whoever happened to clone it. Nothing is renormalised by adding this — the
+# committed bytes already match.
+*.go text eol=lf
+
+# The shell scripts are executed by CI on Linux and macOS. A CRLF shebang line
+# fails with a bare "bad interpreter", which is a confusing way to learn about
+# line endings.
+*.sh text eol=lf
+
+# PowerShell files are deliberately NOT declared here. They are stored LF today,
+# and both `-text` and `eol=crlf` would rewrite all five of them: the first tells
+# git to store the working tree's CRLF verbatim, the second asks for CRLF in the
+# index. Leaving them unmanaged keeps the stored bytes as they are. Checked with
+# `git add --renormalize .`, which staged 664 changed lines across five .ps1
+# files before this line was removed and none after.
