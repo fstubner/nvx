@@ -21,6 +21,21 @@ Cells marked **profile only** describe the generated Seatbelt profile rather tha
 observed behaviour — see ⁵ for which macOS rows are now confirmed against a
 running system and which are not.
 
+**Where the evidence for each column comes from.** Windows is asserted by
+`scripts/sandbox-enforcement-windows.ps1` and ~20 `NVX_PROBE=1` tests run by hand
+on a real machine before a release. Linux was confirmed on real Linux on
+2026-09-01 — WSL2, Ubuntu 24.04, kernel 6.18 — rather than on CI's word:
+`sandbox-enforcement-linux.sh` reported `WRITE_OUTSIDE=DENIED WRITE_INSIDE=ALLOWED
+READ_OUTSIDE=DENIED READ_INSIDE=ALLOWED EGRESS=DENIED`, with `unshare -Urn`
+verified usable first so the egress line was asserted rather than skipped, and the
+cross-compiled test binary ran 308 tests including the Landlock and seccomp ones
+that cannot build on Windows. macOS enforcement is still CI-only: nobody working
+on this has a Mac, and that is why ⁵ distinguishes what is measured there from
+what is read off the generated profile. The Seatbelt profile's CONTENT is checked
+everywhere — seven profile tests run on Linux and Windows too, because generating
+the text is platform-independent — so what the macOS profile SAYS is verified and
+whether the kernel honours it is not.
+
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
 | Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |

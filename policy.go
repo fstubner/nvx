@@ -439,6 +439,7 @@ func loadGlobalPolicy(nvxHome string) (Policy, error) {
 	if err := json.Unmarshal(data, &policy); err != nil {
 		return policy, fmt.Errorf("parse global policy %s: %w", globalPolicyPath, err)
 	}
+	warnAboutUnknownPolicyKeys(globalPolicyPath, data)
 	markPolicyFieldPresence(data, &policy)
 	return policy, nil
 }
@@ -506,6 +507,7 @@ func readAndHashProjectPolicyFile(path string) (Policy, []byte, string, error) {
 	if err := json.Unmarshal(data, &lp); err != nil {
 		return lp, nil, "", fmt.Errorf("parse local policy %s: %w", path, err)
 	}
+	warnAboutUnknownPolicyKeys(path, data)
 	markPolicyFieldPresence(data, &lp)
 	return lp, data, hash, nil
 }
@@ -669,6 +671,19 @@ func hostsAdded(before, after []string) bool {
 }
 
 // policyLoosens reports whether the after policy is more permissive than before.
+//
+// Two fields an audit flagged as missing are deliberately absent, and stay that
+// way because MergePolicies makes them unreachable rather than because they do
+// not matter:
+//
+//   - BlockedPackages is unioned by MergePolicies, so a project file can only ADD
+//     to the blocklist. There is no merge that removes an entry, so there is no
+//     loosening to detect.
+//   - Runtime pins which runtime version is used. It grants no access and
+//     restricts none; a project asking for Node 20 is not asking for permission.
+//
+// Both were checked against MergePolicies rather than assumed. If either ever
+// starts replacing instead of unioning, they belong here.
 func policyLoosens(before, after Policy) bool {
 	if before.Isolation.Enabled && !after.Isolation.Enabled {
 		return true
@@ -685,7 +700,28 @@ func policyLoosens(before, after Policy) bool {
 	if !before.Isolation.Network.PromptUnknown && after.Isolation.Network.PromptUnknown {
 		return true
 	}
-	if len(after.Typosquatting.TrustedPackages) > len(before.Typosquatting.TrustedPackages) {
+	// Compared as a set, not by length.
+	//
+	// Length is correct today only because MergePolicies unions these lists and
+	// never removes, so after is always a superset of before. That makes the
+	// length test right by accident of a rule stated somewhere else, and silently
+	// wrong the day merging changes. hostsAdded is what every other list on this
+	// function uses and costs nothing.
+	if hostsAdded(before.Typosquatting.TrustedPackages, after.Typosquatting.TrustedPackages) {
+		return true
+	}
+	// Lowering the typosquat edit distance finds fewer typosquats. The default is
+	// 2; a project file setting 1 halves what the check catches, and MergePolicies
+	// takes any positive local value, so it applies. Nothing here noticed.
+	if after.Typosquatting.MaxDistance > 0 && before.Typosquatting.MaxDistance > 0 &&
+		after.Typosquatting.MaxDistance < before.Typosquatting.MaxDistance {
+		return true
+	}
+	// Same shape for the release-age cooling-off window. The default is 24 hours
+	// and the whole point of it is that a compromise is usually caught inside it,
+	// so a project file quietly setting min_age_hours to 1 is asking to install
+	// things published minutes ago.
+	if after.ReleaseAgeMinHours() < before.ReleaseAgeMinHours() {
 		return true
 	}
 	if hostsAdded(before.Isolation.Network.DefaultAllow, after.Isolation.Network.DefaultAllow) {

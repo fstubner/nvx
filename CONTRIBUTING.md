@@ -57,6 +57,29 @@ refuses everything fails it rather than passing:
 | `sandbox-enforcement-macos.sh` | CI, every build |
 | `sandbox-enforcement-windows.ps1` | **Manually — see below** |
 
+### Running the Linux probe without a Linux machine
+
+WSL2 is enough, and it is worth doing: until 2026-09-01 the Linux column of
+`docs/enforcement-matrix.md` rested entirely on CI, which is the same evidence
+the Windows column had when it was found to be wrong. Cross-compile from
+Windows, stage into WSL's own filesystem (not `/mnt`, which is slow and has
+different permission semantics), and run:
+
+```sh
+GOOS=linux GOARCH=amd64 go build -o /tmp/nvx-linux .
+GOOS=linux GOARCH=amd64 go test -c -o /tmp/nvx-linux.test .   # the Linux-only tests
+```
+
+The test binary matters as much as the script. `sandbox_landlock_*_test.go` and
+`sandbox_network_mode_linux_test.go` are behind `//go:build linux`, so they never
+compile on a Windows developer machine — running the cross-compiled binary is the
+only way to see them pass anywhere but CI. `-race` does not cross-compile (it
+needs cgo), so that run is without the detector; the Windows gate covers that.
+
+Check `unshare -Urn -- ip link set lo up` succeeds first. If it does not, the
+script skips its egress assertion and still exits 0 — a pass that proves the
+filesystem half only.
+
 ### Before cutting a release, on Windows
 
 Two commands, both of which need a real Windows machine:
@@ -108,7 +131,7 @@ following this literally goes looking for a phantom:
 
 A seventh means something is quietly not being checked — go and look at it rather
 than at this table. Last measured on Windows 11, 2026-08-31, unelevated:
-**433 passing, 6 skipping, 0 failing** on Windows (Linux adds two more: the network-mode readers only build there). Measured on this machine: 163–209s under
+**443 passing, 6 skipping, 0 failing** on Windows (Linux adds two more: the network-mode readers only build there). Measured on this machine: 163–209s under
 -race and 154s without, so the detector costs roughly a quarter, not the double
 this line claimed until an acceptance pass measured it.
 

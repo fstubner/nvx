@@ -528,6 +528,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **An allowlisted name that points somewhere internal is no longer followed
+  there.** The allowlist decided a hostname; the connection then went wherever
+  that name resolved, and nothing looked at the answer. A name resolving to a
+  link-local address — where every cloud keeps its credential endpoint, reachable
+  by anything that can make one unauthenticated request — was reached. nvx now
+  refuses that, while still allowing what it always has: an address you wrote in
+  the policy yourself, and ordinary private-network services like a LAN database.
+
+* **A misspelt policy setting is now reported instead of ignored.**
+  `"blocked_packges"` parses cleanly, exits 0, and blocks nothing — every
+  protection here is switched on by a key name, so any of them can be switched off
+  by one wrong letter that looks like it worked. nvx now names the unrecognised
+  setting and suggests the one you probably meant. It warns rather than refuses:
+  policy files legitimately carry keys a given version does not know, and
+  refusing to run over a stray key would be worse than the problem.
+
+* **Weakening a protection by number now asks, like weakening it by switch
+  already did.** A project policy could halve the typosquat sensitivity, or cut
+  the release-age cooling-off window from a day to an hour, with no prompt —
+  only on/off settings and list additions were treated as needing approval.
+
 * **The typosquat check no longer quietly shrinks to a fraction of its
   dictionary.** nvx compares the package you are installing against a list of
   around 2,000 popular names, refreshed weekly. Once that copy was a week old it
