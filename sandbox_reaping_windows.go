@@ -128,6 +128,61 @@ func processIsRunning(pid int) bool {
 	return ret == waitTimeout
 }
 
+// superviseDirectChild reaps an UNCONTAINED child -- the --no-sandbox path and
+// the "your own code" path -- when nvx goes away.
+//
+// The sandboxed path has had this since the 38-orphan incident; the direct path
+// never did, and the leak simply moved down one level. Measured on the
+// development machine 2026-09-01: 92 stranded `node` processes holding 78
+// consoles open and 1.6 GB, every one of them a child nvx started directly and
+// then stopped waiting on. They came from the test that checks nvx does not
+// strand processes, which asserted only that nvx itself left.
+//
+// A job rather than killing the child from the hangup watchdog, because in the
+// reproduction nvx was gone about a second after its client, long before the
+// watchdog's first 15-second poll -- so a fix hung off the watchdog would not
+// have covered the case actually observed. Kill-on-job-close fires whenever
+// nvx's last handle closes, including an os.Exit that runs no defers and a
+// TerminateProcess from outside, which is the property needed here.
+//
+// The tradeoff, stated because it is a behaviour change: a process deliberately
+// detached by a command run through nvx now dies with nvx, since the job does
+// not permit breakaway. That already holds for everything sandboxed, and it is
+// the same bargain -- nvx supervises what it starts, or it leaks it.
+//
+// Deliberately does NOT publish the job with setSessionJob: that seam answers
+// "does this tunnel peer belong to my run", and an uncontained command has no
+// tunnel. Reaping is the only thing wanted here.
+func superviseDirectChild(pid int) (cleanup func()) {
+	noop := func() {}
+	job, err := createReapingJob()
+	if err != nil {
+		LogWarn("Could not set up process-tree reaping for this command: %v", err)
+		return noop
+	}
+	proc, err := openProcessForJob(uint32(pid))
+	if err != nil {
+		_ = syscall.CloseHandle(job)
+		// Silent when the child has already finished: a command that exits
+		// quickly is the common case, not a fault, and warning on it would put a
+		// line on the terminal for most short invocations.
+		if processIsRunning(pid) {
+			LogWarn("Could not supervise the command's process tree: %v", err)
+		}
+		return noop
+	}
+	defer syscall.CloseHandle(proc)
+
+	if err := assignToReapingJob(job, proc); err != nil {
+		_ = syscall.CloseHandle(job)
+		if processIsRunning(pid) {
+			LogWarn("Could not enable process-tree reaping for this command: %v", err)
+		}
+		return noop
+	}
+	return func() { _ = syscall.CloseHandle(job) }
+}
+
 // superviseProcessTree puts process (and everything it spawns) in a job that
 // reaps them, and publishes that job so the --connect tunnel can ask whether a
 // peer belongs to this run. Returns the cleanup to defer.

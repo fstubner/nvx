@@ -923,6 +923,13 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		LogError("Failed to execute %s: %v", cmdName, err)
 		return 1
 	}
+	// Reap this child if nvx stops waiting on it, by any route. The hangup
+	// watchdog below is the polite one; this is the backstop that also covers
+	// nvx being killed outright, which is how the leak this fixes was actually
+	// produced -- nvx was gone a second after its client, before the watchdog's
+	// first poll, and the child ran on for ever.
+	defer superviseDirectChild(cmd.Process.Pid)()
+
 	setActiveChildKiller(func() { _ = cmd.Process.Kill() })
 	defer setActiveChildKiller(nil)
 

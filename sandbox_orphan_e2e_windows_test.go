@@ -82,17 +82,46 @@ func TestNvxExitsWhenItsClientDisappears(t *testing.T) {
 	// The client is now gone, leaving nvx with a broken stdin and a dead parent
 	// while its own child runs on -- the exact state that stranded 38 processes.
 
+	// Reap the grandchild whatever happens below, including when an assertion
+	// fails. Without this the test leaks one `node loop.js` per run for ever:
+	// 92 of them were found on the development machine on 2026-09-01, holding 78
+	// consoles open and 1.6 GB between them -- left by the very test that checks
+	// nvx does not strand processes. Killing them released 76 of the 78 consoles,
+	// which is what identified these as the source.
+	t.Cleanup(func() { killProcessesByArgument(t, script) })
+
 	deadline := time.Now().Add(stdinBrokenPipeInterval + 30*time.Second)
-	for time.Now().Before(deadline) {
-		if countProcessesRunning(t, nvxExe) == 0 {
-			return // nvx left, and the Job Object takes its child with it
-		}
+	for time.Now().Before(deadline) && countProcessesRunning(t, nvxExe) != 0 {
 		time.Sleep(time.Second)
 	}
+	if countProcessesRunning(t, nvxExe) != 0 {
+		t.Errorf("nvx was still running %v after its client exited. This is the leak that filled the "+
+			"machine with 38 orphaned processes.", stdinBrokenPipeInterval+30*time.Second)
+		killProcessesByImage(t, nvxExe)
+		return
+	}
 
-	t.Errorf("nvx was still running %v after its client exited. This is the leak that filled the "+
-		"machine with 38 orphaned processes.", stdinBrokenPipeInterval+30*time.Second)
-	killProcessesByImage(t, nvxExe)
+	// nvx leaving is only half of the fix, and for a long time this test checked
+	// only that half. It stopped at the line above with the comment "nvx left,
+	// and the Job Object takes its child with it" -- which was false on the path
+	// this test drives. superviseProcessTree, the only thing that creates a
+	// reaping job, is called from the AppContainer launch alone; the client here
+	// starts nvx with --no-sandbox, which never reaches it. So nvx exited, the
+	// test passed, and the child ran on for ever. The leak had not been fixed,
+	// only moved down one level where nothing was looking.
+	//
+	// A few seconds of slack because the job reaps asynchronously once nvx's last
+	// handle closes.
+	childDeadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(childDeadline) && countProcessesWithArgument(t, script) != 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	if n := countProcessesWithArgument(t, script); n != 0 {
+		t.Errorf("nvx exited but left %d of its own children running. An MCP server started "+
+			"through nvx therefore outlives the client that asked for it, which is the same "+
+			"leak measured from the other end: the process nobody is waiting on and nobody kills.\n"+
+			"Survivors:\n%s", n, listProcessesWithArgument(t, script))
+	}
 }
 
 // countProcessesRunning counts live processes started from exePath.
@@ -120,4 +149,68 @@ func killProcessesByImage(t *testing.T, exePath string) {
 	_ = exec.Command("powershell", "-NoProfile", "-Command",
 		"Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq '"+exePath+"' } | Stop-Process -Force",
 	).Run()
+}
+
+// countProcessesWithArgument counts live processes whose command line contains
+// needle.
+//
+// Matched on the command line rather than the image name because the process
+// being counted is nvx's child, not this test's: the test never holds a handle
+// to it, and every one of them is the same node.exe as dozens of unrelated
+// processes on a developer machine. The script path is unique per run, since
+// tempDir gives each run its own directory, so it names exactly this run's child.
+//
+// String.Contains rather than -like: -like would read a [ or * in the temp path
+// as a wildcard, and a needle that quietly matches nothing is how a check like
+// this passes while measuring an empty set.
+//
+// The $PID exclusion is not incidental. The query passes the needle on its own
+// command line, so it matches ITSELF: without that clause the count never
+// reaches zero and this check fails no matter how correct nvx is -- a test that
+// can only ever fail, which is as useless as one that can only ever pass. It was
+// caught because the first failure said "2 children" where one was expected.
+func countProcessesWithArgument(t *testing.T, needle string) int {
+	t.Helper()
+	out, err := exec.Command("powershell", "-NoProfile", "-Command",
+		"@(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and "+
+			"$_.CommandLine.Contains("+powershellSingleQuote(needle)+") }).Count",
+	).Output()
+	if err != nil {
+		t.Skipf("cannot enumerate processes on this host: %v", err)
+	}
+	n, convErr := strconv.Atoi(strings.TrimSpace(string(out)))
+	if convErr != nil {
+		t.Skipf("unexpected process count output %q: %v", string(out), convErr)
+	}
+	return n
+}
+
+// listProcessesWithArgument describes the survivors, for a failure message that
+// says which processes were left rather than only how many.
+func listProcessesWithArgument(t *testing.T, needle string) string {
+	t.Helper()
+	out, err := exec.Command("powershell", "-NoProfile", "-Command",
+		"Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and "+
+			"$_.CommandLine.Contains("+powershellSingleQuote(needle)+") } | "+
+			"ForEach-Object { \"  pid=$($_.ProcessId) ppid=$($_.ParentProcessId) $($_.Name): $($_.CommandLine)\" }",
+	).Output()
+	if err != nil {
+		return "  (could not enumerate: " + err.Error() + ")"
+	}
+	return strings.TrimRight(string(out), "\r\n")
+}
+
+func killProcessesByArgument(t *testing.T, needle string) {
+	t.Helper()
+	_ = exec.Command("powershell", "-NoProfile", "-Command",
+		"Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and "+
+			"$_.CommandLine.Contains("+powershellSingleQuote(needle)+") } | "+
+			"ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+	).Run()
+}
+
+// powershellSingleQuote renders s as a PowerShell single-quoted literal, in
+// which the only character with meaning is the quote itself.
+func powershellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
