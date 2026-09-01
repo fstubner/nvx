@@ -528,6 +528,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A command run without the sandbox no longer outlives nvx.** When nvx stopped
+  waiting on an uncontained command — because whatever started it went away, or
+  because nvx was killed — the program nvx had launched kept running, with no
+  parent and nothing left to stop it. Contained commands have been reaped since
+  the orphan work; the uncontained path never was, so the leak had moved down one
+  level rather than gone away.
+
+  Measured on the development machine: 92 stranded processes holding 78 consoles
+  open and 1.6 GB between them. They came from nvx's own test for this problem,
+  which checked that nvx exited and stopped there — so it left one behind every
+  time it passed, and its comment claimed a cleanup that path never performed.
+
+  The trade: a process deliberately left running in the background by a command
+  started through nvx now ends when nvx does. That was already true of anything
+  sandboxed.
+
 * **An allowlisted name that points somewhere internal is no longer followed
   there.** The allowlist decided a hostname; the connection then went wherever
   that name resolved, and nothing looked at the answer. A name resolving to a
