@@ -656,6 +656,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **`nvx setup` no longer grants volumes nothing uses, and says what it is doing
+  while it works.** It granted the root of every fixed volume on the machine. The
+  permission is narrow — read/execute on the root folder only, not inherited,
+  measured not to reach any subdirectory — but the *cost* is proportional to the
+  size of the volume, because Windows re-runs inheritance across everything
+  beneath the directory it is writing.
+
+  Measured 2026-09-01 on a six-volume machine: a 932 GB drive with 1 GB free on a
+  5400 RPM disk had not finished after 36 minutes, and two more volumes were
+  queued behind it — the last being the one holding the user's actual projects.
+  A failure anywhere returned immediately, so the grant most likely to be lost
+  was the one that mattered.
+
+  It now covers the volumes nvx, your profile and the current directory live on,
+  names the ones it left alone, carries on past a failure instead of abandoning
+  the rest, and skips volumes already granted — so a re-run resumes rather than
+  paying again for what finished. Run it from the volume your projects are on, or
+  pass `--all-drives` for the old behaviour.
+
+  **Interrupting it loses that volume's progress**, so it now reports every 30
+  seconds that it is still working, and says so. Measured 2026-09-02: a run
+  stopped part-way through a 1118 GB volume left no entry on the root at all —
+  the write does not commit until the propagation behind it completes. A timeout
+  was tried and removed for that reason: it could not make the operation safe,
+  only guarantee that a volume needing longer than the timeout was never granted.
+
 * **Documented: a `package.json` above your projects puts them all in one sandbox
   scope.** nvx picks a sandbox's project by walking up to the nearest
   `package.json`, so two projects that resolve to the same root share one identity

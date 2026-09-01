@@ -304,12 +304,19 @@ func main() {
 
 	case "setup":
 		undo := false
+		allDrives := false
 		for _, a := range os.Args[2:] {
 			if a == "--undo" || a == "-u" {
 				undo = true
 			}
+			// Restores the pre-2026-09-01 behaviour of granting every fixed volume.
+			// Off by default because the cost of a grant scales with the size of the
+			// volume, and most machines have volumes no project will ever sit on.
+			if a == "--all-drives" {
+				allDrives = true
+			}
 		}
-		os.Exit(runWindowsSetup(nvxHome, undo))
+		os.Exit(runWindowsSetup(nvxHome, undo, allDrives))
 
 	case "__landlock-exec":
 		a, ok := parseSupervisorExecArgs(os.Args[2:])
@@ -497,7 +504,11 @@ Commands:
                            access, and removing a loopback exemption an older
                            nvx left behind. Contained 'npx' needs it; egress is
                            allowlisted with or without it. Re-run it after
-                           upgrading. 'setup --undo' reverses it
+                           upgrading -- it skips what is already in place, so it
+                           resumes rather than starting over. Covers the volumes
+                           nvx, your profile and the current directory live on;
+                           '--all-drives' covers every fixed volume, which is
+                           slow on large ones. 'setup --undo' reverses it
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
   grants list              Show this project's approved egress hosts, trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)
