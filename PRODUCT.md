@@ -5,6 +5,64 @@ work. That is a conflict of interest: an acceptor should treat everything below
 as a claim to check, not as ground truth. Where a statement is already backed by
 a test, the test is named so it can be run rather than believed.
 
+**Except for the next section, which came from the person who wanted the thing.**
+Recorded 2026-09-01 in answer to "why did you start building this, who is it for,
+what would make it a failure, and is the version manager the price of admission
+or the point". Three acceptance passes had each stopped short of SHIP for the
+same reason — the contract was written by the thing under review, so "does the
+code do what the contract says" was circular. This is the part that is not.
+
+## What it is for, from Felix
+
+**Where it started.** Setting up a new Windows laptop and wanting nvm. nvm does
+not run on Windows; nvm-windows is a different project and is no longer actively
+maintained. The want was a better, more modern nvm that is *truly* cross-platform.
+
+Security came second. Thinking about supply-chain attacks and how much exposure
+developers still carry led to sandboxing and to checks like known-vulnerability
+lookups. Then bun and deno, and then: if the runtime interface is extensible,
+why stop — a polyglot runtime manager with security baked in. Scope was pulled
+back deliberately to keep it small.
+
+**Who it is for.** Developers running AI coding agents, developers who want to
+stop worrying about supply-chain attacks or at least heavily mitigate them, and
+anyone who installs and manages JavaScript runtimes across projects and wants a
+modern implementation of that.
+
+**What would make it a failure.** Two things: if it does not actually reduce the
+risk of compromise through a supply-chain attack, and if it is not simple and
+ergonomic to use. Either one alone is enough.
+
+**The version manager was the initial whole point.**
+
+### Where this contradicts the contract below
+
+That last line reverses what the Purpose section says. The contract states "the
+security layer is the reason to switch; the version manager is how it earns a
+place on `PATH` in the first place" — security first, version management as the
+carrier. The person who wanted it says the opposite: version management first,
+security added after.
+
+Left standing rather than reconciled, because which of them is true changes what
+this project should do when the two conflict, and that is a decision to take
+deliberately rather than by quietly editing one to match the other. Three
+consequences, at least:
+
+- **Cross-platform parity is a primary goal, not a courtesy.** The origin is
+  "nvm does not run on Windows". A platform whose enforcement nobody has ever
+  verified is a bigger problem under this framing than under the contract's.
+- **`npx` needing elevation sits next to the primary job**, not out at the edge
+  of an optional security feature.
+- **Ergonomics is a stated failure condition**, so overhead and friction are not
+  tradeable against security depth without saying so.
+
+Two smaller corrections to the account above, checked against the code: the
+second shipped runtime is **bun**, not deno — Deno, Go and Python providers exist
+on a preservation branch and were removed from the shipped set for focus (see
+`docs/runtime-providers.md`). And the extensible interface described as an
+ambition is real and shipped: `RuntimeProvider` in `version.go`, with
+`NodeProvider` and `BunProvider` implementing it.
+
 ## Purpose
 
 Make the default JavaScript developer workflow safer against supply-chain
