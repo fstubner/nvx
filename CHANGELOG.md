@@ -656,6 +656,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **Documented: a `package.json` above your projects puts them all in one sandbox
+  scope.** nvx picks a sandbox's project by walking up to the nearest
+  `package.json`, so two projects that resolve to the same root share one identity
+  and a contained install in either can reach the other. Each project normally has
+  its own manifest, so they stay apart; a stray one in a parent — a home directory
+  is the easy way to get one, from an `npm install` in the wrong folder — quietly
+  merges everything beneath it.
+
+  Found because nvx's own containment probes reported a cross-project read after
+  an `npm install` ran in a home directory. The behaviour is unchanged and now
+  appears under Known limitations rather than being left for someone to discover;
+  `nvx doctor` still does not check for it, which is stated there too.
+
 * **Every prompt now defaults to "no", and answering one no longer grants
   anything for ever.** Two changes to the same moment, both found by an
   independent review rather than by anyone being bitten.

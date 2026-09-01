@@ -184,7 +184,15 @@ runners; it ran normally on the next attempt.
 **Adding a test? Update the pass count in the same commit.** The skip list is the
 tripwire; the pass count is a fact with a short shelf life, and it has now gone
 stale five times — at 337, 392, 394, 397 and 400, each time because a test
-was added in the commit after the count was written. A number nobody maintains
+was added in the commit after the count was written.
+
+A seventh skip appeared once for a reason worth recording, because it looked like
+a product fault and was not: `TestDoctorDiagnosesAPolicyItCannotRead` needs
+`nvx doctor` to report a healthy baseline before it can assert anything, and an
+unrelated `package.json` in the home directory made doctor report every temporary
+directory as a project carrying leftover grants. Deleting that file restored the
+sixth-skip count. If this one starts skipping, look above the working directory
+for a stray manifest before looking at doctor. A number nobody maintains
 teaches the reader to ignore the table it sits in.
 
 That number is a tripwire and it has caught something three times. It read "3 skips"

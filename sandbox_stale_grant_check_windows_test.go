@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -36,12 +35,10 @@ func TestStaleProjectGrantsAreFoundReportedAndFixed(t *testing.T) {
 	}
 	defer deleteAppContainerProfile("nvx.sandbox.staleprobe")
 
-	project := tempDir(t)
 	// package.json so findProjectRoot treats this as the project root, which is
-	// what the check reports on.
-	if err := os.WriteFile(filepath.Join(project, "package.json"), []byte(`{"name":"p"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// what the check reports on. The helper also asserts the scope really does
+	// resolve here, which a hand-written manifest did not.
+	project := fixtureProjectDir(t)
 
 	// A clean project must not be reported. Establishing this first means a later
 	// "found" result cannot be something the scanner reports about every directory.
@@ -87,7 +84,12 @@ func TestStaleGrantScanIgnoresPerProjectCapabilitySIDs(t *testing.T) {
 		t.Skip("set NVX_PROBE=1 to run (writes and removes real ACEs)")
 	}
 
-	project := tempDir(t)
+	// A project root of its own, for the same reason as the test above: the scan
+	// reports on whatever findProjectRoot resolves to, so a bare temp dir is
+	// scanned as whichever directory above %TEMP% happens to hold a package.json.
+	// With one in the home directory that is the home directory, and the legacy
+	// grants an old `nvx setup` left there are reported as this project's.
+	project := fixtureProjectDir(t)
 	capSID, err := scopeCapabilitySID(project)
 	if err != nil {
 		t.Skipf("cannot derive a capability SID here: %v", err)

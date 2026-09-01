@@ -350,6 +350,23 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   Environment *variables* are scrubbed, but a file is a file. Secrets outside the
   project — `~/.ssh`, `~/.aws`, `~/.npmrc` — are unreachable **on Windows and
   Linux**; on macOS the Seatbelt profile allows reads, so they are not.
+- **A stray `package.json` in a parent directory puts every project beneath it in
+  one sandbox scope.** nvx decides which project a sandbox belongs to by walking
+  up from the working directory to the nearest `package.json`. Projects that
+  resolve to the same root share one identity, so a contained install in either
+  can read and write the other. Normally every project has its own manifest and
+  they stay separate — what breaks it is a manifest somewhere above them.
+
+  A home directory is the easy way to acquire one, from an `npm install` run in
+  the wrong folder. Measured 2026-09-01: an `npm install` in `C:\Users\Felix`
+  left a `package.json` there, and every project beneath it — including nvx's own
+  test fixtures under `%TEMP%` — collapsed into a single scope. The containment
+  probes caught it as a cross-project read, which is how it was found; deleting
+  the file restored per-project isolation immediately.
+
+  `nvx doctor` does not check for this today, so nothing warns you. If contained
+  commands start behaving as though two projects are one, look for a
+  `package.json` above them.
 - **Your own code is not contained by default.** Containment applies to installs and
   ad-hoc tool runners (`npx`, `bunx`). `npm run build`, `npm test` and `node` run
   uncontained under the default `standard` level, so a compromised dependency your
