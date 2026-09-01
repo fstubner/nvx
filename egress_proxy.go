@@ -460,6 +460,13 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 			_, _ = fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
 			return
 		}
+		// The allowlist decided a name; this decides the address behind it.
+		if err := checkResolvedAddress(hp.host); err != nil {
+			LogWarn("Blocked egress: %v", err)
+			auditLog(p.nvxHome, "egress_deny_resolved", map[string]string{"host": target})
+			_, _ = fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
+			return
+		}
 		remote, err := net.Dial("tcp", target)
 		if err != nil {
 			_, _ = fmt.Fprintf(client, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
@@ -622,6 +629,13 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 
 	hp := parseHostPortSpec(host, port)
 	if !p.allowed(hp) {
+		_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		return
+	}
+
+	if err := checkResolvedAddress(hp.host); err != nil {
+		LogWarn("Blocked egress: %v", err)
+		auditLog(p.nvxHome, "egress_deny_resolved", map[string]string{"host": host})
 		_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}

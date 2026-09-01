@@ -724,10 +724,16 @@ func TestLoadPolicyNearestWins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Parent sets max_distance 3, child overrides with 1: the policy nearest
+	// Parent sets max_distance 3, child overrides with 4: the policy nearest
 	// to the working directory must win.
+	//
+	// Both raise it above the default 2, and the direction is the point. Lowering
+	// max_distance finds FEWER typosquats, so it is a loosening and now needs the
+	// trust prompt like any other -- this test used to go 3 -> 1 and was measuring
+	// cascade precedence through a value the trust gate refuses from an untrusted
+	// project file. Raising keeps the cascade under test and the gate out of it.
 	parentPolicy := `{"typosquatting": {"enabled": true, "max_distance": 3}}`
-	childPolicy := `{"typosquatting": {"enabled": true, "max_distance": 1}}`
+	childPolicy := `{"typosquatting": {"enabled": true, "max_distance": 4}}`
 	if err := os.WriteFile(filepath.Join(parentDir, ".nvx-policy.json"), []byte(parentPolicy), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -744,8 +750,8 @@ func TestLoadPolicyNearestWins(t *testing.T) {
 		t.Fatalf("LoadPolicy failed: %v", err)
 	}
 
-	if loaded.Typosquatting.MaxDistance != 1 {
-		t.Errorf("expected child policy MaxDistance 1 to win over parent, got %d", loaded.Typosquatting.MaxDistance)
+	if loaded.Typosquatting.MaxDistance != 4 {
+		t.Errorf("expected child policy MaxDistance 4 to win over parent, got %d", loaded.Typosquatting.MaxDistance)
 	}
 }
 
