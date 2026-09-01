@@ -53,7 +53,12 @@ func TestSandboxCannotReachOtherProjects(t *testing.T) {
 	defer deleteAppContainerProfile(probeProfile)
 
 	// Project A: nvx ran here once, at some point in the past.
-	projectA := tempDir(t)
+	//
+	// A real project root, not a bare temp dir: the scope nvx derives comes from
+	// findProjectRoot walking up, so without a manifest here both projects below
+	// resolve to whatever package.json happens to exist above %TEMP% and share one
+	// identity. See sandbox_fixture_project_windows_test.go.
+	projectA := fixtureProjectDir(t)
 	secretA := filepath.Join(projectA, "src-and-secrets.txt")
 	if err := os.WriteFile(secretA, []byte("OTHER-PROJECT-SOURCE"), 0o600); err != nil {
 		t.Fatal(err)
@@ -69,7 +74,7 @@ func TestSandboxCannotReachOtherProjects(t *testing.T) {
 	}
 
 	// Project B: an unrelated project, where the user now runs `npm install`.
-	projectB := tempDir(t)
+	projectB := fixtureProjectDir(t)
 	homeB, err := os.MkdirTemp("", "nvxb")
 	if err != nil {
 		t.Fatal(err)

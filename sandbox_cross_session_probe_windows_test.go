@@ -87,8 +87,14 @@ func TestOneSandboxSessionCannotReadAnother(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	victimWork := tempDir(t)
-	attackerWork := tempDir(t)
+	// Real project roots, not bare temp dirs. The capability a session is granted
+	// is derived from the project findProjectRoot resolves to, so two fixtures with
+	// no manifest of their own both resolve to whatever package.json exists above
+	// %TEMP% -- and the victim and the attacker then share one identity, which is
+	// precisely what this probe is supposed to be able to tell apart. See
+	// sandbox_fixture_project_windows_test.go.
+	victimWork := fixtureProjectDir(t)
+	attackerWork := fixtureProjectDir(t)
 
 	// Session 1: a concurrent sandbox. Session 2: a trusted tool with a
 	// persistent profile, granted exactly as ensurePersistentGuestProfile's
