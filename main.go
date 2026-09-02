@@ -178,7 +178,7 @@ func main() {
 			LogError("Please specify a version to use. Example: nvx use 20")
 			os.Exit(1)
 		}
-		runUse(useVersion, nvxHome, parseShellArg(os.Args[2:]))
+		runUse(useVersion, nvxHome, parseShellArg(os.Args[2:]), shellArgWasGiven(os.Args[2:]))
 
 	case "default":
 		if len(os.Args) < 3 {
@@ -453,6 +453,25 @@ func defaultShell() string {
 
 // parseShellArg extracts the target shell from trailing command arguments.
 // It accepts "--shell=bash", "--shell bash", and a bare positional "bash".
+// shellArgWasGiven reports whether --shell was passed explicitly.
+//
+// parseShellArg falls back to defaultShell(), so its result cannot answer "did
+// someone ask for machine-readable output". The shell integration always passes
+// --shell, so this is how `nvx use` tells being invoked by the integration --
+// where its output really is evaluated -- from being run straight from a prompt,
+// where it is not.
+func shellArgWasGiven(args []string) bool {
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "--shell=") && strings.TrimPrefix(arg, "--shell=") != "" {
+			return true
+		}
+		if arg == "--shell" && i+1 < len(args) {
+			return true
+		}
+	}
+	return false
+}
+
 func parseShellArg(args []string) string {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -758,7 +777,7 @@ func runUninstall(query string, nvxHome string) {
 	}
 }
 
-func runUse(query string, nvxHome string, shell string) {
+func runUse(query string, nvxHome string, shell string, viaIntegration bool) {
 	provider, version := parseRuntimeSpec(query)
 	requireRuntimeVersion(query, version)
 	display := runtimeDisplayName(provider.Name())
@@ -783,6 +802,24 @@ func runUse(query string, nvxHome string, shell string) {
 
 	targetDir := filepath.Join(nvxHome, "versions", provider.Name(), resolvedVer)
 	emitSessionEnv(shell, nvxHome, targetDir)
+
+	// Only claim the switch happened if something is going to act on it.
+	//
+	// `nvx use` prints the environment for the shell to evaluate; without the
+	// integration loaded, that output goes to the terminal and nothing changes --
+	// and nvx said "Now using Node.js v22.23.2 in this terminal." anyway. Paired
+	// with a shell where the integration silently failed to load, a user can be
+	// told the version switched, repeatedly, while `node -v` never moves.
+	//
+	// The integration exports NVX_SHELL_INTEGRATION, so its presence is the
+	// question "will this be evaluated". A --shell argument means nvx was invoked
+	// BY the integration, which answers the same question.
+	if !viaIntegration && os.Getenv("NVX_SHELL_INTEGRATION") == "" {
+		LogWarn("Printed the environment for %s %s, but nothing evaluated it, so this shell is unchanged.",
+			display, resolvedVer)
+		LogInfo("Load the shell integration once (see 'nvx env'), or evaluate this command's output yourself.")
+		return
+	}
 
 	activeVer := getActiveShellVersionFor(nvxHome, provider.Name())
 	if activeVer != "" && activeVer != resolvedVer {
@@ -962,7 +999,8 @@ func envScript(shell, exePath, shimDir string) string {
 	prepend := shimPathPrependSnippet(shell, shimDir)
 
 	if shell == "bash" || shell == "zsh" {
-		return prepend + fmt.Sprintf(`__nvx_shell_type() {
+		return prepend + fmt.Sprintf(`export NVX_SHELL_INTEGRATION=1
+__nvx_shell_type() {
     if [ -n "$ZSH_VERSION" ]; then
         echo "zsh"
     else
@@ -1033,7 +1071,8 @@ fi
 	// CallDepthOverflow. Reloading a profile after upgrading nvx is enough to do
 	// it, and the prompt is what drives auto-switching, so the failure takes
 	// .nvmrc switching with it. The bash branch above has always guarded this.
-	return prepend + fmt.Sprintf(`$global:__nvx_last_pwd = ""
+	return prepend + fmt.Sprintf(`$env:NVX_SHELL_INTEGRATION = '1'
+$global:__nvx_last_pwd = ""
 $global:__nvx_exe = %s
 
 function __nvx_call {

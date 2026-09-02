@@ -1225,3 +1225,42 @@ func TestReleasesMatchingNarrowsTheList(t *testing.T) {
 		t.Errorf("a query matching nothing must return nothing, got %v", got)
 	}
 }
+
+// `nvx use` must not report a switch that nothing will act on.
+//
+// It prints the environment for the shell to evaluate. Run without the
+// integration loaded, that output lands on the terminal and nothing changes --
+// and nvx still said "Now using Node.js v22.23.2 in this terminal." Paired with a
+// shell where the integration silently failed to load, a user can be told the
+// version switched, repeatedly, while node -v never moves.
+//
+// The integration always passes --shell, so that flag is the signal. parseShellArg
+// cannot answer this: it falls back to defaultShell(), so it never reports absence.
+func TestShellArgWasGivenDistinguishesTheIntegrationFromAPrompt(t *testing.T) {
+	for _, args := range [][]string{
+		{"22", "--shell=bash"},
+		{"22", "--shell", "powershell"},
+		{"--shell=zsh"},
+	} {
+		if !shellArgWasGiven(args) {
+			t.Errorf("%v carries an explicit --shell but was read as a bare prompt invocation", args)
+		}
+	}
+	for _, args := range [][]string{
+		{"22"},
+		{},
+		{"22", "--yes"},
+		{"bash"}, // a bare word parseShellArg accepts as a shell NAME, not as the flag
+		{"22", "--shell="},
+	} {
+		if shellArgWasGiven(args) {
+			t.Errorf("%v has no explicit --shell, but was read as one -- so `nvx use` would claim "+
+				"a switch that nothing evaluated", args)
+		}
+		// The fallback still produces a usable shell for formatting; it just cannot
+		// stand in for "someone asked for machine-readable output".
+		if parseShellArg(args) == "" {
+			t.Errorf("parseShellArg(%v) returned no shell at all", args)
+		}
+	}
+}
