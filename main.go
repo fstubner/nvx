@@ -670,27 +670,29 @@ func resolveLocalVersion(provider RuntimeProvider, query string, nvxHome string)
 		return getLatestLocal(versions), nil
 	}
 
-	q := query
-	if !strings.HasPrefix(q, "v") {
-		q = "v" + q
-	}
-
-	for _, v := range versions {
-		if strings.ToLower(v) == q {
-			return v, nil
+	// "lts" resolved only against the download list, so `nvx install lts` worked
+	// and `nvx use lts` then said "no installed version matches query 'lts'" about
+	// the version it had just put on disk. `use latest` worked throughout, which
+	// is what made the asymmetry obvious.
+	if query == "lts" {
+		lts := ltsVersionsAmong(provider, versions, nvxHome)
+		if len(lts) == 0 {
+			return "", fmt.Errorf("no installed version is known to be LTS; " +
+				"install one with 'nvx install lts', or name the version you want")
 		}
+		return getLatestLocal(lts), nil
 	}
 
-	var matches []string
-	for _, v := range versions {
-		vLower := strings.ToLower(v)
-		if vLower == q || strings.HasPrefix(vLower, q+".") {
-			matches = append(matches, v)
-		}
-	}
-
-	if len(matches) > 0 {
-		return getLatestLocal(matches), nil
+	// Anything else is a version expression, which covers an exact version, a
+	// partial one, and a range. It used to be an exact match followed by a string
+	// prefix compare, so a package.json asking for ">=18 <25" matched nothing at
+	// all and nvx went off to download 18 -- with 20, 22 and 24 already installed.
+	if resolved, err := highestMatching(query, versions); err == nil {
+		return resolved, nil
+	} else if isUnsupportedRange(err) {
+		// Say what could not be read rather than reporting it as "not installed",
+		// which sends the reader looking for a missing download.
+		return "", err
 	}
 
 	return "", fmt.Errorf("no installed version matches query '%s'", query)
@@ -782,6 +784,12 @@ func runUse(query string, nvxHome string, shell string, viaIntegration bool) {
 	requireRuntimeVersion(query, version)
 	display := runtimeDisplayName(provider.Name())
 	resolvedVer, err := resolveLocalVersion(provider, version, nvxHome)
+	if isUnsupportedRange(err) {
+		// An expression nvx cannot read is not a missing version, and offering to
+		// download it would just fail somewhere less obvious.
+		LogError("%v", err)
+		os.Exit(1)
+	}
 	if err != nil {
 		promptMsg := fmt.Sprintf("%s %s is not installed. Would you like to download and install it now?", display, version)
 		if PromptYesNo(promptMsg) {
@@ -1144,6 +1152,13 @@ func runAuto(nvxHome string, shell string) {
 		display := runtimeDisplayName(name)
 
 		resolvedVer, rerr := resolveLocalVersion(provider, query, nvxHome)
+		if isUnsupportedRange(rerr) {
+			// Not a missing download -- an expression nvx cannot read. Offering to
+			// install it produces advice that cannot work ("Run 'nvx install
+			// node@18 - 24'"), so say what is wrong with the file instead.
+			LogWarn("[nvx] %s in %s: %v", display, filepath.Base(sourceFile), rerr)
+			continue
+		}
 		if rerr != nil {
 			promptMsg := fmt.Sprintf("Directory requires %s %s (from %s), but it is not installed. Install it now?", display, query, filepath.Base(sourceFile))
 			if PromptYesNo(promptMsg) {

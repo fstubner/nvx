@@ -227,8 +227,8 @@ func TestBunProviderDetectConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	ver2, _, err := (BunProvider{}).DetectConfig(tmp2)
-	if err != nil || ver2 != "1.1.0" {
-		t.Fatalf("DetectConfig(engines.bun) = %q, want 1.1.0", ver2)
+	if err != nil || ver2 != ">=1.1.0" {
+		t.Fatalf("DetectConfig(engines.bun) = %q, want >=1.1.0", ver2)
 	}
 }
 

@@ -997,36 +997,20 @@ type PackageJSON struct {
 	} `json:"volta"`
 }
 
-// CleanEngineRange parses and cleans a semver engine range into a simple version query
+// CleanEngineRange normalises an engines range for the resolver, leaving the
+// range itself intact.
+//
+// It used to reduce a range to its lower bound: prefixes stripped, everything
+// after the first space dropped, alternatives after "||" discarded. So
+// ">=18 <25" became "18" and "^20 || ^22" became "20", and nvx then treated that
+// single number as the answer. On a machine with 20, 22 and 24 installed --
+// every one of which satisfies ">=18 <25" -- nvx wanted to download 18.
+//
+// Ranges are now understood where they are resolved, against what is installed
+// and against the release list, so the range must survive to get there. See
+// semver_range.go for the supported subset.
 func CleanEngineRange(raw string) string {
-	raw = strings.TrimSpace(raw)
-	prefixes := []string{">=", "<=", ">", "<", "^", "~", "="}
-	for {
-		matched := false
-		for _, p := range prefixes {
-			if strings.HasPrefix(raw, p) {
-				raw = strings.TrimPrefix(raw, p)
-				raw = strings.TrimSpace(raw)
-				matched = true
-			}
-		}
-		if !matched {
-			break
-		}
-	}
-
-	if idx := strings.Index(raw, " "); idx != -1 {
-		raw = raw[:idx]
-	}
-	if parts := strings.Split(raw, "||"); len(parts) > 1 {
-		raw = strings.TrimSpace(parts[0])
-	}
-
-	raw = strings.ReplaceAll(raw, ".x", "")
-	raw = strings.ReplaceAll(raw, ".X", "")
-	raw = strings.ReplaceAll(raw, ".*", "")
-
-	return strings.TrimPrefix(raw, "v")
+	return strings.TrimSpace(raw)
 }
 
 // firstVersionLine returns the version a `.nvmrc`-style file names: the first
