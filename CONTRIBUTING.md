@@ -232,6 +232,18 @@ column and **CI** for the other two. Running both is what keeps the word
 2. Make your change with tests. New behavior needs a test; bug fixes need a
    regression test.
 3. Run `go build ./...` and `go test -race ./...` — both must pass.
+
+   **To check another platform, use `go vet`, not `go build`.** `go build` does
+   not compile test files, so a cross-platform build check passes while the other
+   platforms' test jobs cannot build at all. That shipped once: a helper used by
+   a test file with no build tag was defined in a `_windows_test.go` one, three
+   `GOOS=... go build ./...` checks all passed, and CI's macOS unit job failed on
+   the push.
+
+   ```sh
+   GOOS=darwin go vet ./...
+   GOOS=linux go vet ./...
+   ```
 4. Run `gofmt -w` on changed files. CI runs `govulncheck` and `gosec`
    (`-severity=high -confidence=high`); avoid introducing new findings.
 5. Open a PR describing **what** changed and **why**. Link any related issue.
