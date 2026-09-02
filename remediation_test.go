@@ -1081,3 +1081,26 @@ func TestTrustedToolGrantPersistsUnderNvxHome(t *testing.T) {
 		t.Fatal("unrelated tool must not be trusted")
 	}
 }
+
+// A trailing "@" is a lost version, not a request for the latest.
+//
+// parseRuntimeSpec turned "node@" into "latest", so `nvx install node@`
+// downloaded whatever the newest release happened to be -- measured as v26.8.1,
+// a major nobody asked for, from what is far more likely a truncated line.
+// `nvx install node` already means latest and reads like it.
+func TestATrailingAtSignYieldsNoVersion(t *testing.T) {
+	for _, arg := range []string{"node@", "bun@", "node@   "} {
+		provider, version := parseRuntimeSpec(arg)
+		if strings.TrimSpace(version) != "" {
+			t.Errorf("parseRuntimeSpec(%q) = (%s, %q); a bare '@' must not resolve to a version, "+
+				"or a truncated command line installs a major at random", arg, provider.Name(), version)
+		}
+	}
+	// Naming the runtime with no "@" still means latest -- that is the spelling
+	// that says so.
+	for _, arg := range []string{"node", "bun"} {
+		if _, version := parseRuntimeSpec(arg); version != "latest" {
+			t.Errorf("parseRuntimeSpec(%q) should still mean latest, got %q", arg, version)
+		}
+	}
+}
