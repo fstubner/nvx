@@ -528,6 +528,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Contained `npx` no longer breaks itself for thirty days after one slow
+  moment — and did not need an Administrator to fix.** nvx grants the sandbox
+  permission to walk the directories above its own home. Those grants are
+  best-effort, and one that overruns is remembered and not retried for thirty
+  days. That is the right call for the directories above your *project*, where it
+  was measured: a contained command runs fine without them.
+
+  It is the wrong call for the directory above the sandbox's home, which `npx`
+  genuinely needs. On the development machine one overrun on 2026-08-29 put
+  `~/.nvx/sandbox_home` on that list, and every `nvx npx` afterwards failed with
+  a raw npm error — `EPERM lstat ...\.nvx\sandbox_home` — for eleven days. The
+  only sign at the time was a line saying some permission checks had been skipped
+  "to keep startup fast".
+
+  Worse, nvx pointed at the wrong fix. It reported that an earlier `nvx setup`
+  no longer applied and told you to re-run it elevated, which would not have
+  helped: the failing path is inside nvx's own directory and `nvx setup` does not
+  grant it. Deleting one cache entry made the same command work, unelevated.
+
+  That chain is now never skipped, a failure there is reported instead of
+  remembered, and the setup notice no longer claims to explain a failure it may
+  have nothing to do with. It also stops listing volumes this run has no reason
+  to touch, and stops printing the current one twice.
+
 * **A command run without the sandbox no longer outlives nvx.** When nvx stopped
   waiting on an uncontained command — because whatever started it went away, or
   because nvx was killed — the program nvx had launched kept running, with no

@@ -145,22 +145,51 @@ Deferred with intent, not built:
   elevated `nvx setup` may add optional conveniences; it may not be required for
   any security guarantee.
 
-  **This constraint is currently violated on Windows, for `npx` only.** npm's
-  dependency walker stats every ancestor of its `_npx` staging directory, and an
-  AppContainer cannot read `C:\Users` without a grant only an Administrator can
-  make. So contained `npx` needs `nvx setup`; `node`, `npm install` and
-  `npm run` do not, and are unaffected. It fails closed — `npx` refuses rather
-  than running uncontained — so no security guarantee is weakened, which is the
-  second sentence holding while the first does not.
+  **This was recorded as violated on Windows for `npx`, and the evidence did not
+  support it.** npm's dependency walker stats every ancestor of its `_npx`
+  staging directory, and the conclusion drawn was that an AppContainer cannot read
+  `C:\Users` without a grant only an Administrator can make — so contained `npx`
+  needed `nvx setup`.
+
+  Measured 2026-09-01, on a machine whose earlier elevated setup no longer applied:
+  contained `npx` did fail, but not there. The EPERM was on
+  `C:\Users\<user>\.nvx\sandbox_home` — inside nvx's own directory, on a path
+  `nvx setup` does not grant and never would. npm walks up from the guest home,
+  and that directory's traverse grant had been recorded as a failed attempt on
+  2026-08-29 and was therefore not being retried; the record's thirty-day life is
+  how long contained `npx` stayed broken. Deleting that one cache entry made
+  `nvx npx cowsay hi` run contained and **unelevated** on the same machine, and
+  again from a second, unrelated project. The fix is `grantRequiredAncestors`:
+  the chain above the guest home is never skipped, and a failure there is
+  reported instead of remembered.
+
+  What survives is narrower. Granting a drive root still needs elevation, and a
+  project on a volume whose root the sandbox cannot stat will still fail there —
+  that much is unchanged and is what `nvx setup` is for. What is no longer
+  supported is that contained `npx` requires elevation *as such*: the only
+  end-to-end failure ever measured had a different cause and an unelevated fix.
+  Whether a remaining case genuinely needs `nvx setup` is untested, and this
+  section says so rather than guessing.
+
+  It fails closed either way — `npx` refuses rather than running uncontained — so
+  no security guarantee was weakened by any of it.
 
   Recorded here rather than quietly reworded, because a constraint edited to
   match what the code does stops being a constraint. Measured 2026-08-30, and
   three unelevated escapes were tried and failed: relocating npm's cache into the
   guest home, adding a package boundary at the guest home root, and moving
-  `NVX_HOME` to another volume. The walk fails wherever it starts, because the
-  guest home sits under `~/.nvx`, which nvx deliberately keeps unreadable to a
-  sandbox — making it walkable would expose nvx's own control plane, which is a
-  worse trade than requiring elevation for one command.
+  `NVX_HOME` to another volume.
+
+  The conclusion drawn from those three was that the walk fails wherever it
+  starts, because the guest home sits under `~/.nvx` and making that walkable
+  would expose nvx's own control plane. **The second half of that is wrong, and it
+  is what kept the first half standing for two days.** Walking a directory and
+  reading it are different rights: the grant nvx makes on `~/.nvx/sandbox_home` is
+  `(X,RA)` — traverse and stat the directory itself — which lets npm's walk pass
+  through while leaving the directory unlistable, so one session still cannot
+  enumerate or read another's. That is the grant already asserted by
+  `TestOneSandboxSessionCannotReadAnother`, which passes with it in place. The
+  trade the paragraph above declined was never the trade on offer.
 - **Overhead must stay invisible.** nvx sits in front of every npm invocation;
   measured dispatch overhead is ~3 ms Linux, ~4 ms macOS, and roughly 1–60 ms on
   Windows — samples of 0.9, 2.7, 3.2, 3.4, 6.1, 8.6, 9, 11, 38 and 57 ms with
