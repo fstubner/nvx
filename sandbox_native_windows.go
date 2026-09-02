@@ -385,7 +385,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		}
 	}
 
-	LogInfo("Windows AppContainer isolation active")
+	LogDetail("Windows AppContainer isolation active")
 	// An install that trips the named-pipe restriction blocks forever and prints
 	// nothing; this turns that silence into a diagnosis. See sandbox_hang_hint.
 	stopHint := startHangHint(config.Command, config.Args)
@@ -555,6 +555,16 @@ func prependPath(env []string, dir string) []string {
 // The "already told you" marker is keyed by identity as well as path, so an
 // upgrade that changes which identity needs the grant re-arms the notice rather
 // than inheriting a tick from the old one.
+// driveRootHasGrant asks whether setup's identity can read a drive root. Setup
+// writes read/execute on the folder itself; this asked for modify until
+// 2026-09-02, which never matched, so a completed setup still read as missing
+// and the notice below fired on every package-manager run of a machine that had
+// nothing wrong with it. A variable so a test can stand in for the machine's
+// real drive roots, which are whatever the last elevated setup left them.
+var driveRootHasGrant = func(sidStr, root string) bool {
+	return appContainerHasGrantFor(sidStr, root, grantReadExec)
+}
+
 func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 	sidStr, err := deriveCapabilitySIDString(setupCapabilityName)
 	if err != nil {
@@ -589,16 +599,28 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 
 	var missing []string
 	for _, r := range roots {
-		if appContainerHasGrant(sidStr, r) {
+		if driveRootHasGrant(sidStr, r) {
 			continue
 		}
-		if !stranded && driveRootNoticeSeen(nvxHome, sidStr, r) {
+		if driveRootNoticeSeen(nvxHome, sidStr, r) {
 			continue
 		}
 		missing = append(missing, r)
 	}
 	if len(missing) == 0 {
 		return
+	}
+	// Once per identity and path, in both branches. The stranded case used to
+	// repeat on every package-manager run, on the reasoning that it "BREAKS npx
+	// today". Measured 2026-09-01 and again 2026-09-02: contained npx works
+	// unelevated with those grants stranded, because the only path npm's walk
+	// needs an entry on is inside nvx's own home. A warning that fires on every
+	// install about a condition that breaks nothing is one the person stops
+	// reading, and it was the loudest line on the screen. The failure case is
+	// still covered: remindAboutStrandedSetup says it again, after a
+	// package-manager command has actually failed.
+	for _, r := range missing {
+		markDriveRootNoticeSeen(nvxHome, sidStr, r)
 	}
 
 	if stranded {
@@ -610,16 +632,11 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 		LogInfo("Re-run 'nvx setup' from an Administrator terminal, in this directory, to move it. " +
 			"Until then a tool that walks up to one of those paths may fail there with EPERM. " +
 			"An EPERM on a path inside nvx's own home is a different problem and needs no elevation.")
-		// Deliberately not marked as seen: it repeats until setup is re-run, which
-		// is what clears the condition.
 		return
 	}
 
 	LogWarn("The sandbox cannot read %s. Most workflows are unaffected.", strings.Join(missing, " or "))
 	LogInfo("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal, run in this directory so it covers this volume.")
-	for _, r := range missing {
-		markDriveRootNoticeSeen(nvxHome, sidStr, r)
-	}
 }
 
 func driveRootNoticeFile(nvxHome string) string {

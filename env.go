@@ -878,7 +878,11 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	// "no" the second time and the status line disappears.
 	trace.note(runModeDirect, describeSandboxSkip(cmdName, args, policy, opts))
 	if trace.isTop() {
-		LogInfo("Running directly (not sandboxed): %s %s", cmdName, strings.Join(args, " "))
+		// Detail, not info, since 2026-09-02: running your own code uncontained is
+		// the default, and announcing the default on every `node x.js` was the
+		// first thing the person using it every day asked to have removed. The
+		// classification still lands in the trace, and --verbose shows it.
+		LogDetail("Running directly (not sandboxed): %s %s", cmdName, strings.Join(args, " "))
 		// Both port flags only mean something inside a sandbox, so this command
 		// gets neither the tunnel nor the environment variable naming it. Say so:
 		// silently dropping them leaves the developer debugging a service that is

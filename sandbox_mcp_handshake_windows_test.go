@@ -169,7 +169,7 @@ func TestContainedMcpServerCompletesHandshake(t *testing.T) {
 	// The handshake completing proves stdio crosses the boundary in both
 	// directions. Confirm the process really was contained, so a regression that
 	// silently stopped containing would not pass as success.
-	if !strings.Contains(stderr.String(), "AppContainer isolation active") {
+	if !strings.Contains(stderr.String(), "Running in native sandbox") {
 		t.Errorf("the server answered but was not reported as contained; stderr: %s", tail(stderr.String()))
 	}
 }

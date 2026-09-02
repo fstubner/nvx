@@ -172,6 +172,8 @@ Options:
   -y, --yes                Auto-approve all prompts
   -q, --quiet              Suppress success/info messages (errors and warnings
                            still print)
+  --verbose                Show what nvx is doing on the way: checks, session
+                           ids, permission work. Also NVX_VERBOSE=1 (env)
   NVX_TRACE=1              (env) Record one line per run in ~/.nvx/audit.log for
                            `nvx audit`. Off by default; a local debugging aid
   --agent-mode             Equivalent to -y -q; also settable with
