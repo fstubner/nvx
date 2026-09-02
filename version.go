@@ -198,11 +198,25 @@ func (n NodeProvider) ListLocal(nvxHome string) ([]string, error) {
 
 	var versions []string
 	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), "v") {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "v") && !isStagingVersionDir(entry.Name()) {
 			versions = append(versions, entry.Name())
 		}
 	}
 	return versions, nil
+}
+
+// isStagingVersionDir reports whether a directory under versions/ is a
+// half-finished extraction rather than an installed runtime.
+//
+// An install extracts into "<version>.tmp.<pid>" and renames it into place when
+// it completes. Interrupt one and the staging tree survives -- and it starts with
+// "v", so every listing counted it as installed. Measured: after a killed
+// install, `nvx list` reported only "v18.20.8.tmp.40480"; `use 20` selected
+// "v20.20.2.tmp.49976" and announced success; `node -v` then answered correctly
+// from the partial tree while `npm` failed with "Could not find real executable".
+// A runtime that half works is a worse outcome than one that is plainly absent.
+func isStagingVersionDir(name string) bool {
+	return strings.Contains(name, ".tmp.")
 }
 
 func (n NodeProvider) DetectConfig(dir string) (version string, sourceFile string, err error) {

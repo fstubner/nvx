@@ -1151,3 +1151,46 @@ func TestDefaultShellDetectsGitBashOnWindows(t *testing.T) {
 		})
 	}
 }
+
+// A .nvmrc is a version, not a file to concatenate.
+//
+// The whole file was taken and trimmed, so a comment or any second line became
+// part of the version query -- and the remedy nvx printed then carried an
+// embedded newline and could not be run. Comments in .nvmrc are ordinary.
+func TestVersionFileTakesTheFirstMeaningfulLine(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"plain", "22", "22"},
+		{"trailing newline", "22\n", "22"},
+		{"crlf", "22\r\n", "22"},
+		{"comment after", "22\n# note\n", "22"},
+		{"comment before", "# pin for CI\n22\n", "22"},
+		{"blank lines", "\n\n22\n\n", "22"},
+		{"surrounding space", "  22  \n", "22"},
+		{"empty", "", ""},
+		{"comments only", "# nothing here\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := firstVersionLine([]byte(tc.body)); got != tc.want {
+				t.Errorf("firstVersionLine(%q) = %q, want %q", tc.body, got, tc.want)
+			}
+			if strings.Contains(firstVersionLine([]byte(tc.body)), "\n") {
+				t.Error("a version query with a newline in it produces advice that cannot be run")
+			}
+		})
+	}
+}
+
+// A half-finished install must not read as an installed runtime.
+func TestStagingDirectoriesAreNotInstalledVersions(t *testing.T) {
+	for _, name := range []string{"v18.20.8.tmp.40480", "v20.20.2.tmp.1", "v1.2.3.tmp.99999"} {
+		if !isStagingVersionDir(name) {
+			t.Errorf("%q is an interrupted extraction but would be listed as installed, and "+
+				"`use` would select it -- node works from the partial tree while npm does not", name)
+		}
+	}
+	for _, name := range []string{"v22.23.2", "v20.20.2", "v1.4.0"} {
+		if isStagingVersionDir(name) {
+			t.Errorf("%q is a real installed version but was treated as staging", name)
+		}
+	}
+}
