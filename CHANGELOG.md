@@ -737,6 +737,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only after a package-manager command has actually failed. It had also been
   comparing the wrong right, so a completed setup still read as missing.
 
+* **nvx no longer asks you to run an elevated `nvx setup`.** A missing
+  drive-root grant was two warning lines on every package-manager run and a red
+  FAIL in `nvx doctor`, both saying `npx` may fail without it. Measured, it does
+  not: installs and `npx` run contained with no drive-root grant at all. The
+  grant serves a tool that resolves a path all the way to a drive root, and no
+  such tool has been measured; asking for Administrator rights on a drive root
+  is a lot to ask for that, and on one machine it cost a 22-minute ACL write
+  over 5.6 million entries that nothing had needed.
+
+  Now the only time nvx names `nvx setup` is after a contained package-manager
+  command has failed, as one thing the `EPERM` above it might be. Doctor lists
+  missing roots as a note and the machine stays healthy; `--verbose` still
+  shows the launch-time detail. The README entry that said `npx` needs setup is
+  corrected, and the help text says the command is optional and slow.
+
 * **Windows: a command run through nvx starts fewer processes.** `npm run dev`,
   where `dev` runs `node -e ...`, is a tree of 5 processes instead of 7,
   counting the shell that typed it and the node that runs the script. Measured

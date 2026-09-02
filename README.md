@@ -406,19 +406,20 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
 
   `nvx setup --undo` removes the grants nvx added; the shipped ACE on your profile
   stays either way.
-- **Contained `npx` needs `nvx setup`, and after upgrading past 0.5.7 you must run
-  it again.** npm's dependency walker stats every ancestor directory up to the
-  drive root, and an AppContainer cannot read `C:\` or `C:\Users` unless something
-  granted it — which is what `nvx setup` does, from an Administrator terminal.
-  Without it `npx` fails with `EPERM: operation not permitted, lstat 'C:\Users'`
-  from npm rather than from nvx. `npm install`, `npm run` and `node` are
-  unaffected; they do not make that walk.
+- **`nvx setup` is optional, and nvx no longer asks you to run it.** This entry
+  used to say contained `npx` needed it. That was measured on 2026-08-30 and
+  disproved on 2026-09-01: the `EPERM` behind that claim was on a path inside
+  `~/.nvx`, which nvx grants itself without elevation. `npm install`, `npm run`,
+  `node` and `npx` all run contained without any drive-root grant.
 
-  The next release gives each project its own sandbox identity, so grants made by
-  an earlier `nvx setup` name an identity nothing launches under any more and stop
-  applying.
-  nvx now says so on the first affected run and `nvx doctor` reports it; the fix
-  is to re-run `nvx setup`. Measured 2026-08-30 on a machine set up in July.
+  What the grant is for is a tool that resolves a path all the way up to a drive
+  root, which an AppContainer cannot read without an entry there. No such tool
+  has been measured. If a contained command fails with `EPERM` on a drive root,
+  nvx says so after the failure and names `nvx setup`; `nvx doctor` shows the
+  missing roots as a note, not a failure. The grant is read/execute on the root
+  folder itself, never inherited, for the sandbox's identity only, and its cost
+  is proportional to the volume's size: 22 minutes for 5.6 million entries. It
+  is asked for with that in mind, once, and `nvx setup --undo` takes it back.
 
 - **A loopback exemption left by a pre-0.5.0 `nvx setup` lets contained code reach
   every service on 127.0.0.1.** Local databases, daemon ports, another project's
