@@ -737,6 +737,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only after a package-manager command has actually failed. It had also been
   comparing the wrong right, so a completed setup still read as missing.
 
+* **Windows: a command run through nvx starts fewer processes.** `npm run dev`,
+  where `dev` runs `node -e ...`, is a tree of 5 processes instead of 7,
+  counting the shell that typed it and the node that runs the script. Measured
+  2026-09-02 with `Get-CimInstance Win32_Process`, launched from cmd.exe with
+  `~/.nvx/bin` first on `PATH`:
+
+  ```
+  before                                     after
+  cmd.exe /c "npm run dev"                   cmd.exe /c "npm run dev"
+    nvx.exe shim npm run dev                   npm.exe run dev            (nvx)
+      cmd.exe /c ...\npm.cmd run dev             node.exe npm-cli.js run dev
+        node.exe npm-cli.js run dev                cmd.exe /d /s /c node -e ...
+          cmd.exe /d /s /c node -e ...               node.exe -e ...
+            nvx.exe shim node -e ...
+              node.exe -e ...
+  ```
+
+  Three things changed, all on the uncontained path only; a sandboxed run is
+  launched exactly as before.
+
+  - **The shims in `~/.nvx/bin` are now `node.exe`, `npm.exe`, `npx.exe`,
+    `yarn.exe`, `pnpm.exe`, `bun.exe` and `bunx.exe`** — each a hard link to the
+    `nvx.exe` beside them (a copy where the filesystem cannot link). They replace
+    the `.cmd`, `.ps1` and extensionless files an older nvx wrote, which are
+    removed when shims are regenerated. cmd.exe, PowerShell and Git Bash all
+    resolve the `.exe` first, so there is no longer a shell process between your
+    shell and nvx, and Git Bash no longer needs a script of its own. nvx
+    recognises the name it was started under; `npm --no-sandbox install` still
+    hands `--no-sandbox` to npm, as it did before. `nvx init-shims`, `nvx env`
+    and `nvx doctor --fix` rewrite the links, and relink them when `nvx.exe` has
+    been replaced by an upgrade — a link points at the old file otherwise.
+    `nvx doctor` now reports a command whose `.exe` shim is missing.
+  - **`npm` and `npx` are started as `node.exe npm-cli.js`**, the way the
+    sandbox already did, instead of handing `npm.cmd` to cmd.exe. A self-updated
+    npm in the version's `npm_global` prefix keeps running its own `npm-cli.js`.
+    Exit codes are unchanged (checked: `node -e "process.exit(N)"` comes back
+    as N from all three shells, and a missing npm script exits 1).
+  - **Inside an uncontained run, `node` is the real node.** The child gets a
+    `PATH` entry, `~/.nvx/direct/<runtime>/<version>`, holding only that
+    version's `node.exe` (or `bun.exe`), so a script's own `node` calls no longer
+    come back through nvx. Only the runtime executable is there: a nested
+    `npm install` in a script still resolves to the shim and is contained as
+    before (measured: `npm run` inside a script shows `npm.exe` in the tree, and
+    `node` inside it does not). `nvx uninstall` removes the entry with the
+    version.
+
+  Project-bin shims (`~/.nvx/project-bin/...`, for `node_modules/.bin` tools)
+  are still `.cmd` files and unchanged.
+
 * **`nvx setup` no longer grants volumes nothing uses, and says what it is doing
   while it works.** It granted the root of every fixed volume on the machine. The
   permission is narrow — read/execute on the root folder only, not inherited,

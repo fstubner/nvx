@@ -10,9 +10,10 @@ import (
 )
 
 // pathResolveExts returns the executable extensions to try when resolving a
-// command name against PATH, mirroring how a shell would. On Windows the shim
-// dir holds "<cmd>.cmd"/".ps1" and runtimes hold "<cmd>.exe"; the order matters
-// only within a single directory (first directory on PATH always wins).
+// command name against PATH, mirroring how a shell would. On Windows both the
+// shim dir and the runtimes hold "<cmd>.exe" (an older nvx wrote "<cmd>.cmd"
+// and ".ps1", which is why those are still tried); the order matters only
+// within a single directory (first directory on PATH always wins).
 func pathResolveExts() []string {
 	if runtime.GOOS == "windows" {
 		return []string{".com", ".exe", ".bat", ".cmd", ".ps1", ""}
@@ -63,11 +64,13 @@ type doctorReport struct {
 	shimDirIndex  int // index of the shim dir in PATH; -1 if absent
 	shadowedBy    []pathShadow
 	commands      []commandResolution
-	// missingPosixShims lists wrapped commands with no extensionless shim on
-	// Windows. bash does not consult PATHEXT, so without one a bare `npm` in Git
-	// Bash resolves straight past nvx -- while every PATHEXT-based check in this
-	// report happily calls interception healthy.
-	missingPosixShims []string
+	// missingExeShims lists wrapped commands with no <cmd>.exe shim on Windows.
+	// That is the file every shell resolves first (cmd.exe and PowerShell by
+	// PATHEXT, Git Bash by trying `npm` then `npm.exe`); an install made by an
+	// older nvx has .cmd/.ps1 files instead, which cmd.exe still honours, so a
+	// PATHEXT-based check alone would call it healthy while bash runs the real
+	// npm unwrapped.
+	missingExeShims []string
 }
 
 // dirsEqual reports whether two directory paths are the same after cleaning
@@ -136,8 +139,8 @@ func diagnosePath(pathEnv, nvxHome string, shimCmds []string) doctorReport {
 
 	if runtime.GOOS == "windows" {
 		for _, c := range shimCmds {
-			if _, err := os.Stat(filepath.Join(shimDir, c)); err != nil {
-				rep.missingPosixShims = append(rep.missingPosixShims, c)
+			if _, err := os.Stat(filepath.Join(shimDir, c+".exe")); err != nil {
+				rep.missingExeShims = append(rep.missingExeShims, c)
 			}
 		}
 	}
@@ -247,7 +250,7 @@ func runDoctor(nvxHome string, fix bool) int {
 	// anyway. Closing over rep is deliberate: --fix reassigns it.
 	healthyNow := func() bool {
 		return rep.shimDirOnPath && len(rep.shadowedBy) == 0 &&
-			len(rep.missingPosixShims) == 0 && !weakened && !policyBroken
+			len(rep.missingExeShims) == 0 && !weakened && !policyBroken
 	}
 
 	if healthyNow() {
@@ -258,13 +261,13 @@ func runDoctor(nvxHome string, fix bool) int {
 	if fix {
 		if err := generateShims(nvxHome); err != nil {
 			LogWarn("Could not regenerate shims: %v", err)
-		} else if len(rep.missingPosixShims) > 0 {
+		} else if len(rep.missingExeShims) > 0 {
 			LogSuccess("Wrote the missing shims.")
 		}
 		// Re-diagnose so the caller is told the state after the repair rather
 		// than the state that prompted it.
 		rep = diagnosePath(os.Getenv("PATH"), nvxHome, cmds)
-	} else if len(rep.missingPosixShims) > 0 {
+	} else if len(rep.missingExeShims) > 0 {
 		LogInfo("Run 'nvx doctor --fix' (or 'nvx init-shims') to write them.")
 	}
 
@@ -310,7 +313,7 @@ func runDoctor(nvxHome string, fix bool) int {
 	// which regenerates shims and cannot touch a grant that needs an Administrator
 	// terminal. Someone following it lands back on the same red report, having
 	// changed their PATH for no reason.
-	if !rep.shimDirOnPath || len(rep.shadowedBy) > 0 || len(rep.missingPosixShims) > 0 {
+	if !rep.shimDirOnPath || len(rep.shadowedBy) > 0 || len(rep.missingExeShims) > 0 {
 		LogInfo("To fix the current shell now, run:")
 		if runtime.GOOS == "windows" {
 			LogInfo(`  $env:PATH = "%s;$env:PATH"`, shimDirPath(nvxHome))
@@ -404,9 +407,10 @@ func formatDoctorReport(rep doctorReport) string {
 		fmt.Fprintf(&b, "  [OK]   shim dir is on PATH at position %d, with no raw-runtime dir ahead of it\n", rep.shimDirIndex)
 	}
 
-	if len(rep.missingPosixShims) > 0 {
-		b.WriteString("  [FAIL] no bash shim for: " + strings.Join(rep.missingPosixShims, ", ") + "\n")
-		b.WriteString("         Git Bash ignores PATHEXT, so these run unwrapped there.\n")
+	if len(rep.missingExeShims) > 0 {
+		b.WriteString("  [FAIL] no .exe shim for: " + strings.Join(rep.missingExeShims, ", ") + "\n")
+		b.WriteString("         Shims are nvx.exe under each command's name; an older nvx wrote .cmd/.ps1\n")
+		b.WriteString("         files instead, which Git Bash does not resolve, so these run unwrapped there.\n")
 		b.WriteString("         Fix: nvx init-shims\n")
 	}
 

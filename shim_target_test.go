@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -70,8 +71,8 @@ func TestShimTargetIsStableAcrossRuns(t *testing.T) {
 	}
 }
 
-// The generated shim scripts must name the stable target, since that is the
-// string a user's shell actually executes.
+// The generated shims must run the stable target: a POSIX shim script names it,
+// a Windows shim is a hard link to it.
 func TestGeneratedShimsNameTheStableTarget(t *testing.T) {
 	nvxHome := tempDir(t)
 	if err := generateShims(nvxHome); err != nil {
@@ -81,17 +82,19 @@ func TestGeneratedShimsNameTheStableTarget(t *testing.T) {
 	shimDir := filepath.Join(nvxHome, "bin")
 	target := filepath.Join(shimDir, nvxExecutableName())
 
-	// One shim per platform convention is enough to prove the target is threaded
-	// through; they are all written from the same value.
-	name := "npm"
-	if _, err := os.Stat(filepath.Join(shimDir, "npm.cmd")); err == nil {
-		name = "npm.cmd"
+	// One shim is enough to prove the target is threaded through; they are all
+	// written from the same value.
+	if runtime.GOOS == "windows" {
+		if !sameExistingFile(filepath.Join(shimDir, "npm.exe"), target) {
+			t.Errorf("npm.exe is not the installed nvx at %q", target)
+		}
+		return
 	}
-	body, err := os.ReadFile(filepath.Join(shimDir, name))
+	body, err := os.ReadFile(filepath.Join(shimDir, "npm"))
 	if err != nil {
 		t.Fatalf("read shim: %v", err)
 	}
 	if !strings.Contains(string(body), target) {
-		t.Errorf("shim %s does not invoke the installed nvx at %q; it contains:\n%s", name, target, body)
+		t.Errorf("shim npm does not invoke the installed nvx at %q; it contains:\n%s", target, body)
 	}
 }
