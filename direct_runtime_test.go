@@ -167,8 +167,20 @@ func TestDirectRuntimeDirFollowsAReinstalledRuntime(t *testing.T) {
 		t.Fatal("no direct dir")
 	}
 
+	// The replacement has the same size and the same modification time as the
+	// file it replaces. A reinstall from the same archive looks exactly like
+	// this, and so did two writes inside one timestamp tick on a CI runner --
+	// which is where a version that took size-and-time as "already linked"
+	// skipped the relink and failed.
 	fresh := nodeExe + ".new"
 	writeStubBinary(t, fresh)
+	old, err := os.Stat(nodeExe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(fresh, old.ModTime(), old.ModTime()); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Rename(fresh, nodeExe); err != nil {
 		t.Fatal(err)
 	}

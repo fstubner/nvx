@@ -115,25 +115,16 @@ func directRuntimeDir(nvxHome string, rt RuntimeProvider, version string) string
 // running the old one.
 func ensureDirectRuntimeExe(dir, exe string) error {
 	dst := filepath.Join(dir, filepath.Base(exe))
-	if sameExistingFile(exe, dst) || sameSizeAndTime(exe, dst) {
+	if sameExistingFile(exe, dst) {
 		return nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.Link(exe, dst); err == nil {
-		return nil
-	}
-	if err := installNvxCopy(exe, dst); err != nil {
-		return err
-	}
-	if info, err := os.Stat(exe); err == nil {
-		_ = os.Chtimes(dst, info.ModTime(), info.ModTime())
-	}
-	return nil
+	// A node.exe that was executing through the old link when it was replaced
+	// was moved aside rather than deleted; take it away once nothing runs it.
+	sweepStaleShimExes(dir)
+	return refreshLink(exe, dst)
 }
 
 // pruneDirectRuntimeDirs removes direct dirs whose version is no longer
