@@ -1194,3 +1194,34 @@ func TestStagingDirectoriesAreNotInstalledVersions(t *testing.T) {
 		}
 	}
 }
+
+// `ls-remote <version>` must actually narrow the list.
+//
+// The argument was dropped entirely: `ls-remote 22`, `ls-remote bun` and
+// `ls-remote --all` each printed the same latest-of-each-major table and exited
+// 0. Since that default view is one line per major, there was no way to find a
+// specific patch -- the v22.11.0 an .nvmrc pins, say.
+func TestReleasesMatchingNarrowsTheList(t *testing.T) {
+	releases := []Release{
+		{Version: "v22.23.2"}, {Version: "v22.11.0"}, {Version: "v2.5.0"},
+		{Version: "v24.20.0"}, {Version: "v22.0.0"},
+	}
+	got := releasesMatching("22", releases)
+	if len(got) != 3 {
+		t.Errorf("query 22 matched %d releases, want the three 22.x: %v", len(got), got)
+	}
+	for _, r := range got {
+		if !strings.HasPrefix(r.Version, "v22.") {
+			t.Errorf("query 22 matched %s; v2.x must not be swept in by prefix", r.Version)
+		}
+	}
+	if got := releasesMatching("22.11", releases); len(got) != 1 || got[0].Version != "v22.11.0" {
+		t.Errorf("a major.minor query should reach one release, got %v", got)
+	}
+	if got := releasesMatching("v22.23.2", releases); len(got) != 1 {
+		t.Errorf("an exact version, with or without the v, should match itself: %v", got)
+	}
+	if got := releasesMatching("99", releases); len(got) != 0 {
+		t.Errorf("a query matching nothing must return nothing, got %v", got)
+	}
+}
