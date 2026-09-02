@@ -528,6 +528,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Every contained command on Windows paid about nine seconds of permission
+  writes before anything ran.** Measured 2026-09-02 with timestamps inside one
+  contained `npm install` of a package that was already installed: 6.0 s writing
+  read/execute over the node install, 3.0 s in two traverse grants timing out,
+  0.7 s for everything else nvx did, and 2.2 s for npm itself. Uncontained, the
+  same command took 2.2 s.
+
+  Two things had gone wrong together. Since sandboxes became one AppContainer
+  package per project, every project had been writing its own entry into nvx's
+  *shared* directories — 388 identities on one node install, 39 on
+  `~/.nvx/sandbox_home` — and the check meant to make a second launch free asked
+  for modify rights where the grant had written traverse, so it never matched and
+  the same writes were repeated on every launch. The write on `~/.nvx` never
+  finished inside its timebox, so every run also printed a warning that the
+  sandbox could not stat its own home and `npx` would fail there — while `npx`
+  worked, because that entry was never needed.
+
+  nvx's own read-only trees — the runtime, the staged supervisor, the parent of
+  the guest home — are now granted once to a single identity every sandbox
+  carries, and the check asks for the right it wrote. What must stay per project,
+  write access to the guest home and the project directory, still does. The first
+  write a tree gets under the new identity also removes the per-package debris in
+  the same propagation, at no extra cost. Measured afterwards on the same
+  machine: contained 3.0–3.5 s against 2.4 s uncontained, no warning, and one
+  entry on each tree where there had been hundreds.
+
 * **`nvx doctor` now reports the permissions the sandbox actually has, not what a
   previous setup wrote down.** It compared the identity recorded by the last
   *completed* `nvx setup` against the one nvx launches under, and called the

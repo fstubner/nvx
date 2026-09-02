@@ -133,7 +133,7 @@ func TestAStalledPathIsNotRetriedInThisProcess(t *testing.T) {
 
 	const path = `C:\Users\someone`
 	for i := 0; i < 5; i++ {
-		if err := grantACLWithin(path, "S-1-15-3-1024-x", aclMaskTraverse, 0, 500*time.Millisecond); err == nil {
+		if err := grantACLWithin(path, "S-1-15-3-1024-x", aclMaskTraverse, 0, 500*time.Millisecond, nil); err == nil {
 			t.Fatalf("attempt %d reported success while the write was still blocked", i)
 		}
 	}
@@ -155,7 +155,7 @@ func TestOutstandingStalledWritesAreCapped(t *testing.T) {
 
 	for i := 0; i < maxAbandonedACLWrites*3; i++ {
 		unique := `C:\Users\someone\` + string(rune('a'+i%26)) + string(rune('a'+i/26))
-		_ = grantACLWithin(unique, "S-1-15-3-1024-x", aclMaskTraverse, 0, 500*time.Millisecond)
+		_ = grantACLWithin(unique, "S-1-15-3-1024-x", aclMaskTraverse, 0, 500*time.Millisecond, nil)
 	}
 	if got := attempts.Load(); got > maxAbandonedACLWrites {
 		t.Fatalf("started %d blocked writes with a ceiling of %d", got, maxAbandonedACLWrites)
@@ -168,7 +168,7 @@ func TestASlowWriteThatFinishesReleasesItsSlot(t *testing.T) {
 	release := stalledACLWrites(t, nil)
 
 	const path = `C:\Users\someone\slow`
-	if err := grantACLWithin(path, "S-1-15-3-1024-x", aclMaskTraverse, 0, 500*time.Millisecond); err == nil {
+	if err := grantACLWithin(path, "S-1-15-3-1024-x", aclMaskTraverse, 0, 500*time.Millisecond, nil); err == nil {
 		t.Fatal("expected the deadline to fire")
 	}
 	if aclAbandoned.Load() != 1 {

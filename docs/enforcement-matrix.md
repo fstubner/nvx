@@ -220,6 +220,16 @@ capability is denied — all three measured before the change was built (see
 `nvx setup`'s drive-root grants keep working, and the per-project identity carries
 the isolation.
 
+The package SID did not stay stable for long: 0.5.x made it per-project too, for
+loopback isolation (see the `--connect` entry). The read-only grants that had been
+riding on it — the runtime, the staged supervisor, the parent of the guest home —
+were then being written once per project into directories nvx owns, and a
+mismatched has-grant check repeated them on every launch. Since 2026-09-02 those
+go to a second capability every sandbox carries, `nvx.runtime.readonly`, granted
+once per path per machine (`sandbox_runtime_identity_windows.go`). Three
+identities in a token now: the project's (writable roots and `allow_read_exec`),
+the runtime's (read-only trees), and setup's (drive roots).
+
 Deriving from the project rather than the session is what makes it affordable. The
 same project derives the same SID every run, so the `icacls` write happens once and
 `appContainerHasGrant` skips it thereafter. A per-session identity would pay that

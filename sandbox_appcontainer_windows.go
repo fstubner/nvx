@@ -104,13 +104,14 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	// Tools stat the ancestors of both the working directory and the guest home
 	// (which is HOME inside the sandbox), so grant traverse on both chains.
 	//
-	// These stay on the shared package SID rather than the per-project capability.
-	// They are this-folder-only traverse+stat (X,RA) -- enough to walk through a
-	// directory, not to list it -- so sharing them leaks nothing: a sibling project's
-	// contents are still gated by its own capability. Keeping them shared also
-	// keeps them idempotent across projects, which is what stops the ancestor walk
-	// from re-granting the same chain for every project on the machine.
-	aWork, eWork := grantWorkdirAncestors(sid, nvxHome, workDir)
+	// These go to the runtime capability every sandbox carries, not to this
+	// project's identity. They are this-folder-only traverse+stat (X,RA) -- enough
+	// to walk through a directory, not to list it -- so sharing them leaks
+	// nothing: a sibling project's contents are still gated by its own capability.
+	// Sharing is also what makes them idempotent across projects; granted to the
+	// package SID, which is per project now, the same chain was rewritten for every
+	// project on the machine. See runtimeCapabilityName.
+	aWork, eWork := grantWorkdirAncestors(nvxHome, workDir)
 	if skipped := eWork - aWork; skipped > 0 {
 		// Only the project chain is advisory: the command runs without those, and
 		// skipping a known-slow one is what keeps startup fast. Silence would hide a
@@ -118,13 +119,13 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 		LogInfo("Skipped %d of %d ancestor permission checks to keep startup fast.", skipped, eWork)
 	}
 
-	// The guest home's own chain is NOT advisory, and treating it as though it were
+	// The guest home's parent is NOT advisory, and treating it as though it were
 	// is what broke contained npx on the development machine for eleven days. npm
 	// walks up from the guest home and stats every directory on the way; with
 	// ~/.nvx/sandbox_home recorded as a failed grant and therefore not retried,
 	// every `nvx npx` ended in EPERM on that path -- while nvx reported only that
 	// it had skipped some checks to keep startup fast.
-	if failed := grantGuestHomeAncestors(sid, guestHome); len(failed) > 0 {
+	if failed := grantGuestHomeParent(guestHome); len(failed) > 0 {
 		LogWarn("Could not grant the sandbox stat access on %s.", strings.Join(failed, ", "))
 		LogInfo("Tools that walk up from the sandbox's home -- npx does -- will fail there with EPERM. " +
 			"This is inside nvx's own directory and needs no elevation; a later run retries it.")
@@ -252,34 +253,80 @@ func isProfileRoot(dir string) bool {
 // grantWorkdirAncestors returns how many ancestor grants it attempted and how many
 // were eligible, so the caller can report once for the whole launch rather than
 // once per chain.
-func grantWorkdirAncestors(sid uintptr, nvxHome, workDir string) (attempted, eligible int) {
+func grantWorkdirAncestors(nvxHome, workDir string) (attempted, eligible int) {
 	paths := ancestorGrantPaths(workDir, os.Getenv("USERPROFILE"))
 	if len(paths) == 0 {
 		return 0, 0
 	}
+	sidStr, err := runtimeCapabilitySID()
+	if err != nil {
+		return 0, len(paths)
+	}
 	// Skip grants already known to fail on this machine. They cost the whole
 	// budget every launch and buy nothing -- see sandbox_ancestor_skip_windows.go.
 	attempted = grantAncestorsSkippingKnownFailures(nvxHome, paths, func(p string) error {
-		return grantAppContainerPathReadExecTimeboxed(sid, p, ancestorGrantPerPath)
+		return grantTraverseTimeboxed(sidStr, p, ancestorGrantPerPath)
 	})
 	return attempted, len(paths)
 }
 
-// grantGuestHomeAncestors grants traverse+stat on the chain above the guest home
-// and returns the paths that could not be granted.
+// guestHomeRequiredGrants lists the directories above the guest home that a
+// contained command cannot do without: its parent, and nothing further up.
 //
-// Separate from grantWorkdirAncestors because the two chains are not the same
-// kind of thing. The project chain is advisory -- a contained command runs
-// without it -- so a grant there that has proved slow is worth skipping. This
-// chain is what npm walks when it starts in the sandbox's own home, and without
-// it `npx` fails outright. See grantRequiredAncestors for the measurement.
-func grantGuestHomeAncestors(sid uintptr, guestHome string) []string {
-	paths := ancestorGrantPaths(guestHome, os.Getenv("USERPROFILE"))
+// npm walks up from the guest home and lstat's each directory. Reading a
+// directory's attributes needs either an entry on the directory or list access
+// on its parent, and the sandbox has neither on ~/.nvx/sandbox_home: its parent
+// ~/.nvx grants traverse only. So the parent is granted. ~/.nvx itself is not:
+// its attributes are readable through the profile root above it, which Windows
+// grants to every application package, and lstat of every directory up to the
+// drive root succeeded from a sandbox holding no entry on ~/.nvx at all
+// (measured 2026-09-02, strict isolation, fresh project). Writing that entry
+// costs a propagation over everything under ~/.nvx -- 51,218 entries on the
+// development machine -- and timed out on every launch for as long as it was
+// attempted.
+func guestHomeRequiredGrants(guestHome string) []string {
+	if guestHome == "" {
+		return nil
+	}
+	parent := filepath.Dir(filepath.Clean(guestHome))
+	if parent == guestHome {
+		return nil
+	}
+	return []string{parent}
+}
+
+// grantGuestHomeParent grants traverse+stat on the guest home's parent and
+// returns the paths that could not be granted.
+//
+// Separate from grantWorkdirAncestors because the two are not the same kind of
+// thing. The project chain is advisory -- a contained command runs without it --
+// so a grant there that has proved slow is worth skipping. This is what npm walks
+// when it starts in the sandbox's own home, and without it `npx` fails outright.
+// See grantRequiredAncestors for the measurement.
+//
+// A direct-grant timeout rather than the ancestor walk's: this runs once per
+// machine, not once per project, and the parent is nvx's own sandbox_home, whose
+// size is the number of sessions left in it.
+func grantGuestHomeParent(guestHome string) []string {
+	paths := guestHomeRequiredGrants(guestHome)
 	if len(paths) == 0 {
 		return nil
 	}
+	sidStr, err := runtimeCapabilitySID()
+	if err != nil {
+		return paths
+	}
 	return grantRequiredAncestors(paths, func(p string) error {
-		return grantAppContainerPathReadExecTimeboxed(sid, p, ancestorGrantPerPath)
+		if appContainerHasGrantFor(sidStr, p, grantTraverse) {
+			return nil
+		}
+		// nvx's own sandbox_home: the first write under the new identity drops the
+		// one-entry-per-project debris (thirty-nine here) in the same propagation.
+		// See grantRuntimeReadExecTree.
+		if err := grantACLWithin(p, sidStr, aclMaskTraverse, 0, directGrantTimeout, isPackageSID); err != nil {
+			return fmt.Errorf("traverse grant for the sandbox: %w", err)
+		}
+		return nil
 	})
 }
 
@@ -363,6 +410,11 @@ type grantKind int
 const (
 	grantModify grantKind = iota
 	grantReadExec
+	// grantTraverse is the this-folder-only (X,RA) the ancestor walk writes. It
+	// is its own kind because asking for one of the others in its place is what
+	// made every ancestor grant look absent on every launch: the check looked for
+	// modify, the entry granted traverse, and the write was repeated each time.
+	grantTraverse
 )
 
 // mask is the access this kind of grant requires. Comparing masks is what
@@ -370,10 +422,14 @@ const (
 // access from an entry granting only read and execute, because the line being
 // searched began with the path.
 func (k grantKind) mask() uint32 {
-	if k == grantReadExec {
+	switch k {
+	case grantReadExec:
 		return aclMaskReadExec
+	case grantTraverse:
+		return aclMaskTraverse
+	default:
+		return aclMaskModify
 	}
-	return aclMaskModify
 }
 
 // appContainerHasGrantFor asks the question appContainerHasGrant should always
@@ -417,10 +473,14 @@ func appContainerHasGrantFor(sidStr, path string, want grantKind) bool {
 // grantIdentityFor keeps the two rights in separate cache namespaces, by folding
 // the right into the identity the cache is keyed on.
 func grantIdentityFor(sidStr string, k grantKind) string {
-	if k == grantReadExec {
+	switch k {
+	case grantReadExec:
 		return sidStr + "|rx"
+	case grantTraverse:
+		return sidStr + "|x"
+	default:
+		return sidStr + "|m"
 	}
-	return sidStr + "|m"
 }
 
 // grantAppContainerPath gives the AppContainer modify access to path and its
@@ -450,7 +510,7 @@ func grantAppContainerPath(sid uintptr, path string) error {
 // ensureAppContainerCommand grants AppContainer read/execute on cmdPath. Binaries
 // outside ~/.nvx/versions are copied into nvxHome first so icacls can succeed
 // on paths the runner user owns (e.g. hostedtoolcache on GitHub Actions).
-func ensureAppContainerCommand(sid uintptr, nvxHome, cmdPath string) (string, error) {
+func ensureAppContainerCommand(nvxHome, cmdPath string) (string, error) {
 	if cmdPath == "" {
 		return "", fmt.Errorf("empty command path")
 	}
@@ -483,11 +543,11 @@ func ensureAppContainerCommand(sid uintptr, nvxHome, cmdPath string) (string, er
 		usePath = staged
 	}
 	dir := filepath.Dir(usePath)
-	if err := grantAppContainerPathReadExecTree(sid, dir); err != nil {
+	if err := grantRuntimeReadExecTree(dir); err != nil {
 		return "", err
 	}
 	if dir != usePath {
-		if err := grantAppContainerPathReadExec(sid, usePath); err != nil {
+		if err := grantRuntimeTraverse(usePath); err != nil {
 			return "", err
 		}
 	}
@@ -497,7 +557,7 @@ func ensureAppContainerCommand(sid uintptr, nvxHome, cmdPath string) (string, er
 	// process can resolve the binary's parent but fails to lstat/traverse its
 	// way there (Node's own realpathSync on argv[0] hits this during startup).
 	// Mirrors the same treatment workDir/guestHome already get.
-	_, _ = grantWorkdirAncestors(sid, nvxHome, dir)
+	_, _ = grantWorkdirAncestors(nvxHome, dir)
 	return usePath, nil
 }
 
@@ -622,23 +682,43 @@ func copyFile(src, dst string, mode os.FileMode) error {
 // and its descendants. Inheritable rather than /t-recursive, for the reasons in
 // grantAppContainerPath — this one runs on the runtime version directory, whose
 // bundled node_modules alone is thousands of files.
-func grantAppContainerPathReadExecTree(sid uintptr, path string) error {
-	sidStr, err := appContainerSidToString(sid)
+func grantRuntimeReadExecTree(path string) error {
+	sidStr, err := runtimeCapabilitySID()
 	if err != nil {
 		return err
 	}
-	if appContainerHasGrant(sidStr, path) {
+	if appContainerHasGrantFor(sidStr, path, grantReadExec) {
 		return nil
 	}
-	if err := grantACL(path, sidStr, aclMaskReadExec, nvxInheritFlags); err != nil {
-		return fmt.Errorf("read/execute tree grant for AppContainer: %w", err)
+	// The first write to a tree under the new identity also removes the
+	// per-package entries left there by every project that ran before it: 388
+	// on one node install, one per project per version, none of them needed once
+	// the runtime identity is in place. Same write, same propagation, no extra
+	// cost; done separately it would be one propagation per entry.
+	if err := writeDACLEntryDropping(path, sidStr, aclMaskReadExec, nvxInheritFlags, isPackageSID); err != nil {
+		return fmt.Errorf("read/execute tree grant for the sandbox runtime identity: %w", err)
 	}
 	return nil
 }
 
-// grantAppContainerPathReadExec grants this-folder-only traverse rights on an
-// ancestor directory. Skipped when access is already present, so the common case
-// costs one cheap ACL read instead of a write that can stall behind a filter
+// isPackageSID reports an AppContainer package identity (S-1-15-2-...), as
+// opposed to a capability (S-1-15-3-...) or a user.
+//
+// Only ever used to drop entries from trees nvx owns. On a user's own directory
+// a package entry may be theirs -- a Store app the user granted a folder to
+// carries exactly this shape -- and nvx has no business removing it.
+func isPackageSID(sidStr string) bool {
+	return strings.HasPrefix(sidStr, "S-1-15-2-")
+}
+
+// directGrantTimeout bounds a grant the launch cannot proceed without. Generous,
+// because the alternative is a launch that fails; the ancestor walk's much
+// tighter bound is for grants the launch can do without.
+const directGrantTimeout = 15 * time.Second
+
+// grantRuntimeTraverse grants this-folder-only traverse rights to the identity
+// every sandbox carries. Skipped when access is already present, so the common
+// case costs one cheap ACL read instead of a write that can stall behind a filter
 // driver.
 //
 // Traverse and read-attributes only, NOT read. `(RX)` includes RD -- list
@@ -651,27 +731,32 @@ func grantAppContainerPathReadExecTree(sid uintptr, path string) error {
 //
 // (X) is pass-through and (RA) is stat. Together they are what the ancestor walk
 // was always described as granting; the extra read was never intentional.
-func grantAppContainerPathReadExec(sid uintptr, path string) error {
-	return grantAppContainerPathReadExecTimeboxed(sid, path, 15*time.Second)
-}
-
-// grantAppContainerPathReadExecTimeboxed is grantAppContainerPathReadExec with an
-// explicit per-call timeout, so the ancestor walk can bound an individual grant far
-// more tightly than a direct, necessary grant would want.
-func grantAppContainerPathReadExecTimeboxed(sid uintptr, path string, timeout time.Duration) error {
-	sidStr, err := appContainerSidToString(sid)
+func grantRuntimeTraverse(path string) error {
+	sidStr, err := runtimeCapabilitySID()
 	if err != nil {
 		return err
 	}
-	if appContainerHasGrant(sidStr, path) {
+	return grantTraverseTimeboxed(sidStr, path, directGrantTimeout)
+}
+
+// grantTraverseTimeboxed is grantRuntimeTraverse for an explicit identity with an
+// explicit per-call timeout, so the ancestor walk can bound an individual grant far
+// more tightly than a direct, necessary grant would want.
+//
+// The has-grant check asks for traverse, the right this writes. It asked for
+// modify until 2026-09-02, which no traverse entry satisfies, so every launch
+// found the grant "missing" and wrote it again -- and on a directory too large to
+// finish inside the timebox, reported it as failed, every time.
+func grantTraverseTimeboxed(sidStr, path string, timeout time.Duration) error {
+	if appContainerHasGrantFor(sidStr, path, grantTraverse) {
 		return nil
 	}
 	// Still timeboxed. The call is a syscall now rather than a process spawn, but
 	// the reason for the bound was never the process: writing a directory's ACL
 	// costs time linear in the entries beneath it, and the chain above a project
 	// reaches directories with hundreds of thousands of them. See grantACLWithin.
-	if err := grantACLWithin(path, sidStr, aclMaskTraverse, 0, timeout); err != nil {
-		return fmt.Errorf("traverse grant for AppContainer: %w", err)
+	if err := grantACLWithin(path, sidStr, aclMaskTraverse, 0, timeout, nil); err != nil {
+		return fmt.Errorf("traverse grant for the sandbox: %w", err)
 	}
 	return nil
 }

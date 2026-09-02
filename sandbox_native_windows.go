@@ -247,7 +247,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// whose script argument still pointed into the original directory -- which the
 	// container has no grant on, so node failed with "Cannot find module
 	// C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js".
-	cmdPath, err = ensureAppContainerCommand(sid, config.NvxHome, cmdPath)
+	cmdPath, err = ensureAppContainerCommand(config.NvxHome, cmdPath)
 	if err != nil {
 		LogError("AppContainer executable access failed: %v", err)
 		return 1
@@ -262,7 +262,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// the active runtime's interpreter, which sits outside the directory just
 	// granted and needs one of its own.
 	if !strings.EqualFold(filepath.Dir(cmdPath), grantedDir) {
-		cmdPath, err = ensureAppContainerCommand(sid, config.NvxHome, cmdPath)
+		cmdPath, err = ensureAppContainerCommand(config.NvxHome, cmdPath)
 		if err != nil {
 			LogError("AppContainer executable access failed: %v", err)
 			return 1
@@ -490,10 +490,10 @@ func wrapWithEgressSupervisor(
 	if err != nil {
 		return "", nil, err
 	}
-	if err := grantAppContainerPathReadExecTree(sid, filepath.Dir(supervisor)); err != nil {
+	if err := grantRuntimeReadExecTree(filepath.Dir(supervisor)); err != nil {
 		return "", nil, fmt.Errorf("grant the supervisor to the sandbox: %w", err)
 	}
-	_, _ = grantWorkdirAncestors(sid, nvxHome, filepath.Dir(supervisor))
+	_, _ = grantWorkdirAncestors(nvxHome, filepath.Dir(supervisor))
 
 	supervisorArgs := []string{
 		"__appcontainer-exec",
@@ -747,6 +747,11 @@ func launchCapabilitySIDs(scopeCaps, networkCaps []string) []string {
 	caps := append(append([]string{}, scopeCaps...), networkCaps...)
 	if setupCap, err := deriveCapabilitySIDString(setupCapabilityName); err == nil {
 		caps = append(caps, setupCap)
+	}
+	// The runtime, the supervisor and the guest home's parent are granted to this
+	// one; without it the container cannot read the binary it is about to run.
+	if runtimeCap, err := runtimeCapabilitySID(); err == nil {
+		caps = append(caps, runtimeCap)
 	}
 	return caps
 }

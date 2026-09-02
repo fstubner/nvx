@@ -67,15 +67,15 @@ func TestMeasureAncestorGrantCost(t *testing.T) {
 		fmt.Fprintf(&b, "  %-58s %10s %10s %10s\n", "ancestor", "has-grant", "grant#1", "grant#2")
 		for _, p := range paths {
 			start := time.Now()
-			had := appContainerHasGrant(sidStr, p)
+			had := appContainerHasGrantFor(sidStr, p, grantTraverse)
 			readMS := time.Since(start).Milliseconds()
 
 			start = time.Now()
-			_ = grantAppContainerPathReadExecTimeboxed(sid, p, ancestorGrantPerPath)
+			_ = grantTraverseTimeboxed(sidStr, p, ancestorGrantPerPath)
 			first := time.Since(start).Milliseconds()
 
 			start = time.Now()
-			_ = grantAppContainerPathReadExecTimeboxed(sid, p, ancestorGrantPerPath)
+			_ = grantTraverseTimeboxed(sidStr, p, ancestorGrantPerPath)
 			second := time.Since(start).Milliseconds()
 
 			shown := p
