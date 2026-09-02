@@ -217,6 +217,13 @@ func reportSandboxWeakeners(nvxHome string) bool {
 // after a command failed in a way they cannot read, and because the launch
 // advisory is deliberately shown once per identity -- useful the first time, and
 // gone by the time anyone goes looking.
+//
+// A note, not a FAIL, since 2026-09-02, and it never marks the machine as
+// weakened: the return is always false. Installs and npx were measured working
+// with the grant stranded; what the grant serves is a tool nobody has measured.
+// Doctor's red line was what sent the person running nvx to a 22-minute
+// elevated write on a volume no command of theirs had needed -- see
+// remindAboutDriveRoots.
 func reportStrandedSetupGrant(nvxHome string) bool {
 	prev, ok := readWindowsSetupState(nvxHome)
 	if !ok || prev.AppContainerSID == "" {
@@ -233,14 +240,12 @@ func reportStrandedSetupGrant(nvxHome string) bool {
 		return false
 	}
 
-	fmt.Println("  [FAIL] the sandbox has no drive-root access on " + strings.Join(missing, ", "))
-	fmt.Println("         an earlier 'nvx setup' granted an identity nvx no longer uses")
-	fmt.Println("         a tool that resolves paths up to a drive root may fail there with EPERM")
-	fmt.Println("         re-run 'nvx setup' from an Administrator terminal, in the directory you")
-	fmt.Println("         work in, so it covers that volume")
-	fmt.Println("         (an EPERM on a path inside ~/.nvx is a different problem, and needs no")
-	fmt.Println("         elevation -- nvx retries those itself)")
-	return true
+	fmt.Println("  [note] the sandbox has no drive-root access on " + strings.Join(missing, ", "))
+	fmt.Println("         an earlier 'nvx setup' granted an identity nvx no longer uses. Installs and")
+	fmt.Println("         npx do not need it; a tool that resolves a path all the way to a drive root")
+	fmt.Println("         might. If one fails with EPERM there, 'nvx setup' from an Administrator")
+	fmt.Println("         terminal, run from that volume, grants it. This is not a failure.")
+	return false
 }
 
 // strandedSetupGrantPaths returns the paths this machine needs and the current

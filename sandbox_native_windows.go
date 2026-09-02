@@ -414,28 +414,46 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// was a prefix: an acceptance pass pointed out that the last twenty-five lines
 	// a person reads are still npm's, and wrong.
 	if exitCode != 0 && isPackageManagerCommand(config.Command) {
-		remindAboutStrandedSetup(config.NvxHome)
+		remindAboutDriveRoots(config.NvxHome, workDir)
 	}
 	return exitCode
 }
 
-// remindAboutStrandedSetup repeats the stranded-grant advice after a failed
-// package-manager run, so the correct remedy is the last thing on screen.
+// remindAboutDriveRoots is the one place nvx points at an elevated `nvx setup`,
+// and it speaks only after a package-manager command has failed.
 //
-// Only when the condition actually holds, and only after a failure: a warning
-// printed after every successful install would be noise, and this one has to stay
-// worth reading.
-func remindAboutStrandedSetup(nvxHome string) {
-	current, err := deriveCapabilitySIDString(setupCapabilityName)
+// The drive-root grant is advisory. Node no longer walks to the root (nvx
+// passes --preserve-symlinks into every child), and the walk npm makes needs
+// only an entry inside nvx's own home, which nvx grants itself unelevated.
+// What remains is "a tool that resolves a path all the way to a drive root",
+// and nobody has measured one. Until 2026-09-02 a missing grant was a two-line
+// warning on every package-manager run and a red FAIL in doctor, which read as
+// "required" and sent the person running nvx to a 22-minute elevated ACL write
+// on a 5.6-million-entry volume that no command of theirs had needed. Asking
+// for Administrator rights on a drive root is a lot to ask; it is asked once,
+// after a failure, as one thing the error above might be.
+//
+// Nothing here is a security guarantee: the grant is read/execute on the root
+// folder itself, never inherited, for the sandbox's identity only.
+func remindAboutDriveRoots(nvxHome, workDir string) {
+	sidStr, err := deriveCapabilitySIDString(setupCapabilityName)
 	if err != nil {
 		return
 	}
-	prev, ok := readWindowsSetupState(nvxHome)
-	if !ok || strings.EqualFold(prev.AppContainerSID, current) {
+	roots, _ := windowsSetupGrantPaths(nvxHome, workDir, false)
+	var missing []string
+	for _, r := range roots {
+		if !driveRootHasGrant(sidStr, r) {
+			missing = append(missing, r)
+		}
+	}
+	if len(missing) == 0 {
 		return
 	}
-	LogWarn("That command failed, and an earlier 'nvx setup' no longer applies to this sandbox.")
-	LogInfo("If the error above mentions EPERM on a path like C:\\Users, the fix is 'nvx setup' from an Administrator terminal -- not re-running this as Administrator.")
+	LogInfo("If the error above is an EPERM on %s, that is a drive root the sandbox cannot read; "+
+		"'nvx setup' from an Administrator terminal, run from that volume, grants it. Nothing else needs "+
+		"elevation, and an EPERM inside ~/.nvx is a different problem that nvx retries itself.",
+		strings.Join(missing, " or "))
 }
 
 // windowsSandboxNetwork decides the AppContainer's network capabilities and
@@ -501,10 +519,13 @@ func wrapWithEgressSupervisor(
 	return supervisor, append(supervisorArgs, args...), nil
 }
 
-// noteMissingElevatedGrants reports which host paths the sandbox cannot read,
-// based on the actual ACLs rather than on whether a setup marker file exists --
-// so it stays accurate if setup was undone, or if a project sits on a volume a
-// previous setup did not cover. Only an elevated `nvx setup` can add them.
+// noteMissingElevatedGrants notes, with --verbose only, which drive roots the
+// sandbox cannot read, based on the actual ACLs rather than on whether a setup
+// marker file exists -- so it stays accurate if setup was undone, or if a
+// project sits on a volume a previous setup did not cover. Only an elevated
+// `nvx setup` can add them, and since 2026-09-02 nvx no longer asks anyone to:
+// see remindAboutDriveRoots for what the grant is worth and why this stopped
+// being a warning.
 //
 // Checked against the identity `nvx setup` GRANTS, not against this run's
 // package. Those were the same thing while one package served the whole machine.
@@ -593,19 +614,14 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 	}
 
 	if stranded {
-		LogWarn("An earlier 'nvx setup' granted %s to a sandbox identity nvx no longer uses, so that grant no longer applies.", strings.Join(missing, " or "))
-		// "may fail", not "fails". This notice named the only cause it knew about,
-		// and a reader took it as the explanation for an EPERM that was coming from
-		// somewhere else entirely -- and then spent the better part of an hour on an
-		// elevated command that could not have fixed it.
-		LogInfo("Re-run 'nvx setup' from an Administrator terminal, in this directory, to move it. " +
-			"Until then a tool that walks up to one of those paths may fail there with EPERM. " +
-			"An EPERM on a path inside nvx's own home is a different problem and needs no elevation.")
+		LogDetail("An earlier 'nvx setup' granted %s to a sandbox identity nvx no longer uses, so that grant no longer applies.", strings.Join(missing, " or "))
+		LogDetail("Re-run 'nvx setup' from an Administrator terminal, in this directory, to move it; " +
+			"only a tool that resolves a path all the way to that root would notice.")
 		return
 	}
 
-	LogWarn("The sandbox cannot read %s. Most workflows are unaffected.", strings.Join(missing, " or "))
-	LogInfo("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal, run in this directory so it covers this volume.")
+	LogDetail("The sandbox cannot read %s. Installs and npx do not need it.", strings.Join(missing, " or "))
+	LogDetail("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal, run in this directory so it covers this volume.")
 }
 
 func driveRootNoticeFile(nvxHome string) string {
