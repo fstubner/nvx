@@ -112,44 +112,79 @@ func writeWindowsExeShims(shimDir, target string) error {
 }
 
 // linkShimExe makes dst a hard link to target, or a copy where linking is not
-// possible (a filesystem without hard links).
-//
-// A link that already points at target is left alone: `nvx env` regenerates
-// shims at every shell start, and re-linking seven files each time is churn.
-// One that points elsewhere is what an upgrade leaves behind -- installNvxCopy
-// renames a fresh nvx.exe over the old one, and every link stays on the OLD
-// file -- and has to be replaced, or `npm` keeps running the previous build
-// until someone notices.
-//
-// A shim that is running cannot be deleted, but it can be renamed; Windows
-// allows moving a mapped executable. The renamed-aside file is deleted by
-// sweepStaleShimExes on a later run, once nothing is executing it.
+// possible (a filesystem without hard links). See refreshLink.
 func linkShimExe(target, dst string) error {
-	if sameExistingFile(target, dst) || sameSizeAndTime(target, dst) {
+	return refreshLink(target, dst)
+}
+
+// refreshLink makes dst the same file as src: a hard link where the filesystem
+// allows one, a copy otherwise.
+//
+// A dst that already IS src is left alone: `nvx env` regenerates shims at every
+// shell start, and re-linking seven files each time is churn. Anything else is
+// replaced -- including a file with src's size and modification time. A first
+// version took that as proof the link was current, and for a link it proves
+// nothing: installNvxCopy renames a fresh nvx.exe over the old one and every
+// link stays on the OLD file, a node.exe reinstalled from the same archive
+// carries the archive's timestamp, and a CI runner wrote two files inside one
+// timestamp tick and watched the relink get skipped. Size and time are
+// consulted only on the copy path, where they are what stops a filesystem
+// without hard links from copying the binary again at every shell start.
+//
+// The link is made under a temporary name and renamed over dst, so no partial
+// state is ever visible. A dst that is executing cannot be replaced that way
+// on Windows, but it can be renamed; the renamed-aside file is deleted by
+// sweepStaleShimExes on a later run, once nothing is executing it.
+func refreshLink(src, dst string) error {
+	if sameExistingFile(src, dst) {
+		return nil
+	}
+	tmp := fmt.Sprintf("%s.link-%d", dst, os.Getpid())
+	if err := os.Link(src, tmp); err == nil {
+		if err := replaceFile(tmp, dst); err != nil {
+			_ = os.Remove(tmp)
+			return err
+		}
+		return nil
+	}
+	if sameSizeAndTime(src, dst) {
 		return nil
 	}
 	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-		aside := fmt.Sprintf("%s.stale-%d", dst, os.Getpid())
-		if rerr := os.Rename(dst, aside); rerr != nil {
+		if rerr := os.Rename(dst, asideName(dst)); rerr != nil {
 			return err
 		}
 	}
-	if err := os.Link(target, dst); err == nil {
-		return nil
-	}
-	if err := installNvxCopy(target, dst); err != nil {
+	if err := installNvxCopy(src, dst); err != nil {
 		return err
 	}
 	// A copy is recognised as current by size and time on the next run, the
-	// same way the staged sandbox supervisor identifies its build; without this
-	// every shell start would copy the binary seven times over.
-	if info, err := os.Stat(target); err == nil {
+	// same way the staged sandbox supervisor identifies its build.
+	if info, err := os.Stat(src); err == nil {
 		_ = os.Chtimes(dst, info.ModTime(), info.ModTime())
 	}
 	return nil
 }
 
-// sameSizeAndTime reports whether b is a copy of a made by linkShimExe: same
+// replaceFile renames tmp over dst, moving a dst that is in use aside first.
+func replaceFile(tmp, dst string) error {
+	err := os.Rename(tmp, dst)
+	if err == nil {
+		return nil
+	}
+	if rerr := os.Rename(dst, asideName(dst)); rerr != nil {
+		return err
+	}
+	return os.Rename(tmp, dst)
+}
+
+// asideName is where a file that is executing gets moved so its name can be
+// reused. sweepStaleShimExes matches it.
+func asideName(dst string) string {
+	return fmt.Sprintf("%s.stale-%d", dst, os.Getpid())
+}
+
+// sameSizeAndTime reports whether b is a copy of a made by refreshLink: same
 // size, same modification time. Only consulted when they are not the same file.
 func sameSizeAndTime(a, b string) bool {
 	ai, err := os.Stat(a)
