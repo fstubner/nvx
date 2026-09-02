@@ -191,7 +191,11 @@ func main() {
 		runList(nvxHome)
 
 	case "list-remote", "ls-remote":
-		runListRemote()
+		filter := ""
+		if len(os.Args) >= 3 {
+			filter = os.Args[2]
+		}
+		runListRemote(filter)
 
 	case "env":
 		runEnv(parseShellArg(os.Args[2:]), nvxHome)
@@ -843,12 +847,48 @@ func runList(nvxHome string) {
 	}
 }
 
-func runListRemote() {
+// runListRemote prints remote Node.js releases, optionally narrowed to a query.
+//
+// The query used to be dropped on the floor: `ls-remote 22`, `ls-remote bun` and
+// `ls-remote --all` all printed the identical latest-of-each-major table and
+// exited 0. Swallowing an argument without complaint is bad enough on its own,
+// but the default view is also latest-of-each-major, so there was no way at all
+// to discover a specific patch release -- the v22.11.0 an .nvmrc might pin, say.
+// And `ls-remote bun` answering with a table headed "Node.js versions" is simply
+// the wrong answer to the question asked.
+func runListRemote(query string) {
+	query = strings.TrimSpace(query)
+	// A runtime name is a question about that runtime, and this only knows about
+	// Node. Say so rather than answering about a different one.
+	if query != "" {
+		if p, ok := Providers[strings.ToLower(query)]; ok && p.Name() != "node" {
+			LogError("Remote listing is Node.js only; there is no release list for %s.", p.Name())
+			os.Exit(1)
+		}
+		if strings.HasPrefix(query, "-") {
+			LogError("Unknown option %q. Usage: nvx list-remote [version]", query)
+			os.Exit(1)
+		}
+	}
+
 	LogInfo("Fetching remote release list from nodejs.org...")
 	releases, err := FetchReleases()
 	if err != nil {
 		LogError("Error fetching releases: %v", err)
 		os.Exit(1)
+	}
+
+	// With a query, list every release that matches it rather than one per major:
+	// narrowing to "22" is how someone looks for a specific 22.x, and collapsing
+	// the answer back to one line per major would defeat the point of asking.
+	if query != "" {
+		matched := releasesMatching(query, releases)
+		if len(matched) == 0 {
+			LogError("No Node.js release matches %q.", query)
+			os.Exit(1)
+		}
+		printReleaseTable(fmt.Sprintf("Node.js releases matching %q:", query), matched)
+		return
 	}
 
 	var majorSeen = make(map[string]bool)
@@ -869,11 +909,29 @@ func runListRemote() {
 		}
 	}
 
-	fmt.Println("\n\x1b[36mLatest release of each major Node.js version:\x1b[0m")
+	printReleaseTable("Latest release of each major Node.js version:", filtered)
+}
+
+// releasesMatching narrows a release list to those a version query names, by
+// whole version or by major/minor prefix.
+func releasesMatching(query string, releases []Release) []Release {
+	want := "v" + strings.TrimPrefix(strings.ToLower(strings.TrimSpace(query)), "v")
+	var matched []Release
+	for _, r := range releases {
+		v := strings.ToLower(r.Version)
+		if v == want || strings.HasPrefix(v, want+".") {
+			matched = append(matched, r)
+		}
+	}
+	return matched
+}
+
+func printReleaseTable(heading string, releases []Release) {
+	fmt.Println("\n\x1b[36m" + heading + "\x1b[0m")
 	fmt.Printf("%-10s  %-12s  %-15s  %-8s\n", "Version", "Release Date", "LTS Status", "Npm version")
 	fmt.Println(strings.Repeat("-", 55))
 
-	for _, r := range filtered {
+	for _, r := range releases {
 		ltsStr := "No"
 		if r.IsLTS() {
 			ltsStr = fmt.Sprintf("Yes (%s)", r.LTSName())
