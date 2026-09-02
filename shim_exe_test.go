@@ -105,20 +105,26 @@ func TestExeShimsFollowAReplacedNvx(t *testing.T) {
 // .cmd shims passed `shim npm %*`, so a `--no-sandbox` typed after `npm` was
 // npm's to receive; the exe shim sees it in os.Args[1] and has to keep it there.
 func TestInvokedUnderAShimNameDispatchesAsThatShim(t *testing.T) {
+	// Paths are built with the platform's own separator. The function reads the
+	// base name with filepath, which on Linux and macOS does not split at a
+	// backslash -- so a Windows-spelled path there is one long base name that
+	// matches nothing, and a first version of this test failed on both.
+	bin := filepath.Join("home", "x", ".nvx", "bin")
 	cases := []struct {
 		exe  string
 		args []string
 		want []string
 	}{
-		{`C:\Users\x\.nvx\bin\npm.exe`, []string{"npm.exe", "--no-sandbox", "install", "left-pad"},
+		{filepath.Join(bin, "npm.exe"), []string{"npm.exe", "--no-sandbox", "install", "left-pad"},
 			[]string{"npm.exe", "shim", "npm", "--no-sandbox", "install", "left-pad"}},
-		{`C:\Users\x\.nvx\bin\NPX.EXE`, []string{"NPX.EXE", "cowsay"}, []string{"NPX.EXE", "shim", "npx", "cowsay"}},
-		{`/home/x/.nvx/bin/node`, []string{"node", "-e", "1"}, []string{"node", "shim", "node", "-e", "1"}},
-		{`C:\Users\x\.nvx\bin\nvx.exe`, []string{"nvx.exe", "--no-sandbox", "npm", "install"},
+		{filepath.Join(bin, "NPX.EXE"), []string{"NPX.EXE", "cowsay"}, []string{"NPX.EXE", "shim", "npx", "cowsay"}},
+		{filepath.Join(bin, "node"), []string{"node", "-e", "1"}, []string{"node", "shim", "node", "-e", "1"}},
+		{filepath.Join(bin, "nvx.exe"), []string{"nvx.exe", "--no-sandbox", "npm", "install"},
 			[]string{"nvx.exe", "--no-sandbox", "npm", "install"}},
-		{`/usr/local/bin/nvx`, []string{"nvx", "doctor"}, []string{"nvx", "doctor"}},
+		{filepath.Join("usr", "local", "bin", "nvx"), []string{"nvx", "doctor"}, []string{"nvx", "doctor"}},
 		// The staged sandbox supervisor is a copy of nvx under a per-build name.
-		{`C:\x\.nvx\sandbox-exec\supervisor\nvx-10485760-1725000000.exe`, []string{"nvx-10485760-1725000000.exe", "supervisor-exec"},
+		{filepath.Join("x", ".nvx", "sandbox-exec", "supervisor", "nvx-10485760-1725000000.exe"),
+			[]string{"nvx-10485760-1725000000.exe", "supervisor-exec"},
 			[]string{"nvx-10485760-1725000000.exe", "supervisor-exec"}},
 	}
 	for _, tc := range cases {
@@ -130,7 +136,7 @@ func TestInvokedUnderAShimNameDispatchesAsThatShim(t *testing.T) {
 
 	// And the startup flag parser, given the rewritten arguments, leaves npm's
 	// --no-sandbox alone -- exactly as it did for `nvx shim npm --no-sandbox`.
-	rewritten := shimInvocationArgs(`C:\x\bin\npm.exe`, []string{"npm.exe", "--no-sandbox", "install"})
+	rewritten := shimInvocationArgs(filepath.Join(bin, "npm.exe"), []string{"npm.exe", "--no-sandbox", "install"})
 	filtered, _, noSandbox, _, _ := parseStartupFlags(rewritten)
 	if noSandbox {
 		t.Error("--no-sandbox typed after `npm` was read as nvx's own flag; the shim let it disable the sandbox")
