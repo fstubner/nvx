@@ -13,10 +13,10 @@ func TestResolveCommandOnPath(t *testing.T) {
 	dirA := tempDir(t)
 	dirB := tempDir(t)
 
-	// Command name differs by platform: on Windows shims are "<cmd>.cmd".
+	// Command name differs by platform: on Windows shims are "<cmd>.exe".
 	shimName := "npm"
 	if runtime.GOOS == "windows" {
-		shimName = "npm.cmd"
+		shimName = "npm.exe"
 	}
 	writeExec(t, filepath.Join(dirA, shimName))
 	writeExec(t, filepath.Join(dirB, shimName))
@@ -115,7 +115,7 @@ func TestDiagnosePathCommands(t *testing.T) {
 	// Shim in bin/ and a shadowing copy in current/.
 	shimName := "npm"
 	if runtime.GOOS == "windows" {
-		shimName = "npm.cmd"
+		shimName = "npm.exe"
 	}
 	writeExec(t, filepath.Join(shimDir, shimName))
 	writeExec(t, filepath.Join(current, shimName))

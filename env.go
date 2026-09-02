@@ -217,7 +217,7 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 }
 
 // lookPathSkippingNvxShims resolves cmdName on PATH with ~/.nvx/bin removed so
-// shim wrappers (node.cmd) are not mistaken for the real runtime binary. The
+// shim wrappers (node.exe, which is nvx) are not mistaken for the real runtime binary. The
 // (slow, on Windows) PATH scan is memoized per PATH via the bin-resolve cache.
 func lookPathSkippingNvxShims(cmdName, nvxHome string) (string, error) {
 	if cached := lookupBinCache(nvxHome, cmdName); cached != "" {
@@ -298,41 +298,20 @@ func generateShims(nvxHome string) error {
 	}
 
 	exePath := stableShimTarget(nvxHome)
+	if runtime.GOOS == "windows" {
+		// One nvx.exe under each command's name, rather than .cmd/.ps1/sh
+		// wrappers that each cost a shell process to reach it. See shim_exe.go
+		// for the measurement. Every shell resolves the .exe: cmd.exe and
+		// PowerShell through PATHEXT, and Git Bash -- which does not consult
+		// PATHEXT and used to need the extensionless script -- by trying `npm`
+		// and then `npm.exe`.
+		return writeWindowsExeShims(shimDir, exePath)
+	}
 	for _, cmd := range allShimCommands() {
-		if runtime.GOOS == "windows" {
-			exeCmd := quoteWindowsBatchArg(exePath)
-			content := fmt.Sprintf("@echo off\r\n%s shim %s %%*\r\n", exeCmd, quoteWindowsBatchArg(cmd))
-			if err := writeExecutableFile(filepath.Join(shimDir, cmd+".cmd"), []byte(content)); err != nil {
-				return fmt.Errorf("write cmd shim for %s: %w", cmd, err)
-			}
-
-			contentPs1 := fmt.Sprintf("& %s shim %s @args\r\n", quotePowerShell(exePath), quotePowerShell(cmd))
-			if err := writeExecutableFile(filepath.Join(shimDir, cmd+".ps1"), []byte(contentPs1)); err != nil {
-				return fmt.Errorf("write PowerShell shim for %s: %w", cmd, err)
-			}
-
-			// Also write an extensionless POSIX shim on Windows, for bash.
-			//
-			// cmd.exe and PowerShell find `npm` through PATHEXT and pick up the
-			// .cmd/.ps1 above. bash does not consult PATHEXT: it looks for a file
-			// named exactly `npm`, so with only those two present a bare `npm` in
-			// Git Bash resolved straight past nvx to the real npm -- no audit, no
-			// sandbox, and `nvx doctor` reported interception as healthy because it
-			// was answering the PATHEXT question.
-			//
-			// That is not an edge case on this platform: Git Bash is what most
-			// agent harnesses run on Windows, and agent-driven installs are the
-			// case nvx exists for.
-			contentSh := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", quotePOSIXShell(exePath), quotePOSIXShell(cmd))
-			if err := writeExecutableFile(filepath.Join(shimDir, cmd), []byte(contentSh)); err != nil {
-				return fmt.Errorf("write POSIX shim for %s: %w", cmd, err)
-			}
-		} else {
-			content := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", quotePOSIXShell(exePath), quotePOSIXShell(cmd))
-			shimPath := filepath.Join(shimDir, cmd)
-			if err := writeExecutableFile(shimPath, []byte(content)); err != nil {
-				return fmt.Errorf("write shim for %s: %w", cmd, err)
-			}
+		content := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", quotePOSIXShell(exePath), quotePOSIXShell(cmd))
+		shimPath := filepath.Join(shimDir, cmd)
+		if err := writeExecutableFile(shimPath, []byte(content)); err != nil {
+			return fmt.Errorf("write shim for %s: %w", cmd, err)
 		}
 	}
 	return nil
@@ -917,7 +896,25 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	}
 	binaryPath = preferWindowsRuntimeExe(binaryPath)
 
-	cmd := exec.Command(binaryPath, args...)
+	// Windows: launch npm/npx as node.exe rather than through cmd.exe, and let
+	// the child find the real runtime for its own nested `node`/`bun` calls
+	// without coming back through nvx. See direct_runtime.go for the process
+	// tree this removes two hops from.
+	launchPath, launchArgs := binaryPath, args
+	var childEnv []string
+	if runtime.GOOS == "windows" {
+		nodeExe := ""
+		if rt.Name() == "node" {
+			nodeExe = resolvePinnedCommandPath("node", nvxHome, activeVer, rt)
+		}
+		launchPath, launchArgs = directLaunchCommand(binaryPath, nodeExe, args)
+		if dir := directRuntimeDir(nvxHome, rt, activeVer); dir != "" {
+			childEnv = prependPath(os.Environ(), dir)
+		}
+	}
+
+	cmd := exec.Command(launchPath, launchArgs...)
+	cmd.Env = childEnv // nil inherits, exactly as before
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -1116,7 +1113,9 @@ func installedNvxHint() string {
 	if _, err := exec.LookPath("nvx"); err == nil {
 		return "nvx"
 	}
-	if self, err := os.Executable(); err == nil {
+	// selfNvxBinary, not os.Executable(): under a shim this process is npm.exe,
+	// and "npm.exe --no-sandbox npm ..." is not advice anyone can follow.
+	if self, err := selfNvxBinary(); err == nil {
 		return quoteForShellHint(self)
 	}
 	return "nvx"

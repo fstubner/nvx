@@ -62,21 +62,21 @@ func TestDoctorFixWritesShims(t *testing.T) {
 		t.Fatal("doctor --fix created no shims")
 	}
 
-	// On Windows the extensionless shim is the one bash needs, and its absence is
-	// the condition doctor now has to be able to see.
+	// On Windows the .exe shim is the one every shell resolves, and its absence
+	// is the condition doctor now has to be able to see.
 	if runtime.GOOS == "windows" {
-		if _, err := os.Stat(filepath.Join(shimDir, "npm")); err != nil {
-			t.Errorf("doctor --fix did not write the extensionless npm shim: %v", err)
+		if _, err := os.Stat(filepath.Join(shimDir, "npm.exe")); err != nil {
+			t.Errorf("doctor --fix did not write the npm.exe shim: %v", err)
 		}
 	}
 }
 
 // TestDoctorReportsMissingShimsRatherThanSilentlyFixingThem reproduces the
-// acceptance pass's exact manoeuvre: write a complete set, delete the
-// extensionless ones, and ask doctor. It must notice, not paper over.
+// acceptance pass's exact manoeuvre: write a complete set, delete the ones
+// bash resolves, and ask doctor. It must notice, not paper over.
 func TestDoctorReportsMissingShimsRatherThanSilentlyFixingThem(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("extensionless shims only differ from the POSIX ones on Windows")
+		t.Skip("exe shims are a Windows-only layout")
 	}
 	nvxHome := tempDir(t)
 	if err := generateShims(nvxHome); err != nil {
@@ -85,14 +85,14 @@ func TestDoctorReportsMissingShimsRatherThanSilentlyFixingThem(t *testing.T) {
 	shimDir := filepath.Join(nvxHome, "bin")
 
 	for _, cmd := range coreShimCommands() {
-		_ = os.Remove(filepath.Join(shimDir, cmd))
+		_ = os.Remove(filepath.Join(shimDir, cmd+".exe"))
 	}
 
 	if code := runDoctor(nvxHome, false); code == 0 {
-		t.Error("doctor reported health with every bash shim deleted; a bare `npm` in Git " +
+		t.Error("doctor reported health with every .exe shim deleted; a bare `npm` in Git " +
 			"Bash would run unwrapped and the user would be told everything was fine")
 	}
-	if _, err := os.Stat(filepath.Join(shimDir, "npm")); err == nil {
+	if _, err := os.Stat(filepath.Join(shimDir, "npm.exe")); err == nil {
 		t.Error("doctor recreated the deleted shim without --fix, which is what made the " +
 			"missing-shim check unreachable in the first place")
 	}

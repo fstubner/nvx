@@ -32,22 +32,15 @@ var nodeSandboxPreserveFlags = []string{"--preserve-symlinks-main", "--preserve-
 // Without it the rewrite would bail and launch the batch wrapper, whose own
 // `IF EXIST "%dp0%\node.exe"` check then fails and degrades to a bare `node`
 // that is not resolvable inside the container.
+//
+// The npm.cmd -> node.exe resolution is shared with the uncontained path
+// (windowsNpmCliLaunch); only the preserve-symlinks flags are specific to the
+// container.
 func rewriteWindowsNodeCommand(cmdPath string, args []string, nodeExeFallback string) (string, []string) {
 	switch strings.ToLower(filepath.Base(cmdPath)) {
 	case "npm.cmd", "npx.cmd":
-		cli := "npm-cli.js"
-		if strings.EqualFold(filepath.Base(cmdPath), "npx.cmd") {
-			cli = "npx-cli.js"
-		}
-		dir := filepath.Dir(cmdPath)
-		nodeExe := filepath.Join(dir, "node.exe")
-		// Keep the CLI next to the .cmd we resolved, so a self-updated npm stays
-		// the one that runs; only the interpreter falls back.
-		cliPath := filepath.Join(dir, "node_modules", "npm", "bin", cli)
-		if !regularFileExists(nodeExe) && regularFileExists(nodeExeFallback) {
-			nodeExe = nodeExeFallback
-		}
-		if !regularFileExists(nodeExe) || !regularFileExists(cliPath) {
+		nodeExe, cliPath, ok := windowsNpmCliLaunch(cmdPath, nodeExeFallback)
+		if !ok {
 			return cmdPath, args
 		}
 		rewritten := make([]string, 0, len(nodeSandboxPreserveFlags)+1+len(args))
@@ -63,14 +56,6 @@ func rewriteWindowsNodeCommand(cmdPath string, args []string, nodeExeFallback st
 	default:
 		return cmdPath, args
 	}
-}
-
-func regularFileExists(path string) bool {
-	if path == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }
 
 // resolveSandboxNodeExe locates the node.exe of the runtime version this session
@@ -514,22 +499,6 @@ func wrapWithEgressSupervisor(
 	}
 	supervisorArgs = append(supervisorArgs, "--", cmdPath)
 	return supervisor, append(supervisorArgs, args...), nil
-}
-
-// prependPath puts dir at the front of the PATH entry in env (case-insensitive
-// key match), adding a PATH entry if none exists.
-func prependPath(env []string, dir string) []string {
-	if dir == "" {
-		return env
-	}
-	for i, e := range env {
-		kv := strings.SplitN(e, "=", 2)
-		if len(kv) == 2 && strings.EqualFold(kv[0], "PATH") {
-			env[i] = "PATH=" + dir + string(os.PathListSeparator) + kv[1]
-			return env
-		}
-	}
-	return append(env, "PATH="+dir)
 }
 
 // noteMissingElevatedGrants reports which host paths the sandbox cannot read,

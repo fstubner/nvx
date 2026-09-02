@@ -27,6 +27,13 @@ var exposePortsFlag []string
 var connectPortsFlag []string
 
 func init() {
+	// Started as npm.exe (a Windows shim is nvx hard-linked under the wrapped
+	// command's name), this process is `nvx shim npm ...`. Rewritten before the
+	// flag parser looks, so that npm's own arguments stay npm's: a --no-sandbox
+	// typed after `npm` must reach npm, not switch off the sandbox.
+	if self, err := os.Executable(); err == nil {
+		os.Args = shimInvocationArgs(self, os.Args)
+	}
 	var yes, noSandbox, strict, standard bool
 	os.Args, yes, noSandbox, strict, standard = parseStartupFlags(os.Args)
 	yesFlag = yes
@@ -801,6 +808,7 @@ func runUninstall(query string, nvxHome string) {
 		LogError("Uninstallation failed: %v", err)
 		os.Exit(1)
 	}
+	pruneDirectRuntimeDirs(nvxHome)
 }
 
 func runUse(query string, nvxHome string, shell string, viaIntegration bool) {
