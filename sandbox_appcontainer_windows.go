@@ -111,12 +111,23 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	// keeps them idempotent across projects, which is what stops the ancestor walk
 	// from re-granting the same chain for every project on the machine.
 	aWork, eWork := grantWorkdirAncestors(sid, nvxHome, workDir)
-	aHome, eHome := grantWorkdirAncestors(sid, nvxHome, guestHome)
-	if skipped := (eWork + eHome) - (aWork + aHome); skipped > 0 {
-		// Not worth a warning: these grants are advisory and the command runs without
-		// them. Silence would hide a genuinely slow filesystem, so report once per
-		// launch rather than once per directory chain.
-		LogInfo("Skipped %d of %d ancestor permission checks to keep startup fast.", skipped, eWork+eHome)
+	if skipped := eWork - aWork; skipped > 0 {
+		// Only the project chain is advisory: the command runs without those, and
+		// skipping a known-slow one is what keeps startup fast. Silence would hide a
+		// genuinely slow filesystem, so report once per launch.
+		LogInfo("Skipped %d of %d ancestor permission checks to keep startup fast.", skipped, eWork)
+	}
+
+	// The guest home's own chain is NOT advisory, and treating it as though it were
+	// is what broke contained npx on the development machine for eleven days. npm
+	// walks up from the guest home and stats every directory on the way; with
+	// ~/.nvx/sandbox_home recorded as a failed grant and therefore not retried,
+	// every `nvx npx` ended in EPERM on that path -- while nvx reported only that
+	// it had skipped some checks to keep startup fast.
+	if failed := grantGuestHomeAncestors(sid, guestHome); len(failed) > 0 {
+		LogWarn("Could not grant the sandbox stat access on %s.", strings.Join(failed, ", "))
+		LogInfo("Tools that walk up from the sandbox's home -- npx does -- will fail there with EPERM. " +
+			"This is inside nvx's own directory and needs no elevation; a later run retries it.")
 	}
 	return caps, nil
 }
@@ -252,6 +263,24 @@ func grantWorkdirAncestors(sid uintptr, nvxHome, workDir string) (attempted, eli
 		return grantAppContainerPathReadExecTimeboxed(sid, p, ancestorGrantPerPath)
 	})
 	return attempted, len(paths)
+}
+
+// grantGuestHomeAncestors grants traverse+stat on the chain above the guest home
+// and returns the paths that could not be granted.
+//
+// Separate from grantWorkdirAncestors because the two chains are not the same
+// kind of thing. The project chain is advisory -- a contained command runs
+// without it -- so a grant there that has proved slow is worth skipping. This
+// chain is what npm walks when it starts in the sandbox's own home, and without
+// it `npx` fails outright. See grantRequiredAncestors for the measurement.
+func grantGuestHomeAncestors(sid uintptr, guestHome string) []string {
+	paths := ancestorGrantPaths(guestHome, os.Getenv("USERPROFILE"))
+	if len(paths) == 0 {
+		return nil
+	}
+	return grantRequiredAncestors(paths, func(p string) error {
+		return grantAppContainerPathReadExecTimeboxed(sid, p, ancestorGrantPerPath)
+	})
 }
 
 // isPathStrictlyUnder reports whether path is a proper descendant of base.

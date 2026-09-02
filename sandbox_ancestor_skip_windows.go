@@ -128,6 +128,37 @@ func normalizeAncestorKey(path string) string {
 	return strings.ToLower(filepath.Clean(path))
 }
 
+// grantRequiredAncestors runs grant over paths that are NOT optional, ignoring
+// the skip cache entirely, and returns the ones that failed.
+//
+// The cache above exists because most ancestor grants buy nothing: with the walk
+// skipped, a contained process still launches, stats and writes its working
+// directory. That reasoning was measured on the chain above a PROJECT, and it
+// does not hold for the chain above the guest home.
+//
+// Measured 2026-09-01: `nvx npx cowsay hi` failed with
+//
+//	EPERM lstat C:\Users\Felix\.nvx\sandbox_home
+//
+// because npm walks up from the guest home, and that directory had been recorded
+// as a failed grant on 2026-08-29 and was therefore not being attempted. One
+// transient failure disabled contained npx for the thirty-day life of the entry,
+// silently, with the only evidence a count of skipped checks and a cache file
+// nobody knows to read. Removing that single entry made the same command succeed.
+//
+// So a required ancestor is attempted every launch, and a failure is returned to
+// be reported rather than remembered. The cost of retrying is bounded by the
+// has-grant check inside the grant itself: once the ACE is there, later launches
+// pay one ACL read.
+func grantRequiredAncestors(paths []string, grant func(string) error) (failed []string) {
+	for _, p := range paths {
+		if err := grant(p); err != nil {
+			failed = append(failed, p)
+		}
+	}
+	return failed
+}
+
 // grantAncestorsSkippingKnownFailures runs grant over paths, leaving out any whose
 // grant failed recently, and records new failures. It returns how many it
 // attempted, so the caller can still report what it skipped.

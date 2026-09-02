@@ -561,15 +561,17 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 		return
 	}
 
-	sysDrive := os.Getenv("SystemDrive")
-	if sysDrive == "" {
-		sysDrive = "C:"
-	}
-
-	roots := windowsAncestorGrantPaths()
-	if vol := filepath.VolumeName(workDir); vol != "" && !strings.EqualFold(vol, sysDrive) {
-		roots = append(roots, vol+`\`)
-	}
+	// The roots THIS run could actually walk to, which is the same set `nvx setup`
+	// would grant if run from here -- so the notice cannot name a path the
+	// suggested command would not fix, and cannot list one twice.
+	//
+	// It used to take every fixed volume on the machine and then append the working
+	// directory's, which named volumes no project was on and printed the current
+	// one twice ("... or G:\ or H:\ or H:\"). Worse, it made the notice look like a
+	// complete account of why a contained command had failed, when the failure
+	// measured on 2026-09-01 was inside nvx's own home and no amount of elevated
+	// setup would have touched it.
+	roots, _ := windowsSetupGrantPaths(nvxHome, workDir, false)
 
 	// A machine that ran setup before per-project packages has the grant on an
 	// identity nothing carries now. That case is not advisory -- it BREAKS `npx`,
@@ -601,14 +603,20 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 
 	if stranded {
 		LogWarn("An earlier 'nvx setup' granted %s to a sandbox identity nvx no longer uses, so that grant no longer applies.", strings.Join(missing, " or "))
-		LogInfo("Re-run 'nvx setup' from an Administrator terminal to move it. Until then a tool that walks up to those paths -- npx does -- fails there with EPERM.")
+		// "may fail", not "fails". This notice named the only cause it knew about,
+		// and a reader took it as the explanation for an EPERM that was coming from
+		// somewhere else entirely -- and then spent the better part of an hour on an
+		// elevated command that could not have fixed it.
+		LogInfo("Re-run 'nvx setup' from an Administrator terminal, in this directory, to move it. " +
+			"Until then a tool that walks up to one of those paths may fail there with EPERM. " +
+			"An EPERM on a path inside nvx's own home is a different problem and needs no elevation.")
 		// Deliberately not marked as seen: it repeats until setup is re-run, which
 		// is what clears the condition.
 		return
 	}
 
 	LogWarn("The sandbox cannot read %s. Most workflows are unaffected.", strings.Join(missing, " or "))
-	LogInfo("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal (it covers every fixed drive).")
+	LogInfo("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal, run in this directory so it covers this volume.")
 	for _, r := range missing {
 		markDriveRootNoticeSeen(nvxHome, sidStr, r)
 	}
