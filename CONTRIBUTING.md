@@ -244,6 +244,22 @@ column and **CI** for the other two. Running both is what keeps the word
    GOOS=darwin go vet ./...
    GOOS=linux go vet ./...
    ```
+
+   **Vet catches what does not compile. It does not catch what compiles and
+   fails.** A test that spelled its paths with backslashes passed on Windows,
+   vetted clean for Linux and macOS, and failed on both — `filepath.Base` does
+   not split at a backslash there. Before pushing anything that touches paths,
+   file layout or process launching, run the whole suite on real Linux; with
+   Docker Desktop it is one command and takes a few seconds after the first pull:
+
+   ```sh
+   docker run --rm -v "$PWD:/src:ro" -w /src \
+     -e GOFLAGS=-buildvcs=false -e GOCACHE=/tmp/gocache -e GOPATH=/tmp/gopath \
+     golang:1.26 go test -count=1 ./...
+   ```
+
+   From Git Bash, prefix it with `MSYS_NO_PATHCONV=1` or `-w /src` is rewritten
+   into a Windows path. macOS still has to wait for CI; nothing here runs it.
 4. Run `gofmt -w` on changed files. CI runs `govulncheck` and `gosec`
    (`-severity=high -confidence=high`); avoid introducing new findings.
 5. Open a PR describing **what** changed and **why**. Link any related issue.
