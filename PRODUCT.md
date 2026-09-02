@@ -37,16 +37,21 @@ ergonomic to use. Either one alone is enough.
 
 ### Where this contradicts the contract below
 
-That last line reverses what the Purpose section says. The contract states "the
+That last line reversed what the Purpose section said. The contract stated "the
 security layer is the reason to switch; the version manager is how it earns a
 place on `PATH` in the first place" — security first, version management as the
 carrier. The person who wanted it says the opposite: version management first,
 security added after.
 
-Left standing rather than reconciled, because which of them is true changes what
-this project should do when the two conflict, and that is a decision to take
-deliberately rather than by quietly editing one to match the other. Three
-consequences, at least:
+**Settled 2026-09-02, by Felix:** the version manager is still the main thing,
+and security is quickly becoming the second main thing. So the ordering below is
+his, not the contract's, and the Purpose section has been corrected to match
+rather than the other way round.
+
+It was left standing for two weeks rather than reconciled, because which of them
+is true changes what this project should do when the two conflict, and that is a
+decision to take deliberately rather than by quietly editing one to match the
+other. Three consequences follow from the answer:
 
 - **Cross-platform parity is a primary goal, not a courtesy.** The origin is
   "nvm does not run on Windows". A platform whose enforcement nobody has ever
@@ -73,9 +78,20 @@ already on `PATH` intercepting `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx` �
 uses that position to audit what gets installed and to contain the commands that
 execute untrusted code.
 
-The security layer is the reason to switch; the version manager is how it earns
-a place on `PATH` in the first place. If nvx is slower or more annoying than fnm
-at the version-management job, the security layer never gets installed.
+**The version manager is the main thing; the security layer is quickly becoming
+the second main thing.** Decided 2026-09-02 — see "What it is for, from Felix"
+above, which this sentence used to contradict. It read "the security layer is the
+reason to switch; the version manager is how it earns a place on `PATH` in the
+first place", written by the same context that built the containment work and
+inclined to rate that work first.
+
+The difference is which way a conflict resolves. Version management being primary
+means that being slower or more annoying than fnm is a defect in the main job,
+not a tax on an optional one, and that a platform where nvx manages runtimes
+badly is a worse failure than one where it contains them narrowly. Security being
+a close and rising second means it is not a bolt-on either: a containment
+guarantee is not traded away for a few milliseconds without that being argued for
+in writing.
 
 ## Users
 

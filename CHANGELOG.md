@@ -528,6 +528,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx doctor` now reports the permissions the sandbox actually has, not what a
+  previous setup wrote down.** It compared the identity recorded by the last
+  *completed* `nvx setup` against the one nvx launches under, and called the
+  machine broken whenever they differed. That record is only written when a setup
+  run finishes, so a run interrupted part-way through a slow volume left it naming
+  the old identity while the volumes it had already granted carried the new one.
+
+  Measured 2026-09-02: two cancelled runs, three volumes correctly granted, and
+  doctor still reporting that an earlier setup "granted an identity nvx no longer
+  uses" and that `npx` "fails there with EPERM" — neither true of that machine by
+  then. It now names only the paths genuinely missing, says such a tool *may* fail
+  there, and points out that an EPERM inside `~/.nvx` is a different problem
+  needing no elevation.
+
 * **Contained `npx` no longer breaks itself for thirty days after one slow
   moment — and did not need an Administrator to fix.** nvx grants the sandbox
   permission to walk the directories above its own home. Those grants are

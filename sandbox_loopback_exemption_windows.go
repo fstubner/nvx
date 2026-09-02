@@ -223,12 +223,52 @@ func reportStrandedSetupGrant(nvxHome string) bool {
 		return false // setup was never run here; nothing to be stranded
 	}
 	current, err := deriveCapabilitySIDString(setupCapabilityName)
-	if err != nil || strings.EqualFold(prev.AppContainerSID, current) {
+	if err != nil {
 		return false
 	}
-	fmt.Println("  [FAIL] an earlier 'nvx setup' granted an identity nvx no longer uses")
-	fmt.Println("         those drive-root grants no longer apply, so a tool that walks up to a")
-	fmt.Println("         drive root -- npx does -- fails there with EPERM")
-	fmt.Println("         re-run 'nvx setup' from an Administrator terminal to move them")
+	workDir, _ := os.Getwd()
+	missing := strandedSetupGrantPaths(nvxHome, workDir, prev.AppContainerSID, current,
+		func(p string) bool { return appContainerHasGrantFor(current, p, grantReadExec) })
+	if len(missing) == 0 {
+		return false
+	}
+
+	fmt.Println("  [FAIL] the sandbox has no drive-root access on " + strings.Join(missing, ", "))
+	fmt.Println("         an earlier 'nvx setup' granted an identity nvx no longer uses")
+	fmt.Println("         a tool that resolves paths up to a drive root may fail there with EPERM")
+	fmt.Println("         re-run 'nvx setup' from an Administrator terminal, in the directory you")
+	fmt.Println("         work in, so it covers that volume")
+	fmt.Println("         (an EPERM on a path inside ~/.nvx is a different problem, and needs no")
+	fmt.Println("         elevation -- nvx retries those itself)")
 	return true
+}
+
+// strandedSetupGrantPaths returns the paths this machine needs and the current
+// setup identity does not hold. Empty means nothing to report.
+//
+// It asks the permissions, not the record. Reporting straight off the recorded
+// identity said FAIL on a machine where C:\, C:\Users and D:\ already carried the
+// current identity's entry -- because the record is only written when a setup run
+// COMPLETES, and a run interrupted part-way through a slow volume leaves it
+// holding whatever identity was there before. Measured 2026-09-02: two cancelled
+// runs, three volumes correctly granted, and doctor still reporting that none of
+// them applied.
+//
+// Reporting the wrong thing here is expensive rather than untidy. This is the
+// message someone reads after a contained command failed, and the version it
+// replaces asserted that npx "fails there with EPERM" -- which sent a maintainer
+// to a 46-minute elevated grant on a volume that had nothing to do with the
+// failure they were chasing.
+func strandedSetupGrantPaths(nvxHome, workDir, recordedSID, currentSID string, hasGrant func(string) bool) []string {
+	if recordedSID == "" || strings.EqualFold(recordedSID, currentSID) {
+		return nil
+	}
+	paths, _ := windowsSetupGrantPaths(nvxHome, workDir, false)
+	var missing []string
+	for _, p := range paths {
+		if !hasGrant(p) {
+			missing = append(missing, p)
+		}
+	}
+	return missing
 }
