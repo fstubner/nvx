@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -156,6 +157,30 @@ func diagnosePath(pathEnv, nvxHome string, shimCmds []string) doctorReport {
 // entry from PATH and prepends it, guaranteeing the shim dir wins command
 // resolution in every new shell — independent of `nvx use`/`auto`. shimDir is
 // the OS-native path; POSIX shells receive a Git-Bash-style path on Windows.
+// powershellASCIIPath renders a path as a PowerShell expression that evaluates
+// back to it, using only ASCII bytes on the wire.
+//
+// PowerShell decodes a native command's stdout with [Console]::OutputEncoding,
+// which on a default Windows install is a legacy OEM codepage. nvx writes UTF-8.
+// So every non-ASCII byte of a path came back mangled, and `nvx env` handed the
+// shell a shim directory that does not exist.
+//
+// Measured 2026-09-02, Windows PowerShell 5.1 and pwsh 7, both reporting
+// OutputEncoding ibm850, on a home under a directory containing "ä": the first
+// emitted path arrived as U+251C U+00F1 where U+00E4 was written, Test-Path on it
+// was False, and `node` was then not found. Bash on the identical path was
+// correct, which is why this survived -- it is invisible unless the account name
+// carries an accent, and silent when it does.
+//
+// Base64 rather than a quoted literal because the encoding of the pipe is not
+// nvx's to fix from inside the script it is being read from: by the time any
+// [Console]::OutputEncoding line in the output ran, the rest of that output has
+// already been decoded. Only bytes no codepage can disagree about survive that.
+func powershellASCIIPath(p string) string {
+	return `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('` +
+		base64.StdEncoding.EncodeToString([]byte(p)) + `'))`
+}
+
 func shimPathPrependSnippet(shell, shimDir string) string {
 	if shell == "bash" || shell == "zsh" {
 		dir := shimDir
@@ -169,8 +194,7 @@ func shimPathPrependSnippet(shell, shimDir string) string {
 			`export PATH="$__nvx_bin:$PATH"` + "\n"
 	}
 	// PowerShell default.
-	dir := quotePowerShell(shimDir)
-	return "$__nvx_bin = " + dir + "\n" +
+	return "$__nvx_bin = " + powershellASCIIPath(shimDir) + "\n" +
 		`$env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and ($_.TrimEnd('\') -ne $__nvx_bin.TrimEnd('\')) }) -join ';'` + "\n" +
 		`$env:PATH = "$__nvx_bin;$env:PATH"` + "\n"
 }

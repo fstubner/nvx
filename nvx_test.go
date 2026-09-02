@@ -21,8 +21,11 @@ func TestEnvScriptFrontsShimDir(t *testing.T) {
 		t.Fatalf("bash env script must still define the nvx function")
 	}
 
+	// The shim dir is asserted through what the script decodes to: it is emitted
+	// base64 so a non-UTF-8 console codepage cannot corrupt it on the way into the
+	// shell. See TestPowerShellIntegrationSurvivesANonASCIIPath.
 	ps := envScript("powershell", `C:\opt\nvx.exe`, `C:\Users\u\.nvx\bin`)
-	if !strings.Contains(ps, "$env:PATH") || !strings.Contains(ps, `.nvx\bin`) {
+	if !strings.Contains(ps, "$env:PATH") || !decodedPathsContain(ps, `.nvx\bin`) {
 		t.Fatalf("powershell env script must front the shim dir:\n%s", ps)
 	}
 	if !strings.Contains(ps, "function nvx {") {

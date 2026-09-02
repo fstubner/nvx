@@ -940,44 +940,72 @@ fi
 `, exe, exe, exe, exe)
 	}
 
-	// PowerShell default
+	// PowerShell default.
+	//
+	// Two things here are not decoration, and both were silent failures on the
+	// platform this project exists for.
+	//
+	// __nvx_call forces UTF-8 for the duration of a call because PowerShell decodes
+	// a native command's stdout with [Console]::OutputEncoding -- a legacy OEM
+	// codepage by default -- while nvx writes UTF-8. Without it, `nvx use` in a
+	// home containing a non-ASCII character emits a PATH that arrives corrupted and
+	// is then eval'd. See powershellASCIIPath for the measurement; that covers the
+	// bootstrap, this covers every call afterwards.
+	//
+	// The prompt wrap is guarded because it was not idempotent. It captured
+	// $old_prompt and the wrapper resolved that name at CALL time, so loading the
+	// script twice made the wrapper call itself: prompt destroyed, then
+	// CallDepthOverflow. Reloading a profile after upgrading nvx is enough to do
+	// it, and the prompt is what drives auto-switching, so the failure takes
+	// .nvmrc switching with it. The bash branch above has always guarded this.
 	return prepend + fmt.Sprintf(`$global:__nvx_last_pwd = ""
+$global:__nvx_exe = %s
+
+function __nvx_call {
+    $prev = $null
+    try { $prev = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
+    try { & $global:__nvx_exe @args }
+    finally { if ($prev) { try { [Console]::OutputEncoding = $prev } catch {} } }
+}
 
 function nvx {
     $cmd = $args[0]
     if ($cmd -eq "use" -or $cmd -eq "auto") {
-        $stdout = & %q @args --shell=powershell
+        $stdout = __nvx_call @args --shell=powershell
         if ($stdout) {
             $stdout | Out-String | Invoke-Expression
         }
     } else {
-        & %q @args
+        __nvx_call @args
     }
 }
 
 function nvx_prompt_hook {
     if ($global:__nvx_last_pwd -ne $pwd) {
         $global:__nvx_last_pwd = $pwd
-        $stdout = & %q auto --shell=powershell
+        $stdout = __nvx_call auto --shell=powershell
         if ($stdout) {
             $stdout | Out-String | Invoke-Expression
         }
     }
 }
 
-if (Test-Path Function:\prompt) {
-    $old_prompt = $function:prompt
-    $function:prompt = {
-        nvx_prompt_hook
-        . $old_prompt
-    }
-} else {
-    $function:prompt = {
-        nvx_prompt_hook
-        "PS $pwd> "
+if (-not $global:__nvx_prompt_wrapped) {
+    $global:__nvx_prompt_wrapped = $true
+    if (Test-Path Function:\prompt) {
+        $global:__nvx_old_prompt = $function:prompt
+        $function:prompt = {
+            nvx_prompt_hook
+            . $global:__nvx_old_prompt
+        }
+    } else {
+        $function:prompt = {
+            nvx_prompt_hook
+            "PS $pwd> "
+        }
     }
 }
-`, exe, exe, exe)
+`, powershellASCIIPath(exe))
 }
 
 func runAuto(nvxHome string, shell string) {
