@@ -236,6 +236,18 @@ func readDACL(path string) ([]aclEntry, error) {
 // child unaffected. Excluding them keeps the buffer honest about what it is
 // asserting, which is this directory's own entries and nothing else.
 func writeDACLEntry(path, sidStr string, mask uint32, flags uint8) error {
+	return writeDACLEntryDropping(path, sidStr, mask, flags, nil)
+}
+
+// writeDACLEntryDropping is writeDACLEntry that also leaves out every explicit
+// entry whose SID `drop` returns true for.
+//
+// It exists so a write that is happening anyway can take old entries with it.
+// The propagation SetNamedSecurityInfoW runs is what a write costs -- six seconds
+// over a node install here -- and it costs the same whether the new list is one
+// entry longer or four hundred shorter. Removing the same entries one at a time
+// through revokeACL would be one propagation each.
+func writeDACLEntryDropping(path, sidStr string, mask uint32, flags uint8, drop func(sidStr string) bool) error {
 	sid, err := sidFromString(sidStr)
 	if err != nil {
 		return err
@@ -275,6 +287,11 @@ func writeDACLEntry(path, sidStr string, mask uint32, flags uint8) error {
 			if ace.Header.AceType == accessAllowedAceType || ace.Header.AceType == accessDeniedAceType {
 				if eq, _, _ := procEqualSid.Call(uintptr(unsafe.Pointer(aceSID(ace))), uintptr(unsafe.Pointer(sid))); eq != 0 {
 					continue // ours; the replacement is added below
+				}
+				if drop != nil {
+					if str, err := appContainerSidToString(uintptr(unsafe.Pointer(aceSID(ace)))); err == nil && drop(str) {
+						continue
+					}
 				}
 			}
 			keep = append(keep, rawACE{ptr: unsafe.Pointer(ace), size: ace.Header.AceSize,
@@ -406,13 +423,20 @@ const maxAbandonedACLWrites = 8
 var aclWriteFn atomic.Pointer[func(path, sidStr string, mask uint32, flags uint8) error]
 
 func aclWrite(path, sidStr string, mask uint32, flags uint8) error {
+	return aclWriteDropping(path, sidStr, mask, flags, nil)
+}
+
+// aclWriteDropping is aclWrite with writeDACLEntryDropping's predicate. A test
+// hook, which replaces the write wholesale, never sees the predicate; the hook
+// is about writes that stall, and nothing it stands in for drops entries.
+func aclWriteDropping(path, sidStr string, mask uint32, flags uint8, drop func(string) bool) error {
 	if fn := aclWriteFn.Load(); fn != nil {
 		return (*fn)(path, sidStr, mask, flags)
 	}
-	return writeDACLEntry(path, sidStr, mask, flags)
+	return writeDACLEntryDropping(path, sidStr, mask, flags, drop)
 }
 
-func grantACLWithin(path, sidStr string, mask uint32, flags uint8, timeout time.Duration) error {
+func grantACLWithin(path, sidStr string, mask uint32, flags uint8, timeout time.Duration, drop func(string) bool) error {
 	key := strings.ToLower(filepath.Clean(path))
 	if _, stalled := aclStalledPaths.Load(key); stalled {
 		return fmt.Errorf("setting permissions on %s stalled earlier in this process; not retried", path)
@@ -435,7 +459,7 @@ func grantACLWithin(path, sidStr string, mask uint32, flags uint8, timeout time.
 	done := make(chan error, 1)
 
 	go func() {
-		err := aclWrite(path, sidStr, mask, flags)
+		err := aclWriteDropping(path, sidStr, mask, flags, drop)
 		if state.CompareAndSwap(pending, delivered) {
 			done <- err
 			return

@@ -49,7 +49,7 @@ func TestPipedStdioReachesRealAppContainerChild(t *testing.T) {
 		sysRoot = `C:\Windows`
 	}
 	cmdExe := sysRoot + `\System32\cmd.exe`
-	if err := grantAppContainerPathReadExec(sid, cmdExe); err != nil {
+	if err := grantRuntimeTraverse(cmdExe); err != nil {
 		t.Skipf("cannot grant the container access to cmd.exe: %v", err)
 	}
 

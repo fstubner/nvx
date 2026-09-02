@@ -52,7 +52,7 @@ func TestGuestHomeAncestorsAreGrantedEvenWhenPreviouslyRecordedAsFailing(t *test
 
 	var attempted []string
 	failed := grantRequiredAncestors(
-		ancestorGrantPaths(guestHome, nvxHome),
+		guestHomeRequiredGrants(guestHome),
 		func(p string) error { attempted = append(attempted, p); return nil },
 	)
 
@@ -77,7 +77,7 @@ func TestAFailedRequiredAncestorIsReportedAndNotRecorded(t *testing.T) {
 	sandboxHome := filepath.Join(nvxHome, "sandbox_home")
 
 	failed := grantRequiredAncestors(
-		ancestorGrantPaths(guestHome, nvxHome),
+		guestHomeRequiredGrants(guestHome),
 		func(p string) error {
 			if strings.EqualFold(p, sandboxHome) {
 				return errors.New("did not complete in time")

@@ -93,7 +93,7 @@ func launchAppContainerProcess(
 		sysRoot = `C:\Windows`
 	}
 	cmdExe := filepath.Join(sysRoot, "System32", "cmd.exe")
-	if grantErr := grantAppContainerPathReadExec(appContainerSID, cmdExe); grantErr != nil {
+	if grantErr := grantRuntimeTraverse(cmdExe); grantErr != nil {
 		return exitCode, err
 	}
 	wrapped := append([]string{"/c", cmdPath}, args...)

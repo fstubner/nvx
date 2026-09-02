@@ -79,7 +79,7 @@ func TestUnelevatedSandboxRunsPackageManager(t *testing.T) {
 		{"npm run hi", []string{"run", "hi"}},
 	} {
 		cmdPath, launchArgs := rewriteWindowsNodeCommand(npmPath, tc.args, resolveSandboxNodeExe(nvxHome))
-		usePath, err := ensureAppContainerCommand(sid, nvxHome, cmdPath)
+		usePath, err := ensureAppContainerCommand(nvxHome, cmdPath)
 		if err != nil {
 			t.Fatalf("%s: executable access: %v", tc.name, err)
 		}
@@ -88,7 +88,7 @@ func TestUnelevatedSandboxRunsPackageManager(t *testing.T) {
 		env = setNodeOptionsPreserveSymlinks(env)
 
 		code, err := launchAppContainerProcess(usePath, launchArgs, env, workDir, sid, 0,
-			append(scopeCaps, capabilityInternetClientSID))
+			launchCapabilitySIDs(scopeCaps, []string{capabilityInternetClientSID}))
 		if err != nil {
 			t.Errorf("%s: launch error: %v", tc.name, err)
 			continue
