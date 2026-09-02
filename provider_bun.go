@@ -217,7 +217,9 @@ func (b BunProvider) ListLocal(nvxHome string) ([]string, error) {
 	}
 	var versions []string
 	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), "v") {
+		// Staging trees from an interrupted install start with "v" too; see
+		// isStagingVersionDir.
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "v") && !isStagingVersionDir(entry.Name()) {
 			versions = append(versions, entry.Name())
 		}
 	}

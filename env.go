@@ -1029,6 +1029,30 @@ func CleanEngineRange(raw string) string {
 	return strings.TrimPrefix(raw, "v")
 }
 
+// firstVersionLine returns the version a `.nvmrc`-style file names: the first
+// line with something on it that is not a comment.
+//
+// The whole file used to be taken, trimmed. A `.nvmrc` carrying a comment, or a
+// second line of any kind, therefore produced a version query with a newline in
+// it -- and the remedy nvx printed could not be run:
+//
+//	⚠ Directory requires Node.js 22
+//	# note (from .nvmrc) but it is not installed. Run 'nvx install node@22
+//	# note'.
+//
+// Returns "" for a file with nothing usable in it, which callers already treat
+// the same as an absent file.
+func firstVersionLine(content []byte) string {
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
 // DetectVersionConfig scans the current directory and ascends to root looking for Node version indicators
 func DetectVersionConfig(startDir string) (version string, sourceFile string, err error) {
 	dir, err := filepath.Abs(startDir)
@@ -1041,7 +1065,7 @@ func DetectVersionConfig(startDir string) (version string, sourceFile string, er
 		nvmrc := filepath.Join(dir, ".nvmrc")
 		if info, err := os.Stat(nvmrc); err == nil && !info.IsDir() {
 			if content, err := os.ReadFile(nvmrc); err == nil {
-				return strings.TrimSpace(string(content)), nvmrc, nil
+				return firstVersionLine(content), nvmrc, nil
 			}
 		}
 
@@ -1049,7 +1073,7 @@ func DetectVersionConfig(startDir string) (version string, sourceFile string, er
 		nodeVersion := filepath.Join(dir, ".node-version")
 		if info, err := os.Stat(nodeVersion); err == nil && !info.IsDir() {
 			if content, err := os.ReadFile(nodeVersion); err == nil {
-				return strings.TrimSpace(string(content)), nodeVersion, nil
+				return firstVersionLine(content), nodeVersion, nil
 			}
 		}
 
