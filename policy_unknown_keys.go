@@ -28,8 +28,23 @@ import (
 // policyKeyPaths returns every key path a Policy can legitimately contain, as
 // dotted paths ("isolation.network.mode"). Derived from the struct tags so it
 // cannot drift from the type.
-func policyKeyPaths() map[string]bool {
-	out := map[string]bool{}
+// The second return is the paths whose CHILDREN are data rather than settings --
+// map-typed fields, where the user chooses the key names.
+//
+// Without it, `runtime.versions` (a map[string]string) had its contents walked as
+// though they were setting names, so the README's own example --
+//
+//	{ "runtime": { "default": "node", "versions": { "node": "20" } } }
+//
+// -- reported `runtime.versions.node` as "not an nvx policy setting and is being
+// ignored", twice per command, and suggested `isolation.filesystem.mode`. The
+// setting was honoured the whole time. This is the warning whose entire purpose
+// is that a misspelt key silently disables a protection, so firing it falsely on
+// a config copied out of the project's own documentation is how a reader learns
+// to skip the ones that are real.
+func policyKeyPaths() (known, openToUserKeys map[string]bool) {
+	known = map[string]bool{}
+	openToUserKeys = map[string]bool{}
 	var walk func(t reflect.Type, prefix string)
 	walk = func(t reflect.Type, prefix string) {
 		for t.Kind() == reflect.Ptr {
@@ -52,18 +67,27 @@ func policyKeyPaths() map[string]bool {
 			if prefix != "" {
 				path = prefix + "." + name
 			}
-			out[path] = true
+			known[path] = true
+
+			ft := f.Type
+			for ft.Kind() == reflect.Ptr {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Map {
+				openToUserKeys[path] = true
+				continue
+			}
 			walk(f.Type, path)
 		}
 	}
 	walk(reflect.TypeOf(Policy{}), "")
-	return out
+	return known, openToUserKeys
 }
 
 // unknownPolicyKeys returns the key paths in data that Policy has no field for,
 // in a stable order.
 func unknownPolicyKeys(data []byte) []string {
-	known := policyKeyPaths()
+	known, openToUserKeys := policyKeyPaths()
 
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {
@@ -81,6 +105,11 @@ func unknownPolicyKeys(data []byte) []string {
 			if !known[path] {
 				unknown = append(unknown, path)
 				continue // do not descend into something already unrecognised
+			}
+			if openToUserKeys[path] {
+				// A map: the keys below are the user's own names for things, not
+				// setting names, so nothing under here can be "unrecognised".
+				continue
 			}
 			var child map[string]json.RawMessage
 			if json.Unmarshal(raw, &child) == nil {
@@ -153,7 +182,7 @@ func warnAboutUnknownPolicyKeys(path string, data []byte) {
 	if len(unknown) == 0 {
 		return
 	}
-	known := policyKeyPaths()
+	known, _ := policyKeyPaths()
 	for _, key := range unknown {
 		if near := nearestPolicyKey(key, known); near != "" {
 			LogWarn("%s: %q is not an nvx policy setting and is being ignored. Did you mean %q?", path, key, near)
