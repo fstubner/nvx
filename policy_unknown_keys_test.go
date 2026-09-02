@@ -46,7 +46,8 @@ func TestAMisspeltPolicyKeyIsReported(t *testing.T) {
 			if !found {
 				t.Fatalf("%q was not reported as unknown; got %v", tc.wantKey, unknown)
 			}
-			if near := nearestPolicyKey(tc.wantKey, policyKeyPaths()); near != tc.wantNearest {
+			knownPaths, _ := policyKeyPaths()
+			if near := nearestPolicyKey(tc.wantKey, knownPaths); near != tc.wantNearest {
 				t.Fatalf("suggested %q for %q, want %q", near, tc.wantKey, tc.wantNearest)
 			}
 		})
@@ -80,7 +81,8 @@ func TestAnUnrecognisableKeyIsReportedWithoutASuggestion(t *testing.T) {
 	if len(unknown) != 1 || unknown[0] != "totally_made_up_setting" {
 		t.Fatalf("got %v, want the one unknown key", unknown)
 	}
-	if near := nearestPolicyKey("totally_made_up_setting", policyKeyPaths()); near != "" {
+	allKnown, _ := policyKeyPaths()
+	if near := nearestPolicyKey("totally_made_up_setting", allKnown); near != "" {
 		t.Fatalf("suggested %q for a key that resembles nothing; a wrong suggestion is worse than none", near)
 	}
 }
@@ -88,7 +90,7 @@ func TestAnUnrecognisableKeyIsReportedWithoutASuggestion(t *testing.T) {
 // The key list is derived from the struct tags, so it cannot drift from the type
 // the way a hand-maintained list would.
 func TestKnownPolicyKeysComeFromTheStruct(t *testing.T) {
-	known := policyKeyPaths()
+	known, _ := policyKeyPaths()
 	for _, want := range []string{
 		"blocked_packages",
 		"typosquatting.max_distance",
@@ -114,4 +116,31 @@ func keysOf(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// The README's own policy example must not be reported as a misspelling.
+//
+// runtime.versions is a map[string]string -- the keys are runtime names the user
+// chooses, not setting names. Walking into it reported "runtime.versions.node" as
+// unrecognised on every shim command, twice, and suggested
+// "isolation.filesystem.mode". The setting was being honoured throughout.
+//
+// This is the channel whose whole purpose is that a misspelt key silently
+// disables a protection. Firing it falsely on a config lifted from the project's
+// own documentation is how a reader is trained to skip the warnings that matter.
+func TestUserChosenMapKeysAreNotReportedAsMisspellings(t *testing.T) {
+	readme := []byte(`{ "runtime": { "default": "node", "versions": { "node": "20", "bun": "1.2" } } }`)
+	if got := unknownPolicyKeys(readme); len(got) != 0 {
+		t.Errorf("the README's documented policy block was reported as containing unknown "+
+			"settings: %v", got)
+	}
+
+	// The check must still work either side of the map: a typo in a real setting
+	// is still caught, and a typo in the map's OWN name is still caught.
+	if got := unknownPolicyKeys([]byte(`{"runtime":{"defualt":"node"}}`)); len(got) != 1 || got[0] != "runtime.defualt" {
+		t.Errorf("a misspelt setting next to a map was not reported: %v", got)
+	}
+	if got := unknownPolicyKeys([]byte(`{"runtime":{"verisons":{"node":"20"}}}`)); len(got) != 1 || got[0] != "runtime.verisons" {
+		t.Errorf("a misspelt map name was not reported: %v", got)
+	}
 }
