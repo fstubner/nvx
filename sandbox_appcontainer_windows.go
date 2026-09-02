@@ -116,7 +116,7 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 		// Only the project chain is advisory: the command runs without those, and
 		// skipping a known-slow one is what keeps startup fast. Silence would hide a
 		// genuinely slow filesystem, so report once per launch.
-		LogInfo("Skipped %d of %d ancestor permission checks to keep startup fast.", skipped, eWork)
+		LogDetail("Skipped %d of %d ancestor permission checks to keep startup fast.", skipped, eWork)
 	}
 
 	// The guest home's parent is NOT advisory, and treating it as though it were

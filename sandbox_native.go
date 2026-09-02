@@ -27,7 +27,7 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 		return 1
 	}
 
-	LogInfo("Sandbox session: %s", sandboxID)
+	LogDetail("Sandbox session: %s", sandboxID)
 
 	var guestHome string
 	if usePersistentProfile(config.ToolName) {

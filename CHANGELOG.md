@@ -720,6 +720,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **The terminal is quiet by default.** A contained `npm install` printed ten
+  lines of nvx before npm said anything — the package being verified, the scan
+  starting, the scan being clean, a session id, a permissions count, two lines
+  about an old `nvx setup`, the isolation being active — and a plain `node x.js`
+  announced on every run that it was not sandboxed. Now a contained command
+  prints one line, `Running in native sandbox: npm install is-odd`, and your own
+  code prints nothing. Warnings and errors are unchanged. The rest is behind
+  `--verbose` (or `NVX_VERBOSE=1`), and `NVX_TRACE=1` still records every run.
+
+  The two-line warning about an earlier `nvx setup` having granted an identity
+  nvx no longer uses fired on every package-manager run, by design, on the
+  reasoning that the condition breaks `npx`. Measured twice, it does not:
+  contained `npx` runs unelevated with those grants stranded. It is now shown
+  once per identity and path like the other drive-root advisory, and repeated
+  only after a package-manager command has actually failed. It had also been
+  comparing the wrong right, so a completed setup still read as missing.
+
 * **`nvx setup` no longer grants volumes nothing uses, and says what it is doing
   while it works.** It granted the root of every fixed volume on the machine. The
   permission is narrow — read/execute on the root folder only, not inherited,

@@ -12,6 +12,7 @@ import (
 
 var yesFlag = false
 var quietFlag = false
+var verboseFlag = false
 var agentModeFlag = false
 
 // exposePortsFlag holds --expose values, which add to whatever
@@ -35,6 +36,9 @@ func init() {
 	standardFlag = standard && !strict
 	if os.Getenv("NVX_QUIET") == "1" || strings.EqualFold(os.Getenv("NVX_QUIET"), "true") {
 		quietFlag = true
+	}
+	if os.Getenv("NVX_VERBOSE") == "1" || strings.EqualFold(os.Getenv("NVX_VERBOSE"), "true") {
+		verboseFlag = true
 	}
 	if os.Getenv("NVX_AGENT_MODE") == "1" || strings.EqualFold(os.Getenv("NVX_AGENT_MODE"), "true") {
 		agentModeFlag = true
@@ -84,6 +88,8 @@ func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
 			yes = true
 		case "-q", "--quiet":
 			quietFlag = true
+		case "--verbose":
+			verboseFlag = true
 		case "--agent-mode":
 			agentModeFlag = true
 			yes = true
@@ -562,10 +568,12 @@ Options:
                          TO the command: nvx npm --filesystem-provider=...
   -y, --yes              Auto-approve all prompts
   -q, --quiet            Suppress success/info messages (errors and warnings still print)
+  --verbose              Show what nvx is doing on the way: checks, session ids, permission work
   --agent-mode           Auto-approve all prompts and suppress success/info messages
                          (equivalent to -y -q; also settable via NVX_AGENT_MODE=1)
 
 Environment:
+  NVX_VERBOSE=1          Same as --verbose, for every run in this shell
   NVX_TRACE=1            Record one line per run in ~/.nvx/audit.log for
                          'nvx audit'. Off by default; a local debugging aid
   NVX_YES=true           Auto-approve prompts (same as -y)
@@ -588,6 +596,22 @@ func LogSuccess(format string, a ...interface{}) {
 
 func LogInfo(format string, a ...interface{}) {
 	if quietFlag {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\x1b[36mℹ\x1b[0m "+format+"\n", a...)
+}
+
+// LogDetail is what nvx is doing on the way to the result -- a check starting,
+// a session id, permission work it skipped -- for someone who asked to see it
+// with --verbose or NVX_VERBOSE=1. Off by default.
+//
+// A contained `npm install` printed ten lines of this before npm said anything,
+// and a plain `node x.js` announced on every run that it was not sandboxed. The
+// user wanted the terminal back. The line that stays on LogInfo is the one that
+// changes what a person should expect: that the command IS sandboxed. Warnings
+// and errors are not affected by either flag.
+func LogDetail(format string, a ...interface{}) {
+	if quietFlag || !verboseFlag {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "\x1b[36mℹ\x1b[0m "+format+"\n", a...)
@@ -1484,7 +1508,7 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 			}
 		}
 
-		LogInfo("Verifying package %q...", pkgName)
+		LogDetail("Verifying package %q...", pkgName)
 		resolvedVer, pubTime, hasScripts, err := resolveNpmPackageDetailsForVerify(pkgName, versionQuery)
 		if err != nil {
 			msg := fmt.Sprintf("Could not verify registry metadata for %s: %v. Proceed without metadata checks?", pkgName, err)
@@ -1535,7 +1559,7 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 
 	// 5. Batch Vulnerability Scan (CVEs / OSV database)
 	if len(osvQueries) > 0 {
-		LogInfo("Scanning OSV database for known vulnerabilities...")
+		LogDetail("Scanning OSV database for known vulnerabilities...")
 		vulns, err := scanVulnerabilitiesBatchForVerify(osvQueries)
 		if err != nil {
 			msg := fmt.Sprintf("Vulnerability database scan failed: %v. Proceed without CVE checks?", err)
@@ -1558,7 +1582,7 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 				return 1, "a package has a known active vulnerability and the warning was not approved"
 			}
 		} else {
-			LogSuccess("Vulnerability scan clean. No active CVEs found.")
+			LogDetail("Vulnerability scan clean. No active CVEs found.")
 		}
 	}
 	return 0, ""
