@@ -155,9 +155,13 @@ func TestShimPathPrependSnippet(t *testing.T) {
 	}
 
 	// PowerShell: must filter the existing entry and reassign $env:PATH.
+	//
+	// The path is asserted through what the snippet DECODES to, not through the
+	// literal text: it is emitted base64 so that a console codepage other than
+	// UTF-8 cannot corrupt it. See TestPowerShellIntegrationSurvivesANonASCIIPath.
 	ps := shimPathPrependSnippet("powershell", `C:\Users\u\.nvx\bin`)
-	if !strings.Contains(ps, `.nvx\bin`) {
-		t.Fatalf("powershell snippet missing shim dir: %s", ps)
+	if !decodedPathsContain(ps, `.nvx\bin`) {
+		t.Fatalf("powershell snippet does not yield the shim dir: %s", ps)
 	}
 	if !strings.Contains(ps, "$env:PATH") {
 		t.Fatalf("powershell snippet must set $env:PATH: %s", ps)
