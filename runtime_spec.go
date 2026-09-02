@@ -23,11 +23,14 @@ func parseRuntimeSpec(arg string) (RuntimeProvider, string) {
 	if i := strings.Index(arg, "@"); i > 0 {
 		name := strings.ToLower(arg[:i])
 		if p, ok := Providers[name]; ok {
-			version := strings.TrimSpace(arg[i+1:])
-			if version == "" {
-				version = "latest"
-			}
-			return p, version
+			// A trailing "@" with nothing after it yields an empty version, which
+			// callers refuse. It used to mean "latest", so `nvx install node@`
+			// silently downloaded whatever the newest release happened to be -- a
+			// major nobody asked for. Someone typing a bare "node@" has far more
+			// likely lost the version off the end of the line than chosen to say
+			// "latest" the long way round, and `nvx install node` already means
+			// latest and reads like it.
+			return p, strings.TrimSpace(arg[i+1:])
 		}
 		return Providers["node"], arg
 	}

@@ -721,8 +721,22 @@ func getExtension() string {
 	return "tar.gz"
 }
 
+// requireRuntimeVersion stops a spec whose "@" has nothing after it.
+//
+// parseRuntimeSpec used to turn a trailing "@" into "latest", so `nvx install
+// node@` downloaded the newest release there was. A bare "node@" is a line that
+// lost its version, not a request for latest -- `nvx install node` already means
+// that.
+func requireRuntimeVersion(query, version string) {
+	if strings.TrimSpace(version) == "" {
+		LogError("No version given in %q. Put the version after the '@' (e.g. node@22), or drop the '@' for the latest.", query)
+		os.Exit(1)
+	}
+}
+
 func runInstall(query string, nvxHome string) {
 	provider, version := parseRuntimeSpec(query)
+	requireRuntimeVersion(query, version)
 	err := provider.Install(version, nvxHome)
 	if err != nil {
 		LogError("Installation failed: %v", err)
@@ -732,6 +746,7 @@ func runInstall(query string, nvxHome string) {
 
 func runUninstall(query string, nvxHome string) {
 	provider, version := parseRuntimeSpec(query)
+	requireRuntimeVersion(query, version)
 	err := provider.Uninstall(version, nvxHome)
 	if err != nil {
 		LogError("Uninstallation failed: %v", err)
@@ -741,6 +756,7 @@ func runUninstall(query string, nvxHome string) {
 
 func runUse(query string, nvxHome string, shell string) {
 	provider, version := parseRuntimeSpec(query)
+	requireRuntimeVersion(query, version)
 	display := runtimeDisplayName(provider.Name())
 	resolvedVer, err := resolveLocalVersion(provider, version, nvxHome)
 	if err != nil {
@@ -774,6 +790,7 @@ func runUse(query string, nvxHome string, shell string) {
 
 func runDefault(query string, nvxHome string) {
 	provider, version := parseRuntimeSpec(query)
+	requireRuntimeVersion(query, version)
 	resolvedVer, err := resolveLocalVersion(provider, version, nvxHome)
 	if err != nil {
 		LogError("Could not find installed version matching '%s': %v", version, err)
