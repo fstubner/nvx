@@ -74,7 +74,7 @@ func TestResolveVersion(t *testing.T) {
 		{"18.16", "v18.16.1", ""},
 		{"18", "v18.16.1", ""},
 		{"Hydrogen", "v18.16.1", ""},
-		{"unknown", "", "no release found matching query"},
+		{"unknown", "", "is not a version number"},
 	}
 
 	for _, tc := range tests {
@@ -93,23 +93,25 @@ func TestResolveVersion(t *testing.T) {
 	}
 }
 
-func TestCleanEngineRange(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"^18.16.0", "18.16.0"},
-		{">=16.0.0 <18.0.0", "16.0.0"},
-		{"18.x", "18"},
-		{"~20.11.0", "20.11.0"},
-		{"=18.0.0", "18.0.0"},
-		{"16.4.*", "16.4"},
-		{"14.x || 16.x", "14"},
-	}
-
-	for _, tc := range tests {
-		res := CleanEngineRange(tc.input)
-		if res != tc.expected {
+// The range must reach the resolver intact.
+//
+// This used to assert the opposite: ">=16.0.0 <18.0.0" became "16.0.0" and
+// "14.x || 16.x" became "14". That flattening WAS the defect -- nvx then treated
+// the lower bound as the answer and, on a machine with three satisfying versions
+// installed, went off to download the oldest one named. Ranges are understood
+// where they are resolved now, so nothing may eat them on the way there.
+func TestCleanEngineRangePreservesTheRange(t *testing.T) {
+	for _, tc := range []struct{ input, expected string }{
+		{"^18.16.0", "^18.16.0"},
+		{">=16.0.0 <18.0.0", ">=16.0.0 <18.0.0"},
+		{"18.x", "18.x"},
+		{"~20.11.0", "~20.11.0"},
+		{"=18.0.0", "=18.0.0"},
+		{"16.4.*", "16.4.*"},
+		{"14.x || 16.x", "14.x || 16.x"},
+		{"  20  ", "20"},
+	} {
+		if res := CleanEngineRange(tc.input); res != tc.expected {
 			t.Errorf("CleanEngineRange(%q) = %q, expected %q", tc.input, res, tc.expected)
 		}
 	}

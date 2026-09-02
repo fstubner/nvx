@@ -131,9 +131,24 @@ following this literally goes looking for a phantom:
 
 A seventh means something is quietly not being checked — go and look at it rather
 than at this table. Last measured on Windows 11, 2026-09-02, unelevated:
-**463 passing, 6 skipping, 0 failing** on Windows (Linux adds two more: the network-mode readers only build there). Measured on this machine: 163–209s under
+**468 passing, 6 skipping, 0 failing** on Windows (Linux adds two more: the network-mode readers only build there). Measured on this machine: 163–209s under
 -race and 154s without, so the detector costs roughly a quarter, not the double
 this line claimed until an acceptance pass measured it.
+
+`TestProxyRelayForwardsBothDirections` is sensitive to machine load, and fails in
+a way that reads like a product bug:
+
+```
+dial relay 127.0.0.1:61048: setsockopt: An operation was attempted on
+something that is not a socket.
+```
+
+Measured 2026-09-02: it failed twice on a machine also running an Android
+emulator and three runaway test processes, and passed on the same commit once
+those were gone. Run the gate on an otherwise idle machine. It is worth naming
+because the obvious next step — bisecting whatever you last changed — produces a
+confident wrong answer: removing the newest test file "fixed" it, purely because
+that run happened after the load dropped.
 
 The summary line must read `ok github.com/fstubner/nvx <time>` and nothing else.
 `[no tests to run]` appended to it means a child process wrote to the test

@@ -118,6 +118,23 @@ func ResolveVersion(query string, releases []Release) (Release, error) {
 		}
 	}
 
+	// A range, last, so nothing above changes meaning. Needed because a
+	// package.json range now reaches this far intact: it used to be flattened to
+	// its lower bound before anyone saw it, which is how ">=18 <25" turned into a
+	// request to download exactly 18. The newest release satisfying the range is
+	// the answer, matching what npm would pick.
+	byVersion := make(map[string]Release, len(releases))
+	names := make([]string, 0, len(releases))
+	for _, r := range releases {
+		byVersion[r.Version] = r
+		names = append(names, r.Version)
+	}
+	if best, err := highestMatching(query, names); err == nil {
+		return byVersion[best], nil
+	} else if isUnsupportedRange(err) {
+		return Release{}, err
+	}
+
 	return Release{}, fmt.Errorf("no release found matching query: %s", query)
 }
 
@@ -392,9 +409,47 @@ func (n NodeProvider) Install(version string, nvxHome string) error {
 		return fmt.Errorf("activate installed Node.js version: %w", err)
 	}
 
+	// Record whether this release is LTS, so `use lts` and a `.nvmrc` saying "lts"
+	// can be answered from disk. Without it, "lts" resolved only against the
+	// download list: `nvx install lts` worked and `nvx use lts` then reported "no
+	// installed version matches query 'lts'" about the version it had just put
+	// there. Best-effort -- a missing marker degrades to "not known to be LTS",
+	// which is what every version installed before this behaves as.
+	noteLTSRelease(destDir, release)
+
 	LogSuccess("Node.js %s installed successfully to: %s", resolvedVer, destDir)
 	return nil
 
+}
+
+// ltsMarkerName is written inside a version directory when the release is LTS.
+// The file's presence is the fact; its contents are the codename, for display.
+const ltsMarkerName = ".nvx-lts"
+
+func noteLTSRelease(versionDir string, release Release) {
+	if !release.IsLTS() {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(versionDir, ltsMarkerName), []byte(release.LTSName()), 0o600)
+}
+
+// ltsVersionsAmong narrows versions to the ones recorded as LTS at install time.
+//
+// Only Node has LTS releases; for any other runtime this is empty, which the
+// caller reports as "no installed version is known to be LTS" rather than
+// guessing.
+func ltsVersionsAmong(provider RuntimeProvider, versions []string, nvxHome string) []string {
+	if provider.Name() != "node" {
+		return nil
+	}
+	var out []string
+	for _, v := range versions {
+		marker := filepath.Join(nvxHome, "versions", "node", v, ltsMarkerName)
+		if info, err := os.Stat(marker); err == nil && !info.IsDir() {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func (n NodeProvider) Uninstall(version string, nvxHome string) error {
