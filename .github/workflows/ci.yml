@@ -145,8 +145,27 @@ jobs:
         Write-Host $line
         "$line" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
-        $reasons = Select-String -Path probe.log -Pattern '^--- SKIP' -Context 2,0 |
-          ForEach-Object { $_.Context.PreContext[-1] } | Sort-Object -Unique
+        # The reason is the `file_test.go:NN: message` line before the SKIP, but
+        # it is not reliably the line immediately before it, and it does not
+        # reliably start the line. `go test` interleaves the program's own stdout
+        # with its own, so a skip reason arrives as
+        #   [nvx output]     download_verify_test.go:362: needs Developer Mode
+        # and four of nvx's own `AppContainer launch failed` error lines sat where
+        # a first version of this expected the reason to be, and were reported as
+        # unrecognised skips. So: scan back a few lines and take the last thing
+        # shaped like a Go test location, from that point on.
+        # -CaseSensitive, or this step's own "--- skip reasons ---" header matches
+        # '^--- SKIP' and is reported as a skip nobody can explain. PowerShell
+        # matches case-insensitively by default and Go prints SKIP in capitals.
+        $reasons = Select-String -Path probe.log -Pattern '^--- SKIP' -CaseSensitive -Context 8,0 |
+          ForEach-Object {
+            $hit = $null
+            foreach ($line in $_.Context.PreContext) {
+              $m = [regex]::Match($line, '\S+\.go:\d+: .*')
+              if ($m.Success) { $hit = $m.Value }
+            }
+            if ($hit) { $hit } else { 'UNEXPLAINED SKIP near: ' + $_.Line.Trim() }
+          } | Sort-Object -Unique
         Write-Host "--- skip reasons ---"
         $reasons | ForEach-Object { Write-Host $_ }
 
