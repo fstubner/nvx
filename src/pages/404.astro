@@ -2,37 +2,32 @@
 import Page from '../layouts/Page.astro';
 import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
-import { site } from '../data/site';
-const { meta, modules } = site;
+import { modules } from '../data/site-content/modules';
 ---
 
 <Page
-  title={`Page not found | ${meta.siteName}`}
-  description={`The requested ${meta.siteName} page could not be found.`}
+  title="Page not found | NetsCLI"
+  description="The requested NetsCLI page could not be found."
   canonicalPath="/404.html"
   includeFaqSchema={false}
   bodyClass="not-found-page"
+  noindex
 >
   <Nav />
-  <main class="not-found" aria-labelledby="not-found-title">
+  <!-- id="main" is what Page.astro's "Skip to content" link targets. -->
+  <main id="main" class="not-found" aria-labelledby="not-found-title">
     <section class="not-found-shell">
       <div class="not-found-copy">
         <p class="eyebrow">HTTP 404</p>
         <h1 id="not-found-title">Page not found</h1>
         <p>
           We could not find that page. Use the links below to get back
-          {modules.docs ? 'to the docs or installation guide.' : 'home.'}
+          on track.
         </p>
         <div class="not-found-actions" aria-label="Recovery actions">
-          {modules.docs ? (
-            <>
-              <a class="primary" href="/docs/">Open docs</a>
-              <a href="/docs/install/">Installation</a>
-              <a href="/">Return home</a>
-            </>
-          ) : (
-            <a class="primary" href="/">Return home</a>
-          )}
+          {modules.docs && <a class="primary" href="/docs/">Open docs</a>}
+          {modules.docs && <a href="/docs/install/">Installation</a>}
+          <a class={modules.docs ? undefined : "primary"} href="/">Return home</a>
         </div>
       </div>
     </section>
@@ -43,9 +38,14 @@ const { meta, modules } = site;
 <style is:global>
 .not-found{
   padding:clamp(32px,5vh,60px) 24px;
+  /* var(), not `#111`. Same shape of bug as the section band in landing/base.css:
+     the base layer of a multi-line `background:` shorthand, sitting alone on
+     its own line, which the pass that tokenised every other opaque background
+     never matched. In the light theme this painted the whole 404 page
+     near-black under light-theme text -- the heading measured 1.06:1. */
   background:
-    linear-gradient(180deg,rgba(10,174,122,.045),transparent 20rem),
-    #111;
+    linear-gradient(180deg,rgba(var(--netscli-accent-rgb),.045),transparent 20rem),
+    var(--netscli-bg);
 }
 .not-found-shell{
   width:min(720px,100%);
@@ -67,7 +67,7 @@ const { meta, modules } = site;
 }
 .not-found .eyebrow{
   margin:0 0 12px;
-  color:var(--accent);
+  color:var(--netscli-accent);
   font-size:.75rem;
   font-weight:800;
   letter-spacing:.14em;
@@ -75,7 +75,7 @@ const { meta, modules } = site;
 }
 .not-found h1{
   margin:0;
-  color:#f5f5f5;
+  color:var(--netscli-text-strong);
   font-size:clamp(2.4rem,6vw,5rem);
   line-height:1.05;
   letter-spacing:-.035em;
@@ -83,7 +83,7 @@ const { meta, modules } = site;
 .not-found p{
   margin:20px 0 0;
   max-width:43rem;
-  color:#bfc5cf;
+  color:var(--netscli-text);
   font-size:clamp(1rem,1.6vw,1.18rem);
 }
 .not-found-actions{
@@ -98,29 +98,29 @@ const { meta, modules } = site;
   align-items:center;
   justify-content:center;
   padding:9px 17px;
-  border:1px solid rgba(10,174,122,.35);
+  border:1px solid rgba(var(--netscli-accent-rgb),.35);
   border-radius:7px;
-  color:#e5e5e5;
+  color:var(--netscli-text);
   text-decoration:none;
-  background:rgba(255,255,255,.025);
+  background:rgba(var(--netscli-lift-rgb),.025);
   font-weight:700;
 }
 .not-found-actions a.primary{
-  color:#06130f;
-  border-color:var(--accent);
-  background:var(--accent);
+  color:var(--netscli-on-accent);
+  border-color:var(--netscli-accent);
+  background:var(--netscli-accent);
 }
 .not-found-actions a:hover,
 .not-found-actions a:focus-visible{
   outline:0;
   border-color:rgba(30,220,255,.62);
-  color:#fff;
+  color:var(--netscli-text-strong);
 }
 .not-found-actions a.primary:hover,
 .not-found-actions a.primary:focus-visible{
-  color:#06130f;
-  background:var(--accent-hover);
-  border-color:var(--accent-hover);
+  color:var(--netscli-on-accent);
+  background:var(--netscli-accent-bright);
+  border-color:var(--netscli-accent-bright);
 }
 @media(max-width:820px){
   .not-found{

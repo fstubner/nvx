@@ -8,11 +8,10 @@ import Faq from '../components/Faq.astro';
 import Footer from '../components/Footer.astro';
 import { site } from '../data/site';
 const githubRepo = site.social.repo;
-const heroDownloads = site.hero.downloads ?? [];
 ---
 <Page>
   <Nav />
-  <main id="main">
+  <main id="main" data-github-repo={githubRepo}>
     <Hero />
     <Surfaces />
     <Install />
@@ -20,8 +19,9 @@ const heroDownloads = site.hero.downloads ?? [];
   </main>
   <Footer />
 
-  <script define:vars={{ githubRepo, heroDownloads }}>
+  <script>
     import { initLandingPage } from '../scripts/landing-page';
-    initLandingPage(githubRepo, heroDownloads);
+    const repo = document.querySelector<HTMLElement>('[data-github-repo]')?.dataset.githubRepo;
+    if (repo) initLandingPage(repo);
   </script>
 </Page>

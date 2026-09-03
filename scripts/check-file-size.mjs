@@ -12,14 +12,6 @@ const transitionExceptions = new Map([
       reason: 'docs header/search/toc behaviors; split search vs toc vs tables next',
     },
   ],
-  [
-    'src/styles/starlight/20-docs-shell-closeout.css',
-    {
-      maxLines: 320,
-      reason:
-        'single cohesive docs shell close-out pass split from starlight.css; not further split to avoid fragmenting one cascade-ordered concern',
-    },
-  ],
 ]);
 const roots = ['src'];
 const extensions = new Set(['.css', '.mjs', '.rs', '.ts', '.tsx']);
