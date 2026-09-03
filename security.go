@@ -255,24 +255,67 @@ func CheckTyposquattingAuthority(pkgName string, popularList []string, maxDist i
 
 	for _, popular := range popularList {
 		dist := LevenshteinDistance(pkgName, popular)
-		if dist >= 1 && dist <= maxDist {
-			// Query downloads to verify authority
-			pkgDownloads, errPkg := weeklyDownloads(pkgName)
-			suspectDownloads, errSus := weeklyDownloads(popular)
+		if dist < 1 || dist > maxDist {
+			continue
+		}
+		if !plausibleTypo(pkgName, popular, dist) {
+			continue
+		}
 
-			if errPkg == nil && errSus == nil {
-				// Authority threshold: if the target is high-popularity (>50k/week)
-				// AND it has more than 100x the weekly downloads of the installed package, it's a typosquat
-				if suspectDownloads > 50000 && suspectDownloads > 100*pkgDownloads {
-					return popular
-				}
-			} else {
-				// Fallback if offline/API fails: flag on name similarity
+		// Query downloads to verify authority
+		pkgDownloads, errPkg := weeklyDownloads(pkgName)
+		suspectDownloads, errSus := weeklyDownloads(popular)
+
+		if errPkg == nil && errSus == nil {
+			// A package with a real user base of its own is not a squat, whatever
+			// the ratio says. `tsc` has 780,294 weekly downloads and `ms` has
+			// 545,506,628, so the ratio test alone called TypeScript's compiler a
+			// typosquat of `ms` and refused to install it -- and in a
+			// non-interactive shell that is a hard failure with no way past it
+			// short of approving every prompt.
+			//
+			// The bar is the same popularityFloor the line below uses to decide
+			// what counts as popular enough to be worth impersonating. Anything
+			// that clears it is established by this check's own standard.
+			if pkgDownloads > popularityFloor {
+				continue
+			}
+			// Authority threshold: if the target is high-popularity
+			// AND it has more than 100x the weekly downloads of the installed package, it's a typosquat
+			if suspectDownloads > popularityFloor && suspectDownloads > 100*pkgDownloads {
 				return popular
 			}
+		} else {
+			// Fallback if offline/API fails: flag on name similarity
+			return popular
 		}
 	}
 	return ""
+}
+
+// popularityFloor is the weekly-download count above which a package is treated
+// as established: worth impersonating when it is the target, and not plausibly a
+// squat when it is the one being installed.
+const popularityFloor = 50000
+
+// plausibleTypo reports whether two names are close enough that one could be a
+// mistyping of the other, rather than merely scoring a small edit distance.
+//
+// Distance alone is meaningless on short names: every short word is close to
+// every other one. `tsc` and `ms` are distance 2 apart and share a single
+// letter, and that was enough to block `nvx install tsc` as a typosquat of `ms`.
+//
+// The rule is that the edits must not amount to most of the shorter name. nvx
+// already reasons this way about its own commands -- nearestCommand refuses a
+// suggestion whose distance is not smaller than the word -- and this is the same
+// rule applied to package names, where the consequence of getting it wrong is a
+// refused install rather than an unhelpful hint.
+func plausibleTypo(a, b string, dist int) bool {
+	shorter := len(a)
+	if len(b) < shorter {
+		shorter = len(b)
+	}
+	return dist < shorter
 }
 
 // NpmDownloadsResponse represents the structure returned by api.npmjs.org
