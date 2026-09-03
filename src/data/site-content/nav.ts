@@ -14,6 +14,8 @@
  * form.
  */
 
+import { sections } from './sections';
+
 export interface NavLink {
   label: string;
   /** Set for links to another page. Mutually exclusive with `section`. */
@@ -29,7 +31,7 @@ export interface NavLink {
 import { modules } from './modules';
 
 /* Every link the site could show; `navLinks` below is this list with the
-   sections a product has switched off in modules.ts removed. */
+   ones a product has no destination for removed. */
 const allLinks: NavLink[] = [
   { label: 'Features', section: 'surfaces', mobileGroup: 'site' },
   { label: 'Install', section: 'install', mobileGroup: 'site' },
@@ -44,9 +46,18 @@ const allLinks: NavLink[] = [
   },
 ];
 
+/** The links this site actually has.
+ *
+ * Two reasons a link would go nowhere, and both are content decisions:
+ * modules.ts switches whole sections of the site off, and sections.ts says
+ * which landing sections the page renders. A bar link to either is a link
+ * that scrolls nowhere or 404s -- the same defect as a docs sidebar entry
+ * whose page was deleted, in the one component every page renders.
+ */
 export const navLinks: NavLink[] = allLinks.filter((link) => {
   if (link.href === '/docs/') return modules.docs;
   if (link.href === '/changelog/') return modules.changelog;
+  if (link.section) return (sections as readonly string[]).includes(link.section);
   return true;
 });
 
