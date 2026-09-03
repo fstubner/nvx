@@ -121,6 +121,19 @@ live contained process skips there. The enforcement script detects that and
 skips; the CI step exists to start asserting if a future runner image can host
 one, not to assert today.
 
+**A Windows runner whose sockets are broken is a re-run, not a bug.** Seen
+2026-09-03: `listen tcp 127.0.0.1:0: socket: An operation was attempted on
+something that is not a socket` from three tests at once, with two probes
+skipping because the host could not create an AF_UNIX socket or find a
+non-loopback address. Winsock was in a bad state on that runner; the same
+commit went green on a re-run with no change. Two things follow. Re-running
+the failed job is the right response to *that* signature — a bare loopback
+`listen` failing is not something this project can cause. And the skip check
+is right to fail on it rather than allowlisting it: a host that cannot make
+an AF_UNIX socket runs the relay probes as skips, which is the
+verifying-nothing case the check exists for. Do not add those reasons to the
+allowlist to make a flaky runner quiet.
+
 `NVX_PROBE=1` matters as much as the script. Those probes launch real
 AppContainers to check that a sandbox cannot read another project, that a deny
 ACE hides a secret, that one session cannot read another's guest home, and that
