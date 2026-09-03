@@ -1,72 +1,30 @@
 import type { SectionCopy, SurfaceCard } from './types';
 
 export const surfacesCopy: SectionCopy = {
-  heading: 'Choose how to work with your network',
+  heading: 'Two ways to use it',
   leadHtml:
-    'Four ways in, one engine behind them. Whichever you pick — desktop app, terminal UI, CLI or MCP — a port scan means the same thing and returns the same answer. <a href="/docs/">Full docs →</a>',
+    'One card per surface your product has. Cards alternate sides down the page; set <code>flip</code> to start on the right.',
 };
 
 export const surfaces: SurfaceCard[] = [
   {
-    title: 'Desktop app',
-    body:
-      'The desktop app is where you compare results side by side. Tabs keep several investigations open at once, and every result is sortable, filterable, and exportable, with the full history kept as you go.',
+    title: 'In the terminal',
+    body: 'A card with an image panel. Give the intrinsic width and height so the browser reserves the space before the file arrives, and write alt text that says what the picture shows.',
     image: {
-      src: '/gui-scan.png',
-      webp: '/gui-scan.webp',
-      alt:
-        'NetsCLI Desktop dark theme scan view showing sanitized demo port results, row details, command preview, and status bar',
-      width: 1377,
-      height: 740,
-    },
-  },
-  {
-    title: 'Terminal UI',
-    body:
-      'Run <code>netscli</code> with no subcommand to start the terminal UI. It is the one to reach for when you are already in a shell and want to stay there — history and autocomplete included, with local interface activity beside the results.',
-    image: {
-      src: '/assets/tui-discover.png',
-      webp: '/assets/tui-discover.webp',
-      alt:
-        'netscli terminal UI running /discover with sanitized lab hostnames, vendors, and response times',
+      src: '/assets/hero.png',
+      alt: 'The Example command-line tool running in a terminal',
       width: 1640,
       height: 930,
     },
-    flip: true,
   },
   {
-    title: 'Command line',
-    body:
-      'Use the CLI for repeatable diagnostics and automation. Network operations expose <code>--json</code> and <code>--yaml</code> output, so scripts and other tools can consume the same data the desktop app displays.',
-    // `--resolve` on the discover line is load-bearing, not decoration.
-    // `hostname` is only populated when the flag is passed (core's
-    // discover.rs guards the reverse-lookup pass on it), so without it this
-    // sample's own output would be three nulls rather than the three names
-    // shown below it.
-    codeHtml: `<span style="color:var(--ui-code-comment)">$</span> netscli scan demo.local -p 80,443 --json
-<span style="color:var(--ui-code-punct)">[</span>
-  <span style="color:var(--ui-code-punct)">{</span> <span style="color:var(--ui-code-key)">"port"</span>: 80,  <span style="color:var(--ui-code-key)">"open"</span>: true, <span style="color:var(--ui-code-key)">"service"</span>: <span style="color:var(--ui-code-string)">"http"</span>  <span style="color:var(--ui-code-punct)">}</span>,
-  <span style="color:var(--ui-code-punct)">{</span> <span style="color:var(--ui-code-key)">"port"</span>: 443, <span style="color:var(--ui-code-key)">"open"</span>: true, <span style="color:var(--ui-code-key)">"service"</span>: <span style="color:var(--ui-code-string)">"https"</span> <span style="color:var(--ui-code-punct)">}</span>
-<span style="color:var(--ui-code-punct)">]</span>
-
-<span style="color:var(--ui-code-comment)">$</span> netscli discover --resolve --json | jq '.[].hostname'
-<span style="color:var(--ui-code-string)">"workstation.local"</span>
-<span style="color:var(--ui-code-string)">"phone.local"</span>
-<span style="color:var(--ui-code-string)">"pi.local"</span>`,
-  },
-  {
-    title: 'MCP server',
-    body:
-      'Run <code>netscli serve</code> when an MCP client needs local network tools. Discovery, scanning, ping, DNS, ARP and interfaces are all exposed as structured tools, so an agent gets the same results you would, in a shape it can parse.',
-    codeHtml: `<span style="color:var(--ui-code-comment)">// claude_desktop_config.json</span>
-<span style="color:var(--ui-code-punct)">{</span>
-  <span style="color:var(--ui-code-key)">"mcpServers"</span>: <span style="color:var(--ui-code-punct)">{</span>
-    <span style="color:var(--ui-code-key)">"netscli"</span>: <span style="color:var(--ui-code-punct)">{</span>
-      <span style="color:var(--ui-code-key)">"command"</span>: <span style="color:var(--ui-code-string)">"netscli"</span>,
-      <span style="color:var(--ui-code-key)">"args"</span>: [<span style="color:var(--ui-code-string)">"serve"</span>]
-    <span style="color:var(--ui-code-punct)">}</span>
-  <span style="color:var(--ui-code-punct)">}</span>
-<span style="color:var(--ui-code-punct)">}</span>`,
+    title: 'In a script',
+    body: 'A card with a code panel instead of an image. The markup is yours; colour it with the shared code tokens so it follows the theme.',
     flip: true,
+    codeHtml: `<span style="color:var(--ui-code-comment)">$</span> example run --json
+{
+  <span style="color:var(--ui-code-key)">"status"</span>: <span style="color:var(--ui-code-string)">"ok"</span>,
+  <span style="color:var(--ui-code-key)">"items"</span>: <span style="color:var(--ui-code-punct)">12</span>
+}`,
   },
 ];
