@@ -116,3 +116,27 @@ func isPlainWord(s string) bool {
 	}
 	return true
 }
+
+// quickstartText is what `nvx` on its own prints.
+//
+// It used to print the full help: a heading and twenty-odd commands, with
+// nothing saying which one to type first. That is the first thing anyone sees
+// after installing, and a list is not an answer to "what now".
+//
+// `nvx help` still prints everything, and the last line here says so, so
+// nothing is hidden -- only ordered.
+func quickstartText() string {
+	return `nvx - a runtime version manager that sandboxes what it installs
+
+Getting started:
+  nvx install 22          Install Node.js 22 (or 'lts', or 'bun@1.2')
+  nvx use 22              Switch this terminal to it
+  npm install <package>   Runs contained: no access to your keys or other projects
+
+Already have a project?
+  nvx auto                Switch to what .nvmrc / .node-version / engines asks for
+  nvx env                 Load the shell integration so that happens on every cd
+
+  nvx help                Every command
+  nvx doctor              Check nvx is intercepting node/npm/npx correctly`
+}

@@ -140,6 +140,7 @@ Commands:
   verify-install <pkgs>    Verify package safety before installing (called by shims)
   shim <cmd> [args]        Internal shim router (called by generated wrappers)
   version, -v              Print version info
+  help [command]           Show this list, or detail for one command
 
 Isolation flags — ALL of these go BEFORE the command, as
 `nvx --no-sandbox npm ...`. Written after it they belong to the command: nvx

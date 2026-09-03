@@ -139,7 +139,8 @@ func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
 
 func main() {
 	if len(os.Args) < 2 {
-		printHelp()
+		// A short start, not the full list. See quickstartText.
+		fmt.Println(quickstartText())
 		return
 	}
 
@@ -522,8 +523,8 @@ func helpText() string {
 Usage:
   nvx <command> [arguments]
 
-Runtimes: Node.js and Bun. A bare version is Node.js (nvm-compatible);
-prefix Bun with '@' (e.g. bun@1.2).
+Runtimes: Node.js and Bun. A bare version means Node.js (nvm-compatible);
+name another runtime before an '@' (e.g. bun@1.2).
 
 Commands:
   install <[rt@]version>   Download and install a runtime version (e.g. 20, lts, bun@1.2)
@@ -557,6 +558,7 @@ Commands:
   import [nvm|fnm|volta]   Import Node.js versions already installed via nvm, fnm, or volta
                            (defaults to scanning all three)
   version, -v              Print version info
+  help [command]           Show this list, or detail for one command
 
 Options:
   --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
@@ -801,6 +803,13 @@ func runInstall(query string, nvxHome string) {
 	err := provider.Install(version, nvxHome)
 	if err != nil {
 		LogError("Installation failed: %v", err)
+		// A version that does not exist is the one install failure with an obvious
+		// next move, and nvx did not name it: "no release found matching query: 99"
+		// leaves someone guessing at what is valid.
+		if strings.Contains(err.Error(), "no release found") {
+			LogInfo("Run 'nvx list-remote' to see what %s versions exist, or install a major line like 22, or 'lts'.",
+				runtimeDisplayName(provider.Name()))
+		}
 		os.Exit(1)
 	}
 	// Do the sandbox's read/execute grant on the new tree now, where a second is
