@@ -13,6 +13,7 @@
 # Only files that are ENTIRELY content are listed. types.ts, nav.ts,
 # modules.ts and site.ts hold shell code as well and must keep merging
 # normally, or a sync would silently drop the code half.
+src/data/site-content/changelog.ts  merge=ours
 src/data/site-content/docs.ts       merge=ours
 src/data/site-content/faq.ts        merge=ours
 src/data/site-content/footer.ts     merge=ours
