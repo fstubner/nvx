@@ -98,7 +98,7 @@ setTimeout(() => { say('HUNG'); process.exit(9); }, 60000);
 
 	report, err := os.ReadFile(reportPath)
 	if err != nil {
-		t.Skipf("the contained process wrote no report, so this host could not run it: %v\nnvx said:\n%s", err, out)
+		failUnlessHostRefusedLaunch(t, string(out), err, "the contained process")
 	}
 	got := string(report)
 	t.Logf("contained process reported:\n%s", strings.TrimSpace(got))
@@ -188,7 +188,7 @@ setTimeout(() => { say('HUNG closed=' + closed); process.exit(9); }, 90000);
 
 	report, err := os.ReadFile(reportPath)
 	if err != nil {
-		t.Skipf("no report written, so this host could not run it: %v\n%s", err, out)
+		failUnlessHostRefusedLaunch(t, string(out), err, "the 12 concurrent piped children")
 	}
 	got := string(report)
 	t.Logf("report:\n%s", strings.TrimSpace(got))
@@ -215,4 +215,25 @@ setTimeout(() => { say('HUNG closed=' + closed); process.exit(9); }, 90000);
 		t.Error("crossing the pool limit printed no warning; the difference in behaviour between " +
 			"the first children and the rest is exactly what must not be silent")
 	}
+}
+
+// failUnlessHostRefusedLaunch decides what a missing report from a contained
+// process means.
+//
+// Both callers used to skip whenever the report file was absent, for any
+// reason at all. That is the failure mode requireAppContainerLaunch exists to
+// prevent, applied to a different signal: these two guard the streaming-stdio
+// fix, and if that fix regressed the contained process would write no report
+// and the test would report a skip. The thing they were written to catch --
+// `npx vitest` stranding processes forever -- would come back silently.
+//
+// nvx prints "AppContainer launch failed" when the host refuses the launch, and
+// a hosted Windows runner refuses every one. That, and only that, is a skip.
+func failUnlessHostRefusedLaunch(t *testing.T, out string, readErr error, what string) {
+	t.Helper()
+	if strings.Contains(out, "AppContainer launch failed") {
+		t.Skipf("this host cannot create AppContainer children, so %s could not run: %v", what, readErr)
+	}
+	t.Fatalf("%s wrote no report although the sandbox launched, so this is the feature and not the "+
+		"host: %v\nnvx said:\n%s", what, readErr, out)
 }
