@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"testing"
 )
@@ -25,6 +26,20 @@ func TestMain(m *testing.M) {
 	// thing the control asks: that the process started and ran our code.
 	if os.Getenv("NVX_HOST_CONTROL_CHILD") == "1" {
 		os.Exit(0)
+	}
+	// One early, legible failure instead of four late confusing ones when
+	// NVX_HOME cannot hold an AF_UNIX socket. See probeSocketHeadroomProblem.
+	//
+	// Safe to run before m.Run() despite this function's standing warning about
+	// per-probe setup, because it is gated on NVX_PROBE -- which is not in
+	// windowsAllowedEnvKeys, so a contained child never has it and never reaches
+	// this branch. NVX_HOME is not propagated either, so a child could not fail
+	// the check even if it did.
+	if os.Getenv("NVX_PROBE") == "1" {
+		if problem := probeSocketHeadroomProblem(GetHomeDir()); problem != "" {
+			fmt.Fprintln(os.Stderr, problem)
+			os.Exit(1)
+		}
 	}
 	code := m.Run()
 	cleanupProbeChildBinary()
