@@ -1,15 +1,16 @@
 import type { Analytics, BuiltWithEntry, SocialProof } from './types';
 
+// The "Built with" row in the footer. Credit what the product is made of,
+// not what the site is made of.
 export const builtWith: BuiltWithEntry[] = [
   { name: 'Rust', url: 'https://www.rust-lang.org/' },
-  { name: 'ratatui', url: 'https://ratatui.rs/' },
-  { name: 'Tauri', url: 'https://tauri.app/' },
-  { name: 'hickory', url: 'https://github.com/hickory-dns/hickory-dns' },
-  { name: 'sqlx', url: 'https://github.com/launchbadge/sqlx' },
+  { name: 'clap', url: 'https://docs.rs/clap/' },
 ];
 
-export const social: SocialProof = { repo: 'fstubner/netscli' };
+// Star and download counts are fetched from this repo at runtime. A repo
+// that does not exist simply leaves the counters hidden.
+export const social: SocialProof = { repo: 'your-org/example' };
 
-export const analytics: Analytics = {
-  cloudflareToken: 'c03201f65f6d41aa843c81f259a1ac06',
-};
+// No analytics token: the beacon is left out of every build. Add
+// `cloudflareToken` to turn it on.
+export const analytics: Analytics = {};
