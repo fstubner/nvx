@@ -59,3 +59,41 @@ func TestTheSuggesterReadsTheRealCommandList(t *testing.T) {
 		}
 	}
 }
+
+// Every command the quickstart tells a newcomer to type must exist.
+//
+// The quickstart is the first screen after installing, so a line that does not
+// work is the worst place to have one. A draft of it said `nvx install` with no
+// arguments reads .nvmrc; it does not -- it answers "Please specify a version"
+// -- and `nvx auto` is the command that does. That particular error is not
+// catchable here, since `install` is a real command and only the description
+// was wrong, but a command that stops existing is.
+func TestTheQuickstartOnlyNamesRealCommands(t *testing.T) {
+	known := map[string]bool{}
+	for _, name := range commandNamesFromHelp() {
+		known[strings.Fields(name)[0]] = true
+	}
+	if len(known) < 10 {
+		t.Fatalf("could not read the command list; the guard would pass vacuously")
+	}
+
+	for _, line := range strings.Split(quickstartText(), "\n") {
+		// Indented lines only: the title line is "nvx - a runtime version
+		// manager ...", and reading that as a command suggested `nvx -`.
+		if !strings.HasPrefix(line, "  ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "nvx" {
+			continue
+		}
+		cmd := fields[1]
+		if strings.HasPrefix(cmd, "<") {
+			continue
+		}
+		if !known[cmd] {
+			t.Errorf("the quickstart tells a new user to run 'nvx %s', which is not a command "+
+				"nvx has. This is the first screen after installing.", cmd)
+		}
+	}
+}
