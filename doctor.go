@@ -253,6 +253,10 @@ func runDoctor(nvxHome string, fix bool) int {
 			len(rep.missingExeShims) == 0 && !weakened && !policyBroken
 	}
 
+	// Runs whichever way the interception verdict goes: a machine whose PATH is
+	// broken needs the integration too, and --fix should mend both in one pass.
+	reportShellIntegration(fix)
+
 	if healthyNow() {
 		LogSuccess("nvx is intercepting commands correctly.")
 		return 0
@@ -320,7 +324,6 @@ func runDoctor(nvxHome string, fix bool) int {
 		} else {
 			LogInfo(`  export PATH="%s:$PATH"`, shimDirPath(nvxHome))
 		}
-		LogInfo("Ensure your shell profile contains:  eval \"$(nvx env)\"  (or the PowerShell equivalent).")
 	}
 
 	// After a --fix pass the shims may now be complete even though PATH still is
