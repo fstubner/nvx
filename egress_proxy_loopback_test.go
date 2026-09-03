@@ -47,7 +47,7 @@ func TestLoopbackIsNotAutomaticallyAllowed(t *testing.T) {
 	p := newTestProxy(t, "proxy", nil)
 
 	for _, host := range []string{"127.0.0.1", "localhost", "::1"} {
-		if p.allowed(parseHostPortSpec(host, 5432)) {
+		if p.allowed(parseHostPortSpec(host, 5432), nil) {
 			t.Errorf("%s:5432 was permitted with an empty allowlist; a contained install could reach every local service", host)
 		}
 	}
@@ -70,15 +70,15 @@ func TestLoopbackIsReachableWhenAllowlisted(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := newTestProxy(t, "proxy", []string{tc.entry})
-			if !p.allowed(parseHostPortSpec("127.0.0.1", 3000)) {
+			if !p.allowed(parseHostPortSpec("127.0.0.1", 3000), nil) {
 				t.Errorf("allow_hosts %q did not permit 127.0.0.1:3000", tc.entry)
 			}
-			if !p.allowed(parseHostPortSpec("localhost", 3000)) {
+			if !p.allowed(parseHostPortSpec("localhost", 3000), nil) {
 				t.Errorf("allow_hosts %q did not permit localhost:3000", tc.entry)
 			}
 			// A different port on the same host stays blocked, so the entry is
 			// being matched rather than the host being waved through again.
-			if tc.entry != "127.0.0.1:*" && p.allowed(parseHostPortSpec("127.0.0.1", 9999)) {
+			if tc.entry != "127.0.0.1:*" && p.allowed(parseHostPortSpec("127.0.0.1", 9999), nil) {
 				t.Errorf("allow_hosts %q also permitted port 9999", tc.entry)
 			}
 		})
@@ -90,10 +90,10 @@ func TestLoopbackIsReachableWhenAllowlisted(t *testing.T) {
 func TestLoopbackModeStillPermitsLoopback(t *testing.T) {
 	p := newTestProxy(t, "loopback", nil)
 
-	if !p.allowed(parseHostPortSpec("127.0.0.1", 8080)) {
+	if !p.allowed(parseHostPortSpec("127.0.0.1", 8080), nil) {
 		t.Error("network.mode=loopback must permit loopback destinations; that is what the mode is for")
 	}
-	if p.allowed(parseHostPortSpec("registry.npmjs.org", 443)) {
+	if p.allowed(parseHostPortSpec("registry.npmjs.org", 443), nil) {
 		t.Error("network.mode=loopback must still block non-loopback destinations")
 	}
 }
@@ -105,10 +105,10 @@ func TestLoopbackModeStillPermitsLoopback(t *testing.T) {
 func TestOfflineModeBlocksLoopbackToo(t *testing.T) {
 	p := newTestProxy(t, "offline", nil)
 
-	if p.allowed(parseHostPortSpec("127.0.0.1", 8080)) {
+	if p.allowed(parseHostPortSpec("127.0.0.1", 8080), nil) {
 		t.Error("network.mode=offline permitted a loopback destination")
 	}
-	if p.allowed(parseHostPortSpec("registry.npmjs.org", 443)) {
+	if p.allowed(parseHostPortSpec("registry.npmjs.org", 443), nil) {
 		t.Error("network.mode=offline permitted a remote destination")
 	}
 }

@@ -44,7 +44,7 @@ func TestLoopbackIsNeverOfferedAtThePrompt(t *testing.T) {
 
 	for _, host := range []string{"127.0.0.1", "localhost", "::1"} {
 		p := newPromptingProxy(t, nil)
-		if p.allowed(parseHostPortSpec(host, 5432)) {
+		if p.allowed(parseHostPortSpec(host, 5432), nil) {
 			t.Errorf("%s:5432 was granted through the prompt; untrusted code can ask for a local service", host)
 		}
 		if !auditContains(t, p.nvxHome, "egress_deny_loopback_prompt") {
@@ -61,7 +61,7 @@ func TestLoopbackIsNeverOfferedAtThePrompt(t *testing.T) {
 func TestAllowlistedLoopbackStillWorksWithPromptingOn(t *testing.T) {
 	t.Setenv("NVX_TRUST_YES", "1")
 	p := newPromptingProxy(t, []string{"127.0.0.1:5432"})
-	if !p.allowed(parseHostPortSpec("127.0.0.1", 5432)) {
+	if !p.allowed(parseHostPortSpec("127.0.0.1", 5432), nil) {
 		t.Error("an allowlisted local service must stay reachable; refusing it pushes people to --no-sandbox")
 	}
 }
@@ -77,7 +77,7 @@ func TestAPromptedApprovalDoesNotOutliveTheRun(t *testing.T) {
 	t.Setenv("NVX_TRUST_YES", "1")
 	p := newPromptingProxy(t, nil)
 
-	if !p.allowed(parseHostPortSpec("example.com", 443)) {
+	if !p.allowed(parseHostPortSpec("example.com", 443), nil) {
 		t.Fatal("NVX_TRUST_YES did not approve the prompt; the rest of this test would prove nothing")
 	}
 	if !p.session["example.com:443"] {
