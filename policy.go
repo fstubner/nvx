@@ -67,9 +67,26 @@ type IsolationPolicy struct {
 }
 
 type FilesystemPolicy struct {
-	Provider   string   `json:"provider"`
-	Mode       string   `json:"mode,omitempty"`
-	AllowWrite []string `json:"allow_write"`
+	Provider string `json:"provider"`
+	Mode     string `json:"mode,omitempty"`
+	// allow_write was here, declared and merged, and read by nothing. Removed
+	// 2026-09-03 rather than implemented.
+	//
+	// It arrived on 2026-07-02 in a schema refactor, as part of a shape nobody
+	// had asked for yet, and no code ever consulted it. Setting it did nothing,
+	// which at least failed closed -- but because it was a KNOWN key,
+	// policy_unknown_keys.go stayed quiet, so a policy naming it got no warning
+	// either. A security tool that silently ignores a permission someone wrote
+	// down is worse than one that refuses to understand it.
+	//
+	// Deleting rather than wiring up, because there is no caller: a writable root
+	// beyond the project and the guest home is a write-containment escape, and
+	// the one real request for reaching outside the project -- a tool whose
+	// program lives elsewhere -- is served by AllowReadExec, which is never
+	// writable. If this is ever wanted, it needs a policyLoosens clause too, or a
+	// project-local file could add writable roots with no trust prompt.
+	// Unknown-key warnings will now name it, which is the correct answer for
+	// anyone who had it in a file.
 	// AllowReadExec are extra directories a contained process may READ and
 	// EXECUTE from. Never writable, whatever else the policy says.
 	//
@@ -821,10 +838,7 @@ func MergePolicies(global, local Policy) Policy {
 	if local.Isolation.Filesystem.Mode != "" {
 		merged.Isolation.Filesystem.Mode = local.Isolation.Filesystem.Mode
 	}
-	if len(local.Isolation.Filesystem.AllowWrite) > 0 {
-		merged.Isolation.Filesystem.AllowWrite = append(merged.Isolation.Filesystem.AllowWrite, local.Isolation.Filesystem.AllowWrite...)
-	}
-	// Appended, like AllowWrite and the host allowlists: a project adds the roots
+	// Appended, like the host allowlists: a project adds the roots
 	// its own toolchain needs on top of anything global policy already grants,
 	// rather than replacing it. policyLoosens treats an addition here as widening,
 	// so a checked-in file still has to be trusted before it takes effect.
