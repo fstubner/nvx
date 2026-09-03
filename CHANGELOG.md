@@ -528,6 +528,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Every published overhead figure was measured from a command that failed, and
+  has been withdrawn.** `scripts/bench.py` timed the shim as `nvx shim node
+  --no-sandbox -e 0`. nvx passes a wrapped command's own arguments through
+  untouched on purpose, so `--no-sandbox` reached node, which answered `bad
+  option: --no-sandbox` and exited 9. The wrapped half of the measurement was
+  timing an argument-parsing failure against a real node run — on every
+  platform, behind every figure this project ever published (`~38 ms`, then
+  `9–57 ms`, then `1–60 ms`, then `~3 ms Linux / ~4 ms macOS`). On Linux the
+  failure is faster than starting node, so the corrected script reports a
+  *negative* overhead for the old command.
+
+  The script now refuses to time an arm that does not exit 0 and print a marker
+  from inside the runtime, so it can no longer publish a failure as a success.
+  It also alternates the two arms and differences each pair instead of
+  subtracting two independently drifting medians; the old design produced 140.0,
+  147.8, 92.9 and 42.5 ms on four consecutive runs of one idle laptop while the
+  raw baseline alone swung 65→142 ms. When the spread is wider than the median
+  it now says so instead of printing a figure.
+
+  Measured with the corrected script: **about 75 ms on Windows** (three runs on
+  one machine, medians 73.8/74.2/77.1 ms, p10–p90 roughly 63–93; a fourth run on
+  a busy machine was refused by the spread check). Linux in a container came out
+  at 4–10 ms with the spread swamping it, and the script declined to give a
+  figure. macOS has never been measured with a working script. README and
+  PRODUCT.md now say exactly that.
+
 * **Contained `npx` works without an elevated `nvx setup`, and no longer hangs
   when run outside a project.** Two separate faults, both hit by an MCP client
   starting `npx -y <server>` under nvx.

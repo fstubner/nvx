@@ -220,13 +220,37 @@ Deferred with intent, not built:
   enumerate or read another's. That is the grant already asserted by
   `TestOneSandboxSessionCannotReadAnother`, which passes with it in place. The
   trade the paragraph above declined was never the trade on offer.
-- **Overhead must stay invisible.** nvx sits in front of every npm invocation;
-  measured dispatch overhead is ~3 ms Linux, ~4 ms macOS, and roughly 1–60 ms on
-  Windows — samples of 0.9, 2.7, 3.2, 3.4, 6.1, 8.6, 9, 11, 38 and 57 ms with
-  `scripts/bench.py`. The Windows figure is the one of the three that moves, and
-  it has now outrun two attempts to pin it: "~38 ms" flatly, then a "9–57 ms"
-  range whose floor the next machine measured below. It is quoted as a range on
-  purpose.
+- **Overhead must stay invisible.** nvx sits in front of every npm invocation.
+  Measured dispatch overhead is **about 75 ms on Windows**, and is not currently
+  established on Linux or macOS.
+
+  **Every figure this constraint carried before 2026-09-03 was withdrawn, and the
+  reason is worse than the numbers being wrong.** `scripts/bench.py` timed the
+  shim as `nvx shim node --no-sandbox -e 0`. nvx does not read its own flags from
+  a wrapped command's arguments — deliberately, so that `nvx npx tsc --strict`
+  gives tsc its `--strict` — so `--no-sandbox` was passed to node, which answered
+  `bad option: --no-sandbox` and exited 9. The wrapped arm timed an
+  argument-parsing failure against a real node run, on every platform, for every
+  figure ever published: `~38 ms`, then `9–57 ms`, then `1–60 ms`, then
+  `~3 ms Linux / ~4 ms macOS`. On Linux the failure is *faster* than starting
+  node, so the corrected script reports a negative overhead for the old command —
+  which is the tell, and which the old script printed without comment.
+
+  Two changes make that class of error hard to repeat. The script now refuses to
+  time any arm that does not exit 0 **and** print a marker from inside the
+  runtime, so a harness that cannot tell success from failure can no longer
+  publish one as the other. And it alternates the two arms and differences each
+  pair, rather than subtracting two independently drifting medians — the old
+  design produced 140.0, 147.8, 92.9 and 42.5 ms on four consecutive runs of one
+  idle laptop while the raw baseline alone swung 65→142 ms.
+
+  The Windows figure is three runs on one machine: medians 73.8, 74.2 and 77.1 ms,
+  p10–p90 roughly 63–93. A fourth run on a busy machine was refused by the
+  script's own spread check rather than written down. A Linux container reported
+  4–10 ms with the spread swamping it, and the script declined to give a figure;
+  macOS has never been measured with a working script. This constraint now states
+  one number, for the one platform where a working script has produced a stable
+  one.
 - **Pre-1.0.** Breaking changes are acceptable between minor versions; silently
   weakening a documented security guarantee is not.
 - **Three platforms are not equal, and the differences are published.** Windows
