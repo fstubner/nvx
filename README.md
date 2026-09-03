@@ -115,11 +115,8 @@ Measured, so a new product knows where to look:
 
 - The reference content is netscli's: the docs pages, the FAQ, the install
   commands and the assets under `public/assets/` (including the wordmark the
-  `check:wordmark` guard measures). Replace them; nothing else points at
-  netscli once you do, except the two lines below.
-- `astro.config.mjs` still hard-codes netscli's GitHub URL for the docs
-  header link and netscli's wording for the `twitter:image:alt` tag. Both
-  belong in `site-content/`; they are the next things to move.
+  `check:wordmark` guard measures). Replace them; nothing outside
+  `src/data/site-content/`, the docs pages and the assets names netscli.
 - The landing components carry 37 literal colours, most of them rgba()
   greys; `src/styles/README.md` lists where.
 - Deployment is the product's own: there is no `CNAME`, no Pages workflow.
