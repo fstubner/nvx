@@ -115,15 +115,18 @@ property.
 
 ## What is still netscli-shaped
 
-Measured, so a new product knows where to look:
+Nothing. The tree carries no netscli string outside this file, the CI
+workflow header and `.gitattributes`, all of which describe where the shell
+comes from rather than what the site says. The last of it went in three
+passes: the product name compiled into the 404 page, the changelog page and
+two nav labels; four comments that used netscli commands as the measured
+example behind a fix; and an unreferenced logo asset.
 
-- Four code comments cite netscli commands and URLs as the real examples
-  behind a defect they explain. They are history, and they stay accurate as
-  history. Nothing else in the tree names netscli.
+Two things are worth knowing rather than fixing:
+
 - The landing components carry 37 literal colours, most of them rgba()
   greys; `src/styles/README.md` lists where.
 - Deployment is the product's own: there is no `CNAME`, no Pages workflow.
-  netscli deploys from its monorepo with its own workflows.
 
 ## Keeping it in sync
 
