@@ -114,9 +114,11 @@ property.
 Measured, so a new product knows where to look:
 
 - The reference content is netscli's: the docs pages, the FAQ, the install
-  commands and the assets under `public/assets/` (including the wordmark the
-  `check:wordmark` guard measures). Replace them; nothing outside
-  `src/data/site-content/`, the docs pages and the assets names netscli.
+  commands and the assets under `public/assets/`. Replace them; no code
+  outside `src/data/site-content/`, the docs pages and the assets names
+  netscli, and the guards follow the content rather than the old filenames.
+- Four comments cite netscli commands and URLs as the real examples behind a
+  defect they explain. They are history, and they stay accurate as history.
 - The landing components carry 37 literal colours, most of them rgba()
   greys; `src/styles/README.md` lists where.
 - Deployment is the product's own: there is no `CNAME`, no Pages workflow.
