@@ -130,6 +130,8 @@ Commands:
   audit [--summary]        Review the local record of security decisions, and of
                            past runs when NVX_TRACE=1 (--runs, --failures,
                            --limit=N, --all)
+  report [--out=FILE]      Collect version, interception, policy and log tails
+                           into one file to read and send on. Nothing is uploaded
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;
                            every run reclaims some automatically)
   setup [--undo]           (Windows, Administrator) Grant the sandbox stat access
