@@ -132,10 +132,11 @@ Commands:
                            --limit=N, --all)
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;
                            every run reclaims some automatically)
-  setup [--undo]           (Windows) One-time elevated setup adding drive-root
-                           access and removing a loopback exemption an older nvx
-                           left behind. Egress is allowlisted either way; `npx`
-                           needs it (see below). Re-run it after upgrading
+  setup [--undo]           (Windows, Administrator) Grant the sandbox stat access
+                           to the roots of the volumes nvx, your profile and the
+                           current directory live on, and remove a loopback
+                           exemption an older nvx left. Optional: installs and
+                           `npx` do not need it. Slow on a large volume
   verify-install <pkgs>    Verify package safety before installing (called by shims)
   shim <cmd> [args]        Internal shim router (called by generated wrappers)
   version, -v              Print version info

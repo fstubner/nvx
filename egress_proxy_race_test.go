@@ -37,7 +37,7 @@ func TestEgressProxyAllowedIsRaceFreeAgainstSessionWrites(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
-				_ = p.allowed(hostPort{host: "registry.npmjs.org", port: 443})
+				_ = p.allowed(hostPort{host: "registry.npmjs.org", port: 443}, nil)
 			}
 		}()
 	}

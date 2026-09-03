@@ -285,7 +285,7 @@ func allowKeysFor(hp hostPort) []string {
 	return keys
 }
 
-func (p *EgressProxy) allowed(hp hostPort) bool {
+func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
 	mode := strings.ToLower(strings.TrimSpace(p.policy.Isolation.Network.Mode))
 
 	// A loopback destination used to be permitted unconditionally, whatever the
@@ -347,7 +347,14 @@ func (p *EgressProxy) allowed(hp hostPort) bool {
 	// Postgres, Redis, dev servers, other agents' MCP servers. An allowlist entry
 	// someone typed into a policy file is a decision that can be read and diffed;
 	// an answer to a prompt raised by untrusted code is not.
-	if isLoopback(hp.host) {
+	// The NAME and the ADDRESS, because a name is exactly how you reach 127.0.0.1
+	// without typing it. isLoopback matches only the literal spellings, so
+	// `cache.attacker.example` with an A record of 127.0.0.1 walked past this
+	// refusal and reached the prompt -- and one "yes" from a developer who was
+	// not expecting a security question hands a postinstall their local Postgres,
+	// which is the outcome the paragraph above says this exists to prevent.
+	// Found by an independent acceptance pass on 2026-09-03.
+	if isLoopback(hp.host) || anyLoopback(ips) {
 		LogWarn("Blocked egress to a local service: %s", key)
 		LogInfo("nvx does not offer local services through a prompt, because the contained process is what triggers it. "+
 			"If this is meant, add %q to isolation.network.allow_hosts in the project policy, or use --connect for one run.", key)
@@ -456,18 +463,20 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 			_, _ = fmt.Fprintf(client, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"nvx\"\r\n\r\n")
 			return
 		}
-		if !p.allowed(hp) {
-			_, _ = fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
-			return
-		}
-		// The allowlist decided a name; this decides the address behind it.
-		if err := checkResolvedAddress(hp.host); err != nil {
-			LogWarn("Blocked egress: %v", err)
+		// Resolved ONCE, here, and everything below judges and dials that same
+		// answer. See resolveEgressAddresses for what resolving twice cost.
+		ips, rerr := resolveEgressTarget(hp.host)
+		if rerr != nil {
+			LogWarn("Blocked egress: %v", rerr)
 			auditLog(p.nvxHome, "egress_deny_resolved", map[string]string{"host": target})
 			_, _ = fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
 			return
 		}
-		remote, err := net.Dial("tcp", target)
+		if !p.allowed(hp, ips) {
+			_, _ = fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
+			return
+		}
+		remote, err := dialVetted(ips, hp.host, hp.port)
 		if err != nil {
 			_, _ = fmt.Fprintf(client, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
 			return
@@ -628,20 +637,20 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 	}
 
 	hp := parseHostPortSpec(host, port)
-	if !p.allowed(hp) {
-		_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
-		return
-	}
-
-	if err := checkResolvedAddress(hp.host); err != nil {
-		LogWarn("Blocked egress: %v", err)
+	// Resolved once; see the CONNECT path above and resolveEgressAddresses.
+	ips, rerr := resolveEgressTarget(hp.host)
+	if rerr != nil {
+		LogWarn("Blocked egress: %v", rerr)
 		auditLog(p.nvxHome, "egress_deny_resolved", map[string]string{"host": host})
 		_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}
+	if !p.allowed(hp, ips) {
+		_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		return
+	}
 
-	target := net.JoinHostPort(host, strconv.Itoa(int(port)))
-	remote, err := net.Dial("tcp", target)
+	remote, err := dialVetted(ips, hp.host, hp.port)
 	if err != nil {
 		_, _ = conn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
