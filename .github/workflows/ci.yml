@@ -49,6 +49,23 @@ jobs:
         # than their PowerShell equivalents.
         shell: bash
     steps:
+      # Before the checkout, deliberately: if this ever runs on a public repo,
+      # the job must stop before it fetches anything a fork wrote.
+      #
+      # The plan if this repo is published is to move back to `ubuntu-latest`
+      # in the same commit, and the plan is sound. This is here because plans
+      # like that are remembered on the day they are made and not six months
+      # later, and forgetting this one means a stranger's pull request runs
+      # its own code on a personal machine. A comment cannot enforce it; a
+      # step that fails can.
+      - name: Refuse to run self-hosted on a public repo
+        if: ${{ github.event.repository.private == false }}
+        run: |
+          echo "This repository is public and CI is on a self-hosted runner." >&2
+          echo "A fork's pull request would execute its own code on that machine." >&2
+          echo "Change runs-on to ubuntu-latest -- public repos get hosted minutes free." >&2
+          exit 1
+
       - uses: actions/checkout@v4
         with:
           # check:changelog compares dated headings against tags; with the
