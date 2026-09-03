@@ -6,6 +6,31 @@ on:
   pull_request:
     branches: [ main ]
 
+# Cancel a run the moment a newer push supersedes it.
+#
+# Without this every push starts a full matrix and every one of them runs to
+# completion. This repo is pushed to directly and often -- all of the last 100
+# runs were `push`, three of them inside 27 minutes on 3 September -- so one
+# working session started three complete matrices, and nobody was ever going
+# to read the first two.
+#
+# This is about feedback time and queueing, not money. nvx is public, and
+# public repositories get GitHub-hosted standard runners at no charge, so
+# the macOS and Windows legs cost nothing however often they run. (Written
+# down because the first version of this comment claimed the opposite and
+# was wrong: the 10x/2x multipliers are real, but they apply to private
+# repositories.) What superseded runs do cost is a slower answer on the
+# commit anyone is actually waiting for, and a queue of obsolete jobs ahead
+# of it.
+#
+# cancel-in-progress only ever discards a run whose commit has already been
+# replaced, so nothing that gates a merge is lost. The platform legs stay as
+# they are: this is a sandboxing tool whose macOS and Windows containment
+# claims are checked nowhere else.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Build and Test
