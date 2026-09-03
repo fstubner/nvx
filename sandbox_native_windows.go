@@ -553,7 +553,7 @@ func wrapWithEgressSupervisor(
 	if err := grantRuntimeReadExecTree(filepath.Dir(supervisor)); err != nil {
 		return "", nil, fmt.Errorf("grant the supervisor to the sandbox: %w", err)
 	}
-	_, _ = grantWorkdirAncestors(nvxHome, filepath.Dir(supervisor))
+	startAdvisoryAncestorGrants(nvxHome, filepath.Dir(supervisor))
 
 	supervisorArgs := []string{
 		"__appcontainer-exec",

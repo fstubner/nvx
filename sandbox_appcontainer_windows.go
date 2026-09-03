@@ -125,13 +125,10 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	// Sharing is also what makes them idempotent across projects; granted to the
 	// package SID, which is per project now, the same chain was rewritten for every
 	// project on the machine. See runtimeCapabilityName.
-	aWork, eWork := grantWorkdirAncestors(nvxHome, workDir)
-	if skipped := eWork - aWork; skipped > 0 {
-		// Only the project chain is advisory: the command runs without those, and
-		// skipping a known-slow one is what keeps startup fast. Silence would hide a
-		// genuinely slow filesystem, so report once per launch.
-		LogDetail("Skipped %d of %d ancestor permission checks to keep startup fast.", skipped, eWork)
-	}
+	// In the background: the command does not wait for these. See
+	// startAdvisoryAncestorGrants for the measurement that moved them off the
+	// critical path.
+	startAdvisoryAncestorGrants(nvxHome, workDir)
 
 	// The guest home's parent is NOT advisory, and treating it as though it were
 	// is what broke contained npx on the development machine for eleven days. npm
@@ -624,7 +621,7 @@ func ensureAppContainerCommand(nvxHome, cmdPath string) (string, error) {
 	// process can resolve the binary's parent but fails to lstat/traverse its
 	// way there (Node's own realpathSync on argv[0] hits this during startup).
 	// Mirrors the same treatment workDir/guestHome already get.
-	_, _ = grantWorkdirAncestors(nvxHome, dir)
+	startAdvisoryAncestorGrants(nvxHome, dir)
 	return usePath, nil
 }
 
