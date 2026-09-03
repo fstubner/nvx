@@ -44,7 +44,7 @@ func TestContainmentNotDisprovedInsideRealAppContainer(t *testing.T) {
 
 	guestHome := tempDir(t)
 	workDir := tempDir(t)
-	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
+	scopeCaps, _, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
