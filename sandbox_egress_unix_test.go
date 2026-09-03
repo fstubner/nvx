@@ -125,7 +125,7 @@ func connectVia(t *testing.T, addr, target, cred string) string {
 // everything passes perfectly. That is precisely the state proxy mode was in.
 func TestEgressProxyOverUnixSocketEnforcesAllowlistBothWays(t *testing.T) {
 	// A stand-in "remote host" on a non-loopback address.
-	remote := nonLoopbackListener(t)
+	remote := proxyTargetListener(t)
 	defer remote.Close()
 	host, _, _ := net.SplitHostPort(remote.Addr().String())
 	go func() {
@@ -196,7 +196,7 @@ func TestEgressProxyOverUnixSocketEnforcesAllowlistBothWays(t *testing.T) {
 // anonymous client is refused BEFORE the allowlist is consulted, or the 403/200
 // difference would still leak what this session may reach.
 func TestEgressProxyRefusesClientsWithoutThisSessionsCredential(t *testing.T) {
-	remote := nonLoopbackListener(t)
+	remote := proxyTargetListener(t)
 	defer remote.Close()
 	go func() {
 		for {
@@ -249,4 +249,46 @@ func TestEgressProxyRefusesClientsWithoutThisSessionsCredential(t *testing.T) {
 			}
 		})
 	}
+}
+
+// proxyTargetListener is a stand-in "remote host" for tests where the proxy
+// runs in this process and dials the target from here.
+//
+// Loopback, deliberately, because those tests do not need the target to be
+// anywhere in particular -- only to be somewhere the proxy can reach and the
+// policy can name. They used nonLoopbackListener for realism, and inherited its
+// environmental dependency: on a machine whose only non-loopback IPv4 is a
+// Tailscale address that will not bind, the helper skips, and the assertion
+// disappears. Measured 2026-09-03 on exactly such a machine -- two security
+// assertions, that the proxy enforces its allowlist in both directions and that
+// it refuses a client without this session's credential, silently did not run.
+//
+// A skip is the worst outcome available here: those two tests exist because a
+// sibling sandbox found another session's relay by port-scanning loopback, and
+// a green run that never checked reads identically to one that did.
+//
+// nonLoopbackListener stays for the tests that genuinely need a distinct
+// address: inside a Linux network namespace the host's loopback is not the
+// container's, so a loopback peer there would be unreachable for a real reason
+// rather than a policy one.
+func proxyTargetListener(t *testing.T) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		// Fails rather than skips, on purpose -- that is the whole point of this
+		// helper. But say what it means, because the message alone reads like a
+		// product defect and is not one: nothing in nvx can stop this process
+		// binding its own loopback socket.
+		//
+		// Seen twice on 2026-09-03, once on a hosted Windows runner and once
+		// locally while the full probe gate was hammering the machine: a bare
+		// `listen tcp 127.0.0.1:0` returning "An operation was attempted on
+		// something that is not a socket". Both cleared on a re-run with no code
+		// change. See CONTRIBUTING for that signature.
+		t.Fatalf("could not bind a loopback socket for the test's stand-in host: %v\n"+
+			"This is the machine, not nvx -- nothing here can stop this process opening its own "+
+			"socket. If the whole suite is failing this way, re-run it; if it persists, the host's "+
+			"networking stack needs attention.", err)
+	}
+	return ln
 }
