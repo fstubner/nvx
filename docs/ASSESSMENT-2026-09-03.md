@@ -5,6 +5,29 @@ commit on top. Written to answer one question honestly: is this a template
 with engineering rigour, or netscli's site with a README? Every finding
 cites what was measured; what was not examined is listed at the end.
 
+## Status, later the same day
+
+This is a snapshot, and the tree moved under it within hours. What closed:
+
+- **#4, template fitness (the shell is not brand-neutral).** Closed. The
+  `netscli-` prefix became `ui-` across 79 tokens, six class names and the
+  docs table marker; the product name left the 404 page, the changelog page,
+  the two nav labels, `/llms.txt` and the type docs; and the comments that
+  used netscli strings as their measured example now state the measurement
+  without the name. Nothing outside the sample content, the docs pages and
+  the images names netscli.
+- **#8's evidence line is stale**: the landing scrollbar rule reads
+  `var(--ui-bg)` now. The duplication itself is still there.
+
+What is new since, and not assessed here: the sample content for a fictional
+product, `AGENTS.md`, `npm run check:content`, `npm run theme`, the
+composable landing sections and the second layout, and CI on a self-hosted
+runner. The theme tool in particular changes finding #5's weight -- a
+re-brand no longer means editing components for the accent, though the 37
+literal colours are still there for everything else.
+
+Everything else below stands.
+
 ## Scope
 
 In scope: everything under `src/`, `scripts/`, `astro.config.mjs`,
