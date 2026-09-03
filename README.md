@@ -165,6 +165,13 @@ two browser sweeps.
 The workspace persists between runs. `actions/checkout` cleans untracked
 files each time, so `node_modules` is rebuilt per run rather than drifting.
 
+`setup-node`'s `cache: npm` is deliberately off. It exists to carry the npm
+cache between throwaway hosted VMs; here the cache is already on the disk,
+and turning a local read into an upload and a download makes every run
+slower. The first run of this workflow measured it: the checks finished in
+under four minutes, and the cache upload was still running ten minutes
+later.
+
 ## Preview builds
 
 Set `SITE_PREVIEW=1` on a build that is deployed somewhere other than the
