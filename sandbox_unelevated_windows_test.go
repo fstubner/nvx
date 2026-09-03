@@ -100,7 +100,11 @@ func TestUnelevatedSandboxRunsPackageManager(t *testing.T) {
 		code, err := launchAppContainerProcess(usePath, launchArgs, env, workDir, sid, 0,
 			launchCapabilitySIDs(scopeCaps, []string{capabilityInternetClientSID}))
 		if err != nil {
-			t.Errorf("%s: launch error: %v", tc.name, err)
+			// The shared decision, not a bespoke one: a host that cannot create
+			// AppContainer children at all skips, anything else fails. Reporting
+			// every launch error as a defect turned this probe red on hosted CI
+			// the moment a staged runtime let it get as far as launching.
+			requireAppContainerLaunch(t, err)
 			continue
 		}
 		if code != 0 {
