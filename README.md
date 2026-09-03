@@ -106,6 +106,65 @@ git ref or a browser session:
 
 `src/styles/docs/README.md` has the workflow.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs every check in this repo on a **self-hosted
+runner**, because this repo is private and GitHub-hosted minutes are billed.
+Self-hosted minutes are not.
+
+That choice has a security condition attached: a self-hosted runner executes
+whatever a workflow tells it to, on a real machine. Safe while the repo is
+private and one person opens the pull requests; not safe if it is ever made
+public, because a fork's pull request would then run its own code on that
+machine. **If this repo is published, change `runs-on` back to
+`ubuntu-latest` in the same commit** -- public repos get GitHub-hosted
+minutes free, so nothing is lost.
+
+### Setting the runner up
+
+Once, on the machine that will run the checks. It needs Node (the workflow
+installs the version `.nvmrc` names), Chrome, and Git.
+
+```powershell
+mkdir C:ctions-runner; cd C:ctions-runner
+Invoke-WebRequest -Uri https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-win-x64-2.337.0.zip -OutFile runner.zip
+Expand-Archive -Path runner.zip -DestinationPath . -Force
+```
+
+Get a registration token -- it is short-lived, and generating one needs no
+copying out of a browser:
+
+```powershell
+gh api -X POST repos/<owner>/<repo>/actions/runners/registration-token -q .token
+```
+
+Then register and start it. The default labels are `self-hosted` and
+`windows`, which is exactly what the workflow asks for:
+
+```powershell
+./config.cmd --url https://github.com/<owner>/<repo> --token <the token>
+./run.cmd
+```
+
+`run.cmd` holds the terminal and stops when you close it, which is the right
+default while you are trying it. To have it survive a reboot, install it as
+a service instead:
+
+```powershell
+./svc.cmd install
+./svc.cmd start
+```
+
+### What to expect
+
+Jobs queue rather than run in parallel, because there is one runner. The
+whole gate is a single job for that reason -- two would checkout and
+`npm ci` twice, in series, for nothing. Expect a few minutes, most of it the
+two browser sweeps.
+
+The workspace persists between runs. `actions/checkout` cleans untracked
+files each time, so `node_modules` is rebuilt per run rather than drifting.
+
 ## Preview builds
 
 Set `SITE_PREVIEW=1` on a build that is deployed somewhere other than the
