@@ -17,6 +17,7 @@
 //
 // Exits 0 when nothing is left.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -138,14 +139,20 @@ for (const file of ASSET_SOURCES) {
 
 // ---- 5. The placeholder images ---------------------------------------------
 
-// Both ship as flat generated shapes. Their exact byte length distinguishes
-// "still the placeholder" from "a real screenshot", whatever the file is called.
+// Both ship as flat generated shapes. Their content hash is what identifies
+// them, whatever the file is called.
+//
+// Byte length was the first attempt and it cried wolf immediately: a
+// replacement wordmark drawn to the same geometry in a different colour
+// compressed to exactly 914 bytes, and the check called it untouched.
 const PLACEHOLDERS = [
-  ['public/assets/wordmark.png', 914, 'the wordmark', 'Replace it, then re-run `npm run check:wordmark`: the inset token is measured against whichever asset meta.ts names.'],
-  ['public/assets/hero.png', 8724, 'the hero screenshot', 'Replace it with a real screenshot at the dimensions hero.ts declares.'],
+  ['public/assets/wordmark.png', '72d88acb2c0aa048', 'the wordmark', 'Replace it, then re-run `npm run check:wordmark`: the inset token is measured against whichever asset meta.ts names.'],
+  ['public/assets/hero.png', 'e407733cd6998d52', 'the hero screenshot', 'Replace it with a real screenshot at the dimensions hero.ts declares.'],
 ];
-for (const [file, size, what, hint] of PLACEHOLDERS) {
-  if (exists(file) && fs.statSync(path.join(root, file)).size === size) {
+for (const [file, digest, what, hint] of PLACEHOLDERS) {
+  if (!exists(file)) continue;
+  const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex');
+  if (actual.startsWith(digest)) {
     note(file, `is still the generated placeholder for ${what}`, hint);
   }
 }
