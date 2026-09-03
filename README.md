@@ -14,6 +14,8 @@ else is the shell.
   navigation, the domain, and the `modules` toggles. `src/data/site.ts`
   assembles these into the `site` object every component reads.
 - `src/content/docs/**/*.md` -- the docs pages, if `modules.docs` is on.
+  Their sidebar, title, description and logo are `site-content/docs.ts`;
+  nothing warns when an entry points at a page that no longer exists.
 - `public/assets/*` -- wordmark, hero screenshot, favicon, OG image.
 - `CHANGELOG.md` -- the changelog page's local fallback; it also reads
   GitHub Releases at runtime.
@@ -111,9 +113,13 @@ property.
 
 Measured, so a new product knows where to look:
 
-- Every token and class carries a `netscli-` prefix (`--netscli-accent`,
-  `.netscli-table-scroll`, `data-netscli-table`). They are generic in
-  function; renaming them is a mechanical sweep that has not been done.
+- The reference content is netscli's: the docs pages, the FAQ, the install
+  commands and the assets under `public/assets/` (including the wordmark the
+  `check:wordmark` guard measures). Replace them; nothing else points at
+  netscli once you do, except the two lines below.
+- `astro.config.mjs` still hard-codes netscli's GitHub URL for the docs
+  header link and netscli's wording for the `twitter:image:alt` tag. Both
+  belong in `site-content/`; they are the next things to move.
 - The landing components carry 37 literal colours, most of them rgba()
   greys; `src/styles/README.md` lists where.
 - Deployment is the product's own: there is no `CNAME`, no Pages workflow.
@@ -121,7 +127,31 @@ Measured, so a new product knows where to look:
 
 ## Keeping it in sync
 
-This tree is netscli's `site/` directory. `git subtree split --prefix=site`
-in the netscli repo produces a history this repo shares; the last sync was
-netscli@3f79335 (2026-09-03), and the generalisation on top of it is the
-commit after that sync. A later sync repeats the two steps.
+This tree is netscli's `site/` directory, and since 2026-09-03 the two
+histories share a base, so a sync is an ordinary merge rather than a
+hand-applied patch. In the netscli repo:
+
+```
+git subtree split --prefix=site -b site-split main
+```
+
+Then here, with netscli added as a remote:
+
+```
+git fetch netscli site-split:refs/remotes/netscli/site-split
+git merge netscli/site-split
+```
+
+Conflicts appear only where a generalisation in this repo touches a line the
+sync changed -- the last sync had three, all in `astro.config.mjs`,
+`src/data/site.ts` and `src/data/site-content/types.ts`. Resolve by keeping
+both sides: this repo's `modules` gating plus netscli's change.
+
+Going the other way -- an improvement made in a product's site that belongs
+in the template -- is a cherry-pick onto a branch here, then the same merge
+into netscli. Improvements are easiest to land if they go into netscli
+first, because that is the direction the merge runs.
+
+A brand-new product should start with `git subtree add --prefix=site <this
+repo> main`, so it shares this history from its first commit and both
+directions are ordinary merges from then on.
