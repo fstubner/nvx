@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -208,4 +209,47 @@ func grantAncestorsSkippingKnownFailures(nvxHome string, paths []string, grant f
 		saveAncestorSkips(nvxHome, skips)
 	}
 	return attempted
+}
+
+// advisoryAncestorMu serialises the background ancestor walks. They share the
+// skip-cache file, and three of them start per launch.
+var advisoryAncestorMu sync.Mutex
+
+// startAdvisoryAncestorGrants runs the ancestor walk for dir WITHOUT blocking
+// the launch.
+//
+// The walk grants traverse on the directories above a project, a staged command
+// and the supervisor. It is advisory: TestAncestorGrantsAreNotNeededForContainment
+// launches a contained child with the walk deliberately skipped and the child
+// still stats and writes its working directory, because the launch reads its
+// executable out of the guest home rather than through that chain. What the
+// grants buy is a tool that walks UP from the project looking for a root.
+//
+// Blocking on them cost most of a cold start. Measured 2026-09-03 on a fresh
+// NVX_HOME, first contained `npm install` broken down by phase:
+//
+//	3.00s  the walk above the working directory
+//	0.88s  granting the runtime tree, which IS needed
+//	2.03s  the walk above the staged command
+//	~2s    npm's own work
+//
+// Five of eleven seconds spent, before the command started, on grants the
+// command does not need -- and on this machine they time out and are not even
+// applied, so the five seconds bought nothing at all.
+//
+// Fire-and-forget rather than joined at the end. An ACL write that outlives the
+// caller still lands: measured 2026-08-31, a write abandoned at its deadline
+// completed 3m45s later and was found in place by the next launch. So the worst
+// case is that a grant arrives late, which is exactly what "advisory" means. The
+// mutex is because these share a cache file, not because the order matters.
+func startAdvisoryAncestorGrants(nvxHome, dir string) {
+	go func() {
+		advisoryAncestorMu.Lock()
+		defer advisoryAncestorMu.Unlock()
+		attempted, eligible := grantWorkdirAncestors(nvxHome, dir)
+		if skipped := eligible - attempted; skipped > 0 {
+			LogDetail("Skipped %d of %d ancestor permission checks for %s (they are advisory and run in the background).",
+				skipped, eligible, dir)
+		}
+	}()
 }
