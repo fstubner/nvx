@@ -362,6 +362,11 @@ func main() {
 		if isShimCommand(command) {
 			os.Exit(runShim(command, os.Args[2:], nvxHome))
 		}
+		if near := nearestCommand(command); near != "" {
+			LogError("Unknown command: %s. Did you mean 'nvx %s'?", command, near)
+			LogInfo("Run 'nvx help' for the full list.")
+			os.Exit(1)
+		}
 		LogError("Unknown command: %s", command)
 		printHelp()
 		os.Exit(1)
@@ -693,7 +698,7 @@ func resolveLocalVersion(provider RuntimeProvider, query string, nvxHome string)
 		return "", err
 	}
 	if len(versions) == 0 {
-		return "", fmt.Errorf("no %s versions are currently installed", provider.Name())
+		return "", noVersionsInstalled{runtime: provider.Name()}
 	}
 
 	query = strings.TrimSpace(strings.ToLower(query))
@@ -855,7 +860,12 @@ func runUse(query string, nvxHome string, shell string, viaIntegration bool) {
 	}
 
 	targetDir := filepath.Join(nvxHome, "versions", provider.Name(), resolvedVer)
-	emitSessionEnv(shell, nvxHome, targetDir)
+	// Only when something is going to read it. See shouldPrintShellEnv: to a
+	// person at a terminal this is 6,000 characters of PATH with the sentence
+	// that matters printed underneath it.
+	if shouldPrintShellEnv(viaIntegration) {
+		emitSessionEnv(shell, nvxHome, targetDir)
+	}
 
 	// Only claim the switch happened if something is going to act on it.
 	//
@@ -869,9 +879,11 @@ func runUse(query string, nvxHome string, shell string, viaIntegration bool) {
 	// question "will this be evaluated". A --shell argument means nvx was invoked
 	// BY the integration, which answers the same question.
 	if !viaIntegration && os.Getenv("NVX_SHELL_INTEGRATION") == "" {
-		LogWarn("Printed the environment for %s %s, but nothing evaluated it, so this shell is unchanged.",
+		LogWarn("%s %s is installed, but this shell is unchanged: nothing is loading nvx's environment here.",
 			display, resolvedVer)
-		LogInfo("Load the shell integration once (see 'nvx env'), or evaluate this command's output yourself.")
+		LogInfo("Load the shell integration once and it switches by itself from then on:")
+		LogInfo("  %s", shellIntegrationHint(shell))
+		LogInfo("Or, for this shell only:  %s", evalHint(shell, version))
 		return
 	}
 

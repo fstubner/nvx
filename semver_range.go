@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -299,5 +300,37 @@ func highestMatching(expr string, versions []string) (string, error) {
 // read it and nothing matched". The two need different messages: the first is a
 // syntax the user should rewrite, the second is a version they should install.
 func isUnsupportedRange(err error) bool {
-	return err != nil && !strings.HasPrefix(err.Error(), "no version matches")
+	if err == nil || errors.Is(err, errNoVersionsInstalled) {
+		// Nothing installed is not a syntax the caller should rewrite; it is a
+		// runtime the caller should install, and the caller offers to.
+		return false
+	}
+	return !strings.HasPrefix(err.Error(), "no version matches")
 }
+
+// errNoVersionsInstalled marks "this runtime has nothing installed at all",
+// which is a different answer from "I could not read that version expression"
+// and needs a different response.
+//
+// isUnsupportedRange decides that by exclusion -- anything not starting with
+// "no version matches" is treated as an expression nvx cannot read -- and an
+// empty installation fell on the wrong side of it. `nvx use 20` on a machine
+// where nvx is installed but no runtime is, which is the state every new user
+// is in, printed "no node versions are currently installed" and exited,
+// skipping the branch immediately below that offers to download it. The first
+// `nvx use` anyone types dead-ended.
+var errNoVersionsInstalled = errors.New("nothing installed")
+
+// noVersionsInstalled carries the runtime name while still matching the
+// sentinel above under errors.Is.
+//
+// A type rather than fmt.Errorf("%w: ...", errNoVersionsInstalled), because
+// that put the sentinel's own words in front of the real sentence and the user
+// read "nothing installed: no node versions are currently installed".
+type noVersionsInstalled struct{ runtime string }
+
+func (e noVersionsInstalled) Error() string {
+	return "no " + e.runtime + " versions are currently installed"
+}
+
+func (e noVersionsInstalled) Is(target error) bool { return target == errNoVersionsInstalled }
