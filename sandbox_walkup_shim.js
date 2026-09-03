@@ -59,6 +59,17 @@ try {
     return !!e && (e.code === 'EPERM' || e.code === 'EACCES');
   }
 
+  // Exported so the narrowness this file claims can be asserted rather than
+  // merely stated. Loading via `--require` ignores module.exports; a test
+  // requires the file directly and checks the two predicates against paths that
+  // must be refused. Without this, forcing isCoveredAncestor to `return true` --
+  // which makes the shim fabricate stats for ANY denied path anywhere, the exact
+  // opposite of what the header promises -- left the whole suite green.
+  if (typeof module === 'object' && module.exports) {
+    module.exports.isCoveredAncestor = isCoveredAncestor;
+    module.exports.isPermissionError = isPermissionError;
+  }
+
   // A real directory's Stats, borrowed from one the sandbox can read, so the
   // answer has every method and field a caller might look at.
   let template = null;

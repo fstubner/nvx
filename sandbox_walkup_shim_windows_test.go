@@ -69,7 +69,14 @@ func TestWalkUpShimAnswersForUnreadableAncestors(t *testing.T) {
 	}
 	nodePath := resolvePinnedCommandPath("node", nvxHome, ver, rt)
 	if nodePath == "" {
-		t.Skipf("no nvx-managed node runtime under %s; run `nvx install`", nvxHome)
+		// Fails rather than skips, for the reason spelled out in
+		// sandbox_unelevated_windows_test.go: NVX_PROBE=1 is a request to assert,
+		// and a gate that skips itself reports success while checking nothing.
+		t.Fatalf("no nvx-managed node runtime under %s. This gate cannot assert anything "+
+			"without one, so it fails rather than passing quietly.\nRun both:\n"+
+			"  nvx -y install 22\n  nvx -y default 22\n"+
+			"`nvx use 22` alone is not enough -- it sets the shell version, not the global default.",
+			nvxHome)
 	}
 	nodePath, err = ensureAppContainerCommand(nvxHome, nodePath)
 	if err != nil {
