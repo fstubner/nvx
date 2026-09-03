@@ -86,7 +86,7 @@ func TestAddingAReadExecRootCountsAsLoosening(t *testing.T) {
 }
 
 // A local policy ADDS to the global one rather than replacing it, matching
-// allow_write and the host allowlists.
+// the host allowlists.
 func TestLocalReadExecRootsAreAppendedToGlobal(t *testing.T) {
 	global := DefaultPolicy()
 	global.Isolation.Filesystem.AllowReadExec = []string{"/from/global"}

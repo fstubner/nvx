@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // A misspelt key in a policy file silently removes the protection it was meant
@@ -175,15 +176,45 @@ func nearestPolicyKey(unknown string, known map[string]bool) string {
 	return best
 }
 
+// warnedPolicyKeys remembers what this process has already said, so one
+// misspelt setting is reported once rather than once per policy load.
+//
+// LoadPolicy runs several times in a single command -- the shim decides what to
+// do with it, then the sandbox loads it again -- and every load warned. One
+// stray key produced the same two lines two or three times over, which an
+// acceptance pass called out as noise. A repeated warning is not a louder
+// warning; it is one people learn to scroll past.
+var (
+	warnedPolicyKeysMu sync.Mutex
+	warnedPolicyKeys   = map[string]bool{}
+)
+
 // warnAboutUnknownPolicyKeys reports keys nvx does not recognise in a policy
-// file, naming the nearest real key when one is close.
+// file, naming the nearest real key when one is close. Each (file, key) is
+// reported at most once per process.
 func warnAboutUnknownPolicyKeys(path string, data []byte) {
 	unknown := unknownPolicyKeys(data)
 	if len(unknown) == 0 {
 		return
 	}
 	known, _ := policyKeyPaths()
+
+	warnedPolicyKeysMu.Lock()
+	var fresh []string
 	for _, key := range unknown {
+		id := path + "\x00" + key
+		if warnedPolicyKeys[id] {
+			continue
+		}
+		warnedPolicyKeys[id] = true
+		fresh = append(fresh, key)
+	}
+	warnedPolicyKeysMu.Unlock()
+
+	if len(fresh) == 0 {
+		return
+	}
+	for _, key := range fresh {
 		if near := nearestPolicyKey(key, known); near != "" {
 			LogWarn("%s: %q is not an nvx policy setting and is being ignored. Did you mean %q?", path, key, near)
 			continue
