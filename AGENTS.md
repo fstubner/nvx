@@ -107,6 +107,16 @@ Both have shipped broken here before, which is why they are named:
 - A **replaced wordmark with a different transparent margin** renders slightly
   indented in both bars. `check:wordmark` is the only thing that sees it.
 
+## If this site is a subtree inside a product's repo
+
+The template's root is the site root; a subtree puts the site in `site/`.
+Three things move with it, and the README's "Starting a new product" section
+has the detail: the CI workflow has to sit at the PROJECT root to run at
+all, `changelog.astro` reads the site directory's `CHANGELOG.md` rather than
+the product's, and this file arrives at `site/AGENTS.md`.
+
+Everything else is unchanged: run the commands above from inside `site/`.
+
 ## Style
 
 The copy on this site is plain: short sentences, no "powerful" or "seamless",

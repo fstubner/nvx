@@ -232,11 +232,56 @@ sync changed -- the last sync had three, all in `astro.config.mjs`,
 `src/data/site.ts` and `src/data/site-content/types.ts`. Resolve by keeping
 both sides: this repo's `modules` gating plus netscli's change.
 
-Going the other way -- an improvement made in a product's site that belongs
-in the template -- is a cherry-pick onto a branch here, then the same merge
-into netscli. Improvements are easiest to land if they go into netscli
-first, because that is the direction the merge runs.
+## Starting a new product from this template
 
-A brand-new product should start with `git subtree add --prefix=site <this
-repo> main`, so it shares this history from its first commit and both
-directions are ordinary merges from then on.
+Add it as a subtree, so the project shares this history from its first
+commit and syncing works in both directions afterwards:
+
+```
+git subtree add --prefix=site https://github.com/<owner>/product-site-template main
+```
+
+Then three things need doing, because the template is a repo whose root IS
+the site and a subtree is a directory inside someone else's repo. All three
+were found by doing this rather than by reading it:
+
+1. **Move the CI workflow to the project root.** It arrives at
+   `site/.github/workflows/ci.yml`, and GitHub only reads `.github/` at the
+   repo root -- so a project that leaves it there has CI that silently does
+   not exist. Move it to `.github/workflows/`, add
+   `defaults: run: working-directory: site`, and point the file-size guard
+   step at `site/scripts/check-file-size.mjs`.
+2. **Decide which CHANGELOG the site reads.** `src/pages/changelog.astro`
+   imports `../../CHANGELOG.md`, which is the site directory's own copy.
+   A product's changelog usually lives at the project root: change the
+   import to `../../../CHANGELOG.md` and delete `site/CHANGELOG.md`, or
+   keep the site's copy deliberately. `scripts/changelog-dates.mjs` reads
+   `<site root>/CHANGELOG.md` and needs the same decision.
+3. **Move `AGENTS.md` up, or leave a pointer.** It arrives at
+   `site/AGENTS.md`. An agent working in `site/` will find it; one working
+   from the project root may not.
+
+Everything else works unchanged from inside a subtree: the build, all four
+static guards, `check:content`, the changelog check (tags resolve from
+anywhere in the repo) and the two browser sweeps. Verified on a scratch
+project: 6 routes built, every check passed.
+
+### Sending a change back
+
+A fix a product makes in its `site/` directory, back to this template:
+
+```
+git subtree push --prefix=site https://github.com/<owner>/product-site-template <branch>
+```
+
+That lands a branch here whose history sits directly on top of `main`, with
+only the site's commits in it -- open a pull request from it as usual.
+Verified the same way: a one-file change in a scratch project arrived here
+as one commit against `main`.
+
+`subtree push` re-splits the whole history each time and gets slower as the
+project grows; on a large repo prefer a cherry-pick of the same commits
+onto a branch cut from `main` here.
+
+Improvements are still easiest to land if they go into netscli first, since
+that is the direction the merge above runs.
