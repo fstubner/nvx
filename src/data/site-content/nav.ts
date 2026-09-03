@@ -38,7 +38,7 @@ const allLinks: NavLink[] = [
   { label: 'Changelog', href: '/changelog/', mobileGroup: 'project' },
   {
     label: 'GitHub',
-    href: 'https://github.com/fstubner/netscli',
+    href: 'https://github.com/your-org/example',
     external: true,
     mobileGroup: 'project',
   },

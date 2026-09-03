@@ -4,9 +4,12 @@ An Astro + Starlight site for a product: a landing page, optional docs,
 optional changelog. It is netscli.com's site, kept in sync with it, with
 the product-specific parts collected where a new product replaces them.
 
-netscli's real content ships here as the reference example. Its copy,
-images and docs pages are exactly what a new product replaces; everything
-else is the shell.
+The content that ships here describes a fictional product called Example: a
+landing page, three docs pages, a FAQ, install routes for three platforms,
+and two placeholder images. It is deliberately thin and deliberately
+generic. It exists so a fresh clone builds, renders every feature of the
+shell and passes its own checks before you have written a word -- and so
+that what you delete is obvious. Everything else is the shell.
 
 ## What a new product edits
 
@@ -23,8 +26,9 @@ else is the shell.
   `src/styles/docs/theme.css` for how Starlight's tokens map onto it. The
   guide is `src/styles/README.md`.
 
-Two things netscli ships that most products delete: `src/pages/install.sh.ts`
-and `install.ps1.ts`, the installer scripts it serves from its own domain.
+The sample content is not a starting draft to edit around: replace each
+file's contents outright. The comments in them say what each field is for
+and where it is rendered, which is the part worth keeping.
 
 ## What the shell is
 
@@ -113,12 +117,9 @@ property.
 
 Measured, so a new product knows where to look:
 
-- The reference content is netscli's: the docs pages, the FAQ, the install
-  commands and the assets under `public/assets/`. Replace them; no code
-  outside `src/data/site-content/`, the docs pages and the assets names
-  netscli, and the guards follow the content rather than the old filenames.
-- Four comments cite netscli commands and URLs as the real examples behind a
-  defect they explain. They are history, and they stay accurate as history.
+- Four code comments cite netscli commands and URLs as the real examples
+  behind a defect they explain. They are history, and they stay accurate as
+  history. Nothing else in the tree names netscli.
 - The landing components carry 37 literal colours, most of them rgba()
   greys; `src/styles/README.md` lists where.
 - Deployment is the product's own: there is no `CNAME`, no Pages workflow.
@@ -141,7 +142,18 @@ git fetch netscli site-split:refs/remotes/netscli/site-split
 git merge netscli/site-split
 ```
 
-Conflicts appear only where a generalisation in this repo touches a line the
+Content does not conflict. `.gitattributes` marks the files that are purely
+this repo's sample content `merge=ours`, so a sync keeps them whatever
+netscli did to its own. That needs the driver defined once per clone:
+
+```
+git config merge.ours.driver true
+```
+
+Without it nothing breaks; those files just come back as ordinary conflicts
+to resolve by hand.
+
+Conflicts appear where a generalisation in this repo touches a line the
 sync changed -- the last sync had three, all in `astro.config.mjs`,
 `src/data/site.ts` and `src/data/site-content/types.ts`. Resolve by keeping
 both sides: this repo's `modules` gating plus netscli's change.
