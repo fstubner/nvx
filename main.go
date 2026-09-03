@@ -798,6 +798,20 @@ func runInstall(query string, nvxHome string) {
 		LogError("Installation failed: %v", err)
 		os.Exit(1)
 	}
+	// Do the sandbox's read/execute grant on the new tree now, where a second is
+	// invisible next to the download, rather than in front of someone's first
+	// contained command. Best-effort; the launch still does it if this did not.
+	//
+	// Resolved against what is now on disk, not against the query. `nvx install
+	// 22` installs v22.23.2, and a first version of this passed "22" straight
+	// through, looked for a directory of that name, found nothing and returned
+	// silently -- an optimisation that never once ran, which is exactly the kind
+	// of quiet no-op this project removed from the policy struct this morning.
+	if installed, rerr := resolveLocalVersion(provider, version, nvxHome); rerr == nil {
+		pregrantRuntimeForSandbox(nvxHome, provider.Name(), installed)
+	} else {
+		LogDetail("Could not tell which version %q installed (%v); the first contained command will grant it.", version, rerr)
+	}
 }
 
 func runUninstall(query string, nvxHome string) {
