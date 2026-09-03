@@ -62,12 +62,22 @@ func TestUnelevatedSandboxRunsPackageManager(t *testing.T) {
 	}
 	npmPath := resolvePinnedCommandPath("npm", nvxHome, ver, rt)
 	if npmPath == "" {
-		// An nvx-managed runtime under ~/.nvx/versions is a precondition, not the
-		// thing under test -- a machine that has node on PATH but has never run
-		// `nvx install` resolves to "". Failing here would report an environment gap
-		// as a defect. scripts/sandbox-smoke.ps1 stages a runtime itself and covers
-		// this same launch path where that matters.
-		t.Skipf("no nvx-managed %s runtime staged under %s; run `nvx install` or see scripts/sandbox-smoke.ps1", rt.Name(), nvxHome)
+		// A missing runtime is an environment gap, not a defect -- but this test
+		// only runs because someone set NVX_PROBE=1, and the whole point of that
+		// is to assert. Skipping here made the release gate report success while
+		// verifying nothing about the claim this test exists for: that a sandbox
+		// with no drive-root grant can run a package manager.
+		//
+		// It was worse than a silent skip, because the message named only half
+		// the fix. `nvx use 22` leaves this nil -- the probe accepts an active
+		// shell version OR a global default, and `use` writes the former into a
+		// shell nothing here inherits. Measured 2026-09-03: a probe run skipped
+		// 45 tests without `nvx default`, and 6 with it.
+		t.Fatalf("no nvx-managed %s runtime staged under %s. This gate cannot assert anything "+
+			"without one, so it fails rather than passing quietly.\nRun both:\n"+
+			"  nvx -y install 22\n  nvx -y default 22\n"+
+			"`nvx use 22` alone is not enough -- it sets the shell version, not the global default.",
+			rt.Name(), nvxHome)
 	}
 	t.Logf("npm resolved to: %s", npmPath)
 
