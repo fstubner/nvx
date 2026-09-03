@@ -528,6 +528,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx doctor` said "nvx is intercepting commands correctly" on an install
+  where version switching was entirely dead.** Doctor checked one half of a
+  working setup — is the shim directory on `PATH`, does `npm` resolve to it —
+  and never looked at the other half, the shell integration. Without that line
+  in the profile, `nvx use 22` changes nothing and entering a project with a
+  `.nvmrc` does not switch. Commands are still audited and contained, so the
+  claim was true; it just was not the whole truth, and it was a green light on a
+  half-working machine.
+
+  Doctor now names the profile it looked at and says whether it loads nvx, on
+  both the healthy and unhealthy paths — a machine whose `PATH` is broken needs
+  the integration too. `nvx doctor --fix` adds the line, creating the profile if
+  it does not exist, in that shell's own syntax, and re-running it does not add
+  a second copy.
+
+  Both installers already write this line, so anyone who ran `install.ps1` or
+  `install.sh` has it. Anyone who built from source, or copied a binary, does
+  not — and nothing said so.
+
 * **Every published overhead figure was measured from a command that failed, and
   has been withdrawn.** `scripts/bench.py` timed the shim as `nvx shim node
   --no-sandbox -e 0`. nvx passes a wrapped command's own arguments through
