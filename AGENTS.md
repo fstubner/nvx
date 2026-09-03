@@ -41,8 +41,9 @@ part of the site nobody rewrites later.
    sections down the page. Position 0 in each install list is the recommended
    route and renders as the card.
 4. **`modules.ts`** — turn `docs` or `changelog` off if the product has
-   neither. With `docs: false`, also remove the Starlight integration from
-   `astro.config.mjs`; the comment there says how.
+   neither. `docs: false` takes Starlight out of the build too, so the site
+   drops to three routes with no config edit; delete the docs sources
+   afterwards if they will never come back.
 5. **`sections.ts`** — which landing sections render, in what order, and
    which of the two layouts. Dropping a section drops the links into it, so
    a product with no install story removes `'install'` rather than filling
