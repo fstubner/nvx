@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -35,6 +36,9 @@ type SandboxConfig struct {
 	// execute from (isolation.filesystem.allow_read_exec), already expanded and
 	// made absolute. Never writable.
 	ReadExecRoots []string
+	// PassEnv are environment variables the project asked to keep inside the
+	// sandbox (isolation.environment.allow). A sensitive prefix still wins.
+	PassEnv []string
 }
 
 // sensitiveEnvPrefixes are environment variable prefixes that will be scrubbed
@@ -194,13 +198,26 @@ func cleanupGuestProfile(nvxHome string, sandboxID string) {
 // variables and only allowing known-safe keys through. When guestHome is
 // non-empty, home- and temp-related variables are redirected into the guest
 // profile; providers with their own filesystem view (e.g. Docker) pass "".
+//
+// Callers that can report what was removed should use scrubEnvironmentAllowing;
+// this drops the detail on the floor, which is what it did everywhere until
+// 2026-09-03 (see sandbox_env_scrub.go).
 func scrubEnvironment(guestHome string) []string {
+	return scrubEnvironmentAllowing(guestHome, nil).Env
+}
+
+// scrubEnvironmentAllowing is scrubEnvironment plus the two things a caller
+// needs to be honest about it: the extra keys a project asked to pass through
+// (isolation.environment.allow), and a record of what was removed.
+func scrubEnvironmentAllowing(guestHome string, passEnv []string) envScrubResult {
 	var allowed map[string]bool
 	if runtime.GOOS == "windows" {
 		allowed = windowsAllowedEnvKeys
 	} else {
 		allowed = unixAllowedEnvKeys
 	}
+	extra := passEnvSet(passEnv)
+	result := envScrubResult{Refused: refusedPassEnv(passEnv)}
 
 	var cleanEnv []string
 	for _, envVar := range os.Environ() {
@@ -219,17 +236,23 @@ func scrubEnvironment(guestHome string) []string {
 				break
 			}
 		}
+		// A sensitive prefix outranks isolation.environment.allow. See
+		// refusedPassEnv: a project-local file must not be able to hand a cloud
+		// credential to a package's install script.
 		if isSensitive {
+			result.Dropped = append(result.Dropped, key)
 			continue
 		}
 
-		// Only allow known-safe keys through
-		if !allowed[keyUpper] {
+		// Only allow known-safe keys through, plus whatever the project named.
+		if !allowed[keyUpper] && !extra[keyUpper] {
+			result.Dropped = append(result.Dropped, key)
 			continue
 		}
 
 		// Temp dirs are redirected into the guest profile below so a
-		// low-privilege sandboxed process can still write scratch files.
+		// low-privilege sandboxed process can still write scratch files. Not a
+		// drop worth reporting: the variable is set again a few lines down.
 		if guestHome != "" && (keyUpper == "TEMP" || keyUpper == "TMP" || keyUpper == "TMPDIR") {
 			continue
 		}
@@ -264,7 +287,9 @@ func scrubEnvironment(guestHome string) []string {
 	// Sandbox depth indicator for nested invocations (internal).
 	cleanEnv = append(cleanEnv, "NVX_SANDBOX=1")
 
-	return cleanEnv
+	sort.Strings(result.Dropped)
+	result.Env = cleanEnv
+	return result
 }
 
 // NetworkLaunchContext carries egress proxy endpoints for OS network rules.
@@ -354,7 +379,9 @@ func dockerRunArgs(imageName, cwd string, config SandboxConfig, egress *EgressPr
 
 	args = append(args, "-v", fmt.Sprintf("%s:/app", cwd), "-w", "/app")
 
-	cleanEnv := applyProxyEnv(scrubEnvironment(""), egress)
+	scrubbed := scrubEnvironmentAllowing("", config.PassEnv)
+	reportEnvScrub(config.NvxHome, scrubbed)
+	cleanEnv := applyProxyEnv(scrubbed.Env, egress)
 	for _, envVar := range cleanEnv {
 		parts := strings.SplitN(envVar, "=", 2)
 		if len(parts) == 2 && parts[0] != "PATH" && parts[0] != "NVX_SANDBOX" {

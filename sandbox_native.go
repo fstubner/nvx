@@ -77,8 +77,9 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 		return sandboxDidNotStart(config, "the egress proxy could not be reached from the sandbox", 1)
 	}
 
-	cleanEnv := scrubEnvironment(guestHome)
-	cleanEnv = applyProxyEnv(cleanEnv, egress)
+	scrubbed := scrubEnvironmentAllowing(guestHome, config.PassEnv)
+	reportEnvScrub(config.NvxHome, scrubbed)
+	cleanEnv := applyProxyEnv(scrubbed.Env, egress)
 
 	cmdPath := resolveSandboxCommand(config, policy)
 	if cmdPath == "" {

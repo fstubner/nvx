@@ -33,7 +33,9 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 	}
 	defer cleanupGuestProfile(config.NvxHome, sandboxID)
 
-	cleanEnv := scrubEnvironment(guestHome)
+	scrubbed := scrubEnvironmentAllowing(guestHome, config.PassEnv)
+	reportEnvScrub(config.NvxHome, scrubbed)
+	cleanEnv := scrubbed.Env
 
 	cwd := config.WorkDir
 	if cwd == "" {

@@ -56,6 +56,9 @@ type IsolationPolicy struct {
 	Enabled    bool             `json:"enabled"`
 	Filesystem FilesystemPolicy `json:"filesystem"`
 	Network    NetworkPolicy    `json:"network"`
+	// Environment names variables a contained process may keep. See
+	// IsolationEnvironmentPolicy.
+	Environment IsolationEnvironmentPolicy `json:"environment,omitempty"`
 	// Level selects standard vs strict containment (see isolationLevel in
 	// containment.go). Empty/unrecognized values normalize to "standard".
 	Level string `json:"level,omitempty"`
@@ -103,6 +106,32 @@ type FilesystemPolicy struct {
 	// would be a guess about what a project runs, and every entry here widens
 	// what contained code may execute. Naming it is the point.
 	AllowReadExec []string `json:"allow_read_exec,omitempty"`
+}
+
+// IsolationEnvironmentPolicy names environment variables a contained process
+// should keep.
+//
+// Named for isolation rather than taking the plain EnvironmentPolicy name, which
+// was already taken by an unrelated struct (Policy.Environment.isolated_tools).
+//
+// Containment allows 11 environment variables through on Windows (7 on Unix) and drops the rest, so an install script
+// cannot read the secrets in the shell that launched it. That is correct and
+// stays. The cost is that a variable a build genuinely needs goes with them:
+// measured on Windows on 2026-09-03, 107 variables outside a contained run and
+// 48 inside, with CI and NODE_ENV among the casualties. A tool that reads CI to
+// suppress prompts starts prompting; nothing errors. Before this existed the
+// only way to get one through was --no-sandbox, which answers "I need one
+// variable" by switching the sandbox off.
+//
+// Names only, matched case-insensitively, no patterns. A glob would be the
+// obvious next step and there is no second caller asking for one yet.
+//
+// A name matching a sensitive prefix (AWS_, GITHUB_, ...) is refused and warned
+// about rather than honoured -- see refusedPassEnv. Adding an entry counts as
+// loosening, so a project-local file naming one needs the same approval an
+// egress host does.
+type IsolationEnvironmentPolicy struct {
+	Allow []string `json:"allow,omitempty"`
 }
 
 type NetworkPolicy struct {
@@ -768,6 +797,12 @@ func policyLoosens(before, after Policy) bool {
 	if hostsAdded(before.Isolation.Filesystem.AllowReadExec, after.Isolation.Filesystem.AllowReadExec) {
 		return true
 	}
+	// A passed-through variable carries whatever the shell holds into code the
+	// project did not write. Naming one is a deliberate hole in the scrub, so it
+	// gets the same approval an egress host does.
+	if hostsAdded(before.Isolation.Environment.Allow, after.Isolation.Environment.Allow) {
+		return true
+	}
 	if !strings.EqualFold(before.Isolation.Filesystem.Provider, after.Isolation.Filesystem.Provider) {
 		return true
 	}
@@ -847,6 +882,9 @@ func MergePolicies(global, local Policy) Policy {
 	}
 	if len(local.Isolation.Filesystem.AllowReadExec) > 0 {
 		merged.Isolation.Filesystem.AllowReadExec = append(merged.Isolation.Filesystem.AllowReadExec, local.Isolation.Filesystem.AllowReadExec...)
+	}
+	if len(local.Isolation.Environment.Allow) > 0 {
+		merged.Isolation.Environment.Allow = append(merged.Isolation.Environment.Allow, local.Isolation.Environment.Allow...)
 	}
 	if local.Isolation.Network.Mode != "" {
 		merged.Isolation.Network.Mode = local.Isolation.Network.Mode
