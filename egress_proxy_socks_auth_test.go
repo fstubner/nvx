@@ -35,7 +35,7 @@ const (
 
 func socksProxyForTest(t *testing.T) (proxy *EgressProxy, addr, user, token, allowed string) {
 	t.Helper()
-	remote := nonLoopbackListener(t)
+	remote := proxyTargetListener(t)
 	t.Cleanup(func() { _ = remote.Close() })
 	go func() {
 		for {
