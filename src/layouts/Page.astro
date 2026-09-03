@@ -78,7 +78,8 @@ const ogDesc = ogDescription ?? meta.ogDescription ?? description;
 // (import.meta.env.PROD is true), so without an explicit signal it would
 // (a) report its traffic to the real Web Analytics property, polluting
 // the real property's numbers with CI, and (b) be crawlable. SITE_PREVIEW is
-// set by whatever deploys previews (netscli sets it in its preview workflow) and turns both off.
+// set by whatever deploys previews -- a Pages or Actions workflow, usually --
+// and turns both off.
 const isPreviewBuild = process.env.SITE_PREVIEW === '1';
 const shouldLoadAnalytics =
   import.meta.env.PROD && !isPreviewBuild && Boolean(analytics.cloudflareToken);
