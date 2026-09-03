@@ -18,10 +18,10 @@ var seatbeltExecPath = "/usr/bin/sandbox-exec"
 
 // platformLaunchNative runs the command under sandbox-exec (Seatbelt) with
 // filesystem write restrictions — this is the default native path on macOS.
-func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath string, cleanEnv []string, netCtx NetworkLaunchContext) int {
+func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath string, cleanEnv []string, netCtx NetworkLaunchContext) (int, error) {
 	if _, err := os.Stat(seatbeltExecPath); err != nil {
 		LogError("native sandbox requires sandbox-exec at %s.", seatbeltExecPath)
-		return 1
+		return 1, errSandboxDidNotStart
 	}
 	sandboxExec := seatbeltExecPath
 
@@ -36,22 +36,22 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	profileFile, err := os.CreateTemp("", "nvx-*.sb")
 	if err != nil {
 		LogError("Failed to create Seatbelt profile file: %v", err)
-		return 1
+		return 1, errSandboxDidNotStart
 	}
 	profilePath := profileFile.Name()
 	defer os.Remove(profilePath)
 	if _, err := profileFile.Write([]byte(profile)); err != nil {
 		profileFile.Close()
 		LogError("Failed to write Seatbelt profile: %v", err)
-		return 1
+		return 1, errSandboxDidNotStart
 	}
 	if err := profileFile.Close(); err != nil {
 		LogError("Failed to close Seatbelt profile file: %v", err)
-		return 1
+		return 1, errSandboxDidNotStart
 	}
 	if err := os.Chmod(profilePath, 0600); err != nil {
 		LogError("Failed to set permissions on Seatbelt profile file: %v", err)
-		return 1
+		return 1, errSandboxDidNotStart
 	}
 
 	args := []string{"-f", profilePath, cmdPath}
@@ -76,10 +76,10 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 			if errBuf.Len() == 0 {
 				LogError("Sandboxed command exited %d with no output (command=%q, profile=%s).", exitErr.ExitCode(), cmdPath, profilePath)
 			}
-			return exitErr.ExitCode()
+			return exitErr.ExitCode(), nil
 		}
 		LogError("Seatbelt execution failed: %v", err)
-		return 1
+		return 1, errSandboxDidNotStart
 	}
-	return 0
+	return 0, nil
 }

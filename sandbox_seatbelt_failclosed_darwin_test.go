@@ -35,7 +35,7 @@ func TestSeatbeltLaunchFailsClosedWithoutSandboxExec(t *testing.T) {
 		Args:    []string{"-c", "touch " + marker},
 	}
 
-	code := platformLaunchNative(config, tempDir(t), tempDir(t), "/bin/sh", nil, NetworkLaunchContext{Mode: "proxy"})
+	code, _ := platformLaunchNative(config, tempDir(t), tempDir(t), "/bin/sh", nil, NetworkLaunchContext{Mode: "proxy"})
 	if code == 0 {
 		t.Error("nvx reported success with sandbox-exec missing; it must fail closed rather than run uncontained")
 	}
