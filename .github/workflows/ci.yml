@@ -1,7 +1,26 @@
 # The same gate netscli runs on its site/ directory, with this repo as the
-# site root. Two jobs: static guards that need no build, then the build with
-# the checks that read dist/. Every step blocks; a check that is allowed to
-# fail is a check nobody reads.
+# site root. Every step blocks; a check that is allowed to fail is a check
+# nobody reads.
+#
+# It runs on a SELF-HOSTED runner. This repo is private, so GitHub-hosted
+# minutes are billed against the account, and that bill is the only reason
+# the choice is interesting -- self-hosted minutes are not metered.
+#
+# Two things follow from that, and both matter:
+#
+#   SECURITY. A self-hosted runner executes whatever the workflow says, on a
+#   real machine. That is fine while this repo is private and one person
+#   opens the pull requests. It stops being fine the moment the repo is
+#   public: a fork's pull request would run its own code here. If this repo
+#   is ever published, move back to `ubuntu-latest` in the same commit --
+#   public repos get GitHub-hosted minutes for free, so there is no reason
+#   not to.
+#
+#   ONE MACHINE. Jobs queue rather than run side by side, so this is one job
+#   rather than two: two jobs would checkout and `npm ci` twice, in series,
+#   for no gain. The step names still report separately.
+#
+# Setting the runner up is in the README under "Continuous integration".
 name: CI
 
 on:
@@ -17,16 +36,32 @@ permissions:
   contents: read
 
 jobs:
-  guards:
-    name: Static guards
-    runs-on: ubuntu-latest
+  site:
+    name: Checks
+    runs-on: [self-hosted, windows]
+    # The browser sweeps are the slow part, at a couple of minutes each. This
+    # is a ceiling on a hang -- a wedged run on a self-hosted runner blocks
+    # every later run, because there is only the one.
+    timeout-minutes: 30
+    defaults:
+      run:
+        # Git Bash, so these are the same commands that work locally rather
+        # than their PowerShell equivalents.
+        shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          # check:changelog compares dated headings against tags; with the
+          # default depth there are none and a dated-but-untagged version
+          # cannot be caught.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+
+      # --- Static guards: no build needed ---------------------------------
       # 300 lines per file, with named transition exceptions.
       - name: File size guard
         run: node scripts/check-file-size.mjs
@@ -42,26 +77,22 @@ jobs:
       - name: Wordmark inset
         run: npm run check:wordmark
 
-  site:
-    name: Build and checks
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # check:changelog compares dated headings against tags; with the
-          # default depth there are none and a dated-but-untagged version
-          # cannot be caught.
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm run check
+      # --- The build, and the checks that read dist/ ----------------------
+      - name: Build
+        run: npm run build
+      - name: Types
+        run: npm run check
       - name: Changelog dates
         run: npm run check:changelog
       - name: Accessibility check
         run: npm run test:a11y
       - name: Rendered contrast sweep
         run: npm run check:contrast
+
+      # A sweep that is cancelled mid-run leaves an `astro preview` holding
+      # its port, and the next run then fails on a port conflict rather than
+      # on anything real. Cheap to prevent; `|| true` because "nothing was
+      # running" is the normal case.
+      - name: Stop any leftover preview server
+        if: always()
+        run: npx astro preview stop || true
