@@ -74,6 +74,192 @@ func resolveSandboxNodeExe(nvxHome string) string {
 	return resolvePinnedCommandPath("node", nvxHome, ver, rt)
 }
 
+// applyProjectGrants reconciles this project's recorded read/execute grants,
+// prepares the sandbox's writable roots, and applies the grants the policy asks
+// for. It returns the capability SIDs the launch must carry and the directory
+// the command starts in.
+//
+// Extracted from platformLaunchNative, which ran to 370 lines of inlined
+// sequence. It and sandbox_appcontainer_windows.go changed together in 21 of
+// that function's 50 commits, which is what a change having to be made in two
+// places at once looks like from the outside. Phases that register a defer are
+// deliberately NOT extracted: the AppContainer SID handle, the port tunnels and
+// the hang hint all have to stay alive until the contained process exits, and
+// moving one behind a function call would release it the moment that call
+// returned.
+func applyProjectGrants(config SandboxConfig, sid uintptr, scope, guestHome, workDir string) (scopeCaps []string, launchDir string, err error) {
+	ledger := loadProjectGrants(config.NvxHome, scope)
+	beforeCount := len(ledger.ReadExecGrants)
+	var revokedNow []readExecGrant
+	if capSID, cerr := scopeCapabilitySID(scope); cerr == nil {
+		ledger.ReadExecGrants, revokedNow = reconcileReadExecGrants(
+			ledger.ReadExecGrants, config.ReadExecRoots, []string{capSID}, revokeSandboxReadExec)
+	}
+
+	scopeCaps, launchDir, err = prepareAppContainerFilesystem(sid, config.NvxHome, guestHome, workDir)
+	if err != nil {
+		return nil, "", fmt.Errorf("AppContainer filesystem setup failed: %w", err)
+	}
+
+	// Extra read/execute roots from isolation.filesystem.allow_read_exec, granted
+	// to THIS PROJECT's capability rather than the shared package identity.
+	//
+	// The distinction matters because these ACEs persist on disk: granted to the
+	// package SID, one project asking for a browser cache would admit every
+	// sandbox on the machine, for ever, and removing the policy entry would not
+	// take it back. Scoped to the capability, only sandboxes carrying this
+	// project's identity are let in -- the same reasoning that made the writable
+	// roots per-project in 0.5.0.
+	//
+	// Best-effort, like the working-directory grant: a failure costs the feature
+	// that needed the path, not the run.
+	//
+	// Record the intent BEFORE granting, and refuse to grant if it cannot be
+	// recorded.
+	//
+	// The other order left a permission on disk that nothing named: a grants file
+	// that could not be written -- read-only, full disk, a permissions problem of
+	// its own -- produced a warning saying nvx would not be able to withdraw the
+	// grant later, and then granted it anyway. Nothing could find it afterwards,
+	// including `grants reset`, because the only thing that would have named it was
+	// the file that failed to save.
+	//
+	// This way round the failure is harmless in the other direction: a record whose
+	// permission was never written costs one no-op withdrawal on some later run.
+	if len(config.ReadExecRoots) > 0 && scope != "" {
+		// Only what will actually be nvx's own entry. A root that already carries a
+		// broader permission -- the project directory itself is both a writable root
+		// and a plausible allow_read_exec entry -- is left out: nvx will not write
+		// over it, so it is not nvx's to take back, and recording it meant `grants
+		// reset` deleted the sandbox's write access to the user's own project while
+		// reporting it had withdrawn a read/execute permission.
+		intended := planReadExecRecords(ledger.ReadExecGrants, config.ReadExecRoots, scopeCaps)
+		if len(intended) != beforeCount || len(revokedNow) > 0 {
+			stored, _ := readGrantsFile(grantsPath(config.NvxHome, scope))
+			ledger.ReadExecGrants = mergeLedgerForSave(intended, stored, revokedNow)
+			ledger.ProjectPath = scope
+			if err := saveProjectGrants(config.NvxHome, ledger); err != nil {
+				LogInfo("They were not granted: a permission nvx cannot record is one it could never withdraw.")
+				return nil, "", fmt.Errorf("could not record the read/execute permissions this policy asks for: %w", err)
+			}
+		}
+	} else if scope != "" && len(revokedNow) > 0 {
+		// Withdrawals still need writing back even with nothing left to grant.
+		stored, _ := readGrantsFile(grantsPath(config.NvxHome, scope))
+		ledger.ReadExecGrants = mergeLedgerForSave(ledger.ReadExecGrants, stored, revokedNow)
+		ledger.ProjectPath = scope
+		if err := saveProjectGrants(config.NvxHome, ledger); err != nil {
+			LogWarn("Could not update the record of the sandbox's read grants: %v", err)
+		}
+	}
+
+	for _, root := range config.ReadExecRoots {
+		granted := false
+		for _, capSID := range scopeCaps {
+			if _, err := grantSandboxReadExec(capSID, root); err != nil {
+				// The record already names this path, which is the safe direction: a
+				// record with no permission behind it is withdrawn as a no-op, while a
+				// permission with no record is invisible.
+				LogWarn("Could not grant the sandbox read access to %s: %v", root, err)
+				continue
+			}
+			granted = true
+		}
+		if granted {
+			LogInfo("Sandbox may read and execute from %s", root)
+		}
+	}
+	return scopeCaps, launchDir, nil
+}
+
+// containedEnv adds everything the contained process needs in its environment:
+// the runtime's own directory on PATH, the flags and preloads that make node
+// survive an AppContainer, and the stdio compatibility shim.
+//
+// Pure apart from writing the two preload files into the guest home, and
+// deliberately holds nothing that must outlive it -- the stdio channel broker
+// stays in the caller, because closing it early would take the pipes with it.
+func containedEnv(env []string, guestHome, cmdPath string) []string {
+	// Put the resolved runtime's directory on PATH so tools spawned inside the
+	// sandbox (e.g. an npx-installed CLI whose launcher calls `node`) can find it.
+	// The host's own node dir is on PATH but is not accessible to the container;
+	// this directory is granted RX above.
+	env = prependPath(env, filepath.Dir(cmdPath))
+
+	// The preserve-symlinks flags above only cover the process nvx launches.
+	// npm scripts spawn further node processes, whose own entry-point resolution
+	// realpaths up to the drive root — a path an AppContainer cannot stat unless
+	// that volume's root was granted by `nvx setup` (only the system drive is,
+	// so any project on another drive fails). NODE_OPTIONS carries the flags into
+	// every child so the realpath walk is skipped there too.
+	env = setNodeOptionsPreserveSymlinks(env)
+
+	// Lifecycle scripts must inherit stdio rather than have it piped, or they
+	// hang forever. See forceForegroundScripts.
+	env = forceForegroundScripts(env)
+
+	// That covers npm piping a script's output. It does not cover a script that
+	// captures its OWN child, which is a different process creating a different
+	// pipe -- esbuild's postinstall, and the reason `npm install esbuild` hung.
+	// The preload makes the synchronous capture APIs use file descriptors instead.
+	if shim, err := writeStdioShim(guestHome); err != nil {
+		LogWarn("Could not install the stdio compatibility preload: %v", err)
+		LogInfo("An install script that captures a subprocess's output may hang; run that install with --no-sandbox.")
+	} else {
+		env = addNodeOptionsRequire(env, shim)
+	}
+
+	// Tools walk up to the drive root and stat every directory on the way; npm
+	// does it for the cache `npx` uses, and an AppContainer cannot stat C:\Users
+	// or a drive root. The preload answers for the ancestors of the sandbox's own
+	// working directory and home, which exist by construction -- so contained
+	// npx no longer needs an elevated `nvx setup`. See sandbox_walkup_shim.js.
+	if shim, err := writeWalkupShim(guestHome); err != nil {
+		LogWarn("Could not install the directory-walk compatibility preload: %v", err)
+		LogInfo("A tool that walks up to the drive root may fail there with EPERM; 'nvx setup' from an Administrator terminal is the fallback.")
+	} else {
+		env = addNodeOptionsRequire(env, shim)
+	}
+
+	return env
+}
+
+// containedCommand stages the command where the sandbox can execute it and
+// rewrites it for an AppContainer launch, returning the executable and its
+// arguments.
+func containedCommand(config SandboxConfig, cmdPath string) (string, []string, error) {
+	// Make the command reachable from inside the container BEFORE rewriting it.
+	//
+	// A runtime outside ~/.nvx/versions is copied into nvxHome, because its own
+	// location may not be grantable. The rewrite below then derives npm-cli.js from
+	// the directory it is handed, so it has to be handed the copy: run the other way
+	// round, it produced a launch whose interpreter was the staged node.exe but
+	// whose script argument still pointed into the original directory -- which the
+	// container has no grant on, so node failed with "Cannot find module
+	// C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js".
+	cmdPath, err := ensureAppContainerCommand(config.NvxHome, cmdPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("AppContainer executable access failed: %w", err)
+	}
+	grantedDir := filepath.Dir(cmdPath)
+
+	// Adapt node/npm/npx for AppContainer launch (direct node.exe, realpath-safe).
+	cmdPath, launchArgs := rewriteWindowsNodeCommand(cmdPath, config.Args, resolveSandboxNodeExe(config.NvxHome))
+
+	// When the resolved npm.cmd has no sibling node.exe -- the normal layout for a
+	// self-updated npm in a version's npm_global prefix -- the rewrite falls back to
+	// the active runtime's interpreter, which sits outside the directory just
+	// granted and needs one of its own.
+	if !strings.EqualFold(filepath.Dir(cmdPath), grantedDir) {
+		cmdPath, err = ensureAppContainerCommand(config.NvxHome, cmdPath)
+		if err != nil {
+			return "", nil, fmt.Errorf("AppContainer executable access failed: %w", err)
+		}
+	}
+
+	return cmdPath, launchArgs, nil
+}
+
 // platformLaunchNative applies AppContainer isolation on Windows.
 // Isolation setup is fail-closed: if AppContainer cannot be applied, the command
 // is not executed.
@@ -140,160 +326,19 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// Access is denied". Doing it first means prepareAppContainerFilesystem
 	// re-establishes whatever this run actually needs, after anything the policy no
 	// longer asks for is gone.
-	ledger := loadProjectGrants(config.NvxHome, scope)
-	beforeCount := len(ledger.ReadExecGrants)
-	var revokedNow []readExecGrant
-	if capSID, cerr := scopeCapabilitySID(scope); cerr == nil {
-		ledger.ReadExecGrants, revokedNow = reconcileReadExecGrants(
-			ledger.ReadExecGrants, config.ReadExecRoots, []string{capSID}, revokeSandboxReadExec)
-	}
-
-	scopeCaps, launchDir, err := prepareAppContainerFilesystem(sid, config.NvxHome, guestHome, workDir)
+	scopeCaps, launchDir, err := applyProjectGrants(config, sid, scope, guestHome, workDir)
 	if err != nil {
-		LogError("AppContainer filesystem setup failed: %v", err)
+		LogError("%v", err)
 		return 1
 	}
 
-	// Extra read/execute roots from isolation.filesystem.allow_read_exec, granted
-	// to THIS PROJECT's capability rather than the shared package identity.
-	//
-	// The distinction matters because these ACEs persist on disk: granted to the
-	// package SID, one project asking for a browser cache would admit every
-	// sandbox on the machine, for ever, and removing the policy entry would not
-	// take it back. Scoped to the capability, only sandboxes carrying this
-	// project's identity are let in -- the same reasoning that made the writable
-	// roots per-project in 0.5.0.
-	//
-	// Best-effort, like the working-directory grant: a failure costs the feature
-	// that needed the path, not the run.
-	//
-	// Record the intent BEFORE granting, and refuse to grant if it cannot be
-	// recorded.
-	//
-	// The other order left a permission on disk that nothing named: a grants file
-	// that could not be written -- read-only, full disk, a permissions problem of
-	// its own -- produced a warning saying nvx would not be able to withdraw the
-	// grant later, and then granted it anyway. Nothing could find it afterwards,
-	// including `grants reset`, because the only thing that would have named it was
-	// the file that failed to save.
-	//
-	// This way round the failure is harmless in the other direction: a record whose
-	// permission was never written costs one no-op withdrawal on some later run.
-	if len(config.ReadExecRoots) > 0 && scope != "" {
-		// Only what will actually be nvx's own entry. A root that already carries a
-		// broader permission -- the project directory itself is both a writable root
-		// and a plausible allow_read_exec entry -- is left out: nvx will not write
-		// over it, so it is not nvx's to take back, and recording it meant `grants
-		// reset` deleted the sandbox's write access to the user's own project while
-		// reporting it had withdrawn a read/execute permission.
-		intended := planReadExecRecords(ledger.ReadExecGrants, config.ReadExecRoots, scopeCaps)
-		if len(intended) != beforeCount || len(revokedNow) > 0 {
-			stored, _ := readGrantsFile(grantsPath(config.NvxHome, scope))
-			ledger.ReadExecGrants = mergeLedgerForSave(intended, stored, revokedNow)
-			ledger.ProjectPath = scope
-			if err := saveProjectGrants(config.NvxHome, ledger); err != nil {
-				LogError("Could not record the read/execute permissions this policy asks for: %v", err)
-				LogInfo("They were not granted: a permission nvx cannot record is one it could never withdraw.")
-				return 1
-			}
-		}
-	} else if scope != "" && len(revokedNow) > 0 {
-		// Withdrawals still need writing back even with nothing left to grant.
-		stored, _ := readGrantsFile(grantsPath(config.NvxHome, scope))
-		ledger.ReadExecGrants = mergeLedgerForSave(ledger.ReadExecGrants, stored, revokedNow)
-		ledger.ProjectPath = scope
-		if err := saveProjectGrants(config.NvxHome, ledger); err != nil {
-			LogWarn("Could not update the record of the sandbox's read grants: %v", err)
-		}
-	}
-
-	for _, root := range config.ReadExecRoots {
-		granted := false
-		for _, capSID := range scopeCaps {
-			if _, err := grantSandboxReadExec(capSID, root); err != nil {
-				// The record already names this path, which is the safe direction: a
-				// record with no permission behind it is withdrawn as a no-op, while a
-				// permission with no record is invisible.
-				LogWarn("Could not grant the sandbox read access to %s: %v", root, err)
-				continue
-			}
-			granted = true
-		}
-		if granted {
-			LogInfo("Sandbox may read and execute from %s", root)
-		}
-	}
-	// Make the command reachable from inside the container BEFORE rewriting it.
-	//
-	// A runtime outside ~/.nvx/versions is copied into nvxHome, because its own
-	// location may not be grantable. The rewrite below then derives npm-cli.js from
-	// the directory it is handed, so it has to be handed the copy: run the other way
-	// round, it produced a launch whose interpreter was the staged node.exe but
-	// whose script argument still pointed into the original directory -- which the
-	// container has no grant on, so node failed with "Cannot find module
-	// C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js".
-	cmdPath, err = ensureAppContainerCommand(config.NvxHome, cmdPath)
+	cmdPath, launchArgs, err := containedCommand(config, cmdPath)
 	if err != nil {
-		LogError("AppContainer executable access failed: %v", err)
+		LogError("%v", err)
 		return 1
 	}
-	grantedDir := filepath.Dir(cmdPath)
 
-	// Adapt node/npm/npx for AppContainer launch (direct node.exe, realpath-safe).
-	cmdPath, launchArgs := rewriteWindowsNodeCommand(cmdPath, config.Args, resolveSandboxNodeExe(config.NvxHome))
-
-	// When the resolved npm.cmd has no sibling node.exe -- the normal layout for a
-	// self-updated npm in a version's npm_global prefix -- the rewrite falls back to
-	// the active runtime's interpreter, which sits outside the directory just
-	// granted and needs one of its own.
-	if !strings.EqualFold(filepath.Dir(cmdPath), grantedDir) {
-		cmdPath, err = ensureAppContainerCommand(config.NvxHome, cmdPath)
-		if err != nil {
-			LogError("AppContainer executable access failed: %v", err)
-			return 1
-		}
-	}
-
-	// Put the resolved runtime's directory on PATH so tools spawned inside the
-	// sandbox (e.g. an npx-installed CLI whose launcher calls `node`) can find it.
-	// The host's own node dir is on PATH but is not accessible to the container;
-	// this directory is granted RX above.
-	cleanEnv = prependPath(cleanEnv, filepath.Dir(cmdPath))
-
-	// The preserve-symlinks flags above only cover the process nvx launches.
-	// npm scripts spawn further node processes, whose own entry-point resolution
-	// realpaths up to the drive root — a path an AppContainer cannot stat unless
-	// that volume's root was granted by `nvx setup` (only the system drive is,
-	// so any project on another drive fails). NODE_OPTIONS carries the flags into
-	// every child so the realpath walk is skipped there too.
-	cleanEnv = setNodeOptionsPreserveSymlinks(cleanEnv)
-
-	// Lifecycle scripts must inherit stdio rather than have it piped, or they
-	// hang forever. See forceForegroundScripts.
-	cleanEnv = forceForegroundScripts(cleanEnv)
-
-	// That covers npm piping a script's output. It does not cover a script that
-	// captures its OWN child, which is a different process creating a different
-	// pipe -- esbuild's postinstall, and the reason `npm install esbuild` hung.
-	// The preload makes the synchronous capture APIs use file descriptors instead.
-	if shim, err := writeStdioShim(guestHome); err != nil {
-		LogWarn("Could not install the stdio compatibility preload: %v", err)
-		LogInfo("An install script that captures a subprocess's output may hang; run that install with --no-sandbox.")
-	} else {
-		cleanEnv = addNodeOptionsRequire(cleanEnv, shim)
-	}
-
-	// Tools walk up to the drive root and stat every directory on the way; npm
-	// does it for the cache `npx` uses, and an AppContainer cannot stat C:\Users
-	// or a drive root. The preload answers for the ancestors of the sandbox's own
-	// working directory and home, which exist by construction -- so contained
-	// npx no longer needs an elevated `nvx setup`. See sandbox_walkup_shim.js.
-	if shim, err := writeWalkupShim(guestHome); err != nil {
-		LogWarn("Could not install the directory-walk compatibility preload: %v", err)
-		LogInfo("A tool that walks up to the drive root may fail there with EPERM; 'nvx setup' from an Administrator terminal is the fallback.")
-	} else {
-		cleanEnv = addNodeOptionsRequire(cleanEnv, shim)
-	}
+	cleanEnv = containedEnv(cleanEnv, guestHome, cmdPath)
 
 	// Streaming capture needs a stream, which the preload's temp files cannot
 	// be. Contained code cannot create a named pipe, so nvx creates a small pool
