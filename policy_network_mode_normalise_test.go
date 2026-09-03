@@ -37,8 +37,8 @@ func TestNetworkModeIsCanonicalAfterNormalisation(t *testing.T) {
 		{"LOOPBACK ", "loopback"},
 		{" open", "open"},
 		{"proxy", "proxy"},
-		{"", "proxy"},        // unset defaults to proxy
-		{"offlin", "proxy"},  // a typo narrows to the restrictive default
+		{"", "proxy"},       // unset defaults to proxy
+		{"offlin", "proxy"}, // a typo narrows to the restrictive default
 		{"banana", "proxy"},
 	}
 	for _, tc := range cases {

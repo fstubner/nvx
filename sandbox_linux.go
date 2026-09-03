@@ -53,4 +53,3 @@ func applyLinuxNamespaces(cmd *exec.Cmd, guestHome string) {
 }
 
 func closeTokenHandle(cmd *exec.Cmd) {}
-

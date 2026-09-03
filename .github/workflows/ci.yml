@@ -42,6 +42,31 @@ jobs:
     - name: Verify dependencies
       run: go mod verify
 
+    # On Linux only: the checkout there has LF endings, so gofmt's answer is
+    # about the committed bytes. A Windows checkout under core.autocrlf=true
+    # has CRLF in the working tree and gofmt flags all 271 files, which is why
+    # `gofmt -l` has never been usable as a local signal here and why this gate
+    # did not exist. Four files were unformatted in the committed bytes when it
+    # was added, and .gitattributes had been asserting they were clean.
+    #
+    # `go vet` for all three platforms in one place, because `go build` does not
+    # compile test files: a helper defined in a _windows_test.go file and used
+    # from an untagged one passed three GOOS build checks and broke the macOS
+    # unit job on push.
+    - name: Format and vet
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash
+      run: |
+        unformatted=$(gofmt -l .)
+        if [ -n "$unformatted" ]; then
+          echo "::error::gofmt would change these files; run gofmt -w on them"
+          echo "$unformatted"
+          exit 1
+        fi
+        GOOS=linux go vet ./...
+        GOOS=darwin go vet ./...
+        GOOS=windows go vet ./...
+
     - name: Build nvx
       run: go build -v ./...
 
@@ -95,6 +120,22 @@ jobs:
       # os/exec's copier goroutines and a poll loop, found only when an
       # acceptance pass combined the two flags by hand.
       run: |
+        # A staged runtime and a GLOBAL DEFAULT, before the probes run.
+        #
+        # Several probes resolve npm/node through nvx and skip when neither an
+        # active shell version nor a global default is set -- and `nvx use` sets
+        # only the former, so the natural setup leaves them skipping with a
+        # message that says just "run `nvx install`". Among them are both probes
+        # backing the most-corrected claim in this project, that contained npx
+        # works without an elevated setup. Measured 2026-09-03: a plain probe run
+        # skipped 45 tests; the same run with a runtime installed and defaulted
+        # skipped 7 and passed 491.
+        go build -o nvx.exe .
+        $env:NVX_HOME = Join-Path $env:RUNNER_TEMP 'nvxprobehome'
+        New-Item -ItemType Directory -Force -Path $env:NVX_HOME | Out-Null
+        ./nvx.exe -y install 22
+        ./nvx.exe -y default 22
+
         go test -v -race ./... 2>&1 | Tee-Object -FilePath probe.log
         $code = $LASTEXITCODE
         $pass = (Select-String -Path probe.log -Pattern '^--- PASS' ).Count
@@ -103,9 +144,42 @@ jobs:
         $line = "NVX_PROBE_COUNTS pass=$pass skip=$skip fail=$fail"
         Write-Host $line
         "$line" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-        Write-Host "--- skip reasons ---"
-        Select-String -Path probe.log -Pattern '^--- SKIP' -Context 2,0 |
+
+        $reasons = Select-String -Path probe.log -Pattern '^--- SKIP' -Context 2,0 |
           ForEach-Object { $_.Context.PreContext[-1] } | Sort-Object -Unique
+        Write-Host "--- skip reasons ---"
+        $reasons | ForEach-Object { Write-Host $_ }
+
+        # Linux fails outright when a privileged containment test skips, because
+        # there the environment can be fixed (a sysctl) and a skip means a real
+        # hole. Windows cannot: hosted runners refuse to create AppContainer
+        # children, so that one skip is a standing fact about the runner, not a
+        # regression. Every OTHER skip reason is a regression -- a probe that
+        # stopped running because a premise check fired, a runtime went missing,
+        # or someone added a gate nobody reads. Those used to be invisible: the
+        # step exited on go test's code, and a skip is exit 0.
+        #
+        # So: an allowlist of reasons known to be environmental, and a failure
+        # for anything else. Adding a line here is a deliberate act with a
+        # reviewer attached, which is the property the old `-run` filter lacked.
+        $allowed = @(
+          'cannot create AppContainer children',
+          'creating symlinks on Windows needs privilege or Developer Mode',
+          'child-side helper for',
+          'internal child for the launch timing probe',
+          'not a -race build',
+          'no nvx loopback exemption',
+          'NVX_PROBE_PROTOTYPES=1 to run',
+          'cannot grant the container access to cmd.exe'
+        )
+        $unexpected = $reasons | Where-Object {
+          $r = $_; -not ($allowed | Where-Object { $r -match [regex]::Escape($_) })
+        }
+        if ($unexpected) {
+          Write-Host "::error::a containment probe skipped for a reason that is not a known host limitation; it is verifying nothing"
+          $unexpected | ForEach-Object { Write-Host "::error::$_" }
+          exit 1
+        }
         exit $code
 
     - name: Windows sandbox smoke

@@ -97,9 +97,9 @@ func TestWatchdogExitsWhenTheParentIsGoneAndSomethingElseHoldsThePipe(t *testing
 		time.Sleep(250 * time.Millisecond)
 	}
 
-	t.Fatalf("the watchdog never fired.\n"+
-		"Its parent had exited and only an unrelated process still held the stdin pipe open, "+
-		"which is exactly how an MCP server outlives its client. nvx would wait here forever, "+
+	t.Fatalf("the watchdog never fired.\n" +
+		"Its parent had exited and only an unrelated process still held the stdin pipe open, " +
+		"which is exactly how an MCP server outlives its client. nvx would wait here forever, " +
 		"holding a sandbox and its contained child, until someone killed it by hand.")
 }
 
