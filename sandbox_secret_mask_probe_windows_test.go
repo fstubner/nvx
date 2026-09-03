@@ -73,7 +73,7 @@ func TestDenyACEHidesSecretFromAppContainer(t *testing.T) {
 	}
 
 	// The grant nvx already applies: (M) over the whole working directory.
-	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
+	scopeCaps, _, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestContainedProcessCannotReachTheRealHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
+	scopeCaps, _, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}

@@ -68,9 +68,18 @@ func TestSetupIsSuggestedOnlyAfterAFailure(t *testing.T) {
 	if strings.TrimSpace(before) != "" {
 		t.Fatalf("a launch with the drive-root grant missing printed something without --verbose:\n%s", before)
 	}
+	// After a failure the hint is detail too, since 2026-09-03: the preload in
+	// sandbox_walkup_shim.js answers the stat that made node tools need the
+	// grant, so a failed command is no longer evidence the grant was missing.
+	quiet := captureStderr(t, func() { remindAboutDriveRoots(nvxHome, workDir) })
+	if strings.TrimSpace(quiet) != "" {
+		t.Fatalf("after a failed command, setup was suggested without --verbose:\n%s", quiet)
+	}
+	verboseFlag = true
+	t.Cleanup(func() { verboseFlag = false })
 	after := captureStderr(t, func() { remindAboutDriveRoots(nvxHome, workDir) })
 	if !strings.Contains(after, "nvx setup") || !strings.Contains(after, "EPERM") {
-		t.Fatalf("after a failed command with the grant missing, nvx did not say what setup is for:\n%s", after)
+		t.Fatalf("after a failed command with the grant missing, --verbose did not say what setup is for:\n%s", after)
 	}
 
 	// And with the grant in place there is nothing to say even after a failure.

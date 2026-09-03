@@ -406,20 +406,38 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
 
   `nvx setup --undo` removes the grants nvx added; the shipped ACE on your profile
   stays either way.
-- **`nvx setup` is optional, and nvx no longer asks you to run it.** This entry
-  used to say contained `npx` needed it. That was measured on 2026-08-30 and
-  disproved on 2026-09-01: the `EPERM` behind that claim was on a path inside
-  `~/.nvx`, which nvx grants itself without elevation. `npm install`, `npm run`,
-  `node` and `npx` all run contained without any drive-root grant.
+- **`nvx setup` is optional, and nvx no longer asks you to run it.** Contained
+  `npx` does need `C:\Users` and the drive root to answer a stat: npm's own
+  realpath walks every directory above the cache `npx` uses, that cache is under
+  the sandbox's home, and an AppContainer with no drive-root grant gets `EPERM`
+  on both. Measured 2026-09-03: `npm install` in a project on `C:` works, `npx -y
+  cowsay hi` from the same project fails with `EPERM: operation not permitted,
+  lstat 'C:\Users'`. An earlier version of this entry said `npx` needed no grant;
+  every run behind that claim happened while the grant was present.
 
-  What the grant is for is a tool that resolves a path all the way up to a drive
-  root, which an AppContainer cannot read without an entry there. No such tool
-  has been measured. If a contained command fails with `EPERM` on a drive root,
-  nvx says so after the failure and names `nvx setup`; `nvx doctor` shows the
-  missing roots as a note, not a failure. The grant is read/execute on the root
-  folder itself, never inherited, for the sandbox's identity only, and its cost
-  is proportional to the volume's size: 22 minutes for 5.6 million entries. It
-  is asked for with that in mind, once, and `nvx setup --undo` takes it back.
+  nvx now answers that stat itself. A preload in every contained node process
+  replies, for the directories above the sandbox's own working directory and
+  home only, with a directory's stats when the OS refuses the real ones. Those
+  directories exist by construction, and the sandbox may already pass through
+  them; only their attributes were hidden. With it, `npx` runs contained on a
+  machine that has never run `nvx setup` (measured: the same `npx` from the same
+  project, no grant, works). What `nvx setup` still serves is a non-node tool
+  that walks to a drive root; if one fails with `EPERM` there, nvx names setup
+  after the failure, and `nvx doctor` shows the missing roots as a note. The
+  grant is read/execute on the root folder itself, never inherited, for the
+  sandbox's identity only, and its cost is proportional to the volume's size:
+  22 minutes for 5.6 million entries. `nvx setup --undo` takes it back.
+- **A contained command run outside any project may start in the sandbox home.**
+  A directory with no `package.json` above it becomes the command's writable
+  root, and granting the sandbox access to a large one — `%TEMP%`, a home
+  folder, the parent of all your projects — is an ACL write over everything
+  beneath it: minutes, on every launch, before anything ran. nvx now gives that
+  grant 1.5 seconds; if it does not finish, the command starts in the sandbox
+  home instead and prints one line saying so, and the directory is not retried
+  for a month. Files the command writes to its working directory then land in
+  the sandbox home and are removed with it. `npx -y <tool>` never cares; a
+  command that must write the directory it was started from should be run from
+  a project, where the grant is always waited for.
 
 - **A loopback exemption left by a pre-0.5.0 `nvx setup` lets contained code reach
   every service on 127.0.0.1.** Local databases, daemon ports, another project's

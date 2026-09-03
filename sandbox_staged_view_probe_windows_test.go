@@ -113,7 +113,7 @@ func TestStagedViewHidesProjectButWritesThrough(t *testing.T) {
 
 	// The grant covers the STAGED view and the real node_modules (the junction
 	// target must be granted in its own right -- a junction is not a bypass).
-	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, staged)
+	scopeCaps, _, err := prepareAppContainerFilesystem(sid, "", guestHome, staged)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}

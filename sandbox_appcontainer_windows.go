@@ -35,13 +35,17 @@ var (
 // constrained launches; workDir stays default integrity so a normal AppContainer
 // child can use it as cwd.
 // It returns the capability SIDs the launch must carry to make use of those
-// grants: the writable roots are granted to a per-project capability rather than
-// to the shared AppContainer SID, so a session in one project cannot reach
-// another's. See sandbox_scope_identity_windows.go for why.
-func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir string) ([]string, error) {
+// grants -- the writable roots are granted to a per-project capability rather
+// than to the shared AppContainer SID, so a session in one project cannot reach
+// another's; see sandbox_scope_identity_windows.go for why -- and the directory
+// the command starts in: workDir, unless the sandbox could not be given access
+// to it in time (see grantNonProjectWorkdir), in which case the guest home
+// stands in.
+func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir string) (caps []string, launchDir string, err error) {
 	packageSIDStr, err := appContainerSidToString(sid)
+	launchDir = workDir
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	// Fresh homes get a traverse-only grant; homes created before 0.5.0 carry a
@@ -53,9 +57,9 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	// project.
 	capSID, err := scopeCapabilitySID(sandboxScopeForWorkDir(workDir))
 	if err != nil {
-		return nil, fmt.Errorf("derive this project's sandbox identity: %w", err)
+		return nil, "", fmt.Errorf("derive this project's sandbox identity: %w", err)
 	}
-	caps := []string{capSID}
+	caps = []string{capSID}
 
 	// Windows grants the same pair sandboxWritableRoots declares, but cannot share
 	// its loop: the guest home is required and takes an integrity label, while the
@@ -73,7 +77,7 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	// describe.
 	for _, root := range sandboxWritableRoots(guestHome, workDir) {
 		if !dirsEqual(root, guestHome) && !dirsEqual(root, workDir) {
-			return nil, fmt.Errorf("sandboxWritableRoots declares %q writable and the Windows sandbox "+
+			return nil, "", fmt.Errorf("sandboxWritableRoots declares %q writable and the Windows sandbox "+
 				"does not implement it; refusing to launch narrower than the declared policy", root)
 		}
 	}
@@ -81,11 +85,11 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	// The guest home must be writable; it is nvx-owned and safe to grant.
 	if guestHome != "" {
 		if err := grantSandboxModify(capSID, guestHome); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		removeStaleAppContainerGrant(packageSIDStr, guestHome)
 		if err := labelLowIntegrity(guestHome); err != nil {
-			return nil, fmt.Errorf("integrity label for %q: %w", guestHome, err)
+			return nil, "", fmt.Errorf("integrity label for %q: %w", guestHome, err)
 		}
 	}
 
@@ -95,11 +99,21 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	// APPLICATION PACKAGES for stat/traverse. Sandbox writes go to the guest home
 	// regardless, so a failed workdir grant should not abort the run.
 	if workDir != "" && !isProfileRoot(workDir) {
-		if err := grantSandboxModify(capSID, workDir); err != nil {
-			LogWarn("Could not grant the sandbox write access to %q: %v", workDir, err)
-			LogInfo("Commands that write the current folder may fail here; run from a project subfolder, or use --no-sandbox.")
+		if findProjectRoot(workDir) != "" {
+			// A project: write access to it is what the command is for, so this
+			// waits however long the tree takes.
+			if err := grantSandboxModify(capSID, workDir); err != nil {
+				LogWarn("Could not grant the sandbox write access to %q: %v", workDir, err)
+				LogInfo("Commands that write the current folder may fail here; run from a project subfolder, or use --no-sandbox.")
+			}
+			removeStaleAppContainerGrant(packageSIDStr, workDir)
+		} else if !grantNonProjectWorkdir(nvxHome, capSID, packageSIDStr, workDir) {
+			// The command cannot even start in a directory the sandbox may not
+			// enter, so it starts in the sandbox's home. See grantNonProjectWorkdir.
+			launchDir = guestHome
+			LogInfo("Running in the sandbox home instead of %s: it is not a project, and granting the sandbox access to it takes too long. "+
+				"Files the command writes to its working directory land in the sandbox home and are removed with it.", workDir)
 		}
-		removeStaleAppContainerGrant(packageSIDStr, workDir)
 	}
 	// Tools stat the ancestors of both the working directory and the guest home
 	// (which is HOME inside the sandbox), so grant traverse on both chains.
@@ -130,7 +144,7 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 		LogInfo("Tools that walk up from the sandbox's home -- npx does -- will fail there with EPERM. " +
 			"This is inside nvx's own directory and needs no elevation; a later run retries it.")
 	}
-	return caps, nil
+	return caps, launchDir, nil
 }
 
 // sandboxScopeForWorkDir returns the project a working directory belongs to, so
@@ -237,6 +251,59 @@ func grantSandboxModify(sidStr, path string) error {
 		return fmt.Errorf("modify grant for sandbox identity: %w", err)
 	}
 	return nil
+}
+
+// grantNonProjectWorkdir grants write access on a working directory that is
+// not inside any project, within the ancestor walk's bound, and remembers a
+// directory that could not be granted in time.
+//
+// A contained command run from a directory with no package.json above it --
+// %TEMP%, a home folder, the parent of all one's projects -- gets that
+// directory as its writable root, and the ACL write for it propagates over the
+// whole tree beneath. Measured 2026-09-03: `npx -y cowsay hi` from %TEMP%
+// (748,317 entries) and from H:\projects\private hung for over two minutes on
+// exactly that write, before the command had started. An MCP client starting
+// `npx -y <server>` from whatever directory it is in hits the same wall, and
+// reports the server as timed out.
+//
+// Such a command rarely writes its working directory; npx never does. So the
+// grant is bounded like an ancestor grant, and a directory that overran is
+// recorded and not retried for the same month, the way a slow ancestor is. A
+// project directory is never bounded: writing it is the point of an install.
+//
+// The same bound covers removing a stale package entry from the directory:
+// that removal is an ACL write of the same cost, and it was the one that hung
+// %TEMP% -- one leftover entry from an older nvx, rewritten over 748,317
+// entries on every launch and never allowed to finish.
+//
+// Reports whether the directory is usable as the command's working directory.
+// Without any entry the sandbox cannot even enter it (CreateProcess fails with
+// "chdir: Access is denied"), so a false answer means the caller has to start
+// the command somewhere else.
+func grantNonProjectWorkdir(nvxHome, capSID, packageSIDStr, workDir string) bool {
+	if appContainerHasGrantFor(capSID, workDir, grantModify) {
+		return true
+	}
+	overran := false
+	attempted := grantAncestorsSkippingKnownFailures(nvxHome, []string{workDir}, func(p string) error {
+		if err := grantACLWithin(p, capSID, aclMaskModify, nvxInheritFlags, ancestorGrantPerPath, nil); err != nil {
+			overran = true
+			return err
+		}
+		for _, stale := range staleAppContainerSIDsOn(p) {
+			_ = grantACLWithin(p, stale, 0, 0, ancestorGrantPerPath, nil)
+		}
+		return nil
+	})
+	switch {
+	case overran:
+		LogDetail("Write access to %s was not granted within %s: it is not a project and its tree is large.", workDir, ancestorGrantPerPath)
+		return false
+	case attempted == 0:
+		LogDetail("Write access to %s skipped: granting it took too long on an earlier run.", workDir)
+		return false
+	}
+	return true
 }
 
 func isProfileRoot(dir string) bool {

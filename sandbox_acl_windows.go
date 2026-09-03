@@ -354,7 +354,9 @@ func writeDACLEntryDropping(path, sidStr string, mask uint32, flags uint8, drop 
 
 // grantACL gives sidStr exactly mask on path, with the given inheritance flags.
 func grantACL(path, sidStr string, mask uint32, flags uint8) error {
-	return writeDACLEntry(path, sidStr, mask, flags)
+	// Through aclWrite, so the test seam that stalls a write covers the direct
+	// grants too, not only the bounded ones.
+	return aclWrite(path, sidStr, mask, flags)
 }
 
 // grantACLWithin is grantACL with a deadline, for the ancestor walk.

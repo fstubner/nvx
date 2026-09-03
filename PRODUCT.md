@@ -187,6 +187,20 @@ Deferred with intent, not built:
   Whether a remaining case genuinely needs `nvx setup` is untested, and this
   section says so rather than guessing.
 
+  **The paragraph above was wrong too, and for the same reason as the one it
+  corrected.** Measured 2026-09-03 with the drive-root grants removed: `npm
+  install` on `C:` works, contained `npx` fails with `EPERM lstat 'C:\Users'`
+  from npm's own realpath, which walks every directory above the `npx` cache
+  in the sandbox home. Every "npx works unelevated" run behind the paragraph
+  above, and behind a commit and README entry made on 2026-09-02, happened
+  while `C:\Users` carried the grant, and nobody checked that premise. The
+  fix that finally holds without elevation is a preload in every contained
+  node process that answers a stat for the ancestors of the sandbox's own
+  working directory and home (`sandbox_walkup_shim.js`); measured working,
+  same project, no grant. This constraint has now flipped three times in
+  four days. The lesson recorded here is procedural: a claim that something
+  works *without* a permission is only measured with that permission absent.
+
   It fails closed either way — `npx` refuses rather than running uncontained — so
   no security guarantee was weakened by any of it.
 

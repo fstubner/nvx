@@ -48,7 +48,9 @@ func addNodeOptionsRequire(env []string, shimPath string) []string {
 		key, value, ok := strings.Cut(e, "=")
 		if ok && strings.EqualFold(key, "NODE_OPTIONS") {
 			found = true
-			if strings.Contains(value, stdioShimName) {
+			// Already there: a nested launch inherits NODE_OPTIONS from the outer
+			// one. Keyed on the file name, since more than one preload uses this.
+			if strings.Contains(value, filepath.Base(shimPath)) {
 				out = append(out, e)
 				continue
 			}

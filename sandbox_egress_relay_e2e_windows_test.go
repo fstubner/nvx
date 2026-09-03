@@ -107,7 +107,7 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 	}
 	defer os.RemoveAll(guestHome)
 	workDir := tempDir(t)
-	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
+	scopeCaps, _, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
 	}

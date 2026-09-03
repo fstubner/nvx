@@ -528,6 +528,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Contained `npx` works without an elevated `nvx setup`, and no longer hangs
+  when run outside a project.** Two separate faults, both hit by an MCP client
+  starting `npx -y <server>` under nvx.
+
+  npm's own realpath stats every directory above the cache `npx` uses; that
+  cache sits in the sandbox's home under `C:\Users`, and an AppContainer with no
+  drive-root grant gets `EPERM` on `C:\Users` and on the drive root. Measured
+  2026-09-03 with the grants removed: `npm install` in a project on `C:` works,
+  `npx -y cowsay hi` from the same project fails with `EPERM: operation not
+  permitted, lstat 'C:\Users'`. A preload in every contained node process now
+  answers that stat, for the directories above the sandbox's own working
+  directory and home only, with a directory's stats when the OS refuses the
+  real ones. Those directories exist by construction and the sandbox may
+  already pass through them; only their attributes were hidden. Measured
+  afterwards, same machine, no grant on any drive root: `npx -y cowsay hi`
+  works from a project on `C:`, from one on `H:`, and `npx -y xtctx` runs from
+  its repo.
+
+  Separately, a command run from a directory with no `package.json` above it
+  — `%TEMP%`, a home folder, the parent of all one's projects — got that
+  directory as its writable root, and the ACL write for it propagated over the
+  whole tree beneath: `npx -y cowsay hi` from `%TEMP%` (748,317 entries) and
+  from `H:\projects\private` hung for over two minutes before the command
+  started. One leftover permission from an older nvx on `%TEMP%` was rewritten
+  the same way on every launch. Both writes are now bounded the way an
+  ancestor grant is, and a directory that overran is remembered for a month.
+  Because the sandbox cannot even start in a directory it holds no entry on,
+  such a command starts in the sandbox home instead and says so; files it
+  writes to its working directory land there and are removed with it. A
+  project directory is never bounded: writing it is the point of an install.
+  Measured afterwards: `npx -y cowsay hi` from `%TEMP%` in 7.8 s, from
+  `H:\projects\private` in 6.2 s with the one-line note.
+
 * **Every contained command on Windows paid about nine seconds of permission
   writes before anything ran.** Measured 2026-09-02 with timestamps inside one
   contained `npm install` of a package that was already installed: 6.0 s writing
@@ -751,6 +784,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   missing roots as a note and the machine stays healthy; `--verbose` still
   shows the launch-time detail. The README entry that said `npx` needs setup is
   corrected, and the help text says the command is optional and slow.
+
+  **Correction, one day later.** The paragraph above was written on a machine
+  whose drive roots were granted, and "npx does not need the grant" was not
+  measured with the grant absent. Measured 2026-09-03 with it removed: `npm
+  install` works, contained `npx` fails with `EPERM lstat 'C:\Users'` from npm's
+  own realpath, which walks every directory above the `npx` cache in the
+  sandbox home. So `npx` did need `C:\Users` readable, and `nvx setup` was the
+  only way to get it. It is not any more: a preload in every contained node
+  process now answers a stat for the directories above the sandbox's own
+  working directory and home, which exist by construction and which the
+  sandbox may already pass through. Contained `npx` runs on a machine that has
+  never run `nvx setup` (measured: same project, no grant, `npx -y cowsay hi`
+  works, and so does `npx -y xtctx` from its repo). What `nvx setup` still
+  serves is a non-node tool that walks to a drive root.
 
 * **Windows: a command run through nvx starts fewer processes.** `npm run dev`,
   where `dev` runs `node -e ...`, is a tree of 5 processes instead of 7,

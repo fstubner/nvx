@@ -68,7 +68,7 @@ func runAppContainerControlLaunch() (bool, string) {
 	}
 	defer os.RemoveAll(workDir)
 
-	scopeCaps, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
+	scopeCaps, _, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		return false, fmt.Sprintf("could not prepare the control filesystem: %v", err)
 	}

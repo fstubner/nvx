@@ -148,7 +148,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 			ledger.ReadExecGrants, config.ReadExecRoots, []string{capSID}, revokeSandboxReadExec)
 	}
 
-	scopeCaps, err := prepareAppContainerFilesystem(sid, config.NvxHome, guestHome, workDir)
+	scopeCaps, launchDir, err := prepareAppContainerFilesystem(sid, config.NvxHome, guestHome, workDir)
 	if err != nil {
 		LogError("AppContainer filesystem setup failed: %v", err)
 		return 1
@@ -283,6 +283,18 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		cleanEnv = addNodeOptionsRequire(cleanEnv, shim)
 	}
 
+	// Tools walk up to the drive root and stat every directory on the way; npm
+	// does it for the cache `npx` uses, and an AppContainer cannot stat C:\Users
+	// or a drive root. The preload answers for the ancestors of the sandbox's own
+	// working directory and home, which exist by construction -- so contained
+	// npx no longer needs an elevated `nvx setup`. See sandbox_walkup_shim.js.
+	if shim, err := writeWalkupShim(guestHome); err != nil {
+		LogWarn("Could not install the directory-walk compatibility preload: %v", err)
+		LogInfo("A tool that walks up to the drive root may fail there with EPERM; 'nvx setup' from an Administrator terminal is the fallback.")
+	} else {
+		cleanEnv = addNodeOptionsRequire(cleanEnv, shim)
+	}
+
 	// Streaming capture needs a stream, which the preload's temp files cannot
 	// be. Contained code cannot create a named pipe, so nvx creates a small pool
 	// out here and the preload only opens them -- see sandbox_stdio_broker_windows.go.
@@ -359,7 +371,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 
 	if useRelay || len(netCtx.ExposePorts) > 0 || len(netCtx.ConnectPorts) > 0 {
 		cmdPath, launchArgs, err = wrapWithEgressSupervisor(
-			sid, config.NvxHome, guestHome, workDir, netCtx, cmdPath, launchArgs,
+			sid, config.NvxHome, guestHome, launchDir, netCtx, cmdPath, launchArgs,
 		)
 		if err != nil {
 			// Fail closed: falling back to a direct connection would silently
@@ -376,7 +388,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	stopHint := startHangHint(config.Command, config.Args)
 	defer stopHint()
 	exitCode, err := launchAppContainerProcess(
-		cmdPath, launchArgs, cleanEnv, workDir, sid, 0, capabilitySIDs,
+		cmdPath, launchArgs, cleanEnv, launchDir, sid, 0, capabilitySIDs,
 	)
 	// A staged supervisor can be corrupted in place without changing its size --
 	// an antivirus quarantine stub, a cloud-sync placeholder, a bad sector. The
@@ -390,7 +402,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 			return 1
 		}
 		exitCode, err = launchAppContainerProcess(
-			cmdPath, launchArgs, cleanEnv, workDir, sid, 0, capabilitySIDs,
+			cmdPath, launchArgs, cleanEnv, launchDir, sid, 0, capabilitySIDs,
 		)
 	}
 	if err != nil {
@@ -450,7 +462,7 @@ func remindAboutDriveRoots(nvxHome, workDir string) {
 	if len(missing) == 0 {
 		return
 	}
-	LogInfo("If the error above is an EPERM on %s, that is a drive root the sandbox cannot read; "+
+	LogDetail("If the error above is an EPERM on %s, that is a drive root the sandbox cannot read; "+
 		"'nvx setup' from an Administrator terminal, run from that volume, grants it. Nothing else needs "+
 		"elevation, and an EPERM inside ~/.nvx is a different problem that nvx retries itself.",
 		strings.Join(missing, " or "))
