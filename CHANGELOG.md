@@ -526,7 +526,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Several abort messages said "aborted by user" when nobody had been asked; they
   now say the warning was not approved, which is what happened.
 
+### Added
+
+* **`isolation.environment.allow`: name an environment variable a contained
+  command needs.** Containment keeps 11 environment variables on Windows (7
+  elsewhere) and drops everything else, so an install script cannot read the
+  secrets in the shell that launched it. That is the point of it, and it stays.
+
+  The cost is that a variable a build genuinely needs goes with them. Measured on
+  Windows: 107 variables outside a contained run, 48 inside, with `CI` and
+  `NODE_ENV` among the casualties. Until now the only way to get one through was
+  `--no-sandbox` — answering "my build needs `NODE_ENV`" by switching the sandbox
+  off.
+
+  ```json
+  { "isolation": { "environment": { "allow": ["CI", "NODE_ENV"] } } }
+  ```
+
+  Exact names, case-insensitive, no patterns. A name matching a sensitive prefix
+  (`AWS_`, `GITHUB_`, `SECRET_`, …) is refused and reported rather than honoured:
+  a policy file lives in the repository, so one line in one must not be able to
+  hand a cloud credential to whatever an install script runs. Adding an entry
+  counts as loosening, so a project-local file naming one needs the same approval
+  an egress host does.
+
 ### Fixed
+
+* **Containment removed most of the environment without saying so.** A tool that
+  reads `CI` to suppress interactive prompts started prompting; a build reading
+  `NODE_ENV=production` quietly emitted a development bundle. Neither failed, so
+  there was nothing to search for, and nothing on screen connected the behaviour
+  to nvx.
+
+  A contained run now says when it removes a variable that changes how tools
+  behave, and names it. Ordinary runs stay quiet: the ~96 variables dropped on a
+  typical Windows run are almost entirely operating-system furniture, and listing
+  them every time would be noise. The complete list goes to the audit log on
+  every contained run.
+
+  The reported set is curated, so it is incomplete by construction — a project's
+  own variable is still dropped without a line on screen, and the audit log is
+  where to look when something behaves differently inside the sandbox.
 
 * **`nvx doctor` said "nvx is intercepting commands correctly" on an install
   where version switching was entirely dead.** Doctor checked one half of a

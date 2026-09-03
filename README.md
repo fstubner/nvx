@@ -526,6 +526,30 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   It matters only where something is waiting with a timeout. If you are wiring a
   contained command into a tool that gives up after a few seconds, run it once by
   hand after installing to absorb the cost.
+- **A contained command sees almost none of your environment.** Containment keeps
+  11 environment variables on Windows (7 elsewhere) and drops the rest, so that a
+  package's install script cannot read the secrets sitting in the shell that
+  launched it. Measured on Windows: 107 variables outside a contained run, 48
+  inside.
+
+  Most of what goes is operating-system furniture nothing reads. Some of it is
+  not: a tool that checks `CI` to suppress interactive prompts starts prompting,
+  and a build reading `NODE_ENV=production` quietly emits a development bundle.
+  Nothing errors, which is what makes it confusing. nvx now says so when a
+  variable of that kind is removed, and records the full list in the audit log.
+
+  Name the ones a project genuinely needs:
+
+  ```json
+  { "isolation": { "environment": { "allow": ["CI", "NODE_ENV"] } } }
+  ```
+
+  Exact names, matched without regard to case; no patterns. A name matching a
+  sensitive prefix (`AWS_`, `GITHUB_`, `SECRET_`, and the rest) is refused and
+  reported rather than honoured — a policy file lives in the repository, and a
+  single line in one must not be able to hand a cloud credential to whatever an
+  install script runs. Adding an entry widens what contained code can see, so a
+  project file that does it needs the same approval as an egress allowlist entry.
 - **A contained tool cannot reach a program kept outside the project.** The
   sandbox grants your project, a throwaway home, and nvx's own runtimes — nothing
   else. A tool that keeps its executables somewhere else cannot run them.

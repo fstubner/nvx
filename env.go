@@ -839,6 +839,7 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 			FilesystemProvider: opts.filesystemProvider,
 			ToolName:           toolName,
 			ReadExecRoots:      resolveReadExecRoots(policy.Isolation.Filesystem.AllowReadExec),
+			PassEnv:            policy.Isolation.Environment.Allow,
 		})
 	}
 
