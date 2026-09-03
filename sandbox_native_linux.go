@@ -36,11 +36,11 @@ func prepareEgressSocket(egress *EgressProxy, guestHome string, netCtx *NetworkL
 
 // platformLaunchNative re-execs nvx as a Landlock child so restrictions are
 // applied in the process that runs the target command.
-func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath string, cleanEnv []string, netCtx NetworkLaunchContext) int {
+func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath string, cleanEnv []string, netCtx NetworkLaunchContext) (int, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		LogError("Failed to resolve nvx executable: %v", err)
-		return 1
+		return 1, errSandboxDidNotStart
 	}
 
 	args := []string{
@@ -102,10 +102,10 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
+			return exitErr.ExitCode(), nil
 		}
 		LogError("Landlock sandbox execution failed: %v", err)
-		return 1
+		return 1, errSandboxDidNotStart
 	}
-	return 0
+	return 0, nil
 }

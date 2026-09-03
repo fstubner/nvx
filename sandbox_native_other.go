@@ -25,9 +25,9 @@ import "runtime"
 // only by building from source -- which is precisely the person who would trust
 // the word "sandbox" without checking. `--no-sandbox` remains the way to run
 // uncontained deliberately; it is handled by shouldSandbox and never reaches here.
-func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath string, cleanEnv []string, netCtx NetworkLaunchContext) int {
+func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath string, cleanEnv []string, netCtx NetworkLaunchContext) (int, error) {
 	LogError("No OS-native sandbox is available on %s; nvx contains commands on Windows, Linux and macOS only.", runtime.GOOS)
 	LogInfo("Refusing to run rather than running this command unprotected.")
 	LogInfo("To run it without containment, and accept that: nvx --no-sandbox %s", config.Command)
-	return 1
+	return 1, errSandboxDidNotStart
 }

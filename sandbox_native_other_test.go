@@ -27,7 +27,7 @@ func TestUnsupportedPlatformRefusesInsteadOfRunningUnprotected(t *testing.T) {
 		WorkDir: dir,
 	}
 
-	code := platformLaunchNative(config, tempDir(t), dir, "/bin/sh", os.Environ(), NetworkLaunchContext{})
+	code, _ := platformLaunchNative(config, tempDir(t), dir, "/bin/sh", os.Environ(), NetworkLaunchContext{})
 
 	if code == 0 {
 		t.Errorf("unsupported platform returned success; it must fail closed (got %d)", code)
