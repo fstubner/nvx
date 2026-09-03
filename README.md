@@ -120,6 +120,11 @@ machine. **If this repo is published, change `runs-on` back to
 `ubuntu-latest` in the same commit** -- public repos get GitHub-hosted
 minutes free, so nothing is lost.
 
+The workflow's first step enforces that rather than trusting anyone to
+remember it: on a public repo it fails before the checkout runs, naming the
+fix. Making the repo public and forgetting the runner gives a red CI, not a
+stranger's code on your machine.
+
 ### Setting the runner up
 
 Once, on the machine that will run the checks. It needs Node (the workflow
