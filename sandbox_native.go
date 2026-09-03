@@ -63,11 +63,17 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 		}()
 	}
 
-	// Platforms that place the sandboxed process in a network namespace need the
-	// parent's proxy exposed on a UNIX socket inside the guest home, since a
-	// namespace-local TCP address cannot reach out. No-op elsewhere.
+	// Platforms that cut the sandboxed process off from the parent's loopback
+	// listeners need the proxy exposed on a UNIX socket inside the guest home:
+	// a Linux network namespace has no route out of itself, and a Windows
+	// AppContainer is refused loopback without an elevated exemption. No-op
+	// elsewhere.
 	if err := prepareEgressSocket(egress, guestHome, &netCtx); err != nil {
-		LogError("Egress proxy setup for namespace isolation failed: %v", err)
+		// "namespace isolation" until 2026-09-03, which named the Linux mechanism
+		// on every platform. The one failure a person actually meets here is a
+		// Windows one -- an NVX_HOME too long for an AF_UNIX path -- and it arrived
+		// under a heading describing something Windows does not do.
+		LogError("Could not put the egress proxy where the sandbox can reach it: %v", err)
 		return 1
 	}
 

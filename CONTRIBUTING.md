@@ -239,6 +239,47 @@ That is why `docs/enforcement-matrix.md` says **measured** for the Windows
 column and **CI** for the other two. Running both is what keeps the word
 "measured" true.
 
+## Why this is one flat `package main`
+
+274 Go files in one directory, ~46,000 lines, no subpackages. This is the first
+thing a newcomer wants to change, so here is what is known about it — labelled,
+because part is reconstructed rather than recorded.
+
+**Not recorded:** nobody wrote down an original decision. The repo starts at
+"Initial commit" on 2026-06-29 with the layout already flat, and it grew.
+Do not read the rest of this section as the reason it was chosen.
+
+**What now depends on it**, which is the part that matters if you want to split
+it:
+
+- **153 of 274 files carry a build tag**, in matched sets — 30 `_windows.go`,
+  8 `_linux.go`, 2 `_darwin.go`, plus 12 `_other.go` and 5 `_stub.go`
+  fallbacks. Every platform's version of a function must sit in the same
+  package as its siblings to substitute for them. A split has to keep each
+  matched set together, so the seams have to fall between *concepts*, never
+  between platforms.
+- **32 test files re-run the test binary as a contained child**, passing
+  `-test.run=` to select which assertion executes inside the AppContainer.
+  That works because there is one test binary containing both the parent and
+  the child halves. Move the sandbox into its own package and each probe needs
+  a built artifact to launch instead of `os.Executable()`.
+- The two above are why `go vet` for all three platforms is a required check
+  and `go build` is not enough: the failure mode of getting a build tag wrong
+  is invisible until another platform compiles the *tests*.
+
+**What it is not.** It is not a workaround for import cycles — `go vet` is
+clean and nothing here imports anything of ours, because there is nothing to
+import. `go.mod` has zero third-party dependencies.
+
+**What it costs**, so the trade is visible: no compiler-enforced boundary
+anywhere. Nothing stops a new file calling into ACL primitives, and the
+package's internal structure is carried entirely by file naming
+(`sandbox_*`, `probe_*`, `policy_*`). That convention is consistent today and
+is the only thing holding the shape.
+
+If you do split it, say so in a `stack-decision.md` entry with what forced it.
+"It is large" is not what forced it.
+
 ## Making changes
 
 1. Fork and create a topic branch from `main`.
