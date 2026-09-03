@@ -99,8 +99,27 @@ http.createServer((q, s) => s.end('SERVED-FROM-CONTAINER egress=' + egress))
 	}
 
 	if !strings.Contains(body, "SERVED-FROM-CONTAINER") {
-		t.Fatalf("the host could not reach the contained server on 127.0.0.1:%d.\nnvx output:\n%s",
-			hostPort, out.String())
+		// Two failures wear this message and they need different fixes, so say
+		// which one happened. The server prints "listening" from inside the
+		// container the moment it binds: with that line, the container is up and
+		// the published-port tunnel is what did not carry the connection; without
+		// it, the sandbox never got as far as running the script and the tunnel
+		// was never exercised.
+		//
+		// An independent audit hit this on 2026-09-03 and could only report the
+		// ambiguous version. It did not reproduce in nine attempts here -- two
+		// NVX_HOME lengths, with and without -race -- where the probe takes 7 to
+		// 24 seconds against the 90 below, so a slower or busier machine running
+		// out of budget is the likeliest of the two and the message could not
+		// distinguish them.
+		reached := "the container never reported its server listening, so the sandbox did not " +
+			"finish standing up within 90s; this is a budget or startup problem, not the tunnel"
+		if strings.Contains(out.String(), "listening") {
+			reached = "the container's server WAS listening, so the published-port tunnel did not " +
+				"carry the connection; this is --expose itself"
+		}
+		t.Fatalf("the host could not reach the contained server on 127.0.0.1:%d.\n%s\nnvx output:\n%s",
+			hostPort, reached, out.String())
 	}
 	// Windows refuses connections INTO an AppContainer, so reaching it at all is
 	// the claim; a reply proves the tunnel carried both directions.
