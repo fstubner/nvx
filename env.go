@@ -895,6 +895,7 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		}
 	}
 	binaryPath = preferWindowsRuntimeExe(binaryPath)
+	warnIfProjectPinsAnotherVersion(nvxHome, rt, activeVer, binaryPath)
 
 	// Windows: launch npm/npx as node.exe rather than through cmd.exe, and let
 	// the child find the real runtime for its own nested `node`/`bun` calls
@@ -1257,4 +1258,85 @@ func copyWholeFile(src, dst string) error {
 		return fmt.Errorf("copied %d of %d bytes", written, srcInfo.Size())
 	}
 	return nil
+}
+
+// warnIfProjectPinsAnotherVersion says so when the project declares a runtime
+// version and the command is about to run a different one.
+//
+// nvx switches versions through the shell integration: the hook sets PATH on
+// `cd`, and the shim then runs whatever that made active. Without the hook
+// loaded there is nothing to switch, so the shim resolves the global default
+// or, failing that, whatever `node` is on PATH -- which may be any version at
+// all.
+//
+// An acceptance pass found the consequence on 2026-09-03: in a project whose
+// .nvmrc pinned 22, with only v22.23.2 installed, `nvx node -v` ran an ambient
+// v24.14.1 and said nothing. `nvx use` already warns loudly when its output is
+// not evaluated; the shim, which is what people actually run all day, did not.
+// For a version manager, silently running the version the project pinned
+// AGAINST is the core job going wrong.
+//
+// A warning and not a switch, deliberately. Which version wins when a shell
+// says one thing and a file says another is a real decision -- someone who ran
+// `nvx use 24` in this shell meant it -- and quietly overriding them would be a
+// different bug of the same kind. This states the disagreement and leaves it
+// to the person.
+func warnIfProjectPinsAnotherVersion(nvxHome string, rt RuntimeProvider, activeVer, binaryPath string) {
+	// Node only: .nvmrc and friends name Node versions, and a bun run has no
+	// business being judged against them.
+	if rt == nil || rt.Name() != "node" || binaryPath == "" {
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	want, source, err := DetectVersionConfig(cwd)
+	if err != nil || want == "" {
+		return
+	}
+	running := runtimeVersionOfBinary(nvxHome, binaryPath, activeVer)
+	if running == "" || versionSatisfies(running, want) {
+		return
+	}
+	LogWarn("%s asks for %s %s, but this command is running %s.",
+		filepath.Base(source), rt.Name(), want, running)
+	LogInfo("nvx switches versions through the shell integration, which is not active here. " +
+		"Load it (see 'nvx env'), or run 'nvx use " + want + "' in this shell.")
+}
+
+// runtimeVersionOfBinary names the version a resolved runtime binary belongs
+// to: the version directory it sits in, or the active version when it is one of
+// nvx's own. Returns "" for a binary nvx does not manage, since there is no
+// version to compare and nothing useful to say.
+func runtimeVersionOfBinary(nvxHome, binaryPath, activeVer string) string {
+	versions := filepath.Join(nvxHome, "versions")
+	if rel, err := filepath.Rel(versions, binaryPath); err == nil &&
+		!strings.HasPrefix(rel, "..") && rel != ".." {
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		// versions/<runtime>/<version>/...
+		if len(parts) >= 2 && strings.HasPrefix(parts[1], "v") {
+			return parts[1]
+		}
+	}
+	if activeVer != "" {
+		return activeVer
+	}
+	// Not nvx-managed and no active version: ask the binary itself, cheaply.
+	out, err := exec.Command(binaryPath, "-v").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// versionSatisfies reports whether the running version answers what the project
+// asked for. The project's request may be a range ("^22", ">=20 <23") or a bare
+// version, so it goes through the same matcher `nvx use` does.
+func versionSatisfies(running, want string) bool {
+	if strings.EqualFold(strings.TrimPrefix(running, "v"), strings.TrimPrefix(want, "v")) {
+		return true
+	}
+	match, err := highestMatching(want, []string{running})
+	return err == nil && match != ""
 }
