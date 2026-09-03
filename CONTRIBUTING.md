@@ -93,6 +93,19 @@ go build -o nvx.exe .
 $env:NVX_PROBE=1; go test -race -timeout 40m .
 ```
 
+**Install a runtime and set it as the global default first**, or a chunk of the
+gate skips itself and says only "run `nvx install`":
+
+```powershell
+./nvx.exe -y install 22; ./nvx.exe -y default 22
+```
+
+`nvx use 22` is not enough — it sets the active shell version, and these probes
+also accept a global default, which is what `nvx default` writes. Both probes
+behind the claim that contained `npx` needs no elevated setup are in this group.
+Measured 2026-09-03: the gate skipped 45 tests without a defaulted runtime and 6
+with one.
+
 **`-race` is part of the gate, not an optional extra.** Without it, nothing in
 this project ever ran the probe tests under the detector: CI's unit step uses
 `-race` but not `NVX_PROBE`, and CI's probe step used `NVX_PROBE` but not

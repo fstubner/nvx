@@ -57,7 +57,7 @@ func TestSandboxIsLoopbackExemptIgnoresOtherAppContainers(t *testing.T) {
 	home := tempDir(t)
 
 	withExemptSIDs(t, []string{
-		"S-1-15-2-1310292540-1029022339-4008023048-2190398717-53961996-4257829345-603366646", // a Windows component
+		"S-1-15-2-1310292540-1029022339-4008023048-2190398717-53961996-4257829345-603366646",  // a Windows component
 		"S-1-15-2-490905099-2794809881-2632752266-3514030558-4166392763-3416490339-321513134", // an orphan
 	})
 	exempt, err := sandboxIsLoopbackExempt(home, ours)
