@@ -2,6 +2,7 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { modules } from './src/data/site-content/modules';
 import { meta } from './src/data/site-content/meta';
+import { social } from './src/data/site-content/footer';
 import {
   docsDescription,
   docsLogo,
@@ -30,13 +31,7 @@ export default defineConfig({
         // changelog set theirs in Page.astro; these are the same asset.
         { tag: 'meta', attrs: { property: 'og:image', content: meta.ogImage } },
         { tag: 'meta', attrs: { name: 'twitter:image', content: meta.ogImage } },
-        {
-          tag: 'meta',
-          attrs: {
-            name: 'twitter:image:alt',
-            content: 'netscli terminal UI running /discover with sanitized lab hostnames, vendors, and response times',
-          },
-        },
+        { tag: 'meta', attrs: { name: 'twitter:image:alt', content: meta.ogImageAlt } },
         ...(process.env.SITE_PREVIEW === '1'
           ? [{ tag: 'meta', attrs: { name: 'robots', content: 'noindex, nofollow' } }]
           : []),
@@ -91,7 +86,7 @@ export default defineConfig({
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/fstubner/netscli',
+          href: `https://github.com/${social.repo}`,
         },
       ],
       sidebar: docsSidebar,
