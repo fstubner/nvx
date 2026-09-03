@@ -43,13 +43,19 @@ part of the site nobody rewrites later.
 4. **`modules.ts`** — turn `docs` or `changelog` off if the product has
    neither. With `docs: false`, also remove the Starlight integration from
    `astro.config.mjs`; the comment there says how.
-5. **The docs**, if any: `src/content/docs/docs/*.md`, and `docs.ts` for the
+5. **`sections.ts`** — which landing sections render, in what order, and
+   which of the two layouts. Dropping a section drops the links into it, so
+   a product with no install story removes `'install'` rather than filling
+   it with something weak. `landingLayout` is `'centered'` (everything on
+   the centre line, screenshot below) or `'split'` (copy left, screenshot
+   right, tighter sections); below 900px they are the same page.
+6. **The docs**, if any: `src/content/docs/docs/*.md`, and `docs.ts` for the
    sidebar. Nothing warns you when a sidebar entry points at a page that does
    not exist — `check:content` does.
-6. **The assets**: `public/assets/`. After replacing the wordmark, run
+7. **The assets**: `public/assets/`. After replacing the wordmark, run
    `npm run check:wordmark`; it measures the asset `meta.ts` names and fails
    if the inset token no longer matches it.
-7. **The theme**: `npm run theme -- --accent "#xxxxxx" --verify` rewrites the
+8. **The theme**: `npm run theme -- --accent "#xxxxxx" --verify` rewrites the
    accent family in both themes and in the landing tier -- twenty tokens --
    then builds and measures the result, stepping the colour until every
    rendered node clears 4.5:1. Without `--verify` it writes and stops. Add
