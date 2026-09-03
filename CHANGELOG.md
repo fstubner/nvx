@@ -528,6 +528,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **`NVX_DEBUG=1` and `nvx report`: keep what nvx said, so a problem can be
+  looked at afterwards.** `audit.log` records 16 kinds of event; everything else
+  nvx prints went to the terminal and was gone when it scrolled. A run that
+  warned about a removed environment variable, or refused an install, left no
+  trace — so the only way to find out what happened was to reproduce it while
+  watching. For anything running unattended, that is not available, which is
+  exactly when the question gets asked.
+
+  `NVX_DEBUG=1` records everything nvx prints to `~/.nvx/debug.log`. Off by
+  default, like `NVX_TRACE`. It rotates once at 5 MB, so a machine left with it
+  set cannot fill its disk.
+
+  `nvx report` collects the version, whether the shims are intercepting, the
+  policy in effect and the tails of both logs into one file — the four things
+  someone else needs before they can help. Nothing is uploaded: nvx has no
+  uploader and this does not add one.
+
+  Unlike `audit.log`, the capture holds **rendered** text, so it can contain
+  paths, hostnames and package names. `LogWarn` still records format strings only
+  and `audit.log` is unchanged — the invariant that keeps a password in a URL out
+  of it still holds. The capture strips credentials from URLs in the recorded
+  command line, which is a mitigation rather than a guarantee; the file says so
+  in its own header, and `nvx report` says so before handing the file over.
+
 * **`isolation.environment.allow`: name an environment variable a contained
   command needs.** Containment keeps 11 environment variables on Windows (7
   elsewhere) and drops everything else, so an install script cannot read the
@@ -551,6 +575,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an egress host does.
 
 ### Fixed
+
+* **`nvx install tsc` was refused as a typosquat of `ms`.** TypeScript's compiler,
+  at 780,294 weekly downloads, was reported as "suspiciously close to popular
+  package ms (edit distance <= 2)" and the install aborted. In a non-interactive
+  shell that is a hard stop: the only way past it was `-y`, which approves every
+  prompt in the session, including a real typosquat.
+
+  Two things were wrong. `tsc` and `ms` share one letter, and at those lengths an
+  edit distance of 2 is not a mistyping — nvx already refuses to suggest a
+  command whose distance is not smaller than the word, and package names now get
+  the same rule. And the authority test was a pure ratio, so `ms` having 700×
+  more downloads outweighed `tsc` having 780,294 of its own; a package that is
+  itself established by the same threshold the check uses to define "popular" is
+  no longer treated as a squat.
+
+  Verified through the built binary, both directions: `nvx npm install tsc`
+  installs, and `expresss` — 723 weekly downloads, one edit from `express` — is
+  still refused.
 
 * **Containment removed most of the environment without saying so.** A tool that
   reads `CI` to suppress interactive prompts started prompting; a build reading

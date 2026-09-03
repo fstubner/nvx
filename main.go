@@ -310,6 +310,9 @@ func main() {
 		}
 		os.Exit(runDoctor(nvxHome, fixPath))
 
+	case "report":
+		os.Exit(runReport(os.Args[2:]))
+
 	case "grants":
 		if len(os.Args) < 3 {
 			LogError("Usage: nvx grants list | nvx grants reset [--all]")
@@ -421,6 +424,23 @@ cannot be told apart from an unused one.
 `
 	case "doctor":
 		return "nvx doctor [--fix]\n\nCheck that ~/.nvx/bin is first on PATH so nvx intercepts node/npm/npx/bun.\nRegenerates shims and reports what is wrong.\n\n--fix  Also repair a shadowed persistent PATH (Windows). That edits your\n       user PATH, so nvx does not do it unless you ask.\n"
+	case "report":
+		return `nvx report [--out=FILE]
+
+Collect what someone else would need to diagnose a problem into a single file:
+nvx's version, whether the shims are intercepting, the policy in effect, and the
+tail of ~/.nvx/audit.log and ~/.nvx/debug.log.
+
+Nothing is uploaded. nvx has no uploader; this writes a file for you to read and
+send yourself.
+
+For the fullest picture, reproduce the problem with NVX_DEBUG=1 set first. That
+records everything nvx prints to ~/.nvx/debug.log, which is otherwise lost when
+the terminal scrolls. Unlike audit.log, those lines are rendered, so they can
+contain paths, hostnames and package names -- read the report before sharing it.
+
+--out=FILE  Write here instead of nvx-report-<timestamp>.txt
+`
 	case "audit":
 		return `nvx audit [--runs] [--failures] [--summary] [--limit=N] [--all]
 
@@ -555,6 +575,7 @@ Commands:
   grants list              Show this project's approved egress hosts, trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)
   audit [--summary]        Review the local record of past runs and security decisions
+  report [--out=FILE]      Collect version, interception, policy and logs into one file
   import [nvm|fnm|volta]   Import Node.js versions already installed via nvm, fnm, or volta
                            (defaults to scanning all three)
   version, -v              Print version info
@@ -590,6 +611,9 @@ Environment:
   NVX_VERBOSE=1          Same as --verbose, for every run in this shell
   NVX_TRACE=1            Record one line per run in ~/.nvx/audit.log for
                          'nvx audit'. Off by default; a local debugging aid
+  NVX_DEBUG=1            Record everything nvx prints in ~/.nvx/debug.log, for
+                         'nvx report'. Off by default. These lines are rendered,
+                         so they can contain paths and package names
   NVX_YES=true           Auto-approve prompts (same as -y)
   NVX_HOME=<dir>         Use a different nvx home instead of ~/.nvx
 
@@ -602,6 +626,7 @@ Examples:
 
 // UI Logging helpers (stderr)
 func LogSuccess(format string, a ...interface{}) {
+	debugCapture("success", fmt.Sprintf(format, a...))
 	if quietFlag {
 		return
 	}
@@ -609,6 +634,7 @@ func LogSuccess(format string, a ...interface{}) {
 }
 
 func LogInfo(format string, a ...interface{}) {
+	debugCapture("info", fmt.Sprintf(format, a...))
 	if quietFlag {
 		return
 	}
@@ -625,6 +651,9 @@ func LogInfo(format string, a ...interface{}) {
 // changes what a person should expect: that the command IS sandboxed. Warnings
 // and errors are not affected by either flag.
 func LogDetail(format string, a ...interface{}) {
+	// Captured even when not shown: --verbose detail is exactly what someone
+	// debugging afterwards wants, and NVX_DEBUG is the request for it.
+	debugCapture("detail", fmt.Sprintf(format, a...))
 	if quietFlag || !verboseFlag {
 		return
 	}
@@ -645,10 +674,15 @@ func LogWarn(format string, a ...interface{}) {
 	// warning about different packages is one recurring warning.
 	// TestEveryLogWarnUsesALiteralFormat pins the invariant this relies on.
 	recordWarning(format)
+	// The RENDERED text goes to the debug capture, which is a different file
+	// with a different contract -- see debug_log.go. audit.log still gets the
+	// template alone, so the password that motivated that rule never reaches it.
+	debugCapture("warn", fmt.Sprintf(format, a...))
 	fmt.Fprintf(os.Stderr, "\x1b[33m⚠\x1b[0m "+format+"\n", a...)
 }
 
 func LogError(format string, a ...interface{}) {
+	debugCapture("error", fmt.Sprintf(format, a...))
 	fmt.Fprintf(os.Stderr, "\x1b[31m✘\x1b[0m "+format+"\n", a...)
 }
 
