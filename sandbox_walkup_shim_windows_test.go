@@ -113,9 +113,10 @@ fs.writeFileSync(process.argv[2], out.join('\n'));
 		_, launchArgs := rewriteWindowsNodeCommand(nodePath, []string{script, report}, nodePath)
 		code, err := launchAppContainerProcess(nodePath, launchArgs, env, workDir, sid, 0,
 			launchCapabilitySIDs(scopeCaps, nil))
-		if err != nil {
-			t.Skipf("this host cannot create AppContainer children: %v", err)
-		}
+		// The shared decision rather than a skip on any error, which is what this
+		// line did when it was written yesterday: a launcher regression would have
+		// been indistinguishable from a hosted runner.
+		requireAppContainerLaunch(t, err)
 		got, rerr := os.ReadFile(report)
 		if rerr != nil {
 			t.Fatalf("child exit %d and no report: %v", code, rerr)
