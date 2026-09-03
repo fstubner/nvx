@@ -4,7 +4,7 @@
 
 import { branding, meta } from './site-content/meta';
 import { modules } from './site-content/modules';
-import { hero } from './site-content/hero';
+import { hero, heroDownloads } from './site-content/hero';
 import { surfaces, surfacesCopy } from './site-content/surfaces';
 import {
   installBinariesNote,
@@ -23,6 +23,7 @@ export type {
   BuiltWithEntry,
   FaqItem,
   Hero,
+  HeroDownload,
   InstallEntry,
   Meta,
   Modules,
@@ -40,6 +41,7 @@ export const site: SiteData = {
   branding,
   modules,
   hero,
+  heroDownloads,
   copy: {
     surfaces: surfacesCopy,
     install: installCopy,
