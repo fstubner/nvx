@@ -58,7 +58,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
+          # No `cache: npm` here, deliberately. That option uploads the npm
+          # cache to GitHub's cache service after every run and downloads it
+          # before the next one -- which is a win on a fresh hosted VM and a
+          # loss on this runner, where ~/.npm is already sitting on the disk
+          # between runs. Measured on the first run of this workflow: the
+          # checks took under four minutes and the cache upload was still
+          # going ten minutes later.
       - run: npm ci
 
       # --- Static guards: no build needed ---------------------------------
