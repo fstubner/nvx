@@ -1,5 +1,5 @@
 export function initActiveNav(): void {
-  const links = [...document.querySelectorAll('[data-site-nav-link][data-section]')];
+  const links = [...document.querySelectorAll<HTMLElement>('[data-site-nav-link][data-section]')];
   if (!links.length) return;
 
   const setActive = (sectionId: string) => {

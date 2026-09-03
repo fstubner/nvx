@@ -2,30 +2,41 @@ import type { Branding, Meta } from './types';
 
 export const meta: Meta = {
   domain: 'https://netscli.com',
-  title: 'NetsCLI - Modern Network Scanner and Diagnostics Toolkit',
+  // "Modern" and "Diagnostics Toolkit" were spending 30 of the ~60 characters
+  // a search result shows on words nobody searches for. The interfaces are the
+  // differentiator, and MCP is the one term here with real intent behind it
+  // and almost no competition.
+  title: 'NetsCLI — Network Scanner for Desktop, CLI, and MCP',
+  // 153 characters. The previous one ran to 172 and was cut around 158, which
+  // truncated the MCP mention off the end -- the most valuable word in it. It
+  // also ran operations and interfaces through a single "for" series
+  // ("a scanner for ... packet capture, and desktop, terminal, CLI, and MCP
+  // workflows"), which does not parse cleanly.
+  // "inspect hosts", not "trace routes": the sentence attributes what it
+  // lists to all four interfaces, and the MCP server has no traceroute tool.
+  // `inspect_host` is a real MCP tool, so the swap keeps the claim true.
+  // Measured at 154 characters in the built page, one more than the 153 this
+  // replaced -- still inside the ~160 a search result shows, and the MCP
+  // mention this description was rewritten to protect is nowhere near the cut.
   description:
-    'NetsCLI is a Rust-based network scanner for LAN discovery, TCP port scans, DNS, trace routes, host inspection, packet capture, and desktop, terminal, CLI, and MCP workflows.',
+    'Discover LAN devices, scan TCP ports, query DNS, and inspect hosts from a desktop app, terminal UI, CLI, or MCP server. One Rust core, consistent results.',
+  // Same scoping as the hero subhead: capture is not in any published desktop
+  // installer, so this must not imply it ships with the app. It is what search
+  // results and link previews show, which is where an inaccurate claim travels
+  // furthest.
   ogDescription:
-    'Discover LAN devices, scan TCP ports, query DNS, trace routes, inspect hosts, and capture packets from the desktop app, terminal UI, CLI, or MCP server backed by one Rust core.',
-  keywords:
-    'network scanner, rust, cli, tui, mcp server, model context protocol, port scan, host discovery, dns lookup, arp table, bonjour, mdns, packet capture, claude, cursor, ai agent, network tool, cross-platform',
+    'Discover LAN devices, scan TCP ports, query DNS, and inspect hosts from the desktop app, terminal UI, CLI, or MCP server backed by one Rust core. Packet capture in capture-enabled CLI builds.',
   siteName: 'NetsCLI',
   author: { name: 'Felix Stubner', url: 'https://github.com/fstubner' },
   ogImage: 'https://netscli.com/assets/tui-discover.png',
   faviconPath: '/favicon.svg',
   themeColor: '#111',
-  changelogTitle: 'NetsCLI release notes',
-  changelogDescription:
-    'Versioned release notes for shipped NetsCLI changes, fixes, and packaging updates.',
 };
 
 export const branding: Branding = {
   wordmark: '/assets/netscli-wordmark.png',
   wordmarkAlt: 'NetsCLI',
-  accentGradient: 'linear-gradient(90deg,#059669,#0aae7a 50%,#1edcff)',
+  accentGradient: 'linear-gradient(90deg,#16a34a,#22c55e 50%,#1edcff)',
   bg: '#111',
   fg: '#d4d4d4',
-  accent: '#0aae7a',
-  accentAlt: '#1edcff',
-  accentHover: '#23d198',
 };

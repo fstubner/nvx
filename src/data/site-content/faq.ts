@@ -1,4 +1,5 @@
 import type { FaqItem, SectionCopy } from './types';
+import { INSTALL_SH_COMMAND } from './install-urls';
 
 export const faqCopy: SectionCopy = {
   heading: 'FAQ',
@@ -14,24 +15,31 @@ export const faq: FaqItem[] = [
   {
     group: 'What it is',
     q: 'What is NetsCLI?',
-    a: 'NetsCLI is an open-source network scanner and diagnostics toolkit written in Rust. It discovers hosts on a subnet, scans TCP ports, queries DNS, traces routes, reads local interfaces and the ARP neighbor cache, and can capture packets when packet-capture support and the required system library are available. You can use it from the desktop app, terminal UI, CLI, or Model Context Protocol (MCP) server.',
+    a: 'NetsCLI is an open-source network scanner written in Rust. It discovers hosts on a subnet, scans TCP ports, queries DNS, traces routes, reads local interfaces and the ARP neighbor cache, and can capture packets when packet-capture support and the required system library are available. You can use it from the desktop app, terminal UI, CLI, or Model Context Protocol (MCP) server.',
     aHtml:
-      'NetsCLI is an open-source network scanner and diagnostics toolkit written in Rust. It discovers hosts on a subnet, scans TCP ports, queries DNS, traces routes, reads local interfaces and the ARP neighbor cache, and can capture packets when packet-capture support and the required system library are available. You can use it from the desktop app, <a href="#surfaces">terminal UI</a>, CLI, or Model Context Protocol (MCP) server.',
+      'NetsCLI is an open-source network scanner written in Rust. It discovers hosts on a subnet, scans TCP ports, queries DNS, traces routes, reads local interfaces and the ARP neighbor cache, and can capture packets when packet-capture support and the required system library are available. You can use it from the desktop app, <a href="#surfaces">terminal UI</a>, CLI, or Model Context Protocol (MCP) server.',
   },
   {
     group: 'Install and updates',
     q: 'How do I install NetsCLI?',
-    a: 'Install the netscli package for the CLI, terminal UI, and MCP server. On Windows, run: winget install fstubner.netscli. On Linux or macOS, run: curl -fsSL https://raw.githubusercontent.com/fstubner/netscli/main/scripts/install.sh | bash. For the Windows desktop app, run: winget install fstubner.netscli.gui. With Rust installed you can also run: cargo install netscli. Prebuilt binaries and desktop installers are attached to GitHub releases when available for that platform.',
+    // Backticks, not quotes. This was a single-quoted string containing
+    // `${INSTALL_SH_COMMAND}`, so the placeholder never interpolated -- and
+    // because `a` is copied verbatim into the FAQPage JSON-LD, the literal
+    // text `${INSTALL_SH_COMMAND}` shipped in the structured data every
+    // search engine and answer engine reads. The visible `aHtml` below was
+    // already a template literal and rendered correctly, which is why the
+    // page looked fine.
+    a: `Install the netscli package for the CLI, terminal UI, and MCP server. On Windows, run: winget install netscli (the full identifier fstubner.netscli also works). On Linux or macOS, run: ${INSTALL_SH_COMMAND}. For the Windows desktop app, run: winget install netscli-gui. With Rust installed you can also run: cargo install netscli. Prebuilt binaries and desktop installers are attached to GitHub releases when available for that platform.`,
     aHtml: `
       <p>Install the <code>netscli</code> package for the CLI, terminal UI, and MCP server:</p>
       <div class="faq-command-list" aria-label="Install commands">
-        <div class="faq-command"><span>Windows</span><code>winget install fstubner.netscli</code></div>
-        <div class="faq-command"><span>Linux/macOS</span><code>curl -fsSL https://raw.githubusercontent.com/fstubner/netscli/main/scripts/install.sh | bash</code></div>
+        <div class="faq-command"><span>Windows</span><code>winget install netscli</code></div>
+        <div class="faq-command"><span>Linux/macOS</span><code>${INSTALL_SH_COMMAND}</code></div>
         <div class="faq-command"><span>Rust</span><code>cargo install netscli</code></div>
       </div>
       <p>Install the Windows desktop app separately:</p>
       <div class="faq-command-list" aria-label="Desktop app install command">
-        <div class="faq-command"><span>Windows app</span><code>winget install fstubner.netscli.gui</code></div>
+        <div class="faq-command"><span>Windows app</span><code>winget install netscli-gui</code></div>
       </div>
       <p>Prebuilt binaries and desktop installers for Windows, Linux, and macOS are attached to <a href="https://github.com/fstubner/netscli/releases/latest">GitHub releases</a> when available for that platform.</p>
     `,
@@ -87,15 +95,15 @@ export const faq: FaqItem[] = [
   {
     group: 'Install and updates',
     q: 'Is NetsCLI a free network scanner for Windows, macOS, or Linux?',
-    a: 'Yes. NetsCLI is MIT-licensed and free for personal, open-source, and commercial use. Windows users can install the CLI/TUI with `winget install fstubner.netscli` and the desktop app with `winget install fstubner.netscli.gui`. macOS and Linux users can install through the script, Homebrew, Cargo, or packaged release artifacts.',
+    a: 'Yes. NetsCLI is MIT-licensed and free for personal, open-source, and commercial use. Windows users can install the CLI/TUI with `winget install netscli` and the desktop app with `winget install netscli-gui`. macOS and Linux users can install through the script, Homebrew, Cargo, or packaged release artifacts.',
     aHtml: `
       <p>Yes. NetsCLI is MIT-licensed and free for personal, open-source, and commercial use.</p>
       <div class="faq-command-list" aria-label="Package manager commands">
-        <div class="faq-command"><span>Windows CLI/TUI/MCP</span><code>winget install fstubner.netscli</code></div>
-        <div class="faq-command"><span>Windows app</span><code>winget install fstubner.netscli.gui</code></div>
+        <div class="faq-command"><span>Windows CLI/TUI/MCP</span><code>winget install netscli</code></div>
+        <div class="faq-command"><span>Windows app</span><code>winget install netscli-gui</code></div>
         <div class="faq-command"><span>Windows</span><code>scoop bucket add fstubner https://github.com/fstubner/scoop-bucket &amp;&amp; scoop install netscli</code></div>
         <div class="faq-command"><span>macOS</span><code>brew tap fstubner/tap &amp;&amp; brew install netscli</code></div>
-        <div class="faq-command"><span>Linux</span><code>curl -fsSL https://raw.githubusercontent.com/fstubner/netscli/main/scripts/install.sh | bash</code></div>
+        <div class="faq-command"><span>Linux</span><code>${INSTALL_SH_COMMAND}</code></div>
         <div class="faq-command"><span>Arch Linux</span><code>yay -S netscli-bin</code></div>
       </div>
       <p>Packet capture is the only workflow that needs a system capture library: libpcap on Linux/macOS or Npcap on Windows. mDNS discovery is pure Rust and is included in the published app, CLI, and MCP builds.</p>
@@ -103,10 +111,17 @@ export const faq: FaqItem[] = [
   },
   {
     group: 'Network workflows',
-    q: 'Can NetsCLI replace nmap for simple network scans?',
-    a: 'For host discovery, basic TCP port scans, DNS lookups, and ARP-table inspection on a local network, NetsCLI can cover the simpler cases with direct subcommands and structured output. For advanced service detection, NSE scripts, OS fingerprinting, and raw packet workflows, nmap remains the better tool.',
+    q: 'Can NetsCLI replace nmap, and does it have a TUI?',
+    a: 'NetsCLI covers the simpler cases nmap is often reached for: host discovery, basic TCP port scans, DNS lookups, and ARP-table inspection on a local network, with direct subcommands and structured output. It also ships a terminal UI — run netscli with no arguments to get an interactive, keyboard-driven scanner in the terminal, which nmap itself does not provide. For advanced service detection, NSE scripts, OS fingerprinting, and raw packet workflows, nmap remains the better tool.',
     aHtml:
-      'For host discovery, basic TCP port scans, DNS lookups, and ARP-table inspection on a local network, NetsCLI can cover the simpler cases with direct subcommands and structured output. For advanced service detection, NSE scripts, OS fingerprinting, and raw packet workflows, nmap remains the better tool.',
+      'NetsCLI covers the simpler cases nmap is often reached for: host discovery, basic TCP port scans, DNS lookups, and ARP-table inspection on a local network, with direct subcommands and structured output. It also ships a <a href="#surfaces">terminal UI</a> — run <code>netscli</code> with no arguments to get an interactive, keyboard-driven scanner in the terminal, which nmap itself does not provide. For advanced service detection, NSE scripts, OS fingerprinting, and raw packet workflows, nmap remains the better tool.',
+  },
+  {
+    group: 'Network workflows',
+    q: 'Is there a netscan command for Linux or Windows?',
+    a: 'There is no standard netscan command on Linux, macOS, or Windows — it is not part of any of those systems. People searching for one usually want a command-line network scanner, which is what NetsCLI is: netscli discover lists live hosts on your subnet, netscli scan checks TCP ports on a host, and netscli sweep does both across a range. Several unrelated third-party tools also use the name NetScan, so check which one you mean before installing.',
+    aHtml:
+      '<p>There is no standard <code>netscan</code> command on Linux, macOS, or Windows — it is not part of any of those systems. People searching for one usually want a command-line network scanner, which is what NetsCLI is:</p><div class="faq-command-list" aria-label="Scanning commands"><div class="faq-command"><span>Live hosts</span><code>netscli discover</code></div><div class="faq-command"><span>Ports on a host</span><code>netscli scan router.local -p 22,80,443</code></div><div class="faq-command"><span>Both, across a range</span><code>netscli sweep</code></div></div><p>Several unrelated third-party tools also use the name NetScan, so check which one you mean before installing.</p>',
   },
   {
     group: 'Network workflows',

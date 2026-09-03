@@ -1,0 +1,299 @@
+*,*::before,*::after{box-sizing:border-box}
+:root{
+  --netscli-shell-gutter:24px;
+}
+html{
+  scroll-behavior:smooth;
+  scrollbar-width:thin;
+  scrollbar-color:rgba(140,149,166,.5) #151515;
+}
+*{
+  scrollbar-width:thin;
+  scrollbar-color:rgba(140,149,166,.42) rgba(var(--netscli-lift-rgb),.035);
+}
+::-webkit-scrollbar{width:12px;height:12px}
+::-webkit-scrollbar-track{background:var(--netscli-bg)}
+::-webkit-scrollbar-thumb{
+  background:rgba(140,149,166,.45);
+  border:3px solid var(--netscli-bg);
+  border-radius:999px;
+}
+::-webkit-scrollbar-thumb:hover{background:rgba(170,178,192,.62)}
+::-webkit-scrollbar-corner{background:var(--netscli-bg)}
+html[data-theme='light']{
+  scrollbar-color:rgba(68,81,106,.42) rgba(241,245,249,.92);
+}
+html[data-theme='light'] *{
+  scrollbar-color:rgba(68,81,106,.36) rgba(17,24,39,.045);
+}
+html[data-theme='light'] ::-webkit-scrollbar-track{background:#f1f5f9}
+html[data-theme='light'] ::-webkit-scrollbar-thumb{
+  background:rgba(68,81,106,.36);
+  border-color:#f1f5f9;
+}
+html[data-theme='light'] ::-webkit-scrollbar-thumb:hover{background:rgba(68,81,106,.52)}
+html[data-theme='light'] ::-webkit-scrollbar-corner{background:#f1f5f9}
+body{
+  margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  background:var(--netscli-bg);color:var(--netscli-text);line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.skip-link{
+  position:fixed;
+  top:8px;
+  left:8px;
+  z-index:1000;
+  padding:8px 12px;
+  border:1px solid #2dd4bf;
+  border-radius:6px;
+  background:var(--netscli-bg);
+  color:var(--netscli-text-strong);
+  transform:translateY(calc(-100% - 16px));
+  transition:transform .15s ease;
+}
+.skip-link:focus{transform:translateY(0)}
+html:has(> body.not-found-page){
+  height:100%;
+  overflow:hidden;
+}
+body.not-found-page{
+  min-height:100%;
+  height:100%;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+body.not-found-page nav,
+body.not-found-page footer{
+  flex:0 0 auto;
+}
+body.not-found-page .not-found{
+  flex:1 1 auto;
+  min-height:0;
+  display:grid;
+  align-content:center;
+}
+a{color:inherit}
+/* Inline code follows the theme, like the command chips and unlike the block
+   samples. It was `--netscli-code-bg`, so a near-black chip landed mid-
+   sentence on a white page -- `netscli`, `--json`, `netscli serve` punching
+   holes through the surfaces prose. See the chip note in code-surface.css. */
+code{
+  font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.85em;
+  background:var(--netscli-chip-bg);padding:2px 6px;border-radius:4px;
+  color:var(--netscli-chip-code-fg);
+}
+
+/* layout */
+.w{max-width:var(--netscli-shell-width);margin:0 auto;padding:0 var(--netscli-shell-gutter)}
+
+/* buttons */
+.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:10px 20px;border-radius:8px;font-size:.875rem;font-weight:600;
+  text-decoration:none;transition:all 120ms;
+}
+.btn-w{background:#e5e5e5;color:var(--netscli-bg);border:1px solid #e5e5e5}
+.btn-w:hover{background:#fff;border-color:#fff}
+.btn-o{background:transparent;color:var(--netscli-text-muted);border:1px solid rgba(var(--netscli-lift-rgb),.15)}
+.btn-o:hover{color:var(--netscli-text);border-color:rgba(255,255,255,.3);text-decoration:none}
+.gh-icon{width:16px;height:16px;fill:currentColor;flex-shrink:0}
+
+
+/* ─── SECTIONS ─── */
+section{
+  padding:64px 0;
+  position:relative;
+  scroll-margin-top:72px;
+}
+/* The alternating band.
+ *
+ * `#151515` sat here as the base layer until now, so in the light theme the
+ * "Get started" section painted a near-black band under near-black headings:
+ * measured at 1.03:1. It survived the pass that mapped every other opaque
+ * background onto a surface token because that pass matched a hex on the same
+ * line as its `background:` property, and this one is the second layer of a
+ * multi-line shorthand -- the value sat alone on its own line and was never
+ * seen. Nothing since caught it either; see the note in scripts/a11y.mjs about
+ * what axe does with text over a gradient. */
+section:nth-of-type(even){
+  background:
+    linear-gradient(180deg,rgba(var(--netscli-lift-rgb),.018),rgba(var(--netscli-lift-rgb),.006)),
+    var(--netscli-surface);
+  border-block:1px solid rgba(var(--netscli-lift-rgb),.045);
+}
+/* No alternating band on a light page. Two dark moments carry the rhythm
+ * instead -- #install below and the footer -- and every other section is the
+ * page colour.
+ *
+ * Six treatments were measured getting here; most failed for reasons a
+ * screenshot does not show, so the numbers are kept:
+ *
+ *   1.09:1  the original tint. Invisible; not a band.
+ *  16.43:1  #install inverted to navy. The .alt and .tryblock command blocks
+ *           are #10151b, so they went 16.21:1 -> 1.08:1: the commands a
+ *           visitor came to copy vanished into their own container.
+ *   1.27:1  a deeper tint on surfaces AND install -- adjacent sections, so it
+ *           tinted 59.6% of the page in one run and read as a background.
+ *    1:1    no bands. Best for the content (blocks at 17.72:1) and too flat.
+ *  1.143:1  a quiet alternating tint. Structure right, colour washed out.
+ *  14.75:1  dark bands on alternating CARDS -- seven inversions per page.
+ *           Gradient joins were tried and were worse: #1c2634 into #fbfbfb
+ *           runs through a muddy grey; spreading a step does not shrink it.
+ *
+ * So: two dark moments, not seven. `.surfaces-section` is still listed here
+ * because Surfaces.astro paints its own background in a component style and
+ * the bare `section` selector does not reach it -- an earlier build cleared
+ * one and not the other, which is invisible from either file alone. */
+html[data-theme='light'] section,
+html[data-theme='light'] .surfaces-section{
+  background:var(--netscli-bg);
+}
+
+/* The accent wash went with the band it belonged to. It is a radial
+   rgba(accent,.055) in the corner of every even section -- part of the band
+   treatment, and on a white page with no band under it, a green smudge at
+   1.08:1 rather than depth. */
+html[data-theme='light'] section:nth-of-type(even)::before{
+  content:none;
+}
+
+/* The footer is the one dark anchor, and it is dark because it has nothing to
+   swallow: no code panels, no cards, one line of text. The ramp is re-pointed
+   on the subtree rather than restated per element -- the same technique as the
+   code surfaces in code-surface.css. The rgb CHANNELS invert with it, not just
+   the ink: the top border and any hairline here are rgba() call sites, and
+   those channels are near-black in the light theme. */
+/* The install section is a band too, continuing the rhythm the surface cards
+ * start: Desktop app (band), Terminal UI, Command line (band), MCP server,
+ * Get started (band), FAQ, footer (band).
+ *
+ * This was built once before as dark navy and reverted, because the .alt and
+ * .cmd command blocks were #10151b and vanished into it at 1.08:1 -- the
+ * commands a visitor came to copy, lost in the container. That objection no
+ * longer holds: chips follow the theme now (see code-surface.css), so on a
+ * light page they are #f2f5fa and sit ON the band at high contrast rather
+ * than inside it. The band became possible because the chips changed, not
+ * because the earlier measurement was wrong.
+ *
+ * Both themes, like the surface cards, so the rhythm is not a light-mode-only
+ * device. */
+#install{
+  background:var(--netscli-band-dark);
+  box-shadow:var(--netscli-band-inset),var(--netscli-band-edge-shadow);
+  color:var(--netscli-ondark-text);
+  --netscli-text:var(--netscli-ondark-text);
+  --netscli-text-strong:var(--netscli-ondark-text-strong);
+  --netscli-text-muted:var(--netscli-ondark-text-muted);
+  --netscli-accent:var(--netscli-ondark-accent);
+  --netscli-accent-rgb:var(--netscli-ondark-accent-rgb);
+  --netscli-accent-bright:var(--netscli-ondark-accent-bright);
+  --netscli-hairline-rgb:255, 255, 255;
+  --netscli-lift-rgb:255, 255, 255;
+}
+
+/* The recommended-install card is a LIGHT card on the band in the light
+   theme, so the ink has to come back to the light ramp inside it. Not needed
+   in dark, where .reco is a dark card and the on-dark ramp above is already
+   right -- hence the theme scope. Same trap as .faq-command and the chips. */
+html[data-theme='light'] #install .reco{
+  color:var(--netscli-text);
+  --netscli-text:#44516a;
+  --netscli-text-strong:#111827;
+  --netscli-text-muted:#596478;
+  --netscli-accent:#146b2e;
+  --netscli-accent-rgb:20, 107, 46;
+  --netscli-accent-bright:#0e5122;
+  --netscli-hairline-rgb:17, 24, 39;
+  --netscli-lift-rgb:17, 24, 39;
+}
+
+/* The Try-it panel stays a dark code surface -- it is something you read, not
+   a chip you click -- so on the band it needs the same edge the surface cards
+   give their code samples: #10151b on #1c2634 is 1.20:1, and no fill fixes
+   that. */
+#install .tryblock,
+#install .try{
+  border-color:rgba(255,255,255,.18);
+}
+
+html[data-theme='light'] footer{
+  --netscli-band-navy:#141c2e;
+  background:var(--netscli-band-navy);
+  box-shadow:var(--netscli-band-inset),var(--netscli-band-edge-shadow);
+  /* Explicit, not just the token. The element inherits `color` from <body>,
+     where the token already resolved to the light ramp, so re-pointing the
+     token alone leaves text that sets no colour of its own dark on navy.
+     Measured rgb(68,81,106) until this line. */
+  color:var(--netscli-text);
+  --netscli-text:var(--netscli-ondark-text);
+  --netscli-text-strong:var(--netscli-ondark-text-strong);
+  --netscli-text-muted:var(--netscli-ondark-text-muted);
+  --netscli-accent:var(--netscli-ondark-accent);
+  --netscli-accent-rgb:var(--netscli-ondark-accent-rgb);
+  --netscli-accent-bright:var(--netscli-ondark-accent-bright);
+  --netscli-hairline-rgb:255, 255, 255;
+  --netscli-lift-rgb:255, 255, 255;
+}
+
+section:nth-of-type(even)::before{
+  content:"";
+  position:absolute;inset:0;
+  pointer-events:none;
+  z-index:0;
+  background:radial-gradient(circle at 18% 0%,rgba(var(--netscli-accent-rgb),.055),transparent 34rem);
+}
+section>.w{position:relative;z-index:1}
+section h2{font-size:1.5rem;font-weight:700;color:var(--netscli-text-strong);margin:0 0 6px}
+section .lead{color:var(--netscli-text-muted);font-size:.9375rem;margin:0 0 28px}
+section .lead a{color:var(--netscli-accent);text-decoration:underline;text-underline-offset:3px}
+section .lead a:hover{color:var(--netscli-accent-bright)}
+
+
+/* ─── COPY BUTTON ─── */
+.has-copy{position:relative}
+.copy-btn{
+  position:absolute;top:50%;right:5px;transform:translateY(-50%);
+  /* Opaque background so text behind the button isn't visible through it */
+  background:var(--netscli-surface-raised);border:1px solid rgba(var(--netscli-lift-rgb),.12);
+  border-radius:6px;
+  /* Themed, not a literal white. The icon is an inline SVG stroked with
+     `currentColor`, so `rgba(255,255,255,.34)` drew it white on white in the
+     light theme -- every copy button rendered as an empty square. The button's
+     own background and border already used the lift channel; only the ink did
+     not. --netscli-text-muted rather than a lift alpha because it is the same
+     ink the rest of the page uses for secondary marks, and it is contrast
+     checked. */
+  color:var(--netscli-text-muted);
+  width:27px;height:27px;padding:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;opacity:0;
+  transition:none;
+}
+.copy-btn svg{width:15px;height:15px;display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.has-copy:hover .copy-btn,.has-copy:focus-within .copy-btn{opacity:1}
+.faq-command:hover .copy-btn,.faq-command:focus-within .copy-btn{opacity:1}
+.faq-command .copy-btn{right:10px}
+.copy-btn:hover{background:var(--netscli-surface-raised);border-color:rgba(var(--netscli-lift-rgb),.18);color:var(--netscli-text-strong)}
+.copy-btn.copied{color:#3fb950;border-color:rgba(63,185,80,.4)}
+.surface-visual .codeblock .copy-btn,
+.tryblock .copy-btn{
+  top:12px;
+  right:12px;
+  transform:none;
+}
+/* Touch devices don't have :hover; keep copy buttons visible so they're discoverable */
+@media (hover: none){
+  .copy-btn{opacity:.7}
+  .copy-btn:hover{opacity:1}
+}
+
+
+/* ─── RESPONSIVE ─── */
+/* Hero- and Faq-specific responsive rules moved into their own component
+   <style> blocks; only the shared cross-component `section` rules stay here. */
+@media(max-width:600px){
+  section{padding:44px 0}
+  section h2{font-size:1.25rem}
+}

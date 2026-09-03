@@ -12,8 +12,6 @@ export interface Meta {
   description: string;
   /** Short form used in OG / Twitter cards. Falls back to description. */
   ogDescription?: string;
-  /** Comma-separated keyword list. */
-  keywords: string;
   /** Site name for OG. */
   siteName: string;
   author: { name: string; url: string };
@@ -22,10 +20,6 @@ export interface Meta {
   /** Favicon + apple-touch-icon. */
   faviconPath: string;
   themeColor: string;
-  /** /changelog/ page <title> and <meta name="description">. Only used
-   *  when modules.changelog is true. */
-  changelogTitle?: string;
-  changelogDescription?: string;
 }
 
 export interface Branding {
@@ -39,18 +33,6 @@ export interface Branding {
   bg: string;
   /** Default body text colour. */
   fg: string;
-  /** Primary accent colour (buttons, links, focus rings) as a single hex
-   *  value — the solid-colour counterpart to `accentGradient`. Consumed as
-   *  the `--accent` CSS custom property (see layouts/Page.astro); every
-   *  component should reference `var(--accent)` instead of hardcoding this
-   *  hex value, so retheming means editing it in one place. */
-  accent: string;
-  /** Secondary accent colour used at the opposite end of `accentGradient`
-   *  and for a few hover/highlight states. Consumed as `--accent-alt`. */
-  accentAlt: string;
-  /** Brighter accent variant used for hover/focus states on interactive
-   *  elements. Consumed as `--accent-hover`. */
-  accentHover: string;
 }
 
 export interface Hero {
@@ -59,7 +41,12 @@ export interface Hero {
   heading: string;
   subhead: string;
   /** Shell command shown in the hero's highlighted install block. */
+  /** The prominent hero command. Swapped per-OS at runtime by os-tabs.ts;
+   *  this is what a visitor sees before that runs, and what a crawler sees. */
   quickInstall: string;
+  /** The smaller command under it — a genuinely different route, never a
+   *  restatement of the one above. */
+  quickInstallAlt: string;
   /** Jump-to-install link label. */
   installLinkLabel: string;
   /** Path to the hero screenshot. */
@@ -72,18 +59,6 @@ export interface Hero {
   heroImageWebp?: string;
   /** Link to the source repo for the "View source" pill. */
   sourceUrl: string;
-  /** Optional per-platform installer downloads, rendered as a primary
-   *  "Desktop app" button + dropdown menu in the hero. Omit entirely for
-   *  products with no downloadable installer (e.g. a hosted/SaaS product) —
-   *  the hero then shows only the quick-install command. */
-  downloads?: SurfaceDownload[];
-  /** Label for the primary download button, e.g. "Desktop app". Required
-   *  if `downloads` is set. */
-  downloadsLabel?: string;
-  /** Optional secondary command shown below the quick-install command,
-   *  e.g. a package-manager one-liner (`winget install ...`,
-   *  `brew install ...`). Omit to show only the quick-install command. */
-  packageManagerInstall?: string;
 }
 
 export interface SurfaceCard {
@@ -122,11 +97,30 @@ export type Platform = 'windows' | 'macos' | 'linux';
 
 export interface InstallEntry {
   label: string;
-  /** Shell command(s) shown monospace with copy button. */
-  command: string;
-  /** Optional small hint. NOT rendered in the current OS-tabbed design;
-   *  kept on the type for possible future variants or SEO copy. */
+  /** Shell command(s) shown monospace with copy button. Omit when this
+   *  entry is a direct download — set `href` instead. */
+  command?: string;
+  /** Direct download URL. Entries with an `href` render as a link rather
+   *  than a copyable command, for the installer artifacts that have no
+   *  package-manager equivalent (.msi / .dmg / .deb / .AppImage). */
+  href?: string;
+  /** Optional small hint, rendered under the label. Used to warn about
+   *  the unsigned installers before someone hits a Gatekeeper or
+   *  SmartScreen dialog with no explanation. */
   hint?: string;
+}
+
+/** Install routes for one OS, split by which thing you are installing.
+ *
+ *  Both lists follow the same convention as before: position 0 is the
+ *  recommended entry and renders as the hero card; the rest render as
+ *  alternative rows in array order.
+ */
+export interface PlatformInstall {
+  /** CLI + terminal UI (the `netscli` binary). */
+  cli: InstallEntry[];
+  /** Desktop GUI application. */
+  desktop: InstallEntry[];
 }
 
 export interface TryCommand {
@@ -190,9 +184,8 @@ export interface SiteData {
   };
   surfaces: SurfaceCard[];
   install: {
-    /** Per-OS arrays. Position 0 is the recommended (hero) entry; the
-     *  rest render as alternative rows below it in array order. */
-    byPlatform: Record<Platform, InstallEntry[]>;
+    /** Per-OS install routes, each split into CLI and desktop groups. */
+    byPlatform: Record<Platform, PlatformInstall>;
     tryCommands: TryCommand[];
     binariesNote: string;
   };

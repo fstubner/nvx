@@ -6,26 +6,17 @@ import ThemeSelect from 'virtual:starlight/components/ThemeSelect';
 const shouldRenderSearch =
   config.pagefind || config.components.Search !== '@astrojs/starlight/components/Search.astro';
 
+import { hrefFor, isCurrent, navGroupBreak, navLinks } from '../../data/site-content/nav';
+
 const pathname = Astro.url.pathname;
-type NavLink = {
-  href: string;
-  label: string;
-  external?: boolean;
-};
 
-const siteLinks: NavLink[] = [
-  { href: '/#surfaces', label: 'Features' },
-  { href: '/#install', label: 'Install' },
-  { href: '/#faq', label: 'FAQ' },
-  { href: '/docs/', label: 'Docs' },
-  { href: '/changelog/', label: 'Changelog' },
-];
-
-const isActive = (href: string) => {
-  if (href === '/docs/') return pathname.startsWith('/docs');
-  if (href === '/changelog/') return pathname.startsWith('/changelog');
-  return pathname.replace(/\/$/, '') === href.replace(/\/$/, '');
-};
+/* See the note in components/Nav.astro. */
+function linkClass(link: (typeof navLinks)[number], index: number): string | undefined {
+  const parts: string[] = [];
+  if (link.external) parts.push('external-link');
+  if (index === navGroupBreak) parts.push('nav-group-start');
+  return parts.length ? parts.join(' ') : undefined;
+}
 ---
 
 <div class="docs-topbar">
@@ -39,11 +30,12 @@ const isActive = (href: string) => {
 
   <nav class="docs-nav-links" aria-label="Site navigation">
     {
-      siteLinks.map((link) => (
+      navLinks.map((link, i) => (
         <a
-          href={link.href}
-          class={link.external ? 'external-link' : undefined}
-          aria-current={isActive(link.href) ? 'page' : undefined}
+          href={hrefFor(link, pathname)}
+          class={linkClass(link, i)}
+          aria-current={isCurrent(link, pathname)}
+          {...(link.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
         >
           {link.label}
         </a>
@@ -59,7 +51,10 @@ const isActive = (href: string) => {
 
 <script>
   import { initDocsHeader } from '../../scripts/docs-header';
+  import { initDocsSearchKeys, initDocsSearchResilience } from '../../scripts/docs-search-keys';
   initDocsHeader();
+  initDocsSearchKeys();
+  initDocsSearchResilience();
 </script>
 
 <style>
@@ -91,13 +86,20 @@ const isActive = (href: string) => {
       min-width: 0;
       height: var(--sl-nav-height);
       margin: 0 auto 0 0;
-      transform: translateX(-18px);
+      /* Cancels the wordmark asset's own transparent left margin. This was a
+         flat -18px against a 12.4px margin, so the docs logo hung 5.5px
+         further left than the identical logo on the landing bar. See
+         tokens.css. */
+      transform: translateX(calc(var(--netscli-mark-width) * var(--netscli-mark-inset-ratio) * -1));
     }
 
     .docs-mark img {
       display: block;
-      width: 160px;
+      width: var(--netscli-mark-width);
       height: auto;
+      /* Same token as the landing bar's `.mark`, so both bars darken the
+         wordmark by the same amount on a light page. See tokens.css. */
+      filter: var(--netscli-mark-filter);
     }
 
     .docs-nav-links {
@@ -125,12 +127,32 @@ const isActive = (href: string) => {
     }
 
     .docs-nav-links a:hover,
-    .docs-nav-links a[aria-current='page'] {
+    .docs-nav-links a[aria-current] {
       color: var(--sl-color-white);
     }
 
-    .docs-nav-links a[aria-current='page'] {
-      border-bottom-color: #0aae7a;
+    /* Same separator as the landing bar -- see Nav.astro, including why it is
+       a short centred pseudo-element rather than a border: these links are the
+       full nav height, so a border ran floor to ceiling and split the bar. */
+    .docs-nav-links a.nav-group-start {
+      position: relative;
+      margin-inline-start: 0.35rem;
+      padding-inline-start: 0.95rem;
+    }
+
+    .docs-nav-links a.nav-group-start::before {
+      content: "";
+      position: absolute;
+      inset-inline-start: 0;
+      top: 50%;
+      width: 1px;
+      height: 18px;
+      margin-block-start: -9px;
+      background: rgba(var(--netscli-hairline-rgb), 0.28);
+    }
+
+    .docs-nav-links a[aria-current] {
+      border-bottom-color: var(--netscli-accent);
     }
 
     .docs-header-search {
@@ -162,11 +184,21 @@ const isActive = (href: string) => {
       margin: 0;
     }
 
-    .docs-header-theme :global(starlight-theme-select),
-    .docs-header-theme :global(starlight-theme-select label) {
+    .docs-header-theme :global(starlight-theme-select) {
       display: inline-flex;
       align-items: center;
       height: 100%;
+    }
+
+    /* The label is the visible control -- bordered, rounded, tinted -- so it
+       must size to its content, not to the header. `height: 100%` stretched
+       it to the full 60px nav height, next to a 37.6px search button, which
+       is what made the bordered box look oversized and misaligned. The
+       wrapper above keeps 100% so the control stays vertically centred. */
+    .docs-header-theme :global(starlight-theme-select label) {
+      display: inline-flex;
+      align-items: center;
+      height: auto;
     }
 
     @media (max-width: 72rem) {
@@ -175,10 +207,6 @@ const isActive = (href: string) => {
         width: min(100%, calc(100vw - 2rem));
         max-width: calc(100vw - 2rem);
         padding-inline: 1rem;
-      }
-
-      .docs-mark img {
-        width: 140px;
       }
 
       .docs-nav-links {
@@ -193,6 +221,13 @@ const isActive = (href: string) => {
         min-width: 7.75rem;
       }
 
+    }
+
+    /* Same width the landing bar collapses at -- see the note on
+       .docs-nav-links below. The theme control moves into the mobile menu's
+       footer at this point (MobileMenuFooter.astro), so it is relocated
+       rather than lost. */
+    @media (max-width: 900px) {
       .docs-header-theme {
         display: none !important;
       }
@@ -210,17 +245,12 @@ const isActive = (href: string) => {
 
       .docs-mark {
         margin-right: 0;
-        transform: translateX(-8px);
       }
 
       .docs-nav-links {
         margin-left: auto;
         gap: 0.7rem;
         font-size: 0.76rem;
-      }
-
-      .docs-mark img {
-        width: 132px;
       }
 
       .docs-header-search {
@@ -233,7 +263,19 @@ const isActive = (href: string) => {
 
     }
 
-    @media (max-width: 72rem) {
+    /* 900px, matching the landing bar's own collapse in Nav.astro.
+     *
+     * This was 72rem (1152px), so between 901 and 1152 the docs bar showed a
+     * hamburger while the landing bar showed the same six links -- the two
+     * halves of one site with visibly different navigation, and the shape of
+     * the bar changing under the cursor when you clicked "Docs".
+     *
+     * Nothing forced the early collapse: measured at 901px the bar's contents
+     * come to 476px against 842px of room, with the wordmark at its full size
+     * and search already reduced to its icon. If you change this, change
+     * Nav.astro's `@media(max-width:900px)` with it; a media query cannot read
+     * a custom property, so the number genuinely has to be written twice. */
+    @media (max-width: 900px) {
       .docs-nav-links {
         display: none;
       }

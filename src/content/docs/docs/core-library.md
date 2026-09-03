@@ -21,12 +21,18 @@ Interface layers use the core `Ops` facade instead of implementing their own pro
 Dependency flow stays one-way:
 
 ```text
-netscli CLI/TUI ┐
-netscli-gui     ├─> netscli-core
-netscli-mcp     ┘
+netscli CLI/TUI ──┬──────────────> netscli-core
+                  │                     ^
+                  └─> netscli-mcp ──────┘
+netscli-gui ─────────────────────────────┘
 ```
 
 Interface crates may depend on the core. The core must not depend on a UI layer, MCP protocol layer, or desktop runtime.
+
+The CLI additionally depends on `netscli-mcp`, because `netscli serve` runs
+the MCP server in-process — the one edge between two interface crates. The
+diagram previously showed all three as siblings, which made `netscli serve`
+look impossible.
 
 ## Ownership rules
 
@@ -43,7 +49,7 @@ Most consumers start from `Ops`.
 | Type | Role |
 | --- | --- |
 | `Ops` | High-level async operation facade used by the CLI, TUI, Tauri backend, and MCP server. |
-| `OpsConfig` | Runtime limits and defaults for timeouts, concurrency, subnet size, and port count. |
+| `OpsConfig` | Runtime defaults for scan, ping and DNS timeouts, plus probe concurrency. |
 | Result structs | Shared data returned by scans, discovery, DNS, ARP, interfaces, sweep, inspect, and packet capture. |
 
 Expose new behavior through the facade so every interface gets the

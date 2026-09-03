@@ -1,59 +1,67 @@
+# The same gate netscli runs on its site/ directory, with this repo as the
+# site root. Two jobs: static guards that need no build, then the build with
+# the checks that read dist/. Every step blocks; a check that is allowed to
+# fail is a check nobody reads.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
-# A newer push makes an in-flight run pointless, and on a private repo that
-# run is still consuming the account's shared Actions minutes. Runs on the
-# default branch are left alone: that is the history everything else is
-# compared against.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != format("refs/heads/{0}", github.event.repository.default_branch) }}
-
 jobs:
-  maintainability:
-    name: File size guard
+  guards:
+    name: Static guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - run: node scripts/check-file-size.mjs
-
-  build:
-    name: Build + typecheck
-    needs: maintainability
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: package-lock.json
+      - run: npm ci
+      # 300 lines per file, with named transition exceptions.
+      - name: File size guard
+        run: node scripts/check-file-size.mjs
+      # A declaration a later file always overrides is dead; budget 0.
+      - name: Dead CSS budget
+        run: npm run check:css
+      # One region file per part of the docs shell, all registered, no
+      # !important outside the named exceptions.
+      - name: CSS region guard
+        run: npm run check:regions
+      # The wordmark's transparent margin still matches the token that
+      # cancels it.
+      - name: Wordmark inset
+        run: npm run check:wordmark
+
+  site:
+    name: Build and checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # check:changelog compares dated headings against tags; with the
+          # default depth there are none and a dated-but-untagged version
+          # cannot be caught.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
       - run: npm ci
       - run: npm run build
-      - name: Typecheck (non-blocking)
-        # ~43 pre-existing type errors carried over from the source
-        # extraction (untyped DOM access in landing-page.ts under a strict
-        # tsconfig) — see README's "Known gaps". Surfaced but not gating
-        # until cleaned up.
-        run: npm run check
-        continue-on-error: true
-      - name: Accessibility check (non-blocking)
-        # axe-core reports a color-contrast violation on /docs/* (Starlight
-        # footer/mobile-nav external links) on this runner's headless
-        # Chrome that does not reproduce locally on Windows Chrome — same
-        # code, environment-dependent font-rendering/antialiasing at the
-        # WCAG threshold boundary, not a change made in this pass. See
-        # README's "Known gaps".
+      - run: npm run check
+      - name: Changelog dates
+        run: npm run check:changelog
+      - name: Accessibility check
         run: npm run test:a11y
-        continue-on-error: true
+      - name: Rendered contrast sweep
+        run: npm run check:contrast
