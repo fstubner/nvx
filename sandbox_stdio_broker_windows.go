@@ -52,6 +52,16 @@ type stdioChannel struct {
 	// what nvx read from childPipe.
 	nodePipe string
 
+	// reverse turns the channel around for stdin: node writes, the grandchild
+	// reads. The plumbing is identical -- two pipes, nvx holding both server
+	// ends -- and only the direction of the copy differs, because the reason for
+	// two pipes (a named pipe joins a server to a client, so two clients cannot
+	// talk to each other) is symmetric.
+	//
+	//	stdout: grandchild --> childPipe --> nvx --> nodePipe --> node
+	//	stdin:  node --> nodePipe --> nvx --> childPipe --> grandchild
+	reverse bool
+
 	childServer syscall.Handle
 	nodeServer  syscall.Handle
 	// closeOnce guards nodeServer, which both the pump (at end of stream) and
@@ -88,14 +98,17 @@ const stdioChannelPoolSize = 16
 // nvxStdioChannelsEnv carries the provisioned names to the preload.
 const nvxStdioChannelsEnv = "NVX_STDIO_CHANNELS"
 
+// nvxStdinChannelsEnv carries the reverse-direction pool.
+const nvxStdinChannelsEnv = "NVX_STDIN_CHANNELS"
+
 // provisionStdioChannels creates the pool for one sandbox session.
 //
 // Best-effort by design: if any of it fails the caller carries on without the
 // channels and contained streaming keeps hanging exactly as it does today. A
 // failure to provide a workaround must not become a failure to run the command.
-func provisionStdioChannels(containerSID string, sessionID string) (*stdioBroker, string) {
+func provisionStdioChannels(containerSID string, sessionID string) (*stdioBroker, string, string) {
 	if containerSID == "" {
-		return nil, ""
+		return nil, "", ""
 	}
 	// Both identities have to be granted: an AppContainer's access check is
 	// satisfied only when the DACL allows the user the process runs as AND its
@@ -110,27 +123,45 @@ func provisionStdioChannels(containerSID string, sessionID string) (*stdioBroker
 	// case, and it should never have left it.
 	userSID, err := currentUserSIDString()
 	if err != nil {
-		return nil, "" // no channels rather than a pipe open to everyone
+		return nil, "", "" // no channels rather than a pipe open to everyone
 	}
 	sddl := "D:(A;;GA;;;" + userSID + ")(A;;GA;;;" + containerSID + ")"
 
 	broker := &stdioBroker{}
-	var names []string
+	var names, stdinNames []string
 	for i := 0; i < stdioChannelPoolSize; i++ {
-		ch, err := newStdioChannel(sessionID, i, sddl)
+		ch, err := newStdioChannel(sessionID, i, sddl, false)
 		if err != nil {
 			broker.Close()
-			return nil, ""
+			return nil, "", ""
 		}
 		broker.channels = append(broker.channels, ch)
 		names = append(names, ch.childPipe+"|"+ch.nodePipe)
+	}
+	for i := 0; i < stdinChannelPoolSize; i++ {
+		ch, err := newStdioChannel(sessionID, i, sddl, true)
+		if err != nil {
+			broker.Close()
+			return nil, "", ""
+		}
+		broker.channels = append(broker.channels, ch)
+		stdinNames = append(stdinNames, ch.childPipe+"|"+ch.nodePipe)
 	}
 
 	for _, ch := range broker.channels {
 		go ch.pump()
 	}
-	return broker, strings.Join(names, ";")
+	return broker, strings.Join(names, ";"), strings.Join(stdinNames, ";")
 }
+
+// stdinChannelPoolSize is how many contained children can be WRITTEN to at once.
+//
+// Half the stream pool, because a `stdio:'pipe'` spawn takes two output streams
+// and one input, so anything beyond this could not have its output streamed
+// anyway. A spawn that finds the pool empty falls back to the empty-file stdin
+// that was the only behaviour before, so running out costs the old limitation
+// rather than a new failure.
+const stdinChannelPoolSize = stdioChannelPoolSize / 2
 
 // currentUserSIDString returns the SID of the user this process runs as.
 //
@@ -162,9 +193,13 @@ func currentUserSIDString() (string, error) {
 	return s, nil
 }
 
-func newStdioChannel(sessionID string, index int, sddl string) (*stdioChannel, error) {
-	base := fmt.Sprintf(`\\.\pipe\nvx-stdio-%s-%d`, sessionID, index)
-	ch := &stdioChannel{childPipe: base + "-c", nodePipe: base + "-n"}
+func newStdioChannel(sessionID string, index int, sddl string, reverse bool) (*stdioChannel, error) {
+	kind := "o"
+	if reverse {
+		kind = "i"
+	}
+	base := fmt.Sprintf(`\\.\pipe\nvx-stdio-%s-%s%d`, sessionID, kind, index)
+	ch := &stdioChannel{childPipe: base + "-c", nodePipe: base + "-n", reverse: reverse}
 
 	var err error
 	if ch.childServer, err = createNamedPipeWithSecurity(ch.childPipe, sddl); err != nil {
@@ -187,6 +222,18 @@ func (c *stdioChannel) pump() {
 		return
 	}
 	if !acceptPipeClient(c.nodeServer) {
+		return
+	}
+	if c.reverse {
+		// stdin: what node writes reaches the grandchild. When node closes its
+		// end this returns, and the grandchild then has to see EOF -- a tool
+		// that feeds a child input and waits for the answer hangs forever
+		// otherwise, which is the failure this direction exists to remove.
+		_, _ = io.Copy(pipeWriter{c.childServer}, pipeReader{c.nodeServer})
+		c.closeOnce.Do(func() {
+			syscall.CloseHandle(c.childServer)
+			c.childServer = syscall.InvalidHandle
+		})
 		return
 	}
 	_, _ = io.Copy(pipeWriter{c.nodeServer}, pipeReader{c.childServer})
@@ -215,7 +262,15 @@ func (b *stdioBroker) Close() {
 	}
 	b.closed = true
 	for _, ch := range b.channels {
-		if h := ch.childServer; h != 0 && h != syscall.InvalidHandle {
+		// The pump's closeOnce owns the DESTINATION handle, whichever that is:
+		// nodeServer going out, childServer coming in. Close the source here and
+		// leave the destination to the Once, or a reverse channel's childServer
+		// is closed from two goroutines at once.
+		source, dest := ch.childServer, &ch.nodeServer
+		if ch.reverse {
+			source, dest = ch.nodeServer, &ch.childServer
+		}
+		if h := source; h != 0 && h != syscall.InvalidHandle {
 			procCancelIoExBroker.Call(uintptr(h), 0)
 			syscall.CloseHandle(h)
 		}
@@ -226,9 +281,9 @@ func (b *stdioBroker) Close() {
 		// runs -race, which is what made a suite that passes ten times in a row
 		// fail once with nothing to point at.
 		ch.closeOnce.Do(func() {
-			if node := ch.nodeServer; node != 0 && node != syscall.InvalidHandle {
-				procCancelIoExBroker.Call(uintptr(node), 0)
-				syscall.CloseHandle(node)
+			if h := *dest; h != 0 && h != syscall.InvalidHandle {
+				procCancelIoExBroker.Call(uintptr(h), 0)
+				syscall.CloseHandle(h)
 			}
 		})
 	}
@@ -327,6 +382,17 @@ type brokerSecAttrs struct {
 	Length             uint32
 	SecurityDescriptor uintptr
 	InheritHandle      uint32
+}
+
+// addStdinChannelsEnv puts the reverse-direction names where the preload can
+// find them, under their own variable so an older preload -- which knows only
+// the output pool -- ignores them instead of taking an input channel for an
+// output one.
+func addStdinChannelsEnv(env []string, names string) []string {
+	if names == "" {
+		return env
+	}
+	return append(env, nvxStdinChannelsEnv+"="+names)
 }
 
 // addStdioChannelsEnv puts the provisioned names where the preload can find them.

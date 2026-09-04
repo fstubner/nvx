@@ -528,6 +528,30 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   It matters only where something is waiting with a timeout. If you are wiring a
   contained command into a tool that gives up after a few seconds, run it once by
   hand after installing to absorb the cost.
+- **Windows may flag nvx as malware, and the released binaries are not
+  Authenticode-signed.** Observed on 2026-09-04: Windows Defender quarantined
+  freshly built nvx binaries as `Trojan:Win32/Bearfoos.A!ml`, three times in one
+  minute, and `go build` could not produce an executable at all until a build
+  directory exclusion was added.
+
+  The `!ml` suffix marks a machine-learning verdict rather than a signature
+  match, and nvx is a plausible thing for such a classifier to dislike: it
+  creates named pipes with custom security descriptors, manipulates AppContainer
+  tokens, and rewrites filesystem ACLs. Those are the mechanisms containment is
+  built from, and they are also what malware does.
+
+  Releases carry SHA-256 checksums and a SLSA build-provenance attestation, which
+  let you verify a download came from this repository's CI. Neither is an
+  Authenticode signature, and **Defender and SmartScreen do not read them** — so
+  they do nothing to prevent this. Code signing is the actual fix and is not in
+  place; until it is, expect SmartScreen warnings on first run and the
+  possibility of a Defender quarantine.
+
+  If it happens to you, a false positive can be reported to Microsoft at
+  <https://www.microsoft.com/en-us/wdsi/filesubmission>. Reporting is worth more
+  than an exclusion: an exclusion stops your machine scanning that path, which is
+  a real reduction in your own protection, and it does nothing for anyone else.
+
 - **A contained command sees almost none of your environment.** Containment keeps
   11 environment variables on Windows (7 elsewhere) and drops the rest, so that a
   package's install script cannot read the secrets sitting in the shell that
@@ -673,9 +697,20 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   opens them, which Windows permits; the container never creates one. stdout and
   stderr stream as they are produced, stay separate, and exit codes propagate.
 
-  **Writing to a contained child's stdin is not supported.** `child.stdin` is
-  `null` rather than a stream that silently discards. A tool that feeds its child
-  input needs `nvx --no-sandbox`.
+  **Writing to a contained child's stdin works through the same broker, in
+  reverse.** nvx creates the pipe outside the container, the preload opens it,
+  and what the contained process writes is pumped into the child's stdin.
+
+  It did not until 2026-09-04: slot 0 was an empty file, so `child.stdin` was
+  `null` and this section said "a tool that feeds its child input needs
+  `nvx --no-sandbox`". That read like a corner case and was not one. esbuild's
+  service is a child driven over stdin, Vite runs on esbuild, and Vitest runs on
+  Vite, so a contained `npx vitest run` hung with nothing printed to explain it.
+
+  **A child given an IPC channel — `child_process.fork` — still hangs.** That is
+  a second named pipe, created by libuv inside the contained process, and this
+  broker does not cover it. Vitest's default worker pool uses `fork`, so
+  `npx vitest run` still needs `nvx --no-sandbox`.
 
   Beyond 8 concurrent piped children in one process, output is collected and
   delivered **when the stream ends** rather than as it is produced. Nothing hangs,

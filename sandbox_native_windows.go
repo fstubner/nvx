@@ -350,10 +350,11 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	if sidStr, err := appContainerSidToString(sid); err == nil {
 		// The guest home is named after the sandbox id, which is what makes the
 		// pipe names unique between concurrent sessions.
-		broker, channelNames := provisionStdioChannels(sidStr, stdioSessionID(filepath.Base(guestHome)))
+		broker, channelNames, stdinNames := provisionStdioChannels(sidStr, stdioSessionID(filepath.Base(guestHome)))
 		if broker != nil {
 			defer broker.Close()
 			cleanEnv = addStdioChannelsEnv(cleanEnv, channelNames)
+			cleanEnv = addStdinChannelsEnv(cleanEnv, stdinNames)
 		}
 	}
 

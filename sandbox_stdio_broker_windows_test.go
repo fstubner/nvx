@@ -16,7 +16,7 @@ import (
 // which is the current bug with extra steps.
 func TestStdioChannelCarriesBytesAndThenEnds(t *testing.T) {
 	sddl := "D:(A;;GA;;;WD)" // this test's endpoints are both the current user
-	ch, err := newStdioChannel("brokertest", 0, sddl)
+	ch, err := newStdioChannel("brokertest", 0, sddl, false)
 	if err != nil {
 		t.Skipf("cannot create pipes on this host: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestStdioChannelCarriesBytesAndThenEnds(t *testing.T) {
 // A pool that cannot be provisioned must leave the caller able to run the
 // command, because the fallback is the existing limitation and not an error.
 func TestStdioChannelsAreOptional(t *testing.T) {
-	if broker, names := provisionStdioChannels("", "sess"); broker != nil || names != "" {
+	if broker, names, _ := provisionStdioChannels("", "sess"); broker != nil || names != "" {
 		t.Error("provisioning without a container SID should yield nothing to pass on")
 	}
 	// Nil is a valid broker: the launch path holds one whether or not it worked.
