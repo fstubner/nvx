@@ -538,7 +538,8 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   not: a tool that checks `CI` to suppress interactive prompts starts prompting,
   and a build reading `NODE_ENV=production` quietly emits a development bundle.
   Nothing errors, which is what makes it confusing. nvx now says so when a
-  variable of that kind is removed, and records the full list in the audit log.
+  variable of that kind is removed. The set it names is deliberately short, so
+  most contained runs stay silent; `NVX_DEBUG=1` records the complete list.
 
   Name the ones a project genuinely needs:
 

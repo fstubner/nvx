@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,8 +48,13 @@ type envScrubResult struct {
 //
 // This is a curated list and therefore incomplete by construction: a project's
 // own variable (MY_API_URL) is not here and is still dropped without a line on
-// screen. The complete list goes to the audit log on every contained run, which
-// is where to look when something behaves differently inside the sandbox.
+// screen. NVX_DEBUG=1 records the complete list, which is where to look when
+// something behaves differently inside the sandbox.
+//
+// Kept SHORT on purpose. A near-miss entry is not a small cost: NPM_CONFIG_ was
+// added here for one day and fired on 143 of 193 contained runs (see
+// notableEnvPrefixes). Anything considered for this list has to be rare in
+// practice, not merely plausible in principle.
 var notableEnvKeys = map[string]bool{
 	"CI":          true,
 	"NODE_ENV":    true,
@@ -59,10 +65,22 @@ var notableEnvKeys = map[string]bool{
 
 // notableEnvPrefixes catch families rather than single names.
 //
-// Proxy variables are deliberately absent. nvx sets its own (applyProxyEnv) and
-// removes the host's on purpose (stripProxyEnv), so reporting them as casualties
-// would be telling the user that something broke when nvx replaced them.
-var notableEnvPrefixes = []string{"NPM_CONFIG_"}
+// Empty, and the two families that were considered are worth recording as
+// deliberate exclusions rather than oversights.
+//
+// Proxy variables: nvx sets its own (applyProxyEnv) and removes the host's on
+// purpose (stripProxyEnv), so reporting them as casualties would announce a
+// breakage that did not happen.
+//
+// NPM_CONFIG_*: this was here for one day and was a mistake. npm sets these for
+// its own children -- NPM_CONFIG_YES appears whenever npx runs -- so they are
+// plumbing rather than anything a person configured, and nvx shims npx. Measured
+// on this machine after shipping it: the warning fired on 143 of 193 contained
+// runs, which on a machine that launches ~29 npx-based MCP servers means a
+// warning on essentially every server start. A warning that common is not a
+// warning; it is a thing to scroll past, and it drowns the case this whole
+// report exists for.
+var notableEnvPrefixes []string
 
 // notableDropped returns the dropped variables worth putting on screen.
 func notableDropped(dropped []string) []string {
@@ -129,28 +147,37 @@ func refusedPassEnv(passEnv []string) []string {
 
 // reportEnvScrub tells the user what containment removed.
 //
-// The full list always goes to the audit log; the terminal gets a line only when
-// a variable that changes tool behaviour was among them, so an ordinary run stays
-// quiet. Names, never values.
+// The terminal, and audit.log, get a line only when a variable that changes tool
+// behaviour was among them, so an ordinary run stays quiet in both. The full list
+// goes to the debug capture, which is off unless asked for. Names, never values.
 func reportEnvScrub(nvxHome string, res envScrubResult) {
-	if len(res.Dropped) > 0 {
+	notable := notableDropped(res.Dropped)
+
+	// Recorded only when there is something to say. Writing every contained run
+	// put 600 entries and 849KB into audit.log in a few hours on a machine that
+	// launches ~29 contained MCP servers, each line carrying 62 variable names --
+	// a debugging aid that buries the security events audit.log is for. The full
+	// list is still available on demand: NVX_DEBUG=1 captures it, which is the
+	// file meant for exactly this.
+	if len(notable) > 0 {
 		auditLog(nvxHome, "env_scrubbed", map[string]string{
 			"count":   strconv.Itoa(len(res.Dropped)),
 			"dropped": strings.Join(res.Dropped, ","),
 		})
 	}
+	debugCapture("env", fmt.Sprintf("containment dropped %d variables: %s",
+		len(res.Dropped), strings.Join(res.Dropped, ",")))
 
 	// Asked for and not delivered: always worth saying, however ordinary the run.
 	for _, name := range res.Refused {
 		LogWarn("isolation.environment.allow names %s, which holds a credential by convention; it was not passed in.", name)
 	}
 
-	notable := notableDropped(res.Dropped)
 	if len(notable) == 0 {
 		return
 	}
 	LogWarn("Containment removed %d environment variables, including %s.",
 		len(res.Dropped), strings.Join(notable, ", "))
 	LogInfo("Tools that read them behave differently inside the sandbox. To pass one through, add it to " +
-		"isolation.environment.allow in .nvx-policy.json; the full list is in the audit log.")
+		"isolation.environment.allow in .nvx-policy.json; NVX_DEBUG=1 records the full list.")
 }
