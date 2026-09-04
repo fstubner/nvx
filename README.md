@@ -707,10 +707,16 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   service is a child driven over stdin, Vite runs on esbuild, and Vitest runs on
   Vite, so a contained `npx vitest run` hung with nothing printed to explain it.
 
-  **A child given an IPC channel — `child_process.fork` — still hangs.** That is
-  a second named pipe, created by libuv inside the contained process, and this
-  broker does not cover it. Vitest's default worker pool uses `fork`, so
-  `npx vitest run` still needs `nvx --no-sandbox`.
+  **A child given an IPC channel — `child_process.fork` — is refused.** That is a
+  second named pipe, created by libuv *inside* the contained process, and unlike
+  the other three it cannot be handed over ready-made: node's `'ipc'` slot is not
+  an ordinary descriptor and node builds the parent half of the channel itself.
+
+  It used to hang — inside `fork()`, before the child existed and before anything
+  was printed. It now throws immediately, naming `--no-sandbox`. The limitation is
+  the same either way; the difference is a second instead of forever, and a reason
+  instead of silence. Vitest's default worker pool forks, so
+  `nvx --no-sandbox npx vitest run` is the way to run it today.
 
   Beyond 8 concurrent piped children in one process, output is collected and
   delivered **when the stream ends** rather than as it is produced. Nothing hangs,
