@@ -607,8 +607,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every contained run.
 
   The reported set is curated, so it is incomplete by construction — a project's
-  own variable is still dropped without a line on screen, and the audit log is
+  own variable is still dropped without a line on screen, and `NVX_DEBUG=1` is
   where to look when something behaves differently inside the sandbox.
+
+  It has to stay short. `NPM_CONFIG_*` was on the list for a day: npm sets those
+  for its own children, nvx shims `npx`, and the warning fired on 143 of 193
+  contained runs — a warning on essentially every start of an npx-based MCP
+  server, which is noise rather than a warning. The same day's audit write was
+  unconditional and put 600 entries and 849 KB into `audit.log` in a few hours;
+  it is now recorded only when there is something to report.
 
 * **`nvx doctor` said "nvx is intercepting commands correctly" on an install
   where version switching was entirely dead.** Doctor checked one half of a

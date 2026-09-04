@@ -78,15 +78,19 @@ func TestNamingACredentialInThePolicyIsRefusedNotHonoured(t *testing.T) {
 // furniture (COMPUTERNAME, PROCESSOR_LEVEL). Naming them all on every run would
 // be noise nobody reads, which is its own way of saying nothing.
 func TestOnlyBehaviourChangingVariablesAreWorthPrinting(t *testing.T) {
-	dropped := []string{"COMPUTERNAME", "PROCESSOR_LEVEL", "CI", "ONEDRIVE", "NODE_ENV", "npm_config_registry"}
+	dropped := []string{"COMPUTERNAME", "PROCESSOR_LEVEL", "CI", "ONEDRIVE", "NODE_ENV", "npm_config_yes"}
 	notable := notableDropped(dropped)
 
-	for _, want := range []string{"CI", "NODE_ENV", "npm_config_registry"} {
+	for _, want := range []string{"CI", "NODE_ENV"} {
 		if !containsString(notable, want) {
 			t.Errorf("%q changes how tools behave and would not be reported: %v", want, notable)
 		}
 	}
-	for _, noise := range []string{"COMPUTERNAME", "PROCESSOR_LEVEL", "ONEDRIVE"} {
+	// npm_config_* is npm's own plumbing, set for every child npm spawns, and nvx
+	// shims npx. Treating it as notable fired the warning on 143 of 193 contained
+	// runs on a machine running npx-based MCP servers -- a warning on essentially
+	// every server start, which is noise, not a warning.
+	for _, noise := range []string{"COMPUTERNAME", "PROCESSOR_LEVEL", "ONEDRIVE", "npm_config_yes"} {
 		if containsString(notable, noise) {
 			t.Errorf("%q is OS furniture and would print on every single contained run: %v", noise, notable)
 		}
