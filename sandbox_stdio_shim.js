@@ -247,6 +247,14 @@ try {
       const parts = pair.split('|');
       return { childPipe: parts[0], nodePipe: parts[1] };
     });
+    // The reverse-direction pool, for writing to a child. Its own variable and
+    // its own list: an input channel taken for an output stream would copy the
+    // wrong way and wedge silently.
+    const freeIn = (process.env.NVX_STDIN_CHANNELS || '').split(';').filter(Boolean)
+      .map(function (pair) {
+        const parts = pair.split('|');
+        return { childPipe: parts[0], nodePipe: parts[1] };
+      });
 
     let warnedFallback = false;
     function warnStdioFallbackOnce() {
@@ -370,19 +378,47 @@ try {
       // is the exact call an AppContainer refuses. Every stdout/stderr channel
       // in the world does not help if the process hangs on stdin first.
       //
-      // An empty file, so the child reads EOF immediately -- the same
-      // substitution the synchronous path makes. Writing to a contained child's
-      // stdin is therefore not supported; child.stdin is null rather than a
-      // stream that silently goes nowhere.
+      // A reverse channel when one is free, so child.stdin is a real stream.
+      // It was an empty file until 2026-09-04, which made child.stdin null and
+      // was documented as "a tool that feeds its child input needs
+      // --no-sandbox". That undersold it: esbuild's service is a child driven
+      // over stdin, vite runs on esbuild and vitest runs on vite, so `npx vitest
+      // run` on an already-installed binary hung indefinitely -- measured at
+      // over 120s against 4.1s uncontained -- with no error to explain it.
+      //
+      // The empty file remains the fallback when the pool is exhausted: the old
+      // limitation, not a new failure.
       let stdinDir = null;
+      let stdinTaken = null;
       if (fds[0] === 'pipe') {
-        try {
-          stdinDir = scratch();
-          const emptyPath = path.join(stdinDir, 'stdin');
-          fs.writeFileSync(emptyPath, '');
-          fds[0] = fs.openSync(emptyPath, 'r');
-        } catch (e) {
-          return realSpawn.apply(cp, arguments);
+        const inCh = freeIn.shift();
+        if (inCh) {
+          try {
+            // 'r+' on both: these pipes are duplex and a one-way open is
+            // refused. The child reads childPipe as its fd 0; this process
+            // writes nodePipe, and nvx pumps one into the other.
+            const childFd = fs.openSync(inCh.childPipe, 'r+');
+            const writeFd = fs.openSync(inCh.nodePipe, 'r+');
+            fds[0] = childFd;
+            stdinTaken = { ch: inCh, childFd: childFd, writeFd: writeFd };
+          } catch (e) {
+            if (stdinTaken) {
+              try { fs.closeSync(stdinTaken.childFd); } catch (e2) {}
+              try { fs.closeSync(stdinTaken.writeFd); } catch (e2) {}
+            }
+            stdinTaken = null;
+            freeIn.push(inCh);
+          }
+        }
+        if (!stdinTaken) {
+          try {
+            stdinDir = scratch();
+            const emptyPath = path.join(stdinDir, 'stdin');
+            fs.writeFileSync(emptyPath, '');
+            fds[0] = fs.openSync(emptyPath, 'r');
+          } catch (e) {
+            return realSpawn.apply(cp, arguments);
+          }
         }
       }
 
@@ -434,6 +470,27 @@ try {
         try { child.stdio[t.slot] = stream; } catch (e) {}
       }
 
+      // The writable side, for the same reason: node reports null for a slot
+      // passed as a descriptor, so a caller doing child.stdin.write() would see
+      // null without this.
+      if (stdinTaken) {
+        let inStream;
+        try {
+          inStream = new net.Socket({ fd: stdinTaken.writeFd, readable: false, writable: true });
+        } catch (e) {
+          inStream = fs.createWriteStream('', { fd: stdinTaken.writeFd });
+        }
+        // Same rule as the readable side: this shim is in every contained node
+        // process and must never be why one dies.
+        try {
+          inStream.on('error', function () {
+            try { inStream.destroy(); } catch (e2) {}
+          });
+        } catch (e) {}
+        child.stdin = inStream;
+        try { child.stdio[0] = inStream; } catch (e) {}
+      }
+
       // This process also holds the child's write end, and while it does the
       // reader never sees EOF: the stream would deliver every byte and then hang
       // forever, which is the bug being fixed wearing a disguise.
@@ -447,6 +504,12 @@ try {
       });
       child.once('close', function () {
         for (const t of taken) free.push(t.ch);
+        if (stdinTaken) {
+          // Destroy rather than close the fd directly: the socket owns it, and
+          // closing underneath it raises EBADF on the next tick.
+          try { child.stdin && child.stdin.destroy(); } catch (e) {}
+          freeIn.push(stdinTaken.ch);
+        }
       });
       return child;
     };
