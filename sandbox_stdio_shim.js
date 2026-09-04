@@ -514,6 +514,34 @@ try {
       return child;
     };
   }
+
+  // An IPC channel is a named pipe libuv creates INSIDE the container, and an
+  // AppContainer refuses to create one. Unlike stdout, stderr and stdin, this
+  // one cannot be handed over ready-made: node's 'ipc' slot is not an ordinary
+  // descriptor, and the parent half of the channel is built by node itself.
+  //
+  // So it hangs. Not slowly -- forever, inside the fork() call, before the child
+  // exists and before anything is printed: measured with file markers, the line
+  // before fork() is written and the line after it never is. `npx vitest run`
+  // hung for over five minutes twice in the session that reported it, with no
+  // output to suggest a cause, against 1.9s outside the sandbox.
+  //
+  // Failing here is strictly better than that. It is the same limitation either
+  // way; this version says so, names the flag that works, and takes a second
+  // instead of forever. When the channel is eventually brokered like the other
+  // three, this goes away with it.
+  const realFork = cp.fork;
+  cp.fork = function () {
+    const err = new Error(
+      'nvx: child_process.fork() needs an IPC channel, which a Windows AppContainer ' +
+      'cannot create, so this would hang rather than fail. Re-run with `nvx --no-sandbox` ' +
+      '(vitest and other test runners fork worker processes by default).');
+    err.code = 'ERR_NVX_IPC_UNSUPPORTED';
+    throw err;
+  };
+  // Kept reachable: a caller that knows what it is doing, and a future in which
+  // the channel is brokered, both need the real one.
+  cp.fork.nvxRealFork = realFork;
 } catch (e) {
   // Never break a contained process because of this shim.
 }

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A contained process can write to a child's stdin, in a real AppContainer.
@@ -79,5 +80,71 @@ setTimeout(() => { console.log('RESULT timed-out'); process.exit(1); }, 30000);
 			"the null it replaced.\n%s", got)
 	default:
 		t.Fatalf("the probe produced no result (%v):\n%s", err, got)
+	}
+}
+
+// A fork fails immediately and says what to do, instead of hanging forever.
+//
+// An IPC channel is a named pipe libuv creates inside the container, and an
+// AppContainer refuses to create one. Unlike the other three streams it cannot
+// be handed over ready-made, so the limitation stands -- but what it used to do
+// was hang inside fork() before the child existed and before anything printed.
+// Measured with file markers: the line before fork() is written and the line
+// after it never is.
+//
+// The session that reported this watched `npx vitest run` sit for over five
+// minutes, twice, with nothing on screen. The timing assertion is the point of
+// this test: a correct message that took five minutes to arrive would still be
+// the bug.
+func TestAContainedForkFailsFastInsteadOfHanging(t *testing.T) {
+	if os.Getenv("NVX_PROBE") != "1" {
+		t.Skip("set NVX_PROBE=1 to run (builds nvx and launches a real AppContainer)")
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not installed; the contained program needs it")
+	}
+
+	proj := tempDir(t)
+	nvxExe := filepath.Join(tempDir(t), "nvx.exe")
+	if out, err := exec.Command("go", "build", "-o", nvxExe, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build nvx: %v\n%s", err, out)
+	}
+
+	probe := `
+const cp = require('node:child_process');
+try {
+  cp.fork(__filename, [], { stdio: ['ignore','ignore','ignore','ipc'] });
+  console.log('RESULT forked-without-error');
+} catch (e) {
+  console.log('RESULT threw ' + (e.code || '') + ' :: ' + e.message);
+}
+`
+	if err := os.WriteFile(filepath.Join(proj, "forkprobe.cjs"), []byte(probe), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(nvxExe, "--strict", "shim", "node", "forkprobe.cjs")
+	cmd.Dir = proj
+	cmd.Env = append(os.Environ(), "NVX_TRACE=")
+
+	start := time.Now()
+	out, _ := cmd.CombinedOutput()
+	elapsed := time.Since(start)
+	got := string(out)
+
+	if !strings.Contains(got, "RESULT threw") {
+		t.Fatalf("a contained fork did not fail with an explanation after %s:\n%s", elapsed, got)
+	}
+	// The message has to name the way out. "Not supported" that does not say
+	// what to run instead sends the reader back to guessing, which is where
+	// the reporting session already was.
+	if !strings.Contains(got, "--no-sandbox") {
+		t.Errorf("the failure does not name the flag that works:\n%s", got)
+	}
+	// Generous, because it shares a machine with the rest of the suite. The
+	// behaviour being pinned is "fails" rather than "hangs", and the old one
+	// never returned at all.
+	if elapsed > 60*time.Second {
+		t.Errorf("the contained fork took %s to fail; it is supposed to fail immediately", elapsed)
 	}
 }
