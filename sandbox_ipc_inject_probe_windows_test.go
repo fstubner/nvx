@@ -80,31 +80,45 @@ func msvcrtFDBlob(handles []syscall.Handle, flags []byte) []byte {
 // question -- and if it fails here there is no point building the blob into
 // nvx's launch path to watch it fail there.
 //
-// WHERE THIS STOPPED, 2026-09-05. It does not work yet, and the reason is NOT
-// yet known to be a real obstacle:
+// WHERE THIS STOPPED, 2026-09-05. It does not work, and the cause is narrowed
+// but not found. The pipe and libuv are NOT implicated -- a plain file injected
+// beside it fails identically:
 //
-//	RESULT raw-failed EBADF    fs.writeSync(3, ...) in the child
-//	RESULT send-returned       process.send did not throw
-//	Error: write EPIPE         ...and then failed, writing to a bad descriptor
+//	RESULT file-fd-failed EBADF   fs.readSync(4, ...) on an ordinary file
+//	RESULT raw-failed EBADF       fs.writeSync(3, ...) on the pipe
+//	RESULT send-returned          process.send did not throw...
+//	Error: write EPIPE            ...then failed, writing to a bad descriptor
 //
-// Read in the wrong order that looks like libuv adopting the handle and the pipe
-// being at fault. It is the opposite: fd 3 does not exist in the child at all,
-// and node built a channel object purely because NODE_CHANNEL_FD was set. So
-// nothing here has yet tested what it was written to test, and the libuv
-// question remains open rather than answered.
+// Note the trap in that order: read top-down it looks like libuv adopting the
+// handle and the pipe misbehaving. It is the opposite. Neither descriptor exists
+// in the child, and node builds a channel object purely because NODE_CHANNEL_FD
+// is set, so the EPIPE is a write to nothing and says nothing about pipes.
 //
-// THE NEXT MEASUREMENT, and it is cheap: inject a plain FILE at fd 4 alongside
-// the pipe and have the child fs.readSync(4). That separates the two live
-// hypotheses, which no evidence yet distinguishes:
+// What has been ruled OUT, each by measurement rather than reasoning:
 //
-//   - the blob this test builds is malformed (layout, flag bytes, or handle
-//     inheritability), and fd injection would work if it were right; or
-//   - node/UCRT does not populate its fd table from lpReserved2 when it is not
-//     libuv doing the spawning, and the whole approach is dead.
+//   - The blob layout. Verified byte for byte against libuv's format:
+//     count=05 00 00 00, flags=01 01 01 09 01, then five 8-byte handles.
+//     cbReserved2=49 = 4 + 5 + 5*8, and sizeof(STARTUPINFOW)=104.
+//   - The struct offsets. The child's stdout reached the file named in
+//     si.StdOutput, which sits AFTER CbReserved2/LpReserved2, so those fields
+//     are where Windows expects them.
+//   - Handle inheritance. Same evidence: an inherited handle demonstrably
+//     reached the child.
+//   - An invalid handle poisoning the blob. NUL is used for stdin instead of
+//     this process's handles, and the result is unchanged.
+//   - Node being unable to receive extra descriptors at all. node -> node with
+//     stdio [0,1,2,fd] delivers fd 3 and reads the file: measured, works.
 //
-// Only if a file-backed descriptor arrives is it worth returning to the pipe.
-// Do not read the EPIPE above as evidence about pipes; it is evidence about a
-// descriptor that was never there.
+// So the mechanism works for node, and this harness's blob looks right, and the
+// child still sees neither descriptor. The gap is between those two facts.
+//
+// THE NEXT MEASUREMENT: spawn a NON-node CRT program with the same blob and see
+// whether it gets the descriptors. That separates "this harness's CreateProcessW
+// call is subtly wrong" from "node's runtime does not populate its fd table from
+// lpReserved2 when libuv is not the spawner" -- the second would end the
+// approach, and nothing measured so far distinguishes them. Comparing against a
+// traced libuv spawn of the same shape would settle it faster if a tracer is to
+// hand.
 func TestAnInjectedOverlappedPipeWorksAsNodesIPCChannel(t *testing.T) {
 	// An investigation harness, not a regression test, and it does not pass:
 	// set NVX_IPC_SPIKE=1 to pick the work up. See the note above for exactly
@@ -161,6 +175,9 @@ func TestAnInjectedOverlappedPipeWorksAsNodesIPCChannel(t *testing.T) {
 	// injection is sound and the problem is inside libuv's IPC path.
 	body := `
 const fs = require('fs');
+try { const b = Buffer.alloc(32); const n = fs.readSync(4, b, 0, 32, 0);
+      console.log('RESULT file-fd-ok ' + b.slice(0, n).toString()); }
+catch (e) { console.log('RESULT file-fd-failed ' + (e.code || e.message)); }
 try { fs.writeSync(3, 'RAW-WRITE-OK\n'); console.log('RESULT raw-ok'); }
 catch (e) { console.log('RESULT raw-failed ' + (e.code || e.message)); }
 if (!process.send) { console.log('RESULT no-channel'); process.exit(1); }
@@ -172,16 +189,60 @@ setTimeout(() => process.exit(0), 1200);
 		t.Fatal(err)
 	}
 
-	stdout, _ := syscall.GetStdHandle(syscall.STD_OUTPUT_HANDLE)
-	stderr, _ := syscall.GetStdHandle(syscall.STD_ERROR_HANDLE)
-	stdin, _ := syscall.GetStdHandle(syscall.STD_INPUT_HANDLE)
-	for _, h := range []syscall.Handle{stdin, stdout, stderr} {
-		_ = markHandleInheritable(h)
+	// NUL for the standard three rather than this process's own handles. Under
+	// `go test` stdin is not necessarily a valid handle, and the C runtime parses
+	// the blob as a unit -- one bad entry and the whole fd table is discarded,
+	// which presents as every injected descriptor missing rather than one.
+	nulPtr, err := syscall.UTF16PtrFromString("NUL")
+	if err != nil {
+		t.Fatal(err)
 	}
+	nul, err := syscall.CreateFile(nulPtr, syscall.GENERIC_READ|syscall.GENERIC_WRITE,
+		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE, &sa,
+		syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatalf("open NUL: %v", err)
+	}
+	defer syscall.CloseHandle(nul)
+
+	// The child's own words are the entire diagnostic, so they go to a file. NUL
+	// would lose them and the console is not readable back from a test binary.
+	outPath := filepath.Join(tempDir(t), "child-output.txt")
+	outPtr, err := syscall.UTF16PtrFromString(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outFile, err := syscall.CreateFile(outPtr, syscall.GENERIC_WRITE,
+		syscall.FILE_SHARE_READ, &sa, syscall.CREATE_ALWAYS, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatalf("create child output file: %v", err)
+	}
+	defer syscall.CloseHandle(outFile)
+
+	stdin, stdout, stderr := nul, outFile, outFile
+	// A plain FILE at fd 4, holding known bytes. This is the discriminator: if
+	// even an ordinary file does not arrive, the blob is not being honoured and
+	// nothing about pipes or libuv is implicated. A file cannot be non-overlapped
+	// in a way libuv objects to, and cannot be in the wrong pipe state.
+	markerPath := filepath.Join(tempDir(t), "marker.txt")
+	if err := os.WriteFile(markerPath, []byte("MARKER-CONTENT"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	markerPtr, err := syscall.UTF16PtrFromString(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker, err := syscall.CreateFile(markerPtr, syscall.GENERIC_READ,
+		syscall.FILE_SHARE_READ, &sa, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatalf("open marker file: %v", err)
+	}
+	defer syscall.CloseHandle(marker)
+
 	const fOpen, fPipe, fDev = 0x01, 0x08, 0x40
 	blob := msvcrtFDBlob(
-		[]syscall.Handle{stdin, stdout, stderr, client},
-		[]byte{fOpen | fDev, fOpen | fDev, fOpen | fDev, fOpen | fPipe})
+		[]syscall.Handle{stdin, stdout, stderr, client, marker},
+		[]byte{fOpen, fOpen, fOpen, fOpen | fPipe, fOpen})
 
 	var si startupInfoWithFDs
 	si.Cb = uint32(unsafe.Sizeof(si))
@@ -200,6 +261,10 @@ setTimeout(() => process.exit(0), 1200);
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	t.Logf("STARTUPINFOW size=%d (want 104 on x64), cbReserved2=%d (want %d), blob=% x",
+		unsafe.Sizeof(si), si.CbReserved2, 4+5+5*8, blob)
+	t.Logf("handles: nul=%#x out=%#x pipe=%#x marker=%#x", nul, outFile, client, marker)
 
 	var pi processInformation
 	const createUnicodeEnvironment = 0x00000400
@@ -233,6 +298,9 @@ setTimeout(() => process.exit(0), 1200);
 	}
 	_, _ = syscall.WaitForSingleObject(pi.hProcess, 5000)
 
+	if childSaid, readErr := os.ReadFile(outPath); readErr == nil {
+		t.Logf("child said:\n%s", childSaid)
+	}
 	if !strings.Contains(got, "injected-ipc") {
 		t.Fatalf("no message arrived on the injected channel (%q).\n"+
 			"Either the fd-table injection did not reach node, or libuv would not adopt the handle. "+
