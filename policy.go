@@ -71,7 +71,14 @@ type IsolationPolicy struct {
 
 type FilesystemPolicy struct {
 	Provider string `json:"provider"`
-	Mode     string `json:"mode,omitempty"`
+	// mode was here, declared and merged, and read by nothing. Removed
+	// 2026-09-05, for the same reason and by the same argument as allow_write
+	// below -- and it was worse placed: `"mode": "strict"` sat in the README's
+	// copy-paste policy example, where it reads as a tightening someone chose.
+	//
+	// Unknown-key warnings now name it, which is the answer for anyone who has
+	// it in a file.
+	//
 	// allow_write was here, declared and merged, and read by nothing. Removed
 	// 2026-09-03 rather than implemented.
 	//
@@ -869,9 +876,6 @@ func MergePolicies(global, local Policy) Policy {
 	}
 	if local.Isolation.Filesystem.Provider != "" {
 		merged.Isolation.Filesystem.Provider = local.Isolation.Filesystem.Provider
-	}
-	if local.Isolation.Filesystem.Mode != "" {
-		merged.Isolation.Filesystem.Mode = local.Isolation.Filesystem.Mode
 	}
 	// Appended, like the host allowlists: a project adds the roots
 	// its own toolchain needs on top of anything global policy already grants,
