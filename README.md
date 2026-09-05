@@ -567,13 +567,25 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   Node.js running the identical script in the identical directory is contained
   and works, and `nvx --no-sandbox bun install` works, so this is a gap between
   the sandbox and Bun specifically rather than a broken sandbox or a broken Bun.
-  The cause is not yet identified; Bun presumably needs a directory right on the
-  working directory that Node does not ask for.
 
-  Both failures exit non-zero and print an error, so nothing installs silently or
-  appears to succeed. Until it is fixed, contained Bun is unusable and
-  `--no-sandbox` is the only way to run it — which means running it **without**
-  containment, so treat what it installs accordingly.
+  **`nvx setup` is required for Bun and not for Node**, and it is not sufficient.
+  Without the elevated drive-root grants, a contained Bun cannot start a script
+  at all. With them it runs a script file, and still cannot open its working
+  directory: `readdir` and any relative-path write fail with `EBADFD`, so
+  `bun install` and `bunx` do not work.
+
+  The remaining cause is not identified. Ruled out by measurement: the access
+  mask on the project directory (granting Full Control changes nothing), nvx's
+  Node preloads (Bun ignores `NODE_OPTIONS` entirely, but Node with its preloads
+  disabled still works), the location and volume, and missing ancestor traverse
+  — a project whose whole chain is granted fails identically. What is left is how
+  Bun opens a directory handle inside an AppContainer.
+
+  Failures are loud once `nvx setup` has run: a non-zero exit and an error. Before
+  it, some relative-path operations fail **silently with exit 0**, which is the
+  worse shape and another reason to run setup. Either way `--no-sandbox` is the
+  only way to use Bun today — which means running it **without** containment, so
+  treat what it installs accordingly.
 
 - **A contained command sees almost none of your environment.** Containment keeps
   11 environment variables on Windows (7 elsewhere) and drops the rest, so that a

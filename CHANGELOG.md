@@ -583,7 +583,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Node running the identical script in the identical directory is contained and
   works, and `nvx --no-sandbox bun install` works, so the gap is between the
-  sandbox and Bun rather than either being broken on its own. Not yet diagnosed.
+  sandbox and Bun rather than either being broken on its own.
+
+  `nvx setup` is required for Bun and is not sufficient. Without its elevated
+  drive-root grants a contained Bun cannot start a script at all; with them it
+  runs a file and still cannot open its working directory, so `readdir` and
+  relative-path writes fail with `EBADFD` and `bun install`/`bunx` do not work.
+  Node needs none of this.
+
+  Ruled out by measurement: the project directory's access mask (Full Control
+  changes nothing), nvx's Node preloads (Bun ignores NODE_OPTIONS, but Node with
+  preloads disabled still works), location and volume, and missing ancestor
+  traverse — a project whose entire chain is granted fails identically. What is
+  left is how Bun opens a directory handle inside an AppContainer.
 
   Both failures exit non-zero and print an error, so nothing installs silently.
   Until this is fixed the only way to run Bun is `--no-sandbox`, which is to say
