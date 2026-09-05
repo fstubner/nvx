@@ -591,11 +591,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relative-path writes fail with `EBADFD` and `bun install`/`bunx` do not work.
   Node needs none of this.
 
-  Ruled out by measurement: the project directory's access mask (Full Control
-  changes nothing), nvx's Node preloads (Bun ignores NODE_OPTIONS, but Node with
-  preloads disabled still works), location and volume, and missing ancestor
-  traverse — a project whose entire chain is granted fails identically. What is
-  left is how Bun opens a directory handle inside an AppContainer.
+  **Root cause found, and it is in Bun.** Inside one contained run, every path
+  pointing at the same directory:
+
+  ```
+  readdirSync(absolute cwd)   OK          readdirSync(".")        EBADFD
+  opendirSync(".")            OK          writeFileSync("x.txt")  EBADFD
+  path.resolve(".")           OK          writeFileSync(absolute) OK
+  ```
+
+  Opening `"."` works; only resolving a relative path for a syscall fails. The
+  error names the ORIGINAL launch directory even after chdir elsewhere, and a
+  contained Bun opens every ancestor by absolute path. So Bun captures a
+  working-directory descriptor at startup and it is unusable in an AppContainer;
+  absolute paths bypass it. Node keeps no such descriptor, hence the asymmetry.
+  Consistent with oven-sh/bun#28220 and #8245.
+
+  Granting more cannot fix it: every directory involved is already openable from
+  inside the container, verified in the same run. Ruled out on the way, each by
+  measurement: the project ACL mask, nvx's Node preloads, location and volume,
+  and ancestor traverse.
 
   Both failures exit non-zero and print an error, so nothing installs silently.
   Until this is fixed the only way to run Bun is `--no-sandbox`, which is to say
