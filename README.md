@@ -186,7 +186,7 @@ Options:
 
 ### Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx` are all intercepted**, and the ones that execute code you did not write — package installs and `npx`-style tool runners — are sandboxed. Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level; `isolation.level: strict` extends containment to it. See [Known limitations](#known-limitations). No separate sandbox subcommand — just run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx` are all intercepted**, and the ones that execute code you did not write — package installs and `npx`-style tool runners — are sandboxed. **Except Bun on Windows, which currently fails inside the sandbox — see [Known limitations](#known-limitations).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level; `isolation.level: strict` extends containment to it. See [Known limitations](#known-limitations). No separate sandbox subcommand — just run commands normally:
 
 ```bash
 npm install
@@ -551,6 +551,29 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   <https://www.microsoft.com/en-us/wdsi/filesubmission>. Reporting is worth more
   than an exclusion: an exclusion stops your machine scanning that path, which is
   a real reduction in your own protection, and it does nothing for anyone else.
+
+- **Bun does not work inside the Windows sandbox at all.** Measured 2026-09-05
+  against Bun 1.3.1: a contained `bun` cannot read its own working directory.
+
+  ```
+  $ nvx bun install is-odd      # contained by default
+  error: An internal error occurred (CouldntReadCurrentDirectory)
+  exit 1, nothing installed
+
+  $ nvx bunx cowsay hi          # contained by default
+  error: An internal error occurred (CouldntReadCurrentDirectory)
+  ```
+
+  Node.js running the identical script in the identical directory is contained
+  and works, and `nvx --no-sandbox bun install` works, so this is a gap between
+  the sandbox and Bun specifically rather than a broken sandbox or a broken Bun.
+  The cause is not yet identified; Bun presumably needs a directory right on the
+  working directory that Node does not ask for.
+
+  Both failures exit non-zero and print an error, so nothing installs silently or
+  appears to succeed. Until it is fixed, contained Bun is unusable and
+  `--no-sandbox` is the only way to run it — which means running it **without**
+  containment, so treat what it installs accordingly.
 
 - **A contained command sees almost none of your environment.** Containment keeps
   11 environment variables on Windows (7 elsewhere) and drops the rest, so that a
