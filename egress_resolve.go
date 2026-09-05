@@ -87,10 +87,15 @@ var checkResolvedAddress = func(host string) error {
 // A literal IP from the client is returned as itself: the allowlist matched that
 // text, so a human wrote it and has decided.
 //
-// A lookup that FAILS returns no addresses and no error, and the caller dials by
-// name so the dial reports it. Refusing here would turn a transient DNS error
-// into a containment verdict it is not -- and there is nothing to rebind from
-// when resolution never succeeded.
+// A lookup that FAILS returns no addresses and no error, and dialVetted resolves
+// again itself. Refusing here would turn a transient DNS error into a
+// containment verdict it is not.
+//
+// This used to say "there is nothing to rebind from when resolution never
+// succeeded", and the caller dialled the NAME. That was wrong: the second
+// resolution is the thing to rebind from, and net.Dial judged nothing, so a
+// record answering SERVFAIL first and 169.254.169.254 second walked through the
+// one guard written to stop it. See dialVetted.
 func resolveEgressAddresses(host string, lookup func(string) ([]net.IP, error)) ([]net.IP, error) {
 	if ip := net.ParseIP(host); ip != nil {
 		return []net.IP{ip}, nil
@@ -147,7 +152,27 @@ func anyLoopback(ips []net.IP) bool {
 // never obtained.
 func dialVetted(ips []net.IP, host string, port uint16) (net.Conn, error) {
 	if len(ips) == 0 {
-		return net.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(int(port))))
+		// Resolve HERE rather than handing the name to net.Dial.
+		//
+		// An earlier lookup that failed leaves this empty, and dialing by name
+		// resolves a second time with nothing judging the answer -- so a record
+		// that returns SERVFAIL to the first query and 169.254.169.254 to the
+		// second reaches the metadata endpoint through the one guard written to
+		// stop exactly that. resolveEgressAddresses said "there is nothing to
+		// rebind from when resolution never succeeded", which is the error: the
+		// second resolution is the thing to rebind from.
+		//
+		// Failing resolution is still the dial's problem to report rather than a
+		// containment verdict, so a name that genuinely will not resolve comes
+		// back as an error here instead of a policy denial.
+		resolved, err := resolveEgressTarget(host)
+		if err != nil {
+			return nil, err
+		}
+		if len(resolved) == 0 {
+			return nil, fmt.Errorf("could not resolve %s", host)
+		}
+		ips = resolved
 	}
 	var lastErr error
 	for _, ip := range ips {
