@@ -214,6 +214,11 @@ jobs:
           'not a -race build',
           'no nvx loopback exemption',
           'NVX_PROBE_PROTOTYPES=1 to run',
+          # The brokered-IPC spikes. Deliberately gated and deliberately not
+          # passing: they are an investigation harness with the findings written
+          # into them, not regression guards. See
+          # sandbox_ipc_inject_probe_windows_test.go for where that stopped.
+          'NVX_IPC_SPIKE=1 to continue the brokered-IPC investigation',
           'cannot grant the container access to cmd.exe'
         )
         $unexpected = $reasons | Where-Object {

@@ -63,6 +63,9 @@ func TestPassedEnvironmentReachesAContainedProcess(t *testing.T) {
 	)
 	out, err := cmd.CombinedOutput()
 	got := string(out)
+	// A host that cannot create AppContainers at all refuses before the probe
+	// runs; that is a skip, not a finding. See requireContainedRunLaunched.
+	requireContainedRunLaunched(t, got)
 	if err != nil && !strings.Contains(got, "PROBE ") {
 		t.Fatalf("the contained run produced no probe output: %v\n%s", err, got)
 	}

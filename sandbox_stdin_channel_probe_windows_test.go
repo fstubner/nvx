@@ -69,6 +69,7 @@ setTimeout(() => { console.log('RESULT timed-out'); process.exit(1); }, 30000);
 	cmd.Env = append(os.Environ(), "NVX_TRACE=")
 	out, err := cmd.CombinedOutput()
 	got := string(out)
+	requireContainedRunLaunched(t, got)
 
 	switch {
 	case strings.Contains(got, "RESULT round-trip-ok"):
@@ -131,6 +132,7 @@ try {
 	out, _ := cmd.CombinedOutput()
 	elapsed := time.Since(start)
 	got := string(out)
+	requireContainedRunLaunched(t, got)
 
 	if !strings.Contains(got, "RESULT threw") {
 		t.Fatalf("a contained fork did not fail with an explanation after %s:\n%s", elapsed, got)
