@@ -576,45 +576,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known issues
 
-* **Bun does not work inside the Windows sandbox.** Measured against Bun 1.3.1:
-  a contained `bun` cannot read its own working directory, so `nvx bun install`
-  and `nvx bunx` both fail with `CouldntReadCurrentDirectory` and install
-  nothing. Both are contained by default, so this is the ordinary path.
+* **Bun needs 1.4.x inside the Windows sandbox; older Bun fails.** Measured
+  2026-09-06: Bun 1.4.2 runs contained correctly — `bun install`, `bunx` and
+  relative-path reads and writes all work. Bun 1.3.1 fails every relative-path
+  operation with `EBADFD`, and without `nvx setup` cannot start a script at all.
 
-  Node running the identical script in the identical directory is contained and
-  works, and `nvx --no-sandbox bun install` works, so the gap is between the
-  sandbox and Bun rather than either being broken on its own.
+  Older Bun keeps a working-directory descriptor captured at startup that an
+  AppContainer will not honour, so absolute paths work and relative ones do not.
+  Node is unaffected because it holds no such descriptor. Bun added AppContainer
+  support in oven-sh/bun#33119, merged 2026-07-20 and shipped from 1.4.0.
 
-  `nvx setup` is required for Bun and is not sufficient. Without its elevated
-  drive-root grants a contained Bun cannot start a script at all; with them it
-  runs a file and still cannot open its working directory, so `readdir` and
-  relative-path writes fail with `EBADFD` and `bun install`/`bunx` do not work.
-  Node needs none of this.
-
-  **Root cause found, and it is in Bun.** Inside one contained run, every path
-  pointing at the same directory:
-
-  ```
-  readdirSync(absolute cwd)   OK          readdirSync(".")        EBADFD
-  opendirSync(".")            OK          writeFileSync("x.txt")  EBADFD
-  path.resolve(".")           OK          writeFileSync(absolute) OK
-  ```
-
-  Opening `"."` works; only resolving a relative path for a syscall fails. The
-  error names the ORIGINAL launch directory even after chdir elsewhere, and a
-  contained Bun opens every ancestor by absolute path. So Bun captures a
-  working-directory descriptor at startup and it is unusable in an AppContainer;
-  absolute paths bypass it. Node keeps no such descriptor, hence the asymmetry.
-  Consistent with oven-sh/bun#28220 and #8245.
-
-  Granting more cannot fix it: every directory involved is already openable from
-  inside the container, verified in the same run. Ruled out on the way, each by
-  measurement: the project ACL mask, nvx's Node preloads, location and volume,
-  and ancestor traverse.
-
-  Both failures exit non-zero and print an error, so nothing installs silently.
-  Until this is fixed the only way to run Bun is `--no-sandbox`, which is to say
-  without containment.
+  This was documented here on 2026-09-05 as "Bun does not work inside the Windows
+  sandbox at all", from measurements against 1.3.1 alone. The mechanism described
+  was right; the scope was not, and the fix already existed upstream.
 
 ### Fixed
 

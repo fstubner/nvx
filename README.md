@@ -555,53 +555,23 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   than an exclusion: an exclusion stops your machine scanning that path, which is
   a real reduction in your own protection, and it does nothing for anyone else.
 
-- **Bun does not work inside the Windows sandbox at all.** Measured 2026-09-05
-  against Bun 1.3.1: a contained `bun` cannot read its own working directory.
+- **Bun needs 1.4.x to work inside the Windows sandbox.** Measured 2026-09-06:
+  Bun **1.4.2** runs contained correctly — `bun install`, `bunx`, relative-path
+  reads and writes all work. Bun **1.3.1** fails every relative-path operation
+  with `EBADFD`, and without `nvx setup` cannot start a script at all
+  (`CouldntReadCurrentDirectory`).
 
-  ```
-  $ nvx bun install is-odd      # contained by default
-  error: An internal error occurred (CouldntReadCurrentDirectory)
-  exit 1, nothing installed
+  If a contained Bun misbehaves, check `bun --version` first. Bun added
+  AppContainer support in [oven-sh/bun#33119](https://github.com/oven-sh/bun/pull/33119),
+  merged 2026-07-20 and shipped from 1.4.0; the related sandbox report is
+  [oven-sh/bun#28220](https://github.com/oven-sh/bun/issues/28220), now closed.
+  Older Bun keeps a working-directory descriptor captured at startup that an
+  AppContainer will not honour, so absolute paths work and relative ones do not —
+  Node is unaffected because it holds no such descriptor.
 
-  $ nvx bunx cowsay hi          # contained by default
-  error: An internal error occurred (CouldntReadCurrentDirectory)
-  ```
-
-  Node.js running the identical script in the identical directory is contained
-  and works, and `nvx --no-sandbox bun install` works, so this is a gap between
-  the sandbox and Bun specifically rather than a broken sandbox or a broken Bun.
-
-  **`nvx setup` is required for Bun and not for Node**, and it is not sufficient.
-  Without the elevated drive-root grants a contained Bun cannot start a script at
-  all. With them it runs a script file, and still fails everything that resolves a
-  RELATIVE path.
-
-  The cause is in Bun, not in nvx's permissions. Measured inside one contained
-  run, with every path pointing at the same directory:
-
-  ```
-  readdirSync(absolute cwd)   OK          readdirSync(".")        EBADFD
-  opendirSync(".")            OK          writeFileSync("x.txt")  EBADFD
-  path.resolve(".")           OK          writeFileSync(absolute) OK
-  ```
-
-  Opening `"."` succeeds; only resolving a relative path for a syscall fails. The
-  error names the ORIGINAL launch directory even after `process.chdir()` elsewhere,
-  and a contained Bun can open every ancestor directory by absolute path. So Bun
-  captures a working-directory descriptor at startup for `openat`-style resolution
-  and that descriptor is unusable inside an AppContainer; absolute paths bypass it.
-  Node does not keep one, which is why Node is unaffected.
-
-  This matches Bun's own reports that it requires `openat` on ancestor directories
-  and fails fatally in sandboxes where Node does not
-  ([oven-sh/bun#28220](https://github.com/oven-sh/bun/issues/28220)), and its
-  history of Windows relative-path `readdir` bugs
-  ([oven-sh/bun#8245](https://github.com/oven-sh/bun/issues/8245)).
-
-  Granting more will not fix it: every directory involved is already openable from
-  inside the container, verified in the same run. Until Bun changes,
-  `nvx --no-sandbox` is the only way to run it — which means running it **without**
-  containment, so treat what it installs accordingly.
+  `nvx install bun@1.4.2` (or later) is the fix. `nvx --no-sandbox` remains the
+  escape hatch for an older Bun, which means running it **without** containment,
+  so treat what it installs accordingly.
 
 - **A contained process can list the names in your home directory, though not
   read anything in it.** Measured 2026-09-05: a contained process enumerated 208
