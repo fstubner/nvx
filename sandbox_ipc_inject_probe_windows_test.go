@@ -112,13 +112,31 @@ func msvcrtFDBlob(handles []syscall.Handle, flags []byte) []byte {
 // So the mechanism works for node, and this harness's blob looks right, and the
 // child still sees neither descriptor. The gap is between those two facts.
 //
-// THE NEXT MEASUREMENT: spawn a NON-node CRT program with the same blob and see
-// whether it gets the descriptors. That separates "this harness's CreateProcessW
-// call is subtly wrong" from "node's runtime does not populate its fd table from
-// lpReserved2 when libuv is not the spawner" -- the second would end the
-// approach, and nothing measured so far distinguishes them. Comparing against a
-// traced libuv spawn of the same shape would settle it faster if a tracer is to
-// hand.
+// THE CONTROL WAS RUN, and it passes: see
+// TestTheFDInjectionBlobWorksForANonNodeCRTProgram. A C program built against
+// the UCRT, launched by this same code with a byte-identical blob -- including
+// an overlapped pipe at fd 3 marked FOPEN|FPIPE -- reports both descriptors
+// PRESENT. So the launch is sound, and node's EBADF is not a malformed blob, a
+// bad CreateProcessW call, or handle inheritance.
+//
+// Which leaves a contradiction that is the actual state of this investigation:
+//
+//	C program, this launch      fd 3 PRESENT, fd 4 PRESENT
+//	node, this launch           fd 3 EBADF,   fd 4 EBADF
+//	node, spawned by node       fd 3 readable
+//
+// Node does receive an inherited descriptor when libuv is the spawner, and does
+// not here, with the blob and the CreateProcessW arguments matched as closely as
+// they can be. Ruled out along the way, each by measurement: the environment
+// block (inheriting the parent's changes nothing), the creation flags, whether
+// NODE_CHANNEL_FD is set at all, an invalid handle poisoning the blob, and the
+// pipe entry itself.
+//
+// So the descriptors are discarded inside node's own startup by something this
+// launch does differently from libuv's, still unidentified. That is a question
+// about node, not about nvx or Windows, and it is where the next session starts
+// -- reading libuv's uv_spawn against this call, or bisecting node's startup.
+// Until it is answered, brokered IPC is neither possible nor ruled out.
 func TestAnInjectedOverlappedPipeWorksAsNodesIPCChannel(t *testing.T) {
 	// An investigation harness, not a regression test, and it does not pass:
 	// set NVX_IPC_SPIKE=1 to pick the work up. See the note above for exactly
@@ -257,7 +275,15 @@ setTimeout(() => process.exit(0), 1200);
 	}
 	// NODE_CHANNEL_FD names the descriptor carrying the channel -- exactly what
 	// node's own fork sets. Here it names one node never opened.
-	envBlock, err := buildEnvBlockForProbe(append(os.Environ(), "NODE_CHANNEL_FD=3"))
+	// With NVX_IPC_SPIKE_NO_CHANNEL=1 the channel variable is left unset. Node
+	// then does no IPC setup, which isolates a question the first runs could not
+	// answer: whether the descriptors never arrive, or arrive and are consumed by
+	// uv_pipe_open taking ownership of fd 3 during channel setup.
+	childEnv := os.Environ()
+	if os.Getenv("NVX_IPC_SPIKE_NO_CHANNEL") != "1" {
+		childEnv = append(childEnv, "NODE_CHANNEL_FD=3")
+	}
+	envBlock, err := buildEnvBlockForProbe(childEnv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,12 +292,19 @@ setTimeout(() => process.exit(0), 1200);
 		unsafe.Sizeof(si), si.CbReserved2, 4+5+5*8, blob)
 	t.Logf("handles: nul=%#x out=%#x pipe=%#x marker=%#x", nul, outFile, client, marker)
 
+	// In NO_CHANNEL mode the environment is inherited rather than rebuilt, which
+	// makes this call identical to the one the UCRT control program gets -- the
+	// only remaining difference between a launch node ignores and one a C program
+	// honours.
 	var pi processInformation
 	const createUnicodeEnvironment = 0x00000400
+	envArg, flagsArg := uintptr(unsafe.Pointer(&envBlock[0])), uintptr(createUnicodeEnvironment)
+	if os.Getenv("NVX_IPC_SPIKE_NO_CHANNEL") == "1" {
+		envArg, flagsArg = 0, 0
+	}
 	ok, _, callErr := procCreateProcessW.Call(
 		0, uintptr(unsafe.Pointer(cmdline)), 0, 0, 1,
-		uintptr(createUnicodeEnvironment),
-		uintptr(unsafe.Pointer(&envBlock[0])), 0,
+		flagsArg, envArg, 0,
 		uintptr(unsafe.Pointer(&si)), uintptr(unsafe.Pointer(&pi)),
 	)
 	if ok == 0 {
