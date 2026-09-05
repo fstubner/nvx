@@ -618,6 +618,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A DNS lookup that failed once was a way past the link-local guard.** nvx
+  refuses to reach `169.254.0.0/16` through a *name*, because that is where cloud
+  metadata endpoints live and one unauthenticated GET there returns credentials.
+  A name whose first lookup failed resolved to nothing, and the dial then fell
+  back to handing the **name** to `net.Dial` — which resolved a second time with
+  nothing judging the answer.
+
+  So a record that answers SERVFAIL to the first query and `169.254.169.254` to
+  the second reached the endpoint the guard exists to protect. It needed an
+  allowlisted host under attacker-controlled DNS, which is precisely the threat
+  model the guard was written for.
+
+  The dial now resolves the name itself and applies the same check, so a name is
+  never handed to `net.Dial` unjudged. A name that genuinely will not resolve
+  still fails as a dial rather than as a containment decision, which was the
+  reason the lookup error was swallowed in the first place.
+
+  Found by an independent audit, in code added the day before to close the first
+  version of this same hole.
+
+### Fixed
+
 * **`nvx install tsc` was refused as a typosquat of `ms`.** TypeScript's compiler,
   at 780,294 weekly downloads, was reported as "suspiciously close to popular
   package ms (edit distance <= 2)" and the install aborted. In a non-interactive
