@@ -574,6 +574,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counts as loosening, so a project-local file naming one needs the same approval
   an egress host does.
 
+### Known issues
+
+* **Bun does not work inside the Windows sandbox.** Measured against Bun 1.3.1:
+  a contained `bun` cannot read its own working directory, so `nvx bun install`
+  and `nvx bunx` both fail with `CouldntReadCurrentDirectory` and install
+  nothing. Both are contained by default, so this is the ordinary path.
+
+  Node running the identical script in the identical directory is contained and
+  works, and `nvx --no-sandbox bun install` works, so the gap is between the
+  sandbox and Bun rather than either being broken on its own. Not yet diagnosed.
+
+  Both failures exit non-zero and print an error, so nothing installs silently.
+  Until this is fixed the only way to run Bun is `--no-sandbox`, which is to say
+  without containment.
+
 ### Fixed
 
 * **`nvx install tsc` was refused as a typosquat of `ms`.** TypeScript's compiler,
