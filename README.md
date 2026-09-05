@@ -569,23 +569,51 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   the sandbox and Bun specifically rather than a broken sandbox or a broken Bun.
 
   **`nvx setup` is required for Bun and not for Node**, and it is not sufficient.
-  Without the elevated drive-root grants, a contained Bun cannot start a script
-  at all. With them it runs a script file, and still cannot open its working
-  directory: `readdir` and any relative-path write fail with `EBADFD`, so
-  `bun install` and `bunx` do not work.
+  Without the elevated drive-root grants a contained Bun cannot start a script at
+  all. With them it runs a script file, and still fails everything that resolves a
+  RELATIVE path.
 
-  The remaining cause is not identified. Ruled out by measurement: the access
-  mask on the project directory (granting Full Control changes nothing), nvx's
-  Node preloads (Bun ignores `NODE_OPTIONS` entirely, but Node with its preloads
-  disabled still works), the location and volume, and missing ancestor traverse
-  — a project whose whole chain is granted fails identically. What is left is how
-  Bun opens a directory handle inside an AppContainer.
+  The cause is in Bun, not in nvx's permissions. Measured inside one contained
+  run, with every path pointing at the same directory:
 
-  Failures are loud once `nvx setup` has run: a non-zero exit and an error. Before
-  it, some relative-path operations fail **silently with exit 0**, which is the
-  worse shape and another reason to run setup. Either way `--no-sandbox` is the
-  only way to use Bun today — which means running it **without** containment, so
-  treat what it installs accordingly.
+  ```
+  readdirSync(absolute cwd)   OK          readdirSync(".")        EBADFD
+  opendirSync(".")            OK          writeFileSync("x.txt")  EBADFD
+  path.resolve(".")           OK          writeFileSync(absolute) OK
+  ```
+
+  Opening `"."` succeeds; only resolving a relative path for a syscall fails. The
+  error names the ORIGINAL launch directory even after `process.chdir()` elsewhere,
+  and a contained Bun can open every ancestor directory by absolute path. So Bun
+  captures a working-directory descriptor at startup for `openat`-style resolution
+  and that descriptor is unusable inside an AppContainer; absolute paths bypass it.
+  Node does not keep one, which is why Node is unaffected.
+
+  This matches Bun's own reports that it requires `openat` on ancestor directories
+  and fails fatally in sandboxes where Node does not
+  ([oven-sh/bun#28220](https://github.com/oven-sh/bun/issues/28220)), and its
+  history of Windows relative-path `readdir` bugs
+  ([oven-sh/bun#8245](https://github.com/oven-sh/bun/issues/8245)).
+
+  Granting more will not fix it: every directory involved is already openable from
+  inside the container, verified in the same run. Until Bun changes,
+  `nvx --no-sandbox` is the only way to run it — which means running it **without**
+  containment, so treat what it installs accordingly.
+
+- **A contained process can list the names in your home directory, though not
+  read anything in it.** Measured 2026-09-05: a contained process enumerated 208
+  entries in `%USERPROFILE%`, while `~/.npmrc`, `~/.ssh` and `~/.aws/credentials`
+  were all refused with EPERM.
+
+  So credentials stay unreadable — that part of the claim above holds — but which
+  tools you use is visible: the presence of `.ssh`, `.aws`, `.1password` and the
+  rest. That is reconnaissance value, not access.
+
+  nvx grants ancestors traverse-only precisely to avoid this, and that is not
+  enough: Windows puts `ALL APPLICATION PACKAGES:(RX)` on the profile directory by
+  default, and every AppContainer inherits it regardless of what nvx does. Fixing
+  it would mean an explicit deny ACE on a directory nvx does not own, which is not
+  obviously the right trade and has not been made.
 
 - **A contained command sees almost none of your environment.** Containment keeps
   11 environment variables on Windows (7 elsewhere) and drops the rest, so that a
