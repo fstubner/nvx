@@ -31,6 +31,14 @@ type EgressProxy struct {
 	// in a different network namespace can reach this proxy (see ListenUnix).
 	unixLn   net.Listener
 	unixPath string
+	// denyHintOnce keeps the "here is how to allow it" line to one per run.
+	//
+	// A blocked host is usually blocked repeatedly -- a script retries, a package
+	// manager fans out -- and repeating the remedy after every denial buries the
+	// denials themselves. The environment-scrub warning taught that the same day
+	// it shipped: a line printed on nearly every event stops being read.
+	denyHintOnce sync.Once
+
 	// token authenticates this session's clients to this session's proxy.
 	//
 	// Every nvx sandbox on a machine shares one AppContainer package identity, and
@@ -285,6 +293,21 @@ func allowKeysFor(hp hostPort) []string {
 	return keys
 }
 
+// explainHowToAllowOnce names the remedy for a blocked host, once per run.
+//
+// The loopback refusal has said what to do since it was written; the ordinary
+// denial -- much the commoner one -- printed the host and stopped, leaving a
+// reader who had never opened a policy file with nothing to act on.
+//
+// Not on the prompt-refused path below: someone who was asked and said no has
+// already decided, and telling them how to undo it is noise.
+func (p *EgressProxy) explainHowToAllowOnce(key string) {
+	p.denyHintOnce.Do(func() {
+		LogInfo("If that is meant, add %q to isolation.network.allow_hosts in .nvx-policy.json. "+
+			"Adding one counts as loosening, so a project file naming it needs approval.", key)
+	})
+}
+
 func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
 	mode := strings.ToLower(strings.TrimSpace(p.policy.Isolation.Network.Mode))
 
@@ -328,6 +351,7 @@ func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
 
 	if !p.policy.Isolation.Network.PromptUnknown {
 		LogWarn("Blocked egress: %s", key)
+		p.explainHowToAllowOnce(key)
 		auditLog(p.nvxHome, "egress_deny", map[string]string{"host": key})
 		return false
 	}

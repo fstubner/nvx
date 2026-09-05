@@ -57,11 +57,6 @@ func GetDownloadsDir() string {
 	return filepath.Join(GetHomeDir(), "downloads")
 }
 
-// GetCurrentLinkPath returns the path of the global default link
-func GetCurrentLinkPath() string {
-	return currentLinkPath(GetHomeDir())
-}
-
 func currentLinkPath(nvxHome string) string {
 	return filepath.Join(nvxHome, "current")
 }

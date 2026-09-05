@@ -234,8 +234,7 @@ Corporate policies can be defined globally in `~/.nvx/policy.json` and customize
   "isolation": {
     "enabled": true,
     "filesystem": {
-      "provider": "native",
-      "mode": "strict"
+      "provider": "native"
     },
     "network": {
       "mode": "proxy",
@@ -250,11 +249,15 @@ Corporate policies can be defined globally in `~/.nvx/policy.json` and customize
 }
 ```
 
-**Not yet implemented.** `prompts.interactive`, `prompts.non_interactive`,
-`prompts.network_unknown` and `isolation.filesystem.mode` are parsed and merged
-but nothing reads them, so setting any of them does nothing — including tightening
-one. They were previously shown in this example and scaffolded by
-`nvx policy init`, which made them look effective. Prompt behaviour is fixed:
+**Not yet implemented.** `prompts.interactive`, `prompts.non_interactive` and
+`prompts.network_unknown` are parsed and merged but nothing reads them, so setting
+any of them does nothing — including tightening one. They were previously shown in
+this example and scaffolded by `nvx policy init`, which made them look effective.
+
+`isolation.filesystem.mode` was in the same state and sat in the example above,
+where `"mode": "strict"` read as a tightening someone had chosen. It was removed
+on 2026-09-05 rather than left inert, so a policy naming it now gets an
+unknown-key warning instead of silence. Prompt behaviour is fixed:
 interactive asks, non-interactive denies, and the two decisions that widen nvx's
 trust boundary ignore `-y`/`NVX_YES` entirely (see above).
 
