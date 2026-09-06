@@ -592,6 +592,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Windows: `nvx setup --undo` could appear to hang.** It swept every ancestor
+  path and the profile root through a permission write with no time limit,
+  where every grant nvx makes is bounded, because a filter driver over the
+  profile root can stall such a write indefinitely and one did. On the profile
+  root the write also propagates over the whole tree. Each revoke is now
+  bounded the way each grant is; one that does not finish is reported by path,
+  counted as a failure, and the command exits non-zero with the entries to
+  remove by hand, instead of sitting there.
+
+* **Windows: an argument containing a backslash before a quote reached the
+  contained program changed.** The command-line quoting emitted a run of
+  backslashes once before an escaped quote, where the system parser needs each
+  of them doubled. Measured against Windows' own parser: `a\"b` came back as
+  `a\b`, and the two- and three-backslash forms were wrong the same way, while
+  eleven other shapes round-tripped. A Windows path inside a quoted JSON
+  argument is the everyday case. The quoting now doubles the run, and a test
+  round-trips every shape through the system parser rather than a hand-written
+  expectation.
+
 * **A version range now resolves to the version npm would install, so the
   checks run against it.** `npm install lodash@^4` -- a range, the shape most
   declared dependencies take -- was an error inside nvx's resolver, the caller
