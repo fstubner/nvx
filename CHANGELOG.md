@@ -592,6 +592,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A contained process no longer inherits whatever handles nvx's caller left
+  open.** Windows handle inheritance is all-or-nothing: nvx launched the
+  in-container supervisor with inheritance on and no list restricting it, so the
+  child received every inheritable handle in the nvx process, whatever that
+  happened to be. nvx marks only stdin, stdout and stderr inheritable itself, but
+  the set is not nvx's to control — an inheritable handle held by whoever
+  launched nvx is inherited by nvx and passed straight through the containment
+  boundary.
+
+  Measured on Windows 11 with the same launcher before and after: the supervisor
+  inside the container held 26 inherited handles, byte for byte the launching
+  process's set, and afterwards holds 3 — exactly the standard streams. Among
+  the 23 that no longer cross were six pipes and a thread handle belonging to a
+  process outside the container.
+
+  This matters more than the handle count suggests, because the caller nvx is
+  built for is an agent harness, and the harness this was measured on does hold
+  extra inheritable pipes. The launch now pins inheritance to an explicit list of
+  the standard handles, so what crosses no longer depends on the caller's
+  hygiene. The list is deduplicated and filtered for unusable entries first: a
+  console gives all three streams the same handle, `> log 2>&1` gives stdout and
+  stderr the same handle, and Windows rejects the entire launch for a duplicate
+  or invalid entry rather than skipping it.
+
 * **`nvx auto` exited 0 after failing to switch.** A directory pinned to a
   version you do not have printed "Run 'nvx install node@22'" and then reported
   success, so `nvx auto && npm test` carried on with the wrong runtime. It now

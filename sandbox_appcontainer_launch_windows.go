@@ -117,7 +117,17 @@ func launchAppContainerProcessOnce(
 	lowILToken syscall.Token,
 	capabilitySIDs []string,
 ) (exitCode int, err error) {
-	attrBuf, attrList, err := initProcThreadAttributeList(1)
+	// Collect stdio before the attribute list, because whether the child gets a
+	// handle list -- and so how many attributes the list must hold -- depends on
+	// whether stdio is inheritable at all.
+	stdio := prepareInheritableStdio()
+	handleList := inheritableStdioHandleList(stdio)
+	attrCount := uint32(1)
+	if stdio.inheritable && len(handleList) > 0 {
+		attrCount = 2
+	}
+
+	attrBuf, attrList, err := initProcThreadAttributeList(attrCount)
 	if err != nil {
 		return 1, err
 	}
@@ -146,6 +156,37 @@ func launchAppContainerProcessOnce(
 		return 1, err
 	}
 
+	// Pin inheritance to exactly the standard handles.
+	//
+	// bInheritHandles=TRUE is all-or-nothing: without this attribute the child
+	// receives EVERY inheritable handle in this process, whatever it happens to
+	// be. nvx marks only these three inheritable itself (the stdio broker passes
+	// its pipes by NAME through the environment, never by handle), but the set is
+	// not nvx's to control -- an inheritable handle held by whoever launched nvx
+	// is inherited by nvx and then passed straight through into the container.
+	//
+	// Measured 2026-09-06 on Windows 11, contained `node` launched from a shell
+	// holding one extra inheritable pipe: the in-container supervisor's
+	// inheritable set was the launching process's set exactly, 37 handles with
+	// identical values, and that extra pipe -- an object belonging to a process
+	// outside the container -- was present in the sandboxed workload's own handle
+	// table. Five runs from chains with nothing extra showed none, which is the
+	// point: what crosses depends on the caller, not on nvx.
+	//
+	// That matters more here than it would elsewhere, because the caller nvx is
+	// designed for is an agent harness, and the agent harness this was measured
+	// on does hold extra inheritable pipes.
+	if attrCount == 2 {
+		if err := updateProcThreadAttribute(
+			attrList,
+			PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+			unsafe.Pointer(&handleList[0]),
+			uintptr(len(handleList))*unsafe.Sizeof(handleList[0]),
+		); err != nil {
+			return 1, err
+		}
+	}
+
 	var si startupInfoEx
 	si.Cb = uint32(unsafe.Sizeof(si))
 	si.lpAttributeList = attrList
@@ -153,7 +194,6 @@ func launchAppContainerProcessOnce(
 	// Standard handles reach the child only when STARTF_USESTDHANDLES and
 	// bInheritHandles are BOTH set; setting just one is worse than neither (the
 	// child fails to start). See prepareInheritableStdio.
-	stdio := prepareInheritableStdio()
 	var inheritHandles uintptr
 	if stdio.inheritable {
 		si.Flags = STARTF_USESTDHANDLES
@@ -238,9 +278,11 @@ func launchAppContainerProcessOnce(
 		)
 	}
 
-	// Keep the attribute buffer and capability SID array alive through CreateProcess.
+	// Keep the attribute buffer, capability SID array and handle list alive
+	// through CreateProcess: the attribute list holds pointers into all three.
 	_ = attrBuf
 	_ = capAttrs
+	_ = handleList
 
 	if createOK == 0 {
 		// %w, not %v: the caller distinguishes a corrupted staged image from other
