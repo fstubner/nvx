@@ -54,9 +54,9 @@ func TestATarSymlinkChainCannotEscapeTheDestination(t *testing.T) {
 	}
 	add("pkg/", tar.TypeDir, "", nil)
 	add("pkg/sub/", tar.TypeDir, "", nil)
-	add("pkg/sub/up", tar.TypeSymlink, "..", nil)       // -> pkg          (inside)
-	add("pkg/link", tar.TypeSymlink, "sub", nil)        // -> pkg/sub      (inside)
-	add("pkg/link/up/out", tar.TypeSymlink, "..", nil)  // lexically pkg/link; really pkg/.. = dest/..
+	add("pkg/sub/up", tar.TypeSymlink, "..", nil)      // -> pkg          (inside)
+	add("pkg/link", tar.TypeSymlink, "sub", nil)       // -> pkg/sub      (inside)
+	add("pkg/link/up/out", tar.TypeSymlink, "..", nil) // lexically pkg/link; really pkg/.. = dest/..
 	add("pkg/link/up/out/pwned", tar.TypeReg, "", []byte("escaped\n"))
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)
@@ -73,8 +73,8 @@ func TestATarSymlinkChainCannotEscapeTheDestination(t *testing.T) {
 
 	// Whatever the extractor reported, nothing may exist outside dest.
 	for _, outside := range []string{
-		filepath.Join(root, "pwned"),        // dest/.. is root
-		filepath.Join(root, "out"),          // the symlink itself, one level up
+		filepath.Join(root, "pwned"), // dest/.. is root
+		filepath.Join(root, "out"),   // the symlink itself, one level up
 		filepath.Join(filepath.Dir(root), "pwned"),
 	} {
 		if _, statErr := os.Lstat(outside); statErr == nil {

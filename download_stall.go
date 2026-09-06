@@ -79,6 +79,8 @@ func (s *stallReader) Stop() { s.timer.Stop() }
 
 type stalledError struct{}
 
-func (stalledError) Error() string { return "download stalled: no data received for " + downloadStallTimeout.String() }
+func (stalledError) Error() string {
+	return "download stalled: no data received for " + downloadStallTimeout.String()
+}
 
 var errDownloadStalled error = stalledError{}
