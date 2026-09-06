@@ -22,6 +22,12 @@ type hostPort struct {
 	port uint16
 }
 
+// maxProxyRequestHeaderBytes caps the CONNECT request line and headers. The
+// client is the sandboxed process and this proxy is nvx itself, outside the
+// sandbox; an unbounded read let a contained process grow the parent's memory
+// for as long as it kept sending bytes without a newline.
+const maxProxyRequestHeaderBytes = 64 << 10
+
 type EgressProxy struct {
 	httpAddr  string
 	socksAddr string
@@ -309,6 +315,12 @@ func (p *EgressProxy) explainHowToAllowOnce(key string) {
 }
 
 func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
+	// Before anything else: is this a name at all? Everything below prints
+	// hp.host to a terminal or writes it to the audit log, and it is whatever
+	// bytes the sandboxed client put in its request. See validEgressHost.
+	if p.refuseInvalidHost(hp) {
+		return false
+	}
 	mode := strings.ToLower(strings.TrimSpace(p.policy.Isolation.Network.Mode))
 
 	// A loopback destination used to be permitted unconditionally, whatever the
@@ -459,7 +471,10 @@ func (p *EgressProxy) serveHTTP(ctx context.Context, ln net.Listener) {
 
 func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 	defer client.Close()
-	br := bufio.NewReader(client)
+	// Capped for the header phase and lifted after it: what follows the headers
+	// is the tunnel, and must not be bounded. See maxProxyRequestHeaderBytes.
+	lim := &io.LimitedReader{R: client, N: maxProxyRequestHeaderBytes}
+	br := bufio.NewReader(lim)
 	req, err := br.ReadString('\n')
 	if err != nil {
 		return
@@ -478,6 +493,10 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 		}
 		port, _ := strconv.ParseUint(portStr, 10, 16)
 		hp := parseHostPortSpec(host, uint16(port))
+		if p.refuseInvalidHost(hp) {
+			_, _ = fmt.Fprintf(client, "HTTP/1.1 400 Bad Request\r\n\r\n")
+			return
+		}
 
 		// Read the remaining CONNECT request headers up to the blank line, and
 		// keep the credential out of them. They must be consumed either way:
@@ -498,6 +517,8 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 				auth = strings.TrimSpace(value)
 			}
 		}
+
+		lim.N = 1 << 62 // headers read; the tunnel is not bounded
 
 		// Authenticate before consulting the allowlist, so a sibling sandbox
 		// scanning loopback cannot use the 403/200 difference to learn what this
@@ -680,6 +701,10 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 	}
 
 	hp := parseHostPortSpec(host, port)
+	if p.refuseInvalidHost(hp) {
+		_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		return
+	}
 	// Resolved once; see the CONNECT path above and resolveEgressAddresses.
 	ips, rerr := resolveEgressTarget(hp.host)
 	if rerr != nil {

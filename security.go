@@ -629,11 +629,22 @@ func min(a, b int) int {
 // exist. Reported from real use 2026-08-20 as a scary, detail-free advisory list
 // for `npm@latest`; the noisy output was the symptom, this is the cause.
 //
-// Anything that is neither a dist-tag nor an exact published version -- a semver
-// range like ^4.17.0, or a typo -- is an error rather than a pass-through. The
-// caller turns that into "could not verify registry metadata ... proceed?", which
-// is honest: nvx cannot check a version it cannot name. Silently continuing with
-// every check disabled is what this replaces.
+// A semver range resolves to the highest published version it allows, which is
+// what npm installs, so the checks describe the thing actually installed. The
+// parser is the engine-constraint one in semver_range.go. It skips prereleases,
+// as npm does unless a range names one, and reports the syntax it does not know
+// rather than guessing.
+//
+// Ranges used to be errors here. The caller turns an error into "Could not
+// verify registry metadata ... Proceed without metadata checks?", which is an
+// ordinary prompt, and -y / NVX_YES approve ordinary prompts by design -- so
+// `npm install lodash@^4 -y`, the shape most declared dependencies take,
+// skipped the install-script, release-age and OSV checks behind a warning
+// nobody unattended was reading.
+//
+// What still cannot be resolved -- a typo, a git or URL spec, a range syntax
+// the parser does not know -- is still an error, and the prompt is the honest
+// answer: nvx cannot check a version it cannot name.
 func resolveVersionQuery(versionQuery string, meta NpmRegistryMetadata) (string, error) {
 	q := strings.TrimSpace(versionQuery)
 
@@ -659,5 +670,13 @@ func resolveVersionQuery(versionQuery string, meta NpmRegistryMetadata) (string,
 		return "", fmt.Errorf("dist-tag %q points at version %q, which the registry did not describe", q, tagged)
 	}
 
-	return "", fmt.Errorf("%q is not an exact version or a dist-tag; nvx cannot check a version it cannot resolve", q)
+	names := make([]string, 0, len(meta.Versions))
+	for name := range meta.Versions {
+		names = append(names, name)
+	}
+	if v, rerr := highestMatching(q, names); rerr == nil {
+		return v, nil
+	}
+
+	return "", fmt.Errorf("%q is not an exact version, a dist-tag or a range nvx can resolve; nvx cannot check a version it cannot resolve", q)
 }

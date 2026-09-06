@@ -135,20 +135,26 @@ func applyProjectGrants(config SandboxConfig, sid uintptr, scope, guestHome, wor
 		// reporting it had withdrawn a read/execute permission.
 		intended := planReadExecRecords(ledger.ReadExecGrants, config.ReadExecRoots, scopeCaps)
 		if len(intended) != beforeCount || len(revokedNow) > 0 {
-			stored, _ := readGrantsFile(grantsPath(config.NvxHome, scope))
-			ledger.ReadExecGrants = mergeLedgerForSave(intended, stored, revokedNow)
-			ledger.ProjectPath = scope
-			if err := saveProjectGrants(config.NvxHome, ledger); err != nil {
+			// Under the ledger's lock, the freshly loaded entries ARE the stored ones
+			// mergeLedgerForSave reconciles against; the separate unlocked re-read
+			// this used to do was an approximation of the same thing.
+			if err := updateProjectGrants(config.NvxHome, scope, func(g *projectGrants) error {
+				g.ReadExecGrants = mergeLedgerForSave(intended, g.ReadExecGrants, revokedNow)
+				ledger.ReadExecGrants = g.ReadExecGrants
+				return nil
+			}); err != nil {
 				LogInfo("They were not granted: a permission nvx cannot record is one it could never withdraw.")
 				return nil, "", fmt.Errorf("could not record the read/execute permissions this policy asks for: %w", err)
 			}
 		}
 	} else if scope != "" && len(revokedNow) > 0 {
 		// Withdrawals still need writing back even with nothing left to grant.
-		stored, _ := readGrantsFile(grantsPath(config.NvxHome, scope))
-		ledger.ReadExecGrants = mergeLedgerForSave(ledger.ReadExecGrants, stored, revokedNow)
-		ledger.ProjectPath = scope
-		if err := saveProjectGrants(config.NvxHome, ledger); err != nil {
+		ours := ledger.ReadExecGrants
+		if err := updateProjectGrants(config.NvxHome, scope, func(g *projectGrants) error {
+			g.ReadExecGrants = mergeLedgerForSave(ours, g.ReadExecGrants, revokedNow)
+			ledger.ReadExecGrants = g.ReadExecGrants
+			return nil
+		}); err != nil {
 			LogWarn("Could not update the record of the sandbox's read grants: %v", err)
 		}
 	}
