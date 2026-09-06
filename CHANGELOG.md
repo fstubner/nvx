@@ -592,6 +592,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A runtime archive could write outside its destination through a chain of
+  symlinks.** The tar extractor checked each symlink's target lexically,
+  against the directory of the entry's own path. That is right for one link
+  and wrong once the path to an entry passes through links created by earlier
+  entries: `link` → `sub`, `sub/up` → `..`, then `link/up/out` → `..` resolves
+  inside lexically and to the destination's parent in the filesystem, and a
+  file entry beneath it lands there. Measured on Linux: every individual
+  target passed the old check and the file was written outside. Every entry is
+  now placed by its real path, resolving earlier symlinks component by
+  component and refusing the moment any step leaves the destination, and a
+  symlink's target is walked the same way from its real parent. The shapes
+  real archives use, such as `bin/npm` → `../lib/node_modules/npm/bin/npm-cli.js`,
+  still extract. This needs a compromised or substituted release archive to
+  matter, which is the situation the extraction exists to survive.
+
+* **What is installed is now the bytes that were verified.** Both installers
+  hashed the downloaded archive at its path and then extracted from that path:
+  two opens, with whatever the file held at the second one installed under the
+  first one's checksum. Another nvx installing the same version into the same
+  fixed download name is the ordinary way the file changes in between.
+  Measured: with the archive rewritten between the two steps, the rewritten
+  content was extracted. The archive is now read once, those bytes are
+  verified, and those same bytes are extracted, so there is nothing to race.
+  That holds the archive in memory during an install, 25 to 60 MB for a
+  runtime.
+
+* **A large download on a slow connection no longer fails partway through.**
+  The HTTP client had a single 60-second timeout covering the whole request,
+  body included, so a 25 to 60 MB archive failed below roughly 4 to 8 Mbps
+  while making steady progress. Connecting, the TLS handshake and waiting for
+  headers are each bounded; the body is bounded only by whether bytes are still
+  arriving, and a download that goes 60 seconds without any is abandoned as
+  stalled. Measured: a body that stopped after 4 KiB was abandoned in under a
+  second with the period shortened, where before it sat out the full minute.
+
 * **Windows: `nvx setup --undo` could appear to hang.** It swept every ancestor
   path and the profile root through a permission write with no time limit,
   where every grant nvx makes is bounded, because a filter driver over the

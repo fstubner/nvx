@@ -383,20 +383,16 @@ func (n NodeProvider) Install(version string, nvxHome string) error {
 	}
 	defer os.Remove(tempFile)
 
-	err = VerifyNodeChecksum(resolvedVer, tempFile, archiveFilename)
+	// Verified and extracted as one set of bytes; see extractVerifiedArchive
+	// for why a verify-by-path then extract-by-path was two different files.
+	expectedSHA, err := fetchExpectedShasum(nodeShasumsURL(resolvedVer), archiveFilename)
 	if err != nil {
 		return err
 	}
 
 	_ = os.RemoveAll(extractDir)
 	defer os.RemoveAll(extractDir)
-	if getOS() == "win" {
-		err = ExtractZip(tempFile, extractDir)
-	} else {
-		err = ExtractTarGz(tempFile, extractDir)
-	}
-
-	if err != nil {
+	if err := extractVerifiedArchive(tempFile, expectedSHA, extractDir, getOS() == "win"); err != nil {
 		return err
 	}
 	if info, err := os.Stat(nodeBinaryPath(extractDir)); err != nil || info.IsDir() {

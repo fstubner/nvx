@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -39,11 +40,18 @@ func DownloadFile(url, destPath string) error {
 		return fmt.Errorf("failed to create directory for download: %w", err)
 	}
 
-	client := &http.Client{
-		Timeout: 60 * time.Second,
+	// Bounded on every step that can hang, and on the body only by whether it
+	// is still moving. A single Client.Timeout of 60s used to cover the whole
+	// request including the body, so a 25-60 MB archive failed below roughly
+	// 4-8 Mbps while making steady progress. See download_stall.go.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("HTTP request failed: %w", err)
 	}
 	// #nosec G704 -- fetching a caller-supplied URL is this function's entire purpose; the URLs are built from the runtime release indexes, and what arrives is checksum-verified before use
-	resp, err := client.Get(url)
+	resp, err := newDownloadClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -65,7 +73,9 @@ func DownloadFile(url, destPath string) error {
 		lastUpdate: time.Now(),
 	}
 
-	_, err = io.Copy(out, io.TeeReader(resp.Body, pw))
+	body := newStallReader(ctx, cancel, resp.Body, downloadStallTimeout)
+	defer body.Stop()
+	_, err = io.Copy(out, io.TeeReader(body, pw))
 	if err != nil {
 		return fmt.Errorf("failed to save download content: %w", err)
 	}
@@ -93,39 +103,55 @@ func ComputeSHA256(filePath string) (string, error) {
 // VerifyNodeChecksum downloads the SHASUMS256.txt for the given Node version,
 // finds the expected SHA-256 for the archive filename, and verifies the downloaded file's hash.
 func VerifyNodeChecksum(version, archivePath, archiveFilename string) error {
-	shaUrl := fmt.Sprintf("https://nodejs.org/dist/%s/SHASUMS256.txt", version)
-	return VerifyChecksumFromShasums(shaUrl, archivePath, archiveFilename)
+	return VerifyChecksumFromShasums(nodeShasumsURL(version), archivePath, archiveFilename)
+}
+
+// nodeShasumsURL is where nodejs.org publishes the checksums for a release.
+func nodeShasumsURL(version string) string {
+	return fmt.Sprintf("https://nodejs.org/dist/%s/SHASUMS256.txt", version)
+}
+
+// fetchExpectedShasum downloads a SHASUMS256.txt-style manifest (lines of
+// "<sha256>  <filename>") and returns the entry for archiveFilename. A missing
+// entry is an error: nothing is verified against a checksum nvx does not have.
+func fetchExpectedShasum(shaUrl, archiveFilename string) (string, error) {
+	tmpFile, err := os.CreateTemp("", "SHASUMS256-*.txt")
+	if err != nil {
+		return "", fmt.Errorf("failed to create secure temp file: %w", err)
+	}
+	shaTemp := tmpFile.Name()
+	if err := tmpFile.Close(); err != nil {
+		return "", fmt.Errorf("failed to close checksum temp file: %w", err)
+	}
+	defer os.Remove(shaTemp)
+
+	LogInfo("Verifying checksum for %s...", archiveFilename)
+	if err := DownloadFile(shaUrl, shaTemp); err != nil {
+		return "", fmt.Errorf("failed to download checksum file: %w", err)
+	}
+	content, err := os.ReadFile(shaTemp)
+	if err != nil {
+		return "", fmt.Errorf("failed to read checksum file: %w", err)
+	}
+	expectedSHA := findShasumEntry(string(content), archiveFilename)
+	if expectedSHA == "" {
+		return "", fmt.Errorf("checksum entry not found for %s in SHASUMS256.txt", archiveFilename)
+	}
+	return expectedSHA, nil
 }
 
 // VerifyChecksumFromShasums downloads a SHASUMS256.txt-style manifest (lines of
 // "<sha256>  <filename>"), looks up archiveFilename, and verifies archivePath's
 // hash against it. It is fail-closed: a missing entry or mismatch is an error.
+//
+// Verifying by path and then extracting by path is two opens of the file, and
+// what is extracted is whatever it holds at the second one. The installers use
+// extractVerifiedArchive instead, which verifies and extracts the same bytes;
+// this remains for callers that only need the check.
 func VerifyChecksumFromShasums(shaUrl, archivePath, archiveFilename string) error {
-	// Create a secure temp file for checksums
-	tmpFile, err := os.CreateTemp("", "SHASUMS256-*.txt")
+	expectedSHA, err := fetchExpectedShasum(shaUrl, archiveFilename)
 	if err != nil {
-		return fmt.Errorf("failed to create secure temp file: %w", err)
-	}
-	shaTemp := tmpFile.Name()
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("failed to close checksum temp file: %w", err)
-	}
-	defer os.Remove(shaTemp)
-
-	LogInfo("Verifying checksum for %s...", archiveFilename)
-	err = DownloadFile(shaUrl, shaTemp)
-	if err != nil {
-		return fmt.Errorf("failed to download checksum file: %w", err)
-	}
-
-	content, err := os.ReadFile(shaTemp)
-	if err != nil {
-		return fmt.Errorf("failed to read checksum file: %w", err)
-	}
-
-	expectedSHA := findShasumEntry(string(content), archiveFilename)
-	if expectedSHA == "" {
-		return fmt.Errorf("checksum entry not found for %s in SHASUMS256.txt", archiveFilename)
+		return err
 	}
 
 	// Compute checksum of downloaded file
@@ -294,7 +320,13 @@ func extractZip(zipPath, destDir string, strip bool) error {
 		return fmt.Errorf("failed to open zip file: %w", err)
 	}
 	defer r.Close()
+	return extractZipReader(&r.Reader, destDir, strip)
+}
 
+// extractZipReader is extractZip over an already-open archive, so that the
+// bytes which were checksum-verified can be the bytes extracted; see
+// extractVerifiedArchive.
+func extractZipReader(r *zip.Reader, destDir string, strip bool) error {
 	if err := os.MkdirAll(destDir, 0700); err != nil {
 		return fmt.Errorf("failed to create destination folder: %w", err)
 	}
@@ -359,7 +391,13 @@ func ExtractTarGz(tarPath, destDir string) error {
 		return fmt.Errorf("failed to open tar.gz file: %w", err)
 	}
 	defer file.Close()
+	return extractTarGzReader(file, destDir)
+}
 
+// extractTarGzReader is ExtractTarGz over an open stream, so that the bytes
+// which were checksum-verified can be the bytes extracted; see
+// extractVerifiedArchive.
+func extractTarGzReader(file io.Reader, destDir string) error {
 	gzipReader, err := gzip.NewReader(file)
 	if err != nil {
 		return fmt.Errorf("failed to create gzip reader: %w", err)
@@ -370,6 +408,12 @@ func ExtractTarGz(tarPath, destDir string) error {
 
 	if err := os.MkdirAll(destDir, 0700); err != nil {
 		return fmt.Errorf("failed to create destination folder: %w", err)
+	}
+	// Every entry below is placed by REAL path, resolved through whatever
+	// symlinks earlier entries created. See extract_within.go.
+	realDest, err := filepath.EvalSymlinks(destDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve destination directory: %w", err)
 	}
 
 	fmt.Fprint(os.Stderr, "🚚 Extracting files... ")
@@ -395,16 +439,30 @@ func ExtractTarGz(tarPath, destDir string) error {
 
 		switch header.Typeflag {
 		case tar.TypeDir:
+			target, err := extractTargetWithin(realDest, destDir, fpath)
+			if err != nil {
+				return err
+			}
 			// #nosec G115 -- header.Mode is attacker-controlled, but &0770 bounds the result: setuid, setgid, sticky and world bits cannot survive the mask however the conversion wraps
-			if err := os.MkdirAll(fpath, os.FileMode(header.Mode)&0770); err != nil {
+			if err := os.MkdirAll(target, os.FileMode(header.Mode)&0770); err != nil {
 				return fmt.Errorf("failed to create directory: %w", err)
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(fpath), 0700); err != nil {
+			target, err := extractTargetWithin(realDest, destDir, fpath)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
 				return fmt.Errorf("failed to create subdirectory: %w", err)
 			}
+			// Never write through a symlink an earlier entry left at this name.
+			if fi, lerr := os.Lstat(target); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+				if err := os.Remove(target); err != nil {
+					return fmt.Errorf("failed to replace symlink %s with a file: %w", target, err)
+				}
+			}
 			// #nosec G115 -- same as above: &0770 bounds an attacker-controlled tar mode, so no setuid/setgid bit can reach the created file
-			outFile, err := os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode)&0770)
+			outFile, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode)&0770)
 			if err != nil {
 				return fmt.Errorf("failed to open destination file %s: %w", fpath, err)
 			}
@@ -432,31 +490,29 @@ func ExtractTarGz(tarPath, destDir string) error {
 				strings.Contains(linkTarget, ":") {
 				return fmt.Errorf("illegal absolute symlink target in tar archive: %s -> %s", fpath, linkTarget)
 			}
-			resolvedTarget := filepath.Join(filepath.Dir(fpath), linkTarget) // #nosec G305 -- linkTarget is relative, colon-free, and resolved below against destDir.
-			cleanDest, err := filepath.Abs(destDir)
+			// Where the link itself lands, by real path, and where its target
+			// really points from there. Both walks follow any symlink earlier
+			// entries created and fail the moment a step leaves the destination.
+			// The old check resolved the target lexically against the entry's own
+			// path, which a chain of individually-inside links defeated.
+			target, err := extractTargetWithin(realDest, destDir, fpath)
 			if err != nil {
-				return fmt.Errorf("failed to resolve destination directory: %w", err)
+				return err
 			}
-			cleanDest = filepath.Clean(cleanDest)
-			cleanTarget, err := filepath.Abs(resolvedTarget)
-			if err != nil {
-				return fmt.Errorf("failed to resolve symlink target: %w", err)
-			}
-			cleanTarget = filepath.Clean(cleanTarget)
-			if cleanTarget != cleanDest && !strings.HasPrefix(cleanTarget, cleanDest+string(os.PathSeparator)) {
-				return fmt.Errorf("illegal symlink target outside destination: %s -> %s (resolved: %s)", fpath, linkTarget, cleanTarget)
+			if _, err := resolveWithin(realDest, filepath.Dir(target), linkTarget); err != nil {
+				return fmt.Errorf("illegal symlink target outside destination: %s -> %s: %w", fpath, linkTarget, err)
 			}
 
 			// Ensure the parent directory exists — tar entries do not always list
 			// a directory before the symlinks inside it.
-			if err := os.MkdirAll(filepath.Dir(fpath), 0700); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
 				return fmt.Errorf("failed to create subdirectory for symlink %s: %w", fpath, err)
 			}
 			// Remove existing symlink/file if it exists
-			if err := os.Remove(fpath); err != nil && !os.IsNotExist(err) {
+			if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("failed to remove existing symlink target %s: %w", fpath, err)
 			}
-			if err := os.Symlink(header.Linkname, fpath); err != nil {
+			if err := os.Symlink(header.Linkname, target); err != nil {
 				return fmt.Errorf("failed to create symlink %s -> %s: %w", fpath, header.Linkname, err)
 			}
 		}
