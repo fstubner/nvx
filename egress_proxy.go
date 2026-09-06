@@ -338,21 +338,10 @@ func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
 			return true
 		}
 	}
-	if p.sessionAllows(keys) {
-		return true
-	}
-
 	key := fmt.Sprintf("%s:%d", hp.host, hp.port)
 	if mode == "offline" || mode == "loopback" {
 		LogWarn("Blocked egress (network.mode=%s): %s", mode, key)
 		auditLog(p.nvxHome, "egress_block_mode", map[string]string{"host": key, "mode": mode})
-		return false
-	}
-
-	if !p.policy.Isolation.Network.PromptUnknown {
-		LogWarn("Blocked egress: %s", key)
-		p.explainHowToAllowOnce(key)
-		auditLog(p.nvxHome, "egress_deny", map[string]string{"host": key})
 		return false
 	}
 
@@ -378,11 +367,41 @@ func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
 	// not expecting a security question hands a postinstall their local Postgres,
 	// which is the outcome the paragraph above says this exists to prevent.
 	// Found by an independent acceptance pass on 2026-09-03.
+	//
+	// This sits BEFORE the session check, and that placement is load-bearing. A
+	// grant given while a name resolved publicly is keyed on the name, so with the
+	// check after it a later request -- same name, record now 127.0.0.1 -- matched
+	// the grant and was dialled without the address ever being looked at. The
+	// address has to be judged on every request, not only the one that prompted.
 	if isLoopback(hp.host) || anyLoopback(ips) {
 		LogWarn("Blocked egress to a local service: %s", key)
 		LogInfo("nvx does not offer local services through a prompt, because the contained process is what triggers it. "+
 			"If this is meant, add %q to isolation.network.allow_hosts in the project policy, or use --connect for one run.", key)
 		auditLog(p.nvxHome, "egress_deny_loopback_prompt", map[string]string{"host": key})
+		return false
+	}
+	// A name that did not resolve is not offered at the prompt either. A person
+	// cannot judge an address nobody has seen -- and the dial's own second lookup
+	// cannot tell a prompt-approved name from an allowlisted one, so it applies
+	// only the link-local check. SERVFAIL to the first query and 127.0.0.1 to the
+	// second therefore walked through the loopback refusal above and reached the
+	// prompt: the same shape closed for link-local the day before, found by an
+	// independent audit on 2026-09-06. Allowlisted names are not affected; they
+	// returned above, and a transient DNS failure there stays the dial's problem.
+	if len(ips) == 0 {
+		LogWarn("Blocked egress: %s did not resolve, and nvx does not ask you to approve an address it has not seen.", key)
+		auditLog(p.nvxHome, "egress_deny_unresolved_prompt", map[string]string{"host": key})
+		return false
+	}
+
+	if p.sessionAllows(keys) {
+		return true
+	}
+
+	if !p.policy.Isolation.Network.PromptUnknown {
+		LogWarn("Blocked egress: %s", key)
+		p.explainHowToAllowOnce(key)
+		auditLog(p.nvxHome, "egress_deny", map[string]string{"host": key})
 		return false
 	}
 
