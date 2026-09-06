@@ -1,0 +1,3 @@
+The nvx.exe for this platform is copied here from dist/nvx.exe
+by the release workflow before publishing. It is not committed: a binary
+in git is a binary nobody diffed.
