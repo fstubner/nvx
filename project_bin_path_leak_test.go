@@ -29,14 +29,6 @@ func TestLeavingAProjectRemovesItsProjectBinFromPath(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	binA := projectBinDir(projectA, nvxHome)
-	binB := projectBinDir(projectB, nvxHome)
-	for _, d := range []string{binA, binB} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-
 	// Standing in B, with A's project-bin still on PATH from an earlier visit.
 	origWd, err := os.Getwd()
 	if err != nil {
@@ -45,6 +37,21 @@ func TestLeavingAProjectRemovesItsProjectBinFromPath(t *testing.T) {
 	defer func() { _ = os.Chdir(origWd) }()
 	if err := os.Chdir(projectB); err != nil {
 		t.Fatal(err)
+	}
+	// B's directory is derived the way CleanAndBuildPath derives it: from the
+	// working directory as the OS reports it, which on macOS resolves the
+	// temp directory's symlink and so hashes differently from the path given
+	// to Chdir.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binA := projectBinDir(projectA, nvxHome)
+	binB := projectBinDir(findProjectRoot(cwd), nvxHome)
+	for _, d := range []string{binA, binB} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
 	system := filepath.Join(tempDir(t), "system")
 	incoming := strings.Join([]string{binA, system}, string(filepath.ListSeparator))
