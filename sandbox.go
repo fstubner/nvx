@@ -348,7 +348,9 @@ func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string, eg
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	LogInfo("Running in Docker sandbox: docker %s", strings.Join(dockerArgs, " "))
+	// Variables by name, never by value: this line also reaches debug.log and
+	// the report bundle. See dockerLaunchLine.
+	LogInfo("Running in Docker sandbox: docker %s", dockerLaunchLine(dockerArgs))
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode()

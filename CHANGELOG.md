@@ -592,6 +592,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx setup --help` ran setup.** The command scanned its arguments for
+  `--undo` and `--all-drives` and ignored everything else, so `--help` and
+  `-h` reached the elevation check, and `nvx setup --undoo` ran setup forward,
+  granting, when the person typing it meant to take the grant back. Setup is
+  the one command that changes ACLs on the machine's drive roots from an
+  Administrator terminal, which is the worst place for "unrecognised means
+  proceed". Measured on the installed build: all three reached the elevation
+  check. `--help` and `-h` now print usage and exit 0, anything unrecognised
+  prints usage and exits 2, and `nvx help setup` works like the other commands.
+
+* **The Docker provider printed environment values in its launch line, and
+  kept them in `debug.log`.** The `docker run` argument list carries every
+  allowed variable as `-e KEY=VALUE`, and the launcher logged the list whole.
+  The values are the ones the scrub lets through on purpose: whatever
+  `isolation.environment.allow` names, which is the mechanism for handing a
+  token to a tool that needs one. So a token a user deliberately allowed into
+  the sandbox appeared on the terminal, in `debug.log` under `NVX_DEBUG=1`, and
+  from there in the `nvx report` bundle people are asked to attach to a bug
+  report. Measured on the installed build with an allowlisted variable holding
+  a sentinel: the sentinel was printed. The line now names each variable and
+  shows `<redacted>` for its value, in every spelling docker accepts for the
+  flag.
+
 * **Windows: `nvx setup` ran system tools by name, resolved through PATH,
   elevated.** icacls, reg and CheckNetIsolation were launched as bare names,
   and PATH is not nvx's: its user half is written by ordinary user-level code
