@@ -1,0 +1,3 @@
+The nvx for this platform is copied here from dist/nvx-linux-amd64
+by the release workflow before publishing. It is not committed: a binary
+in git is a binary nobody diffed.

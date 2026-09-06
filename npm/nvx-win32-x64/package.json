@@ -1,0 +1,20 @@
+{
+  "name": "@fstubner/nvx-win32-x64",
+  "version": "0.0.0",
+  "description": "nvx binary for win32/x64. Installed automatically by @fstubner/nvx.",
+  "homepage": "https://github.com/fstubner/nvx",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fstubner/nvx.git"
+  },
+  "license": "MIT",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/"
+  ]
+}

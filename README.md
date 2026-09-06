@@ -1,4 +1,4 @@
-# nvx — Secure Runtime Version and Package Manager
+# nvx — contain what your agent installs
 
 ![nvx logo](./assets/nvx_logo.png)
 
@@ -9,9 +9,23 @@
 
 
 
-`nvx` is a fast, cross-platform **JavaScript runtime version manager** that **audits and sandboxes npm-family toolchain commands — including whatever your AI coding agents run**. It manages **Node.js and Bun** like nvm/fnm, then adds an ambient security layer: installs are checked for typosquatting and known vulnerabilities, and the commands that run untrusted code — package installs and `npx`-style tool runners — are executed inside a native OS sandbox.
+When a coding agent runs `npm install`, it executes code from strangers with your
+credentials within reach. `nvx` puts that command inside an OS sandbox: a throwaway
+`HOME`, no access to `~/.ssh` or `~/.npmrc`, writes confined to the project, and an
+allowlist for anything it tries to reach over the network.
 
-Zero dependencies, one static binary, Windows/macOS/Linux. Originally built to fix the lack of a fast native runtime manager on Windows; the security layer is what makes it worth switching to.
+**You do not change how you run anything.** No wrapper command, no policy file to
+write first, no agent configuration. nvx installs shims on `PATH`, so `npm install`
+is still `npm install` — it is simply contained when it runs code you did not write.
+That is the part other sandboxes leave to you: they need `theirtool run -- npm
+install`, and an agent will not remember to type it.
+
+It is also a **Node.js and Bun version manager**, because it has to be — the shims
+that intercept the toolchain are the same ones that switch runtimes on `cd`. If you
+use nvm, fnm or volta today, nvx replaces them.
+
+Zero dependencies, one static binary, Windows/macOS/Linux. Installs are additionally
+checked for typosquatting, known CVEs and suspiciously fresh releases.
 
 
 ---
