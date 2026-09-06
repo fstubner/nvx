@@ -288,7 +288,7 @@ Policies cascade: the global policy applies everywhere, and local policy files m
   - `open`: no egress filtering.
   - `offline` / `loopback`: block non-loopback egress at the proxy.
 * **`runtime.versions`**: Pin runtime versions used inside the sandbox (e.g. `"node": "20"`).
-* **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project (`<project>/.nvx/npm_global`) instead of being shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch.
+* **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project (`<project>/.nvx/npm_global`) instead of being shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch. Because that directory goes on your PATH, a project file that turns this on counts as a loosening and needs the same approval as an egress host.
 
 Override filesystem provider per shim: `npm --filesystem-provider=docker install`.
 

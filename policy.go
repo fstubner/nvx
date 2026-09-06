@@ -810,6 +810,16 @@ func policyLoosens(before, after Policy) bool {
 	if hostsAdded(before.Isolation.Environment.Allow, after.Isolation.Environment.Allow) {
 		return true
 	}
+	// isolated_tools moves the npm global prefix to <project>/.nvx/npm_global,
+	// and the shell integration puts that prefix on PATH ahead of the runtime
+	// and the system on every cd. That is a directory the repository controls,
+	// on the user's PATH: a checked-out project can ship its own binaries in it.
+	// MergePolicies honours a project file that sets it, and nothing here asked
+	// -- the one project-file setting that puts repository content on PATH was
+	// the one that never needed approval.
+	if !before.Environment.IsolatedTools && after.Environment.IsolatedTools {
+		return true
+	}
 	if !strings.EqualFold(before.Isolation.Filesystem.Provider, after.Isolation.Filesystem.Provider) {
 		return true
 	}

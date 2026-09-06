@@ -664,6 +664,14 @@ func TestCleanAndBuildPathProjectTools(t *testing.T) {
 	}
 }
 
+// An APPROVED project policy that sets isolated_tools is honoured, from a
+// subdirectory, and names the project directory.
+//
+// Approved is the operative word. This test used to write the file and expect
+// it honoured as-is, which pinned the hole rather than the feature: the setting
+// puts <project>/.nvx/npm_global on the user's PATH, so it is a loosening and an
+// unpinned file is ignored (see TestAnUnpinnedProjectFileCannotSwitchIsolatedToolsOn).
+// The pin below is what an accepted prompt records.
 func TestLoadPolicyProjectTools(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "nvx-envpolicy-test-*")
 	if err != nil {
@@ -690,6 +698,26 @@ func TestLoadPolicyProjectTools(t *testing.T) {
 	}
 
 	if err := os.Chdir(subDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Record trust for the exact file contents, keyed the way LoadPolicy looks
+	// it up, so the pin matches on every platform's spelling of the path.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := projectScopeDir()
+	g := loadProjectGrants(nvxHome, scope)
+	g.ProjectPath = scope
+	for _, p := range collectProjectPolicyPaths(cwd, nvxHome) {
+		if strings.HasSuffix(p, ".nvx-policy.json") {
+			if hash, ok := hashPolicyFile(p); ok {
+				g.PolicyPins[filepath.Clean(p)] = hash
+			}
+		}
+	}
+	if err := saveProjectGrants(nvxHome, g); err != nil {
 		t.Fatal(err)
 	}
 

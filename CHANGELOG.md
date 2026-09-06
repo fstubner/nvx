@@ -592,6 +592,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`npm -- install evil` ran uncontained and skipped every pre-install
+  check.** Every scan in nvx stopped at `--`, on the reasoning that the
+  end-of-options separator ends everything nvx has an interest in. That is true
+  of nvx's own flags and wrong for the package manager's command: npm takes its
+  command from the first positional token, and `--` ends flag parsing only.
+  Measured against npm 11: `npm -- view left-pad version` prints the version,
+  `npm --dry-run -- install left-pad@1.3.0` plans the install, and bun reads
+  `bun -- install` as an install. So a verb after `--` was invisible to nvx,
+  the command was classified as your own code, and it ran with no sandbox and
+  no typosquat, OSV or release-age check. `npm install -- evil` was contained
+  but verified nothing, because the package list stopped at the separator too.
+
+  The scans now read `--` the way the package manager does: before the command
+  it is transparent and the next token is the command; after the command, what
+  follows belongs to the command. After a script-running verb (`run`, `test`,
+  `start`, `stop`, `restart`) nothing is nvx's to read, which is what keeps
+  `npm test -- install` -- measured: the test script runs with `install` as its
+  argument -- from being read as an install. One ambiguity is resolved toward
+  containment: a positional right after a flag might be the flag's value, so a
+  `--` after it is read the cautious way. That affects shapes like `npm
+  --silent view -- install` and nothing that installs.
+
+* **A project policy could switch on `isolated_tools` with no approval.** The
+  setting moves the npm global prefix to `<project>/.nvx/npm_global`, and the
+  shell integration puts that prefix on PATH ahead of the runtime and the
+  system on every `cd`. That is a directory the repository controls, on the
+  user's PATH: a checked-out project could ship its own `node`, `git` or `npm`
+  in it. Project policies are merged with the loosening gate that prompts for
+  an egress host or a passed-through variable, and this setting was the one it
+  never looked at. It is now a loosening like the others, so an unpinned
+  project file that sets it is ignored with the usual warning until approved.
+
 * **Windows: the ninth piped child in a contained process hung, and so did any
   piped child of a piped child.** Two bugs in the streaming-stdio broker with one
   failure path between them.
