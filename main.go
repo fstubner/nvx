@@ -192,7 +192,7 @@ func main() {
 			LogError("Please specify a version to use. Example: nvx use 20")
 			os.Exit(1)
 		}
-		runUse(useVersion, nvxHome, parseShellArg(os.Args[2:]), shellArgWasGiven(os.Args[2:]))
+		os.Exit(runUse(useVersion, nvxHome, shellArgOrExit(os.Args[2:]), shellArgWasGiven(os.Args[2:])))
 
 	case "default":
 		if len(os.Args) < 3 {
@@ -212,10 +212,10 @@ func main() {
 		runListRemote(filter)
 
 	case "env":
-		runEnv(parseShellArg(os.Args[2:]), nvxHome)
+		runEnv(shellArgOrExit(os.Args[2:]), nvxHome)
 
 	case "auto":
-		os.Exit(runAuto(nvxHome, parseShellArg(os.Args[2:])))
+		os.Exit(runAuto(nvxHome, shellArgOrExit(os.Args[2:])))
 
 	case "import":
 		source := "all"
@@ -504,23 +504,46 @@ func shellArgWasGiven(args []string) bool {
 	return false
 }
 
-func parseShellArg(args []string) string {
+// knownShells are the shells nvx can emit for. An explicit --shell naming
+// anything else is an error: every emitter's default branch is PowerShell, so
+// `--shell=fish` used to print PowerShell assignments for fish to evaluate.
+var knownShells = map[string]bool{"powershell": true, "pwsh": true, "bash": true, "zsh": true}
+
+func parseShellArg(args []string) (string, error) {
+	explicit := func(v string) (string, error) {
+		v = strings.ToLower(strings.TrimSpace(v))
+		if !knownShells[v] {
+			return "", fmt.Errorf("unknown shell %q: use powershell, pwsh, bash or zsh", v)
+		}
+		return v, nil
+	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if strings.HasPrefix(arg, "--shell=") {
 			if v := strings.TrimPrefix(arg, "--shell="); v != "" {
-				return v
+				return explicit(v)
 			}
 		} else if arg == "--shell" && i+1 < len(args) {
-			return args[i+1]
+			return explicit(args[i+1])
 		} else if !strings.HasPrefix(arg, "-") {
 			switch strings.ToLower(arg) {
 			case "powershell", "pwsh", "bash", "zsh":
-				return strings.ToLower(arg)
+				return strings.ToLower(arg), nil
 			}
 		}
 	}
-	return defaultShell()
+	return defaultShell(), nil
+}
+
+// shellArgOrExit is parseShellArg for the command dispatch: an unknown shell is
+// a usage error, not a guess.
+func shellArgOrExit(args []string) string {
+	shell, err := parseShellArg(args)
+	if err != nil {
+		LogError("%v", err)
+		os.Exit(2)
+	}
+	return shell
 }
 
 func printHelp() {
@@ -739,8 +762,15 @@ func resolveLocalVersion(provider RuntimeProvider, query string, nvxHome string)
 	// and `nvx use lts` then said "no installed version matches query 'lts'" about
 	// the version it had just put on disk. `use latest` worked throughout, which
 	// is what made the asymmetry obvious.
-	if query == "lts" {
+	if isLTS, codename := parseLTSQuery(query); isLTS {
 		lts := ltsVersionsAmong(provider, versions, nvxHome)
+		if codename != "" {
+			lts = filterByLTSCodename(nvxHome, lts, codename)
+			if len(lts) == 0 {
+				return "", fmt.Errorf("no installed version is the %q LTS line; "+
+					"install it with 'nvx install lts/%s', or name the version you want", codename, codename)
+			}
+		}
 		if len(lts) == 0 {
 			return "", fmt.Errorf("no installed version is known to be LTS; " +
 				"install one with 'nvx install lts', or name the version you want")
@@ -866,7 +896,9 @@ func runUninstall(query string, nvxHome string) {
 	pruneDirectRuntimeDirs(nvxHome)
 }
 
-func runUse(query string, nvxHome string, shell string, viaIntegration bool) {
+// runUse returns the process exit code rather than exiting, so a test can hold
+// it to what it reports.
+func runUse(query string, nvxHome string, shell string, viaIntegration bool) int {
 	provider, version := parseRuntimeSpec(query)
 	requireRuntimeVersion(query, version)
 	display := runtimeDisplayName(provider.Name())
@@ -875,23 +907,23 @@ func runUse(query string, nvxHome string, shell string, viaIntegration bool) {
 		// An expression nvx cannot read is not a missing version, and offering to
 		// download it would just fail somewhere less obvious.
 		LogError("%v", err)
-		os.Exit(1)
+		return 1
 	}
 	if err != nil {
 		promptMsg := fmt.Sprintf("%s %s is not installed. Would you like to download and install it now?", display, version)
 		if PromptYesNo(promptMsg) {
 			if instErr := provider.Install(version, nvxHome); instErr != nil {
 				LogError("Installation failed: %v", instErr)
-				os.Exit(1)
+				return 1
 			}
 			resolvedVer, err = resolveLocalVersion(provider, version, nvxHome)
 			if err != nil {
 				LogError("Failed to resolve newly installed version: %v", err)
-				os.Exit(1)
+				return 1
 			}
 		} else {
 			LogError("Could not find installed version matching '%s': %v", version, err)
-			os.Exit(1)
+			return 1
 		}
 	}
 
@@ -920,7 +952,12 @@ func runUse(query string, nvxHome string, shell string, viaIntegration bool) {
 		LogInfo("Load the shell integration once and it switches by itself from then on:")
 		LogInfo("  %s", shellIntegrationHint(shell))
 		LogInfo("Or, for this shell only:  %s", evalHint(shell, version))
-		return
+		// Nothing changed, so this is not success. `nvx use 22 && npm test`
+		// carried on with the wrong runtime while this exited 0 -- the same
+		// silent-failure shape `nvx auto` had. Through the integration, which
+		// always passes --shell, the switch is evaluated and this branch is
+		// never reached.
+		return 1
 	}
 
 	activeVer := getActiveShellVersionFor(nvxHome, provider.Name())
@@ -929,6 +966,7 @@ func runUse(query string, nvxHome string, shell string, viaIntegration bool) {
 	} else {
 		LogSuccess("Now using %s %s in this terminal.", display, resolvedVer)
 	}
+	return 0
 }
 
 func runDefault(query string, nvxHome string) {
@@ -1098,6 +1136,11 @@ func runEnv(shell string, nvxHome string) {
 // the nvx binary; shimDir is ~/.nvx/bin.
 func envScript(shell, exePath, shimDir string) string {
 	exe := strings.ReplaceAll(exePath, "\\", "/")
+	// Quoted for the shell that will read it, not for Go. %q left $ and
+	// backticks for bash to expand inside its double quotes: measured, a path
+	// holding "$HOME" ran a path that did not exist, and every `nvx use` and
+	// every cd hook failed with it.
+	qexe := quotePOSIXShell(exe)
 	prepend := shimPathPrependSnippet(shell, shimDir)
 
 	if shell == "bash" || shell == "zsh" {
@@ -1114,12 +1157,12 @@ nvx() {
     local cmd="$1"
     if [ "$cmd" = "use" ] || [ "$cmd" = "auto" ]; then
         local stdout
-        stdout=$(%q "$@" --shell="$(__nvx_shell_type)")
+        stdout=$(%s "$@" --shell="$(__nvx_shell_type)")
         if [ -n "$stdout" ]; then
             eval "$stdout"
         fi
     else
-        %q "$@"
+        %s "$@"
     fi
 }
 
@@ -1128,7 +1171,7 @@ nvx_prompt_hook() {
     if [ "$PWD" != "$__nvx_last_pwd" ]; then
         export __nvx_last_pwd="$PWD"
         local stdout
-        stdout=$(%q auto --shell="$(__nvx_shell_type)")
+        stdout=$(%s auto --shell="$(__nvx_shell_type)")
         if [ -n "$stdout" ]; then
             eval "$stdout"
         fi
@@ -1140,7 +1183,7 @@ if [[ -n "$ZSH_VERSION" ]]; then
     # Optimize using native zsh chpwd hook instead of prompt command
     nvx_chpwd_hook() {
         local stdout
-        stdout=$(%q auto --shell=zsh)
+        stdout=$(%s auto --shell=zsh)
         if [ -n "$stdout" ]; then
             eval "$stdout"
         fi
@@ -1152,7 +1195,7 @@ elif [[ -n "$BASH_VERSION" ]]; then
         PROMPT_COMMAND="nvx_prompt_hook; $PROMPT_COMMAND"
     fi
 fi
-`, exe, exe, exe, exe)
+`, qexe, qexe, qexe, qexe)
 	}
 
 	// PowerShell default.

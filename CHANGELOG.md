@@ -592,6 +592,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Leaving a project takes its shims off PATH.** Each project gets its own
+  shim directory under `~/.nvx/project-bin`, put at the front of PATH on
+  entering the project. Stale entries for the other per-project directory, the
+  npm prefix, were stripped on every switch; these were not, so after a `cd`
+  from project A into project B, A's shims stayed on PATH behind B's and a
+  command A's `node_modules` provided kept running in B, from A.
+
+* **`lts/*` and `lts/<codename>` now resolve.** They are canonical `.nvmrc`
+  contents and nvx accepted neither: `lts/*` was rejected as "not a version
+  number" and `nvx install lts/hydrogen` found no release, while `lts` alone
+  worked. Both now resolve against the release list and against what is
+  installed, using the codename each install records.
+
+* **`nvx use` reports failure when the shell did not change.** Run without the
+  shell integration, it printed an environment nothing would evaluate, warned
+  that the shell was unchanged, and exited 0, so `nvx use 22 && npm test` ran
+  on whatever runtime was already there. It now exits 1 in that case; through
+  the integration, which always passes `--shell`, the switch is evaluated and
+  the exit is 0 as before.
+
+* **The bash integration quotes the nvx path for bash.** It used Go's `%q`,
+  which leaves `$` for the shell to expand inside double quotes. Measured
+  through a real bash: a path holding `$HOME` ran a path that did not exist,
+  and every `nvx use` and every `cd` hook failed with it. The path is now a
+  single-quoted POSIX string, the same quoting the PATH assignments already
+  used.
+
+* **`--shell=<something nvx does not know>` is an error.** Every emitter's
+  default branch is PowerShell, so `--shell=fish` printed PowerShell
+  assignments for fish to evaluate. The four shells nvx can emit for are the
+  only values accepted, case-insensitively.
+
+* **`nvx doctor --fix` says which PATH entries it removes.** Dropping the raw
+  runtime directories that shadow the shims is the repair; a User PATH shorter
+  by several entries with no word about what went was the defect. Each removed
+  entry is now named, in the report and when applying.
+
 * **A runtime archive could write outside its destination through a chain of
   symlinks.** The tar extractor checked each symlink's target lexically,
   against the directory of the entry's own path. That is right for one link

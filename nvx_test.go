@@ -591,7 +591,11 @@ func TestParseShellArg(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		res := parseShellArg(tc.args)
+		res, err := parseShellArg(tc.args)
+		if err != nil {
+			t.Errorf("parseShellArg(%v) errored: %v", tc.args, err)
+			continue
+		}
 		if res != tc.expected {
 			t.Errorf("parseShellArg(%v) = %q, expected %q", tc.args, res, tc.expected)
 		}
@@ -1289,8 +1293,8 @@ func TestShellArgWasGivenDistinguishesTheIntegrationFromAPrompt(t *testing.T) {
 		}
 		// The fallback still produces a usable shell for formatting; it just cannot
 		// stand in for "someone asked for machine-readable output".
-		if parseShellArg(args) == "" {
-			t.Errorf("parseShellArg(%v) returned no shell at all", args)
+		if shell, err := parseShellArg(args); err != nil || shell == "" {
+			t.Errorf("parseShellArg(%v) returned no shell at all (%v)", args, err)
 		}
 	}
 }

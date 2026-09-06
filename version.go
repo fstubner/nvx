@@ -81,11 +81,14 @@ func ResolveVersion(query string, releases []Release) (Release, error) {
 		return releases[0], nil
 	}
 
-	if query == "lts" {
+	if isLTS, codename := parseLTSQuery(query); isLTS {
 		for _, r := range releases {
-			if r.IsLTS() {
+			if r.IsLTS() && (codename == "" || strings.EqualFold(r.LTSName(), codename)) {
 				return r, nil
 			}
+		}
+		if codename != "" {
+			return Release{}, fmt.Errorf("no LTS release found with codename %q", codename)
 		}
 		return Release{}, fmt.Errorf("no LTS release found")
 	}
