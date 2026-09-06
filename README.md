@@ -692,12 +692,9 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   permission behind entirely, with no way back but working out the capability SID
   and running `icacls` yourself.
 
-  **On Linux this grants reading and executing, but not listing.** A contained
-  process can read and run files under the root; `readdir` on it is still refused.
-  That is not specific to these roots — `/usr/bin` and `/etc` cannot be listed
-  either, and they have been granted since the Linux sandbox was written. A tool
-  that enumerates a directory to find its own binaries will not work contained on
-  Linux yet.
+  On Linux this grants reading, listing and executing. An earlier note here said
+  listing was refused and called it a Landlock limitation; it was a wrong constant
+  in nvx, since fixed.
 
 - **nvx stops a command once the program that started it has exited, and reports
   exit 129.** It checks every 15 seconds and needs two consecutive observations,
