@@ -71,37 +71,73 @@ var executorVerbs = map[string][]string{
 var refreshVerbs = []string{"update", "up", "upgrade", "rebuild", "dedupe", "ddp"}
 
 // subcommandCandidates returns the tokens that could be this invocation's
-// subcommand: nonFlagTokens, truncated at the "--" passthrough separator.
+// subcommand: the non-flag tokens, up to the point where nothing further is
+// nvx's to interpret.
 //
-// The truncation is what stops `npm run build -- create` reading as an
-// initializer fetch. Everything after "--" belongs to the script being run, and
-// a word there is not nvx's to interpret -- the same rule parseShimOptions
-// follows for flags.
+// That point is a script-running verb -- `run <script>`: the script's name is
+// not a subcommand and neither is anything after it; without this a project
+// with a script called "update", "create" or "rebuild" had `npm run <that>`
+// silently sandboxed, measured 2026-08-28 -- or a "--" that follows the
+// command.
+//
+// A "--" BEFORE the command is a different thing. It ends the package
+// manager's flag parsing only, and the first token after it is the command:
+// measured, `npm -- view left-pad version` prints the version. The scan used
+// to stop at every "--", so `npm -- exec x` and `npm -- create x` read as your
+// own code. Everything after such a "--" is positional, dashes included, and
+// all of it is returned, because hasAuditFix needs the second token too.
+//
+// "Follows the command" is judged the way findInstallVerbIndex judges it: a
+// positional not immediately preceded by a flag is the command; one that is
+// might be the flag's value, and a "--" after it is read the cautious way.
 func subcommandCandidates(args []string) []string {
-	for i, a := range args {
-		// `run <script> [args...]`: the script's name is not a subcommand, and
-		// neither is anything after it. Without this, a project with a script
-		// called "update", "create" or "rebuild" had `npm run <that>` silently
-		// sandboxed -- scrubbed environment, restricted egress -- because the
-		// name collided with a verb. Measured 2026-08-28.
-		if a == "--" || isRunScriptVerb(a) {
-			args = args[:i]
-			break
+	var out []string
+	commandSeen, prevWasFlag := false, false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if isRunScriptVerb(a) {
+			return out
 		}
+		if a == "--" {
+			if commandSeen {
+				return out
+			}
+			return append(out, args[i+1:]...)
+		}
+		if strings.HasPrefix(a, "-") {
+			// A flag known to take a value carries it in the next token, which is
+			// then neither a candidate nor the command. This is what nonFlagTokens
+			// did, and dropping it made bare `npm init --registry X` read as an
+			// initializer fetch because "X" followed "init".
+			if flagTakesValue(a) && !strings.Contains(a, "=") && i+1 < len(args) {
+				i++
+				prevWasFlag = false
+				continue
+			}
+			prevWasFlag = !strings.Contains(a, "=")
+			continue
+		}
+		out = append(out, a)
+		if !prevWasFlag {
+			commandSeen = true
+		}
+		prevWasFlag = false
 	}
-	return nonFlagTokens(args)
+	return out
 }
 
-// isRunScriptVerb reports the package-manager subcommands after which the next
-// token names a user-defined script rather than anything nvx should read.
+// isRunScriptVerb reports the package-manager subcommands after which nothing
+// further is nvx's to read.
 //
-// npm, pnpm and yarn all spell it `run` (npm also accepts `run-script`); bun
-// uses `run` too. `npm test` and `npm start` take no script name, so they are
-// deliberately absent -- they have nothing following that could be mistaken for
-// a verb.
+// `run <script> [args]` (npm also spells it `run-script`; pnpm, yarn and bun
+// use `run`), and `test`, `start`, `stop` and `restart`, which name no script
+// but hand everything after "--" to one. Measured: `npm test -- install` ran
+// the test script with argv ["install"]. The second group was absent while the
+// scans stopped at every "--"; once they learned to look past it, `npm test --
+// install` would have read as an install without this.
 func isRunScriptVerb(arg string) bool {
 	switch strings.ToLower(arg) {
-	case "run", "run-script":
+	case "run", "run-script", "test", "start", "stop", "restart":
 		return true
 	}
 	return false

@@ -358,28 +358,64 @@ var installAliases = map[string]bool{
 // docs/enforcement-matrix.md footnote 9). "More containment" is not free when
 // it lands on a command that was never untrusted.
 //
-// The scan therefore stops at `run`/`run-script`. Everything after those
-// belongs to the script being run: its name first, then its arguments. None of
-// it is nvx's to interpret, exactly as with tokens after "--".
+// The scan therefore stops at a script-running verb (see isRunScriptVerb).
+// Everything after one belongs to the script being run: its name first, then
+// its arguments. None of it is nvx's to interpret.
+//
+// "--" is NOT such a stop, and this used to treat it as one. The separator
+// ends the package manager's FLAG parsing, not its command lookup: npm takes
+// its command from the first positional, so a verb right after "--" is the
+// command exactly as it would be without it. Measured against npm 11,
+// 2026-09-06: `npm -- view left-pad version` printed the version, and `npm
+// --dry-run -- install left-pad@1.3.0` planned the install. So `nvx npm --
+// install evil` ran uncontained and skipped every pre-install check, because
+// this returned "no verb" at the "--" and every decision downstream took the
+// your-own-code branch.
+//
+// A "--" AFTER the command is the command's, and the scan does stop there:
+// `npm view -- install` views. The two are told apart by whether the command
+// has been seen yet, with one honest ambiguity: a positional immediately after
+// a flag may be that flag's value (`--loglevel verbose`) rather than the
+// command, so a "--" after such a token is read the cautious way and the next
+// token checked. That resolves toward containment only for shapes like `npm
+// --silent view -- install`, and toward a bypass for none.
 func findInstallVerbIndex(args []string, extraVerbs ...string) int {
 	extra := make(map[string]bool, len(extraVerbs))
 	for _, v := range extraVerbs {
 		extra[strings.ToLower(v)] = true
 	}
+	isVerb := func(tok string) bool {
+		lower := strings.ToLower(tok)
+		return installAliases[lower] || extra[lower]
+	}
+	commandSeen, prevWasFlag := false, false
 	for i, arg := range args {
 		if arg == "--" {
+			if commandSeen {
+				return -1
+			}
+			// End of flags, not of the command: the next token is the command,
+			// whatever it looks like, because nothing after here is a flag.
+			if i+1 < len(args) && isVerb(args[i+1]) {
+				return i + 1
+			}
 			return -1
 		}
 		if isRunScriptVerb(arg) {
 			return -1
 		}
 		if strings.HasPrefix(arg, "-") {
+			// `--key=value` carries its value; `--key value` may not have.
+			prevWasFlag = !strings.Contains(arg, "=")
 			continue
 		}
-		lower := strings.ToLower(arg)
-		if installAliases[lower] || extra[lower] {
+		if isVerb(arg) {
 			return i
 		}
+		if !prevWasFlag {
+			commandSeen = true
+		}
+		prevWasFlag = false
 	}
 	return -1
 }
@@ -400,11 +436,18 @@ func installPackagesArg(args []string, extraVerbs ...string) []string {
 		return nil
 	}
 	var pkgs []string
+	passthrough := false
 	for _, arg := range args[subIdx+1:] {
-		if arg == "--" {
-			break
+		if !passthrough && arg == "--" {
+			// After the verb, "--" ends flag parsing: everything from here is a
+			// package spec, dashes included. Measured: `npm install -- --weird-name`
+			// asked the registry for a package of that name. This used to stop
+			// here, so `npm install -- evil` was contained but verified nothing --
+			// the typosquat, OSV and release-age checks got an empty list.
+			passthrough = true
+			continue
 		}
-		if !strings.HasPrefix(arg, "-") {
+		if passthrough || !strings.HasPrefix(arg, "-") {
 			pkgs = append(pkgs, arg)
 		}
 	}
@@ -469,9 +512,11 @@ func isGlobalInstall(cmdName string, args []string) bool {
 // `yarn add global` installs a package that happens to be called "global". A
 // contains-check would conflate them and refuse a legitimate install.
 func hasLeadingSubcommand(args []string, name string) bool {
-	for _, arg := range args {
+	for i, arg := range args {
 		if arg == "--" {
-			return false
+			// End of flags: the next token is the first positional, whatever it
+			// looks like. See findInstallVerbIndex for the measurement.
+			return i+1 < len(args) && strings.EqualFold(args[i+1], name)
 		}
 		if strings.HasPrefix(arg, "-") {
 			continue // a flag before the subcommand, e.g. `yarn --silent global add`
