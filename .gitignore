@@ -40,3 +40,8 @@ ACC_*.tmp
 IMPLEMENTATION_PLAN.md
 docs/assessment-*.md
 docs/product-review-*.md
+
+# Diagnostic bundles written by `nvx report` into whatever directory it was
+# run from, which during development is this one. One reached a commit on
+# 2026-09-06 via `git add -A`, the same way the review scratch above did.
+nvx-report-*.txt
