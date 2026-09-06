@@ -292,8 +292,19 @@ func windowsSetupGrantPaths(nvxHome, workDir string, allDrives bool) (grant, ski
 	return grant, skipped
 }
 
+// undoRevokeTimeout bounds each revoke `nvx setup --undo` performs. A variable
+// so a test can shorten it.
+var undoRevokeTimeout = directGrantTimeout
+
 func revokeSidGrant(sidStr, path string) error {
-	if err := revokeACL(path, sidStr); err != nil {
+	// Time-boxed like every grant. The undo swept every ancestor path and the
+	// profile root through an unbounded DACL write; on the profile root that
+	// write propagates over the whole tree, so `--undo` after a setup on a
+	// large profile appeared to hang, with nothing to say which path. A revoke
+	// that does not finish in time is now reported by name and counted as a
+	// failure, which the caller already turns into a non-zero exit and "remove
+	// the entries named above by hand".
+	if err := revokeACLWithin(path, sidStr, undoRevokeTimeout); err != nil {
 		return fmt.Errorf("remove the permission on %s: %w", path, err)
 	}
 	return nil

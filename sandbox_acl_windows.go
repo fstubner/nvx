@@ -491,6 +491,14 @@ func revokeACL(path, sidStr string) error {
 	return writeDACLEntry(path, sidStr, 0, 0)
 }
 
+// revokeACLWithin is revokeACL with a deadline: a revoke is a DACL write with
+// an empty mask, so it is bounded the way grantACLWithin bounds a grant, and an
+// abandoned one is accounted for the same way. `nvx setup --undo` uses it; the
+// unbounded form there let an undo over a large profile appear to hang.
+func revokeACLWithin(path, sidStr string, timeout time.Duration) error {
+	return grantACLWithin(path, sidStr, 0, 0, timeout, nil)
+}
+
 // aclEntryFor returns the explicit entry for sidStr on path, if there is one.
 func aclEntryFor(path, sidStr string) (aclEntry, bool, error) {
 	entries, err := readDACL(path)
