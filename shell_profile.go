@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -47,7 +48,19 @@ func profilePathFor(shell string) string {
 	}
 	switch shell {
 	case "powershell":
-		for _, exe := range []string{"pwsh", "powershell"} {
+		// pwsh (PowerShell 7) has no fixed location and is found on PATH, as
+		// the user would find it. Windows PowerShell has a fixed home under the
+		// system directory and is taken from there, not from PATH: see
+		// systemToolPath.
+		candidates := []string{"pwsh"}
+		if runtime.GOOS == "windows" {
+			if p, err := systemToolPath(`WindowsPowerShell\v1.0\powershell.exe`); err == nil {
+				candidates = append(candidates, p)
+			}
+		} else {
+			candidates = append(candidates, "powershell")
+		}
+		for _, exe := range candidates {
 			out, err := exec.Command(exe, "-NoProfile", "-Command", "$PROFILE").Output()
 			if err == nil {
 				if p := strings.TrimSpace(string(out)); p != "" {

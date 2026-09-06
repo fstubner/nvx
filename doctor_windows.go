@@ -62,7 +62,13 @@ func repairPersistentPathImpl(nvxHome string, apply bool) (bool, error) {
 	// does not, matching what install.ps1 uses. The new PATH is passed via an
 	// environment variable so no quoting/injection issues arise.
 	ps := "[Environment]::SetEnvironmentVariable('Path', $env:__NVX_NEWPATH, 'User')"
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", ps)
+	// Windows PowerShell has a fixed home under the system directory; take it
+	// from there rather than from the PATH this very call is repairing.
+	powershell, err := systemToolPath(`WindowsPowerShell\v1.0\powershell.exe`)
+	if err != nil {
+		return false, fmt.Errorf("set User PATH: %w", err)
+	}
+	cmd := exec.Command(powershell, "-NoProfile", "-Command", ps)
 	cmd.Env = append(cmd.Environ(), "__NVX_NEWPATH="+fixed)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return false, fmt.Errorf("set User PATH: %v (%s)", err, strings.TrimSpace(string(out)))
