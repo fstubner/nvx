@@ -51,6 +51,12 @@ func parseSetupArgs(args []string) (setupArgs, error) {
 	return out, nil
 }
 
+// runSetupImpl is what a well-formed `nvx setup` invocation runs. A variable so
+// a test can record whether the elevated path was reached without reaching
+// it: on a CI runner that IS elevated, calling the real thing runs setup
+// against the runner's drive roots.
+var runSetupImpl = runWindowsSetup
+
 // runSetupCommand is the `nvx setup` entry point: help and errors never reach
 // the elevated path.
 func runSetupCommand(args []string, nvxHome string) int {
@@ -64,5 +70,5 @@ func runSetupCommand(args []string, nvxHome string) int {
 		fmt.Print(setupHelpText)
 		return 0
 	}
-	return runWindowsSetup(nvxHome, parsed.undo, parsed.allDrives)
+	return runSetupImpl(nvxHome, parsed.undo, parsed.allDrives)
 }

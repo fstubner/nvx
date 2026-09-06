@@ -1,7 +1,6 @@
 package main
 
 import (
-	"runtime"
 	"testing"
 )
 
@@ -51,22 +50,33 @@ func TestSetupRefusesArgumentsItDoesNotUnderstand(t *testing.T) {
 }
 
 // And the command itself does not reach the elevated path for help or for an
-// error. On Windows, unelevated, reaching it is an exit of 1 with "must run
-// from an elevated terminal"; help exits 0 and an error exits 2, and neither
-// is that.
+// error, while a well-formed invocation does.
+//
+// The elevated path is recorded, never run. A first version of this test
+// called the real thing for the control case, reasoning that an unelevated
+// test process would be stopped at the elevation check. GitHub's Windows
+// runners are elevated, so on CI it ran `nvx setup --undo` against the
+// runner's drive roots for several minutes.
 func TestSetupCommandDoesNotAttemptSetupForHelpOrABadArgument(t *testing.T) {
-	if code := runSetupCommand([]string{"--help"}, tempDir(t)); code != 0 {
-		t.Errorf("`setup --help` exited %d, want 0: it attempted setup instead of printing help", code)
+	orig := runSetupImpl
+	t.Cleanup(func() { runSetupImpl = orig })
+	reached := 0
+	var gotUndo, gotAll bool
+	runSetupImpl = func(_ string, undo, allDrives bool) int {
+		reached++
+		gotUndo, gotAll = undo, allDrives
+		return 0
 	}
-	if code := runSetupCommand([]string{"--undoo"}, tempDir(t)); code != 2 {
-		t.Errorf("`setup --undoo` exited %d, want 2: a typo must not run setup in either direction", code)
+
+	if code := runSetupCommand([]string{"--help"}, tempDir(t)); code != 0 || reached != 0 {
+		t.Errorf("`setup --help`: exit %d, elevated path reached %d times; want 0 and 0", code, reached)
 	}
-	if runtime.GOOS == "windows" {
-		// The control: a well-formed invocation does reach the elevation check,
-		// which an unelevated test process fails. This is what distinguishes
-		// "printed help" from "ran and happened to exit 0".
-		if code := runSetupCommand([]string{"--undo"}, tempDir(t)); code != 1 {
-			t.Errorf("`setup --undo` unelevated exited %d, want 1 (the elevation check)", code)
-		}
+	if code := runSetupCommand([]string{"--undoo"}, tempDir(t)); code != 2 || reached != 0 {
+		t.Errorf("`setup --undoo`: exit %d, elevated path reached %d times; want 2 and 0 -- a typo must not run setup in either direction", code, reached)
+	}
+	// The control: a well-formed invocation is what reaches it, with the
+	// parsed flags.
+	if code := runSetupCommand([]string{"--undo", "--all-drives"}, tempDir(t)); code != 0 || reached != 1 || !gotUndo || !gotAll {
+		t.Errorf("`setup --undo --all-drives`: exit %d, reached %d, undo=%v allDrives=%v; want 0, 1, true, true", code, reached, gotUndo, gotAll)
 	}
 }
