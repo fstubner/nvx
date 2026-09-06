@@ -78,3 +78,40 @@ func prepareInheritableStdio() stdioHandles {
 	s.inheritable = true
 	return s
 }
+
+// inheritableStdioHandleList returns the distinct, usable standard handles, in
+// the order stdin, stdout, stderr.
+//
+// This is the exact set a contained child is meant to receive, for
+// PROC_THREAD_ATTRIBUTE_HANDLE_LIST. Two filters are load-bearing, because
+// CreateProcess rejects the whole launch with ERROR_INVALID_PARAMETER rather
+// than ignoring a bad entry, and a rejected launch here would break every
+// contained run:
+//
+//   - Duplicates. The three standard handles are frequently the same object: a
+//     console gives all three the same handle, and `cmd > log 2>&1` gives stdout
+//     and stderr the same file.
+//   - Invalid entries. A process with no console and no redirection gets a null
+//     or INVALID_HANDLE_VALUE back from GetStdHandle.
+//
+// An empty result means there is nothing to pin, and the caller omits the
+// attribute rather than passing a zero-length list.
+func inheritableStdioHandleList(s stdioHandles) []syscall.Handle {
+	var list []syscall.Handle
+	for _, h := range []syscall.Handle{s.in, s.out, s.err} {
+		if h == 0 || h == syscall.InvalidHandle {
+			continue
+		}
+		seen := false
+		for _, existing := range list {
+			if existing == h {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			list = append(list, h)
+		}
+	}
+	return list
+}
