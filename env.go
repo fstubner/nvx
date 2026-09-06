@@ -171,6 +171,14 @@ func CleanAndBuildPath(currentPath, nvxHome, targetVersionDir, npmPrefixDir stri
 		if strings.Contains(strings.ToLower(normPart), strings.ToLower(projectToolsMarker)) {
 			continue
 		}
+		// And their project-bin shim directories, for the same reason. These
+		// were not stripped, so after a cd from project A into project B, A's
+		// shims stayed on PATH behind B's and a command A's node_modules
+		// provided kept resolving in B, from A. The current project's directory
+		// is added back at the front below.
+		if dirWithin(normPart, filepath.Join(nvxHome, projectBinShimDirName)) {
+			continue
+		}
 
 		cleaned = append(cleaned, part)
 	}

@@ -31,11 +31,10 @@ func repairPersistentPathImpl(nvxHome string, apply bool) (bool, error) {
 		return false, fmt.Errorf("NVX_HOME is inside the temporary directory (%s); "+
 			"refusing to put it in your persistent PATH, since that outlives the directory", shimDir)
 	}
-	out, err := runWinCmd(15*time.Second, "reg", "query", `HKCU\Environment`, "/v", "Path")
+	existing, err := readUserPath()
 	if err != nil {
 		return false, err
 	}
-	existing := parseRegPath(string(out))
 	if strings.TrimSpace(existing) == "" {
 		// A genuinely empty User PATH is indistinguishable here from a parse
 		// failure (unexpected `reg query` output shape, localized Windows,
@@ -48,6 +47,12 @@ func repairPersistentPathImpl(nvxHome string, apply bool) (bool, error) {
 	fixed := rebuildUserPath(existing, shimDir, nvxRuntimeDirs(nvxHome))
 	if existing == fixed {
 		return false, nil
+	}
+	// Say what goes. The repair removes raw-runtime directories that shadow the
+	// shims; a PATH that shrinks with no word about what left is the defect the
+	// report exists to prevent.
+	for _, e := range droppedPathEntries(existing, fixed, shimDir) {
+		LogInfo("PATH repair removes %s (a raw runtime directory that shadows nvx's shims).", e)
 	}
 	if !apply {
 		// A repair is available but was not asked for. Report that and write
@@ -74,6 +79,17 @@ func repairPersistentPathImpl(nvxHome string, apply bool) (bool, error) {
 		return false, fmt.Errorf("set User PATH: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return true, nil
+}
+
+// readUserPath returns the persistent User PATH as the registry holds it. A
+// variable so a test can hand the repair a PATH of its own and check what the
+// repair says about it, without touching the registry.
+var readUserPath = func() (string, error) {
+	out, err := runWinCmd(15*time.Second, "reg", "query", `HKCU\Environment`, "/v", "Path")
+	if err != nil {
+		return "", err
+	}
+	return parseRegPath(string(out)), nil
 }
 
 // parseRegPath extracts the value from `reg query ... /v Path` output.
