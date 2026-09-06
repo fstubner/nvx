@@ -54,7 +54,19 @@ func TestSeatbeltProfileIsWrittenWhereContainedCodeCannotWrite(t *testing.T) {
 			defer func() { seatbeltExecPath = orig }()
 			seatbeltExecPath = fake
 
-			nvxHome := filepath.Join(tempDir(t), ".nvx")
+			// The nvx home goes under $HOME, not under the test's temp directory:
+			// on macOS every temp directory is under /private/var/folders, which is
+			// one of the writable roots this test checks against, so a home placed
+			// there would fail the check for the wrong reason.
+			userHome, err := os.UserHomeDir()
+			if err != nil {
+				t.Fatal(err)
+			}
+			nvxHome, err := os.MkdirTemp(userHome, ".nvx-profile-location-test-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(nvxHome) })
 			guestHome := filepath.Join(nvxHome, "sandbox_home", "thissession")
 			workDir := tempDir(t)
 			if err := os.MkdirAll(guestHome, 0o700); err != nil {
