@@ -324,20 +324,11 @@ func main() {
 		os.Exit(runAuditCommand(os.Args[2:], nvxHome))
 
 	case "setup":
-		undo := false
-		allDrives := false
-		for _, a := range os.Args[2:] {
-			if a == "--undo" || a == "-u" {
-				undo = true
-			}
-			// Restores the pre-2026-09-01 behaviour of granting every fixed volume.
-			// Off by default because the cost of a grant scales with the size of the
-			// volume, and most machines have volumes no project will ever sit on.
-			if a == "--all-drives" {
-				allDrives = true
-			}
-		}
-		os.Exit(runWindowsSetup(nvxHome, undo, allDrives))
+		// --all-drives restores the pre-2026-09-01 behaviour of granting every
+		// fixed volume. Off by default because the cost of a grant scales with the
+		// size of the volume, and most machines have volumes no project will ever
+		// sit on. Anything unrecognised is refused: see parseSetupArgs.
+		os.Exit(runSetupCommand(os.Args[2:], nvxHome))
 
 	case "__landlock-exec":
 		a, ok := parseSupervisorExecArgs(os.Args[2:])
@@ -390,6 +381,8 @@ func isShimCommand(name string) bool {
 
 func commandHelpText(command string) string {
 	switch command {
+	case "setup":
+		return setupHelpText
 	case "install", "i":
 		return "nvx install <[runtime@]version>\n\nDownload and install a runtime version. A bare version installs Node.js\n(e.g. 20, lts, latest, 20.11.0); prefix another runtime with '@'\n(e.g. bun@1.2, bun).\n"
 	case "uninstall", "uni":
