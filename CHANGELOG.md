@@ -592,6 +592,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx auto` exited 0 after failing to switch.** A directory pinned to a
+  version you do not have printed "Run 'nvx install node@22'" and then reported
+  success, so `nvx auto && npm test` carried on with the wrong runtime. It now
+  exits non-zero when the directory asked for something it could not deliver.
+
+  Only to a person, though. The shell integration runs `auto` on every `cd` and
+  pipes it into `eval`; returning non-zero there would put a failing status into
+  every prompt in every directory without a match, which is worse than the bug
+  being fixed. The code is reported when stdout is a terminal and never to the
+  hook, which is piped -- the same distinction `nvx use` already draws about
+  whether to print its environment block.
+
+  A directory that declares no runtime, or already has the right one active,
+  still exits 0. That is the ordinary case, not a failure.
+
+### Fixed
+
 * **A DNS lookup that failed once was a way past the link-local guard.** nvx
   refuses to reach `169.254.0.0/16` through a *name*, because that is where cloud
   metadata endpoints live and one unauthenticated GET there returns credentials.

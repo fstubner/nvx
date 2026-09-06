@@ -215,7 +215,7 @@ func main() {
 		runEnv(parseShellArg(os.Args[2:]), nvxHome)
 
 	case "auto":
-		runAuto(nvxHome, parseShellArg(os.Args[2:]))
+		os.Exit(runAuto(nvxHome, parseShellArg(os.Args[2:])))
 
 	case "import":
 		source := "all"
@@ -1231,11 +1231,33 @@ if (-not $global:__nvx_prompt_wrapped) {
 `, powershellASCIIPath(exe))
 }
 
-func runAuto(nvxHome string, shell string) {
+// runAuto switches the shell to whatever this directory declares, and returns
+// the process exit code.
+//
+// It used to return nothing, so a run that could not do what the directory asked
+// still exited 0. `nvx auto` in a project pinned to a version you do not have
+// printed "Run 'nvx install node@22'" and reported success, which is the silent
+// failure this project keeps finding in other people's tools.
+//
+// Two different nothings, and only one is a failure. A directory that declares
+// no runtime, or already has the right one active, is the ordinary case and
+// exits 0. A directory that asks for something nvx could not deliver is not.
+//
+// Non-zero ONLY when stdout is a terminal. The shell integration runs this on
+// every cd and pipes the result into eval; making that fail would put a failing
+// status into every prompt in every directory without a match, which is a far
+// worse bug than the one being fixed. A person who typed it gets the exit code,
+// the hook never does -- the same distinction shouldPrintShellEnv draws, through
+// the same seam.
+func runAuto(nvxHome string, shell string) int {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return
+		return 0
 	}
+	// Requested and not delivered. Counted rather than a bool so the message can
+	// say how many, and so "no runtime declared" stays distinguishable from
+	// "declared and unmet".
+	unmet := 0
 
 	// Detect and switch every runtime the directory declares (e.g. .nvmrc and
 	// .bun-version), building one combined PATH so Node and Bun coexist.
@@ -1258,6 +1280,7 @@ func runAuto(nvxHome string, shell string) {
 			// install it produces advice that cannot work ("Run 'nvx install
 			// node@18 - 24'"), so say what is wrong with the file instead.
 			LogWarn("[nvx] %s in %s: %v", display, filepath.Base(sourceFile), rerr)
+			unmet++
 			continue
 		}
 		if rerr != nil {
@@ -1265,14 +1288,17 @@ func runAuto(nvxHome string, shell string) {
 			if PromptYesNo(promptMsg) {
 				if ierr := provider.Install(query, nvxHome); ierr != nil {
 					LogError("[nvx] Failed to install %s: %v", display, ierr)
+					unmet++
 					continue
 				}
 				resolvedVer, rerr = resolveLocalVersion(provider, query, nvxHome)
 				if rerr != nil {
+					unmet++
 					continue
 				}
 			} else {
 				LogWarn("[nvx] Directory requires %s %s (from %s) but it is not installed. Run 'nvx install %s@%s'.", display, query, filepath.Base(sourceFile), name, query)
+				unmet++
 				continue
 			}
 		}
@@ -1296,7 +1322,7 @@ func runAuto(nvxHome string, shell string) {
 	}
 
 	if !changed {
-		return
+		return autoExitCode(unmet)
 	}
 	fmt.Print(shellEnvAssignment(shell, "PATH", FormatPathForShell(shell, pathAcc)))
 	if npmPrefix != "" {
@@ -1305,6 +1331,15 @@ func runAuto(nvxHome string, shell string) {
 	for _, kv := range sessionEnv {
 		fmt.Print(shellEnvAssignment(shell, kv[0], kv[1]))
 	}
+	return autoExitCode(unmet)
+}
+
+// autoExitCode reports failure only to a person, never to the cd hook.
+func autoExitCode(unmet int) int {
+	if unmet > 0 && stdoutIsTerminal() {
+		return 1
+	}
+	return 0
 }
 
 // resolveNpmPrefixDir returns the npm global prefix for the session: the
