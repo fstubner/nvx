@@ -38,6 +38,7 @@ func TestVersionQueryResolvesToSomethingCheckable(t *testing.T) {
 			"next":    "12.0.2",  // any dist-tag, not just latest
 			"11.11.0": "11.11.0", // an exact version passes through
 			" latest": "11.19.0", // whitespace is not a different tag
+			">=2":     "12.0.2",  // a range: the highest published version it allows, as npm installs
 		}
 		for query, want := range cases {
 			got, err := resolveVersionQuery(query, meta)
@@ -61,8 +62,12 @@ func TestVersionQueryResolvesToSomethingCheckable(t *testing.T) {
 	// into "could not verify registry metadata ... proceed?", which is honest --
 	// nvx cannot check a version it cannot name. Silently continuing with every
 	// check disabled is the bug.
+	//
+	// Ranges that match a published version now resolve (see
+	// security_version_range_test.go); the ones here match nothing this
+	// registry publishes, so they are still errors.
 	t.Run("refuses what it cannot resolve", func(t *testing.T) {
-		for _, query := range []string{"^4.17.0", "~1.2", "1.x", ">=2", "nosuchtag", "broken"} {
+		for _, query := range []string{"^4.17.0", "~1.2", "1.x", "nosuchtag", "broken"} {
 			got, err := resolveVersionQuery(query, meta)
 			if err == nil {
 				t.Errorf("resolveVersionQuery(%q) = %q with no error; an unresolvable query must "+

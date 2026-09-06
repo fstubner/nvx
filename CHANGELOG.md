@@ -592,6 +592,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A version range now resolves to the version npm would install, so the
+  checks run against it.** `npm install lodash@^4` -- a range, the shape most
+  declared dependencies take -- was an error inside nvx's resolver, the caller
+  turned that into "Could not verify registry metadata ... Proceed without
+  metadata checks?", and `-y` / `NVX_YES` approve that prompt by design. So an
+  unattended install of a range skipped the install-script, release-age and
+  OSV checks behind a warning nobody was reading. nvx already had a range
+  parser for engine constraints; the resolver now uses it and picks the highest
+  published version the range allows, which is what npm installs. A typo, a
+  git or URL spec, or a syntax the parser does not know is still an error, and
+  the prompt is still the honest answer there.
+
+* **A destination name outside the hostname grammar is refused before it can
+  reach the egress prompt or the log.** The prompt prints the requested host
+  to the terminal, and that host is whatever bytes the sandboxed client put in
+  its SOCKS or CONNECT request. A name carrying a carriage return or a terminal
+  escape can redraw the line the person is reading; a name with an embedded
+  newline can put words in the prompt's mouth. Measured: such names reached
+  the prompt, and with `NVX_TRUST_YES` set were approved. Both protocol
+  handlers now refuse anything that is not an IP address or an RFC 1123
+  hostname before resolving it, with the bytes escaped in the warning and the
+  audit entry.
+
+* **A CONNECT request that never ends is dropped, not buffered without
+  limit.** The proxy read the request line and each header with no cap, and
+  the client is the sandboxed process while the proxy is nvx itself outside
+  the sandbox. Measured: after 512 KiB with no newline the proxy was still
+  reading. The header phase is now capped at 64 KiB; a request past that is
+  closed, and the tunnel after the headers is not bounded.
+
+* **A project policy's `expose_ports` now reaches the merged policy.** The
+  merge had a branch for every network list except this one, so a project file
+  that set it did nothing -- and the approval gate that already checked it
+  could never fire. It is merged like `connect_ports`, and an unpinned project
+  file that adds one is ignored until approved.
+
+* **Concurrent nvx processes no longer lose each other's grants.** The ledger
+  of policy pins, approved hosts and recorded filesystem permissions was saved
+  atomically but read, modified and written back with nothing serialising the
+  three callers, so two nvx processes on one project -- an npm lifecycle
+  script, a test runner's workers -- could each read the file, add an entry,
+  and the second write discard the first's. A permission with no record is one
+  nothing can withdraw. Every change now goes through one locked
+  read-modify-write, and the save's temp file has a unique name: sixteen
+  concurrent writers in one process collided on a PID-based one.
+
 * **`nvx setup --help` ran setup.** The command scanned its arguments for
   `--undo` and `--all-drives` and ignored everything else, so `--help` and
   `-h` reached the elevation check, and `nvx setup --undoo` ran setup forward,

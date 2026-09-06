@@ -95,9 +95,16 @@ func ensureTrustedToolGrant(nvxHome, toolName string) bool {
 		return false
 	}
 
-	g.TrustedTools = append(g.TrustedTools, toolName)
-	g.ProjectPath = scope
-	if err := saveProjectGrants(nvxHome, g); err != nil {
+	// Re-read under the ledger's lock and add just this entry, so a concurrent
+	// nvx's additions survive; the copy loaded before the prompt is stale by
+	// now.
+	err := updateProjectGrants(nvxHome, scope, func(g *projectGrants) error {
+		if !g.hasTrustedTool(toolName) {
+			g.TrustedTools = append(g.TrustedTools, toolName)
+		}
+		return nil
+	})
+	if err != nil {
 		LogWarn("Failed to persist trusted-tool grant: %v", err)
 		auditLog(nvxHome, "trusted_tool_grant_persist_failed", map[string]string{"tool": toolName, "project": scope})
 		// The user's explicit approval stands for this run even though it

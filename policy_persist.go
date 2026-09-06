@@ -121,8 +121,23 @@ func saveProjectGrants(nvxHome string, g projectGrants) error {
 	// parse, and a permission nothing has a record of is one nothing can withdraw
 	// -- not reconciliation, not `nvx grants reset`, only icacls by hand.
 	final := grantsPath(nvxHome, g.ProjectPath)
-	tmp := fmt.Sprintf("%s.%d.tmp", final, os.Getpid())
-	if err := os.WriteFile(tmp, out, 0600); err != nil {
+	// A unique temp name, not one built from the PID: two saves in one process
+	// -- measured, sixteen goroutines through updateProjectGrants before it took
+	// a lock -- collided on the same temp file and failed with "being used by
+	// another process". The lock makes that sequence impossible now; this makes
+	// the save safe on its own as well.
+	f, err := os.CreateTemp(filepath.Dir(final), filepath.Base(final)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.Write(out); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, final); err != nil {

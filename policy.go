@@ -656,6 +656,7 @@ func ensureProjectPolicyTrust(nvxHome string) error {
 	scope := projectScopeDir()
 	grants := loadProjectGrants(nvxHome, scope)
 	changed := false
+	acceptedNow := map[string]string{}
 
 	for i := len(localPaths) - 1; i >= 0; i-- {
 		localPath := localPaths[i]
@@ -675,6 +676,7 @@ func ensureProjectPolicyTrust(nvxHome string) error {
 					continue
 				}
 				grants.PolicyPins[cleanPath] = hash
+				acceptedNow[cleanPath] = hash
 				changed = true
 				auditLog(nvxHome, "policy_pin_accepted", map[string]string{"path": cleanPath})
 			}
@@ -683,8 +685,15 @@ func ensureProjectPolicyTrust(nvxHome string) error {
 	}
 
 	if changed {
-		grants.ProjectPath = scope
-		if err := saveProjectGrants(nvxHome, grants); err != nil {
+		// Re-read under the ledger's lock and add only the pins accepted here,
+		// so a concurrent nvx's entries survive rather than being overwritten by
+		// the copy loaded before the prompts.
+		if err := updateProjectGrants(nvxHome, scope, func(g *projectGrants) error {
+			for path, hash := range acceptedNow {
+				g.PolicyPins[path] = hash
+			}
+			return nil
+		}); err != nil {
 			LogWarn("Failed to record project policy trust: %v", err)
 		}
 	}
@@ -893,6 +902,12 @@ func MergePolicies(global, local Policy) Policy {
 	// so a checked-in file still has to be trusted before it takes effect.
 	if len(local.Isolation.Network.ConnectPorts) > 0 {
 		merged.Isolation.Network.ConnectPorts = append(merged.Isolation.Network.ConnectPorts, local.Isolation.Network.ConnectPorts...)
+	}
+	// expose_ports was declared, documented, read by the launcher and gated by
+	// policyLoosens, and missing here -- so a project file that set it did
+	// nothing, and the gate could never fire.
+	if len(local.Isolation.Network.ExposePorts) > 0 {
+		merged.Isolation.Network.ExposePorts = append(merged.Isolation.Network.ExposePorts, local.Isolation.Network.ExposePorts...)
 	}
 	if len(local.Isolation.Filesystem.AllowReadExec) > 0 {
 		merged.Isolation.Filesystem.AllowReadExec = append(merged.Isolation.Filesystem.AllowReadExec, local.Isolation.Filesystem.AllowReadExec...)
