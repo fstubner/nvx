@@ -14,14 +14,24 @@ import (
 	"unsafe"
 )
 
-// runWinCmd runs an external command with a timeout so a stuck tool surfaces as
-// an error instead of hanging. (icacls can hang indefinitely when a filter
+// runWinCmd runs a Windows system tool with a timeout so a stuck tool surfaces
+// as an error instead of hanging. (icacls can hang indefinitely when a filter
 // driver intercepts writes to certain paths, e.g. the OneDrive/Defender-guarded
 // profile root — so every privileged call is time-boxed.)
+//
+// name is a tool in the system directory -- "icacls", "reg",
+// "CheckNetIsolation" -- and is taken from there, never from PATH. This ran
+// exec.CommandContext with the bare name, and `nvx setup` calls it elevated:
+// an Administrator running whatever a user-writable directory earlier in PATH
+// chose to call CheckNetIsolation.exe. See systemToolPath.
 func runWinCmd(timeout time.Duration, name string, args ...string) ([]byte, error) {
+	tool, err := systemToolPath(name + ".exe")
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, tool, args...).CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return out, fmt.Errorf("%s timed out after %s", name, timeout)
 	}

@@ -27,6 +27,13 @@ func TestMain(m *testing.M) {
 	if os.Getenv("NVX_HOST_CONTROL_CHILD") == "1" {
 		os.Exit(0)
 	}
+	// A test that plants a stand-in system tool on PATH points it at this
+	// binary. Asked to be that tool, it prints what the test wants and leaves,
+	// before the testing package can see the tool's argv as flags.
+	if out := os.Getenv("NVX_TEST_FAKE_TOOL_OUTPUT"); out != "" {
+		fmt.Print(out)
+		os.Exit(0)
+	}
 	// One early, legible failure instead of four late confusing ones when
 	// NVX_HOME cannot hold an AF_UNIX socket. See probeSocketHeadroomProblem.
 	//

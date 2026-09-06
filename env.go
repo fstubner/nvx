@@ -105,7 +105,12 @@ func CreateLink(link, target string) error {
 	}
 
 	if runtime.GOOS == "windows" {
-		cmd := exec.Command("cmd", "/c", "mklink", "/j", link, target)
+		// From the system directory, not PATH: see systemToolPath.
+		cmdExe, err := systemToolPath("cmd.exe")
+		if err != nil {
+			return fmt.Errorf("failed to create directory junction: %w", err)
+		}
+		cmd := exec.Command(cmdExe, "/c", "mklink", "/j", link, target)
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to create directory junction: %w", err)
 		}
