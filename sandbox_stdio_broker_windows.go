@@ -62,11 +62,25 @@ type stdioChannel struct {
 	//	stdin:  node --> nodePipe --> nvx --> childPipe --> grandchild
 	reverse bool
 
+	// sddl is what every instance is created with, kept so that retiring a
+	// used instance can create the next one under the same name with the same
+	// access.
+	sddl string
+
+	// The instances currently behind the two names. Guarded by mu: the pump
+	// snapshots them before blocking in I/O, retire replaces them at the end
+	// of a use, and Close invalidates them from another goroutine at the end
+	// of the session.
+	//
+	// One use per instance, many uses per name. A named-pipe instance is
+	// single-shot -- once its client disconnects nothing can connect to it
+	// again -- and the preload puts a name back on its free list when the
+	// child that used it closes. Serving each name exactly once, as this used
+	// to, left a dead pipe behind every recycled name.
+	mu          sync.Mutex
+	closed      bool
 	childServer syscall.Handle
 	nodeServer  syscall.Handle
-	// closeOnce guards nodeServer, which both the pump (at end of stream) and
-	// Close (at end of session) want to close.
-	closeOnce sync.Once
 }
 
 // stdioBroker owns the provisioned channels and the goroutines pumping them.
@@ -199,58 +213,126 @@ func newStdioChannel(sessionID string, index int, sddl string, reverse bool) (*s
 		kind = "i"
 	}
 	base := fmt.Sprintf(`\\.\pipe\nvx-stdio-%s-%s%d`, sessionID, kind, index)
-	ch := &stdioChannel{childPipe: base + "-c", nodePipe: base + "-n", reverse: reverse}
-
-	var err error
-	if ch.childServer, err = createNamedPipeWithSecurity(ch.childPipe, sddl); err != nil {
-		return nil, err
-	}
-	if ch.nodeServer, err = createNamedPipeWithSecurity(ch.nodePipe, sddl); err != nil {
-		syscall.CloseHandle(ch.childServer)
+	ch := &stdioChannel{childPipe: base + "-c", nodePipe: base + "-n", reverse: reverse, sddl: sddl}
+	if err := ch.createInstances(); err != nil {
 		return nil, err
 	}
 	return ch, nil
 }
 
-// pump copies what the grandchild wrote into the pipe the contained node reads.
+// createInstances puts a fresh server instance behind each name. The caller
+// holds c.mu, or owns the channel outright as newStdioChannel does.
 //
-// Blocking waits on both ends: neither connects until the contained process
-// actually uses this channel, and a channel nobody uses simply parks here until
-// the session ends and Close cancels it.
-func (c *stdioChannel) pump() {
-	if !acceptPipeClient(c.childServer) {
-		return
+// Both or neither. A child instance with no node instance behind it would
+// accept a client the pump could never serve, and that client's process would
+// wait on it forever.
+func (c *stdioChannel) createInstances() error {
+	child, err := createNamedPipeWithSecurity(c.childPipe, c.sddl)
+	if err != nil {
+		return err
 	}
-	if !acceptPipeClient(c.nodeServer) {
-		return
+	node, err := createNamedPipeWithSecurity(c.nodePipe, c.sddl)
+	if err != nil {
+		syscall.CloseHandle(child)
+		return err
 	}
-	if c.reverse {
-		// stdin: what node writes reaches the grandchild. When node closes its
-		// end this returns, and the grandchild then has to see EOF -- a tool
-		// that feeds a child input and waits for the answer hangs forever
-		// otherwise, which is the failure this direction exists to remove.
-		_, _ = io.Copy(pipeWriter{c.childServer}, pipeReader{c.nodeServer})
-		c.closeOnce.Do(func() {
-			syscall.CloseHandle(c.childServer)
-			c.childServer = syscall.InvalidHandle
-		})
-		return
-	}
-	_, _ = io.Copy(pipeWriter{c.nodeServer}, pipeReader{c.childServer})
+	c.childServer, c.nodeServer = child, node
+	return nil
+}
 
-	// Closed, not disconnected. DisconnectNamedPipe tears the connection down
-	// under the client, which reaches node as EPIPE on a read -- an error event
-	// that killed the contained process outright. Closing the last server handle
-	// ends the stream the way the end of any stream should look.
-	c.closeOnce.Do(func() {
-		syscall.CloseHandle(c.nodeServer)
-		c.nodeServer = syscall.InvalidHandle
-	})
+// pump serves this channel for the life of the session: accept the two
+// clients, copy until the writer leaves, retire the used instances, put fresh
+// ones behind the same names, and go round again.
+//
+// It used to do that once and return, and the preload recycles names: the
+// ninth piped child in a process -- the first to draw a name whose child had
+// closed -- opened a dead pipe, and the preload's failure path was the raw
+// spawn that blocks inside libuv. Measured: ten children run one after
+// another, the first eight streamed and the ninth hung to the deadline.
+//
+// Blocking waits on both ends: a channel nobody uses parks in the first accept
+// until the session ends and Close cancels it.
+func (c *stdioChannel) pump() {
+	for {
+		child, node, ok := c.current()
+		if !ok {
+			return
+		}
+		if !acceptPipeClient(child) || !acceptPipeClient(node) {
+			return // cancelled by Close, or the handle is gone
+		}
+		if c.reverse {
+			// stdin: what node writes reaches the grandchild. When node closes
+			// its end this returns, and the grandchild then has to see EOF -- a
+			// tool that feeds a child input and waits for the answer hangs
+			// forever otherwise, which is the failure this direction exists to
+			// remove.
+			_, _ = io.Copy(pipeWriter{child}, pipeReader{node})
+		} else {
+			_, _ = io.Copy(pipeWriter{node}, pipeReader{child})
+		}
+		if !c.retire(child, node) {
+			return
+		}
+	}
+}
+
+// current returns the instances to serve next, or false once Close has run.
+func (c *stdioChannel) current() (child, node syscall.Handle, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.childServer == syscall.InvalidHandle || c.nodeServer == syscall.InvalidHandle {
+		return 0, 0, false
+	}
+	return c.childServer, c.nodeServer, true
+}
+
+// retire ends one use of the channel and readies the next.
+//
+// Closed, not disconnected. DisconnectNamedPipe tears the connection down
+// under the client, which reaches node as EPIPE on a read -- an error event
+// that killed the contained process outright. Closing the last server handle
+// on the destination ends the reader's stream the way the end of any stream
+// should look, so the destination goes first; the source's client has already
+// left. Then fresh instances behind the same names, so the name the preload
+// is about to hand back to its free list has a live pipe behind it again.
+//
+// False once the session is over, or if the names cannot be re-created. In
+// the second case this channel simply drops out: its name stays in the
+// preload's list, opens on it fail, and the preload moves to the next one.
+func (c *stdioChannel) retire(child, node syscall.Handle) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	first, second := node, child
+	if c.reverse {
+		first, second = child, node
+	}
+	for _, h := range []syscall.Handle{first, second} {
+		// Compare against the fields rather than closing unconditionally: Close
+		// may have taken them already, from its own goroutine.
+		switch h {
+		case c.childServer:
+			syscall.CloseHandle(h)
+			c.childServer = syscall.InvalidHandle
+		case c.nodeServer:
+			syscall.CloseHandle(h)
+			c.nodeServer = syscall.InvalidHandle
+		}
+	}
+	if c.closed {
+		return false
+	}
+	return c.createInstances() == nil
 }
 
 // Close tears the pool down. Cancelling pending I/O first: a pump parked in
 // ConnectNamedPipe is not released by closing the handle, which is how an
 // earlier probe hung for ten minutes.
+//
+// Everything under the channel's mutex, because the pump's goroutine reads
+// and replaces the same fields. An earlier shape with a sync.Once and one
+// field read outside it raced the pump; `go test -race` caught it every time
+// under load and about 3% of the time in isolation.
 func (b *stdioBroker) Close() {
 	if b == nil {
 		return
@@ -262,30 +344,16 @@ func (b *stdioBroker) Close() {
 	}
 	b.closed = true
 	for _, ch := range b.channels {
-		// The pump's closeOnce owns the DESTINATION handle, whichever that is:
-		// nodeServer going out, childServer coming in. Close the source here and
-		// leave the destination to the Once, or a reverse channel's childServer
-		// is closed from two goroutines at once.
-		source, dest := ch.childServer, &ch.nodeServer
-		if ch.reverse {
-			source, dest = ch.nodeServer, &ch.childServer
-		}
-		if h := source; h != 0 && h != syscall.InvalidHandle {
-			procCancelIoExBroker.Call(uintptr(h), 0)
-			syscall.CloseHandle(h)
-		}
-		// Read INSIDE the Do, not before it. sync.Once serialises the bodies,
-		// not a read that happens outside one -- so lifting this out raced the
-		// pump goroutine's write to the same field. `go test -race` caught it
-		// every time under load and about 3% of the time in isolation, and CI
-		// runs -race, which is what made a suite that passes ten times in a row
-		// fail once with nothing to point at.
-		ch.closeOnce.Do(func() {
-			if h := *dest; h != 0 && h != syscall.InvalidHandle {
-				procCancelIoExBroker.Call(uintptr(h), 0)
-				syscall.CloseHandle(h)
+		ch.mu.Lock()
+		ch.closed = true
+		for _, h := range []*syscall.Handle{&ch.childServer, &ch.nodeServer} {
+			if *h != 0 && *h != syscall.InvalidHandle {
+				procCancelIoExBroker.Call(uintptr(*h), 0)
+				syscall.CloseHandle(*h)
 			}
-		})
+			*h = syscall.InvalidHandle
+		}
+		ch.mu.Unlock()
 	}
 }
 

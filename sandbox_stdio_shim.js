@@ -339,6 +339,45 @@ try {
       return child;
     }
 
+    // Claiming a channel is opening it. A name that will not open is in use by
+    // some other process in this tree -- its instance already has a client,
+    // and Windows refuses a second with ERROR_PIPE_BUSY -- or nvx is between
+    // retiring a used instance and creating the next, a window of
+    // microseconds. Either way the next name is the right move.
+    //
+    // The pipe is the arbiter, so no list has to be right across processes.
+    // Every node process in the sandbox inherits the same NVX_STDIO_CHANNELS,
+    // and each used to treat the whole of it as its own: a nested process's
+    // first pick was the very channel carrying its own stdout, the open was
+    // refused, and the refusal fell through to the raw spawn that hangs. npm
+    // running a script that runs node that spawns anything is that shape.
+    //
+    // Both ends or neither. A channel whose child end opened but whose node
+    // end did not is handed back closed, so nvx's pump sees the client leave
+    // rather than waiting on a reader that never comes.
+    function claim(list) {
+      for (let k = list.length; k > 0; k--) {
+        const ch = list.shift();
+        let childFd = -1, nodeFd = -1;
+        try {
+          // 'r+' on both: these pipes are duplex and a one-way open is refused.
+          childFd = fs.openSync(ch.childPipe, 'r+');
+          nodeFd = fs.openSync(ch.nodePipe, 'r+');
+          return { ch: ch, childFd: childFd, nodeFd: nodeFd };
+        } catch (e) {
+          if (childFd !== -1) { try { fs.closeSync(childFd); } catch (e2) {} }
+          if (nodeFd !== -1) { try { fs.closeSync(nodeFd); } catch (e2) {} }
+          list.push(ch);
+        }
+      }
+      return null;
+    }
+    function release(list, ch, fdA, fdB) {
+      try { fs.closeSync(fdA); } catch (e) {}
+      try { fs.closeSync(fdB); } catch (e) {}
+      list.push(ch);
+    }
+
     cp.spawn = function nvxSpawn(command, args, options) {
       // spawn's signature lets args and options swap, so normalise before
       // reading stdio out of it.
@@ -391,54 +430,41 @@ try {
       let stdinDir = null;
       let stdinTaken = null;
       if (fds[0] === 'pipe') {
-        const inCh = freeIn.shift();
-        if (inCh) {
-          try {
-            // 'r+' on both: these pipes are duplex and a one-way open is
-            // refused. The child reads childPipe as its fd 0; this process
-            // writes nodePipe, and nvx pumps one into the other.
-            const childFd = fs.openSync(inCh.childPipe, 'r+');
-            const writeFd = fs.openSync(inCh.nodePipe, 'r+');
-            fds[0] = childFd;
-            stdinTaken = { ch: inCh, childFd: childFd, writeFd: writeFd };
-          } catch (e) {
-            if (stdinTaken) {
-              try { fs.closeSync(stdinTaken.childFd); } catch (e2) {}
-              try { fs.closeSync(stdinTaken.writeFd); } catch (e2) {}
-            }
-            stdinTaken = null;
-            freeIn.push(inCh);
-          }
-        }
-        if (!stdinTaken) {
+        // The child reads childPipe as its fd 0; this process writes nodePipe,
+        // and nvx pumps one into the other.
+        const t = claim(freeIn);
+        if (t) {
+          fds[0] = t.childFd;
+          stdinTaken = { ch: t.ch, childFd: t.childFd, writeFd: t.nodeFd };
+        } else {
           try {
             stdinDir = scratch();
             const emptyPath = path.join(stdinDir, 'stdin');
             fs.writeFileSync(emptyPath, '');
             fds[0] = fs.openSync(emptyPath, 'r');
           } catch (e) {
-            return realSpawn.apply(cp, arguments);
+            return spawnThroughFiles(command, argv, opts, stdio, wanted);
           }
         }
       }
 
-      try {
-        for (const i of wanted) {
-          const ch = free.shift();
-          // 'r+' rather than 'w': these pipes are duplex, and opening one
-          // write-only is refused.
-          const writeFd = fs.openSync(ch.childPipe, 'r+');
-          const readFd = fs.openSync(ch.nodePipe, 'r+');
-          fds[i] = writeFd;
-          taken.push({ slot: i, ch: ch, writeFd: writeFd, readFd: readFd });
+      for (const i of wanted) {
+        const t = claim(free);
+        if (!t) {
+          // Never the raw spawn from here: that call is the hang. Hand back
+          // whatever was claimed and go through files, which is what an empty
+          // pool gets too.
+          for (const u of taken) release(free, u.ch, u.writeFd, u.readFd);
+          if (stdinTaken) {
+            release(freeIn, stdinTaken.ch, stdinTaken.childFd, stdinTaken.writeFd);
+            stdinTaken = null;
+          } else if (typeof fds[0] === 'number') {
+            try { fs.closeSync(fds[0]); } catch (e) {}
+          }
+          return spawnThroughFiles(command, argv, opts, stdio, wanted);
         }
-      } catch (e) {
-        for (const t of taken) {
-          try { fs.closeSync(t.writeFd); } catch (e2) {}
-          try { fs.closeSync(t.readFd); } catch (e2) {}
-          free.push(t.ch);
-        }
-        return realSpawn.apply(cp, arguments);
+        fds[i] = t.childFd;
+        taken.push({ slot: i, ch: t.ch, writeFd: t.childFd, readFd: t.nodeFd });
       }
 
       const nextOpts = Object.assign({}, opts || {}, { stdio: fds });

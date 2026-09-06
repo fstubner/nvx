@@ -765,7 +765,10 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   instead of silence. Vitest's default worker pool forks, so
   `nvx --no-sandbox npx vitest run` is the way to run it today.
 
-  Beyond 8 concurrent piped children in one process, output is collected and
+  The sandbox streams 8 piped children at once, counted across every node process
+  in the session: a nested process draws from the same pool as its parent, and a
+  channel returns to the pool when the child using it closes, so children run one
+  after another never run out. Beyond 8 at the same time, output is collected and
   delivered **when the stream ends** rather than as it is produced. Nothing hangs,
   and no bytes are dropped — but read it from `stdout` events or the `close`
   event, **not from an `exit` handler**. A caller that accumulates via `data` and

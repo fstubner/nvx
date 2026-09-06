@@ -592,6 +592,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Windows: the ninth piped child in a contained process hung, and so did any
+  piped child of a piped child.** Two bugs in the streaming-stdio broker with one
+  failure path between them.
+
+  nvx pre-creates a pool of named pipes and the preload in each contained node
+  process opens them; a channel went back on the preload's free list when the
+  child using it closed, but nvx served each channel exactly once. So the first
+  child to draw a recycled name -- the ninth, run one after another -- found a
+  dead pipe behind it. Measured: ten sequential children, the first eight
+  streamed and the ninth hung to the deadline. A test runner that spawns a
+  worker per file and waits for each hits this on its ninth file.
+
+  Separately, every node process in the sandbox inherits the same channel list
+  and each treated the whole of it as its own. A nested process's first pick was
+  the channel already carrying its own stdout; the open was refused as busy.
+  `npm test` under most runners -- npm running node running a worker -- is that
+  shape, and it hung.
+
+  Both refusals fell through to the raw `spawn`, which blocks inside libuv
+  before the child exists: the exact hang the broker was built to remove,
+  reached by way of the broker. nvx now serves each channel for the life of the
+  session, putting fresh pipe instances behind a name after each use, and the
+  preload treats a name that will not open as taken and moves to the next one.
+  The pipe itself is the arbiter, so nested processes need no shared
+  bookkeeping. When every name is busy the spawn goes through files, as an
+  empty pool always did; it never goes to the raw call.
+
+  The documented limit is unchanged in size and different in shape: 8 piped
+  children streaming at once, now counted across the whole session rather than
+  per process, with no limit on how many run one after another.
+
 * **Linux: a contained process could remove directories from the nvx runtime
   tree, and could not list any read-only directory.** Both came from one
   mistake. The Landlock access-right constants had an invented `WRITE_DIR` at
