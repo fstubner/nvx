@@ -9,13 +9,6 @@ import (
 	"os/exec"
 )
 
-// seatbeltExecPath is where macOS keeps sandbox-exec. A variable rather than a
-// constant so a test can point it at a path that does not exist and check that
-// nvx refuses to run instead of running uncontained -- the one macOS
-// fail-closed claim that could not be verified while this was inlined, since
-// the real file cannot be removed from a running system.
-var seatbeltExecPath = "/usr/bin/sandbox-exec"
-
 // platformLaunchNative runs the command under sandbox-exec (Seatbelt) with
 // filesystem write restrictions — this is the default native path on macOS.
 func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath string, cleanEnv []string, netCtx NetworkLaunchContext) (int, error) {
@@ -33,26 +26,14 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// legacy caller in sandbox_seatbelt.go was fixed in July; this one was missed,
 	// so the comment there described a guarantee the shipped path did not provide.
 	profile := buildSeatbeltProfile(netCtx, guestHome, workDir)
-	profileFile, err := os.CreateTemp("", "nvx-*.sb")
+	// Under ~/.nvx, which the profile does not grant writes to; see
+	// writeSeatbeltProfile for what $TMPDIR allowed.
+	profilePath, removeProfile, err := writeSeatbeltProfile(config.NvxHome, profile)
 	if err != nil {
-		LogError("Failed to create Seatbelt profile file: %v", err)
+		LogError("Failed to write the Seatbelt profile: %v", err)
 		return 1, errSandboxDidNotStart
 	}
-	profilePath := profileFile.Name()
-	defer os.Remove(profilePath)
-	if _, err := profileFile.Write([]byte(profile)); err != nil {
-		profileFile.Close()
-		LogError("Failed to write Seatbelt profile: %v", err)
-		return 1, errSandboxDidNotStart
-	}
-	if err := profileFile.Close(); err != nil {
-		LogError("Failed to close Seatbelt profile file: %v", err)
-		return 1, errSandboxDidNotStart
-	}
-	if err := os.Chmod(profilePath, 0600); err != nil {
-		LogError("Failed to set permissions on Seatbelt profile file: %v", err)
-		return 1, errSandboxDidNotStart
-	}
+	defer removeProfile()
 
 	args := []string{"-f", profilePath, cmdPath}
 	args = append(args, config.Args...)

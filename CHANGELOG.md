@@ -592,6 +592,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Windows: `nvx setup` ran system tools by name, resolved through PATH,
+  elevated.** icacls, reg and CheckNetIsolation were launched as bare names,
+  and PATH is not nvx's: its user half is written by ordinary user-level code
+  and installers, and the shell integration prepends directories to it on every
+  `cd`. `nvx setup` runs the same binary as Administrator, so a
+  `CheckNetIsolation.exe` in a user-writable directory earlier in PATH ran
+  elevated. Measured unelevated with a planted file: it ran and its output was
+  believed. cmd and powershell were reached the same way from the junction and
+  PATH-repair code. Every Windows system tool is now taken from the system
+  directory the kernel reports, never from PATH, and a test refuses any new
+  program launched by a bare name that is not listed with a reason.
+
+* **macOS: the Seatbelt profile was written where a contained process could
+  rewrite it.** Both launch paths wrote it to `$TMPDIR`, which sits under
+  `/private/var/folders`, one of the roots the profile grants writes on so that
+  contained code has a temp directory. The file was 0600, but a concurrent
+  contained process runs as the same user. Between nvx writing the profile and
+  `sandbox-exec` reading it, that process could replace the contents with
+  `(allow default)`, and the launch it was racing then ran with no containment.
+  The profile now lives under `~/.nvx/seatbelt`, which the profile does not
+  grant writes to. A macOS test drives both launch paths through a stand-in
+  `sandbox-exec` and checks where the profile actually is; it failed on the
+  runner against the previous code before the fix.
+
 * **`npm -- install evil` ran uncontained and skipped every pre-install
   check.** Every scan in nvx stopped at `--`, on the reasoning that the
   end-of-options separator ends everything nvx has an interest in. That is true

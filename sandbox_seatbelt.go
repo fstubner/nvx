@@ -4,9 +4,61 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
+
+// seatbeltExecPath is where macOS keeps sandbox-exec. A variable rather than a
+// constant so a test can point it at a path that does not exist and check that
+// nvx refuses to run instead of running uncontained -- the one macOS
+// fail-closed claim that could not be verified while this was inlined, since
+// the real file cannot be removed from a running system -- and at a stand-in
+// that records its arguments, which is how the profile's location is checked.
+// Shared by both launch paths, so a test can drive either.
+var seatbeltExecPath = "/usr/bin/sandbox-exec"
+
+// writeSeatbeltProfile puts the profile on disk where sandbox-exec can read
+// it and contained code cannot write it, and returns the path plus a remover.
+//
+// Both launch paths used os.CreateTemp("", ...), which on macOS lands under
+// $TMPDIR, and $TMPDIR is under /private/var/folders -- one of the roots the
+// profile itself grants file-write* on, so that contained code has a temp
+// directory. The file was 0600, but a concurrent contained process runs as
+// the same user. Between nvx writing the profile and sandbox-exec reading it,
+// that process could replace the contents with `(allow default)`, and the
+// launch it was racing then ran with no containment at all. A process that
+// watches a directory and rewrites a file is any package's postinstall
+// script. Measured on the CI macOS runner: the profile's directory resolved
+// to /private/var/folders/... before this change.
+//
+// ~/.nvx is what the profile deliberately does NOT grant writes to (see the
+// comment above buildSeatbeltProfile's call sites), so it is the place.
+func writeSeatbeltProfile(nvxHome, profile string) (path string, remove func(), err error) {
+	if nvxHome == "" {
+		nvxHome = GetHomeDir()
+	}
+	dir := filepath.Join(nvxHome, "seatbelt")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", nil, fmt.Errorf("create the Seatbelt profile directory: %w", err)
+	}
+	f, err := os.CreateTemp(dir, "nvx-*.sb")
+	if err != nil {
+		return "", nil, fmt.Errorf("create the Seatbelt profile file: %w", err)
+	}
+	path = f.Name()
+	remove = func() { _ = os.Remove(path) }
+	if _, err := f.Write([]byte(profile)); err != nil {
+		f.Close() // #nosec G104 -- the write error is what matters; a close error on top of it adds nothing
+		remove()
+		return "", nil, fmt.Errorf("write the Seatbelt profile: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		remove()
+		return "", nil, fmt.Errorf("close the Seatbelt profile file: %w", err)
+	}
+	return path, remove, nil
+}
 
 // runSeatbeltSandbox wraps execution with macOS sandbox-exec (Seatbelt).
 func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
@@ -14,7 +66,7 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 		LogError("The 'sandbox-exec' isolation provider is only available on macOS.")
 		return 1
 	}
-	sandboxExec := "/usr/bin/sandbox-exec"
+	sandboxExec := seatbeltExecPath
 	if _, err := os.Stat(sandboxExec); err != nil {
 		LogError("sandbox-exec not found at %s.", sandboxExec)
 		return 1
@@ -58,26 +110,12 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 	// (file-read* below) so the dynamic linker and tooling can still find
 	// everything they need; only writes are scoped down.
 	profile := buildSeatbeltProfile(netCtx, guestHome, cwd)
-	profileFile, err := os.CreateTemp("", "nvx-*.sb")
+	profilePath, removeProfile, err := writeSeatbeltProfile(config.NvxHome, profile)
 	if err != nil {
-		LogError("Failed to create Seatbelt profile file: %v", err)
+		LogError("Failed to write the Seatbelt profile: %v", err)
 		return 1
 	}
-	profilePath := profileFile.Name()
-	defer os.Remove(profilePath)
-	if _, err := profileFile.Write([]byte(profile)); err != nil {
-		profileFile.Close() // #nosec G104 -- the write error below is what matters; a close error on top of it adds nothing
-		LogError("Failed to write Seatbelt profile: %v", err)
-		return 1
-	}
-	if err := profileFile.Close(); err != nil {
-		LogError("Failed to close Seatbelt profile file: %v", err)
-		return 1
-	}
-	if err := os.Chmod(profilePath, 0600); err != nil {
-		LogError("Failed to set permissions on Seatbelt profile file: %v", err)
-		return 1
-	}
+	defer removeProfile()
 
 	args := []string{"-f", profilePath, cmdPath}
 	args = append(args, config.Args...)
