@@ -1,0 +1,38 @@
+nvx report generated 2026-09-06T00:25:11Z
+nvx version: 0.5.7
+os/arch:     windows/amd64
+nvx home:    C:\Users\Felix\go-buildtmp\uat-state
+cwd:         H:\projects\private\needs-work\nvx
+debug capture: false (NVX_DEBUG)
+
+===== interception (nvx doctor) =====
+nvx doctor — shim interception
+  shim dir: C:\Users\Felix\go-buildtmp\uat-state\bin
+  [FAIL] shim dir is not on PATH
+  commands:
+    [FAIL] node -> C:\Users\Felix\.nvx\bin\node.exe (bypasses nvx)
+    [FAIL] npm -> C:\Users\Felix\.nvx\bin\npm.exe (bypasses nvx)
+    [FAIL] npx -> C:\Users\Felix\.nvx\bin\npx.exe (bypasses nvx)
+    [FAIL] bun -> C:\Users\Felix\.nvx\bin\bun.exe (bypasses nvx)
+    [FAIL] bunx -> C:\Users\Felix\.nvx\bin\bunx.exe (bypasses nvx)
+✔ Shell integration is active, and loads in new shells too.
+ℹ Your persistent PATH does not front nvx's shim directory; it can be repaired automatically: run 'nvx doctor --fix'.
+ℹ It edits your user PATH, so nvx does not do it unless you ask.
+ℹ To fix the current shell now, run:
+ℹ   $env:PATH = "C:\Users\Felix\go-buildtmp\uat-state\bin;$env:PATH"
+
+===== policy in effect =====
+isolation enabled:      true
+isolation level:        
+filesystem provider:    native
+network mode:           proxy
+allow_read_exec:        []
+environment.allow:      []
+allow_hosts:            []
+
+===== audit.log (last 200 lines) =====
+(not present)
+
+===== debug.log (last 200 lines) =====
+no debug capture on this machine.
+Re-run the command that misbehaved with NVX_DEBUG=1 set, then run 'nvx report' again.
