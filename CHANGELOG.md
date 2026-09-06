@@ -592,6 +592,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Linux: a contained process could remove directories from the nvx runtime
+  tree, and could not list any read-only directory.** Both came from one
+  mistake. The Landlock access-right constants had an invented `WRITE_DIR` at
+  bit 3 — the kernel has no such right; bit 3 is `READ_DIR` — and every right
+  above it was shifted up by one. So the name `READ_DIR` in the code denoted the
+  kernel's `REMOVE_DIR`: the read-only mask granted rmdir on `/usr`, `/etc` and
+  `~/.nvx/versions`, and never granted listing on any of them.
+
+  Measured on a 6.18 kernel before the fix: a contained process removed an
+  empty directory under `versions/`. Nothing else prevents that — the tree is
+  owned by the user, so ordinary permissions allow it, and Landlock was the only
+  thing that could have said no. Afterwards it is refused, and `/usr`, `/etc`
+  and the runtime tree can be listed, so a tool that enumerates a directory to
+  find its own binaries now works contained on Linux. The earlier README note
+  recording "cannot be listed" as a Landlock limitation was this bug.
+
+  The constants are now pinned against the kernel header's literal values.
+  Every earlier test was written in terms of the same misnamed constants, which
+  is why none of them could see it.
+
+* **Linux: the sandbox refused to start on any kernel between 5.13 and 6.9,
+  blaming a version it did not require.** The ruleset asked the kernel to
+  restrict every right through `IOCTL_DEV`, which arrived in Landlock ABI v5
+  (Linux 6.10). A kernel that does not know a right refuses the whole ruleset
+  rather than trimming it, so Debian 12 (6.1), RHEL 9 (5.14) and Ubuntu 22.04
+  (5.15) all failed closed — with an error saying "kernel 5.13+ required",
+  pointing at the wrong thing. CI never saw it because the runner's kernel is
+  new enough to accept the full mask.
+
+  nvx now asks the kernel which ABI it speaks and restricts the rights that ABI
+  knows, which is how Landlock is documented to be used across versions. The
+  floor is genuinely 5.13 again. A right a kernel does not offer is simply not
+  restricted on that kernel; the rights added by later ABIs (cross-directory
+  linking, truncation, device ioctls) refine a boundary the original rights
+  already draw, and refusing to run is not more secure than running with what
+  the kernel has. The newer `RESOLVE_UNIX` right is deliberately never handled:
+  the in-container egress relay connects to a UNIX socket after the sandbox is
+  applied, and handling it would cut every contained process off from the
+  network on kernels new enough to offer it.
+
 * **A contained process no longer inherits whatever handles nvx's caller left
   open.** Windows handle inheritance is all-or-nothing: nvx launched the
   in-container supervisor with inheritance on and no list restricting it, so the

@@ -42,7 +42,7 @@ func TestLandlockDoesNotExposeNvxHomeSecrets(t *testing.T) {
 		return
 	}
 
-	if fd, err := landlockCreateRuleset(landlockAccessFull); err != nil {
+	if fd, err := landlockCreateRuleset(landlockHandledAccess()); err != nil {
 		t.Skipf("landlock unavailable on this kernel: %v", err)
 	} else {
 		_ = syscall.Close(fd)

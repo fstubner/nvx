@@ -13,44 +13,123 @@ import (
 	"unsafe"
 )
 
-// Landlock ABI constants (linux/landlock.h).
+// Landlock ABI constants, from include/uapi/linux/landlock.h, bit for bit.
+//
+// Pinned by TestLandlockAccessConstantsMatchTheKernelHeader against the header's
+// literal values, because this block once carried an invented WRITE_DIR at bit
+// 3 -- the kernel has no such right; bit 3 is READ_DIR -- with every right above
+// it shifted up by one. The name "ReadDir" in this package then denoted the
+// kernel's REMOVE_DIR, so the read-only mask granted rmdir on the runtime tree
+// and never granted listing anywhere. Measured on a 6.18 kernel before the
+// fix: a contained process removed a directory under versions/. Tests written
+// in terms of the same misnamed constants could not see it.
 const (
 	landlockAccessFSExecute    = 1 << 0
 	landlockAccessFSWriteFile  = 1 << 1
 	landlockAccessFSReadFile   = 1 << 2
-	landlockAccessFSWriteDir   = 1 << 3
-	landlockAccessFSReadDir    = 1 << 4
+	landlockAccessFSReadDir    = 1 << 3
+	landlockAccessFSRemoveDir  = 1 << 4
 	landlockAccessFSRemoveFile = 1 << 5
-	landlockAccessFSRemoveDir  = 1 << 6
-	landlockAccessFSMakeChar   = 1 << 7
-	landlockAccessFSMakeDir    = 1 << 8
-	landlockAccessFSMakeReg    = 1 << 9
-	landlockAccessFSMakeSock   = 1 << 10
-	landlockAccessFSMakeFifo   = 1 << 11
-	landlockAccessFSMakeBlock  = 1 << 12
-	landlockAccessFSMakeSym    = 1 << 13
-	landlockAccessFSRefer      = 1 << 14
-	landlockAccessFSTruncate   = 1 << 15
+	landlockAccessFSMakeChar   = 1 << 6
+	landlockAccessFSMakeDir    = 1 << 7
+	landlockAccessFSMakeReg    = 1 << 8
+	landlockAccessFSMakeSock   = 1 << 9
+	landlockAccessFSMakeFifo   = 1 << 10
+	landlockAccessFSMakeBlock  = 1 << 11
+	landlockAccessFSMakeSym    = 1 << 12
+	landlockAccessFSRefer      = 1 << 13 // ABI v2, Linux 5.19
+	landlockAccessFSTruncate   = 1 << 14 // ABI v3, Linux 6.2
+	landlockAccessFSIoctlDev   = 1 << 15 // ABI v5, Linux 6.10
 
 	landlockRulePathBeneath = 1
+
+	// LANDLOCK_CREATE_RULESET_VERSION: with a null attr and zero size, the
+	// syscall returns the highest ABI version the kernel supports instead of a
+	// ruleset fd.
+	landlockCreateRulesetVersion = 1
 
 	prSetNoNewPrivs = 38
 	openPathFlag    = 0x200000
 )
 
-var (
-	landlockAccessFull = uint64(
-		landlockAccessFSExecute | landlockAccessFSWriteFile | landlockAccessFSReadFile |
-			landlockAccessFSWriteDir | landlockAccessFSReadDir |
-			landlockAccessFSRemoveFile | landlockAccessFSRemoveDir |
-			landlockAccessFSMakeChar | landlockAccessFSMakeDir | landlockAccessFSMakeReg |
-			landlockAccessFSMakeSock | landlockAccessFSMakeFifo | landlockAccessFSMakeBlock |
-			landlockAccessFSMakeSym | landlockAccessFSRefer | landlockAccessFSTruncate,
-	)
-	landlockAccessReadExec = uint64(
-		landlockAccessFSExecute | landlockAccessFSReadFile | landlockAccessFSReadDir,
-	)
+// landlockAccessReadExec is what a read-only root grants: read files, list
+// directories, execute. Never write, remove, create or truncate.
+var landlockAccessReadExec = uint64(
+	landlockAccessFSExecute | landlockAccessFSReadFile | landlockAccessFSReadDir,
 )
+
+// landlockAccessV1 is every filesystem right in the first Landlock ABI (Linux
+// 5.13): EXECUTE through MAKE_SYM. Later ABIs add one right each, and
+// landlockHandledAccessForABI layers them on.
+const landlockAccessV1 = uint64(
+	landlockAccessFSExecute | landlockAccessFSWriteFile | landlockAccessFSReadFile |
+		landlockAccessFSReadDir | landlockAccessFSRemoveDir | landlockAccessFSRemoveFile |
+		landlockAccessFSMakeChar | landlockAccessFSMakeDir | landlockAccessFSMakeReg |
+		landlockAccessFSMakeSock | landlockAccessFSMakeFifo | landlockAccessFSMakeBlock |
+		landlockAccessFSMakeSym,
+)
+
+// landlockABIVersion asks the kernel which Landlock ABI it speaks. 0 means no
+// Landlock at all: the syscall is missing, or the LSM is compiled out or not in
+// the boot-time LSM list.
+func landlockABIVersion() int {
+	r, errno := landlockCall(
+		landlockSyscallCreateRuleset(),
+		0, 0, landlockCreateRulesetVersion,
+		0, 0, 0,
+	)
+	if errno != 0 {
+		return 0
+	}
+	return int(r)
+}
+
+// landlockHandledAccessForABI is the set of filesystem rights the sandbox asks
+// the kernel to restrict, capped to what that ABI version knows.
+//
+// The cap is the whole point. A ruleset that names a right the kernel has never
+// heard of is refused outright with EINVAL, not trimmed -- and this code used
+// to pass every right through IOCTL_DEV unconditionally, so the real floor was
+// the kernel that introduced IOCTL_DEV, Linux 6.10, while the error it printed
+// on anything older said "5.13+ required". Debian 12 (6.1), RHEL 9 (5.14) and
+// Ubuntu 22.04 (5.15) all failed closed with advice pointing at the wrong thing,
+// and CI never saw it because the runner's kernel is new enough to take the
+// full mask.
+//
+// A right the kernel does not handle is simply not restricted, which is how
+// Landlock is documented to behave on older ABIs. That is the correct answer:
+// refusing to run at all is not more secure than running with what the kernel
+// offers, and the rights that arrive in later ABIs (linking across directories,
+// truncation, device ioctls) are refinements on a boundary the v1 rights
+// already draw.
+//
+// RESOLVE_UNIX (ABI v9) is deliberately never handled. Once handled, connecting
+// to a UNIX socket created outside the sandbox needs an explicit rule, and the
+// in-container egress relay dials the parent's UNIX socket per connection,
+// after landlock_restrict_self. Handling it would cut every contained process
+// off from the network on kernels new enough to offer it.
+func landlockHandledAccessForABI(abi int) uint64 {
+	if abi < 1 {
+		return 0
+	}
+	handled := landlockAccessV1
+	if abi >= 2 {
+		handled |= landlockAccessFSRefer
+	}
+	if abi >= 3 {
+		handled |= landlockAccessFSTruncate
+	}
+	// v4 added network rights only.
+	if abi >= 5 {
+		handled |= landlockAccessFSIoctlDev
+	}
+	return handled
+}
+
+// landlockHandledAccess is landlockHandledAccessForABI for the running kernel.
+func landlockHandledAccess() uint64 {
+	return landlockHandledAccessForABI(landlockABIVersion())
+}
 
 type landlockRulesetAttr struct {
 	handledAccessFs uint64
@@ -184,50 +263,64 @@ func landlockReadOnlyRules(nvxHome string) []landlockRule {
 }
 
 func applyLandlockSandbox(guestHome, workDir, nvxHome string, readExecRoots []string) error {
+	return applyLandlockSandboxForABI(landlockABIVersion(), guestHome, workDir, nvxHome, readExecRoots)
+}
+
+// applyLandlockSandboxForABI applies the ruleset a kernel speaking the given ABI
+// would get. Split from applyLandlockSandbox so a test can apply the v1 ruleset
+// -- what a 5.13 kernel produces -- on whatever kernel actually runs the tests,
+// and check it still contains. Without this seam the older-kernel path could
+// only be believed, never run: CI's kernel accepts the full mask.
+func applyLandlockSandboxForABI(abi int, guestHome, workDir, nvxHome string, readExecRoots []string) error {
 	if err := prctlSetNoNewPrivs(); err != nil {
 		return fmt.Errorf("prctl(NO_NEW_PRIVS): %w", err)
 	}
 
-	fd, err := landlockCreateRuleset(landlockAccessFull)
+	handled := landlockHandledAccessForABI(abi)
+	if handled == 0 {
+		return fmt.Errorf("landlock not available: the kernel reports no Landlock ABI (Linux 5.13+ with CONFIG_SECURITY_LANDLOCK, and \"landlock\" in the lsm= list, required)")
+	}
+	fd, err := landlockCreateRuleset(handled)
 	if err != nil {
-		return fmt.Errorf("landlock not supported (kernel 5.13+ required): %w", err)
+		return fmt.Errorf("landlock_create_ruleset (kernel ABI v%d, handled %#x): %w", abi, handled, err)
 	}
 	defer syscall.Close(fd)
 
+	// A rule may only grant rights the ruleset handles; anything else is
+	// EINVAL. The writable roots get everything the kernel restricts, and the
+	// read-only masks below are v1 rights so are always within the handled set,
+	// but masking is what makes that true by construction rather than by
+	// coincidence.
 	for _, p := range sandboxWritableRoots(guestHome, workDir) {
 		if p == "" {
 			continue
 		}
-		if err := landlockAddRule(fd, landlockAccessFull, p); err != nil {
+		if err := landlockAddRule(fd, handled, p); err != nil {
 			return fmt.Errorf("landlock rule for %q: %w", p, err)
 		}
 	}
 
 	// Extra read/execute roots from isolation.filesystem.allow_read_exec. Same
-	// rights as the system read-only roots below: read and execute, never write.
-	// A missing path is skipped rather than fatal -- the parent already warned
-	// about it, and a stale entry should not stop the command.
+	// rights as the system read-only roots below: read, list and execute, never
+	// write. A missing path is skipped rather than fatal -- the parent already
+	// warned about it, and a stale entry should not stop the command.
 	//
-	// Measured on WSL2 Ubuntu 24.04: with a root granted, a contained process
-	// reads a file inside it that it is refused without one. Listing the
-	// directory is still refused, and that is NOT specific to these roots --
-	// `/usr/bin` and `/etc` cannot be listed either, and they have carried
-	// LANDLOCK_ACCESS_FS_READ_DIR since the Linux sandbox was written. Reading
-	// and executing are what this feature is for, so it does its job; the
-	// listing gap is recorded in README as a known limitation rather than
-	// silently worked around here.
+	// These roots, `/usr/bin` and `/etc` could not be listed for as long as the
+	// access constants were shifted (see the const block): the mask that was
+	// meant to carry READ_DIR carried REMOVE_DIR instead. README recorded the
+	// symptom as a Landlock limitation. It was this bug.
 	for _, root := range readExecRoots {
 		info, statErr := os.Stat(root)
 		if statErr != nil || !info.IsDir() {
 			continue
 		}
-		if err := landlockAddRule(fd, landlockAccessReadExec, root); err != nil {
+		if err := landlockAddRule(fd, landlockAccessReadExec&handled, root); err != nil {
 			return fmt.Errorf("landlock read/execute rule for %q: %w", root, err)
 		}
 	}
 
 	for _, rule := range landlockReadOnlyRules(nvxHome) {
-		if err := landlockAddRule(fd, rule.access, rule.path); err != nil {
+		if err := landlockAddRule(fd, rule.access&handled, rule.path); err != nil {
 			return fmt.Errorf("landlock read rule for %q: %w", rule.path, err)
 		}
 	}

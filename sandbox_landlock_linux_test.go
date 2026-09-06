@@ -44,7 +44,7 @@ func TestLandlockSandboxCanStartACommand(t *testing.T) {
 		os.Exit(0)
 	}
 
-	if fd, err := landlockCreateRuleset(landlockAccessFull); err != nil {
+	if fd, err := landlockCreateRuleset(landlockHandledAccess()); err != nil {
 		t.Skipf("landlock unavailable on this kernel: %v", err)
 	} else {
 		_ = syscall.Close(fd)
@@ -76,7 +76,7 @@ func TestLandlockSandboxCanStartACommand(t *testing.T) {
 // deliberately never calls landlock_restrict_self -- doing so would irreversibly
 // restrict the test process itself.
 func TestLandlockAcceptsEveryConfiguredReadRoot(t *testing.T) {
-	fd, err := landlockCreateRuleset(landlockAccessFull)
+	fd, err := landlockCreateRuleset(landlockHandledAccess())
 	if err != nil {
 		t.Skipf("landlock unavailable on this kernel: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestLandlockAcceptsEveryConfiguredReadRoot(t *testing.T) {
 	// The writable roots must remain acceptable too -- both are directories, so
 	// the full access mask is valid for them.
 	for _, p := range []string{guestHome, workDir} {
-		if err := landlockAddRule(fd, landlockAccessFull, p); err != nil {
+		if err := landlockAddRule(fd, landlockHandledAccess(), p); err != nil {
 			t.Errorf("kernel rejected write rule for %q: %v", p, err)
 		}
 	}
