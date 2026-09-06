@@ -376,14 +376,16 @@ func (b BunProvider) Install(version string, nvxHome string) error {
 	}
 	defer os.Remove(tempFile)
 
-	if err := VerifyChecksumFromShasums(shaURL, tempFile, asset); err != nil {
+	// Verified and extracted as one set of bytes; see extractVerifiedArchive.
+	expectedSHA, err := fetchExpectedShasum(shaURL, asset)
+	if err != nil {
 		return err
 	}
 
 	extractDir := filepath.Join(GetDownloadsDir(), fmt.Sprintf("bun-extract-%d", os.Getpid()))
 	_ = os.RemoveAll(extractDir)
 	defer os.RemoveAll(extractDir)
-	if err := ExtractZip(tempFile, extractDir); err != nil {
+	if err := extractVerifiedArchive(tempFile, expectedSHA, extractDir, true); err != nil {
 		return err
 	}
 
