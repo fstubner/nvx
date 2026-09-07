@@ -158,4 +158,37 @@ if [[ $NRC -ne 0 ]] || ! grep -q "NESTED_OK" <<<"$NESTED"; then
   exit 1
 fi
 
+# The sandbox has a /proc, and it is its own rather than the host's.
+#
+# Both halves matter. Without any /proc, Bun cannot run a script or an install
+# at all -- it reads /proc/self to size its stack and reported "JSON document is
+# too deeply nested" against a 65-byte package.json. With the HOST's /proc, a
+# contained process could read every process on the machine: cmdline for all of
+# them, environ for the user's own, which is where credentials are. So the
+# assertion is: readable, and containing almost nothing.
+cat > proc.js <<'JS'
+const fs = require('fs');
+let limits; try { limits = 'ok' } catch { limits = 'unreadable' }
+try { fs.readFileSync('/proc/self/limits'); } catch (e) { limits = 'unreadable(' + e.code + ')'; }
+const pids = fs.readdirSync('/proc').filter(n => /^\d+$/.test(n));
+console.log('PROC_SELF=' + limits);
+console.log('PROC_PIDS=' + pids.length);
+JS
+set +e
+PROC="$("$NVX" -y --strict shim node proc.js 2>&1)"
+PRC=$?
+set -e
+if [[ $PRC -ne 0 ]] || ! grep -q "PROC_SELF=ok" <<<"$PROC"; then
+  echo "$PROC" >&2
+  echo "a contained process cannot read its own /proc; Bun will not run in here" >&2
+  exit 1
+fi
+PROC_PIDS="$(grep -oE "PROC_PIDS=[0-9]+" <<<"$PROC" | head -1 | cut -d= -f2)"
+HOST_PIDS="$(ls -d /proc/[0-9]* | wc -l)"
+if [[ -z "$PROC_PIDS" || "$PROC_PIDS" -gt 16 ]]; then
+  echo "$PROC" >&2
+  echo "the sandbox sees $PROC_PIDS processes (the host has $HOST_PIDS); that is the host's /proc, not its own" >&2
+  exit 1
+fi
+
 echo "Linux sandbox smoke passed."

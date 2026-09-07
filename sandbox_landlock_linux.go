@@ -217,10 +217,18 @@ type landlockRule struct {
 // landlockReadOnlyRules returns the read-only roots the sandbox grants, each
 // paired with an access mask valid for that path's inode type. Paths that do not
 // exist are skipped.
-func landlockReadOnlyRules(nvxHome string) []landlockRule {
+func landlockReadOnlyRules(nvxHome string, privateProc bool) []landlockRule {
 	paths := []string{
 		"/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc",
 		"/dev/null", "/dev/urandom", "/dev/random", "/dev/zero",
+	}
+	// Only when the sandbox has a procfs of its own. Without the private mount
+	// this path is the HOST's /proc, and granting it would hand contained code
+	// every process on the machine -- cmdline for all of them, environ for the
+	// user's own, which is where credentials are. See mountPrivateProc for what
+	// needs /proc and why the grant travels with the mount rather than alone.
+	if privateProc {
+		paths = append(paths, "/proc")
 	}
 	if nvxHome != "" {
 		// Grant the runtime trees, NOT all of nvxHome. That directory is nvx's own
@@ -262,8 +270,8 @@ func landlockReadOnlyRules(nvxHome string) []landlockRule {
 	return rules
 }
 
-func applyLandlockSandbox(guestHome, workDir, nvxHome string, readExecRoots []string) error {
-	return applyLandlockSandboxForABI(landlockABIVersion(), guestHome, workDir, nvxHome, readExecRoots)
+func applyLandlockSandbox(guestHome, workDir, nvxHome string, readExecRoots []string, privateProc bool) error {
+	return applyLandlockSandboxForABI(landlockABIVersion(), guestHome, workDir, nvxHome, readExecRoots, privateProc)
 }
 
 // applyLandlockSandboxForABI applies the ruleset a kernel speaking the given ABI
@@ -271,7 +279,7 @@ func applyLandlockSandbox(guestHome, workDir, nvxHome string, readExecRoots []st
 // -- what a 5.13 kernel produces -- on whatever kernel actually runs the tests,
 // and check it still contains. Without this seam the older-kernel path could
 // only be believed, never run: CI's kernel accepts the full mask.
-func applyLandlockSandboxForABI(abi int, guestHome, workDir, nvxHome string, readExecRoots []string) error {
+func applyLandlockSandboxForABI(abi int, guestHome, workDir, nvxHome string, readExecRoots []string, privateProc bool) error {
 	if err := prctlSetNoNewPrivs(); err != nil {
 		return fmt.Errorf("prctl(NO_NEW_PRIVS): %w", err)
 	}
@@ -319,7 +327,7 @@ func applyLandlockSandboxForABI(abi int, guestHome, workDir, nvxHome string, rea
 		}
 	}
 
-	for _, rule := range landlockReadOnlyRules(nvxHome) {
+	for _, rule := range landlockReadOnlyRules(nvxHome, privateProc) {
 		if err := landlockAddRule(fd, rule.access&handled, rule.path); err != nil {
 			return fmt.Errorf("landlock read rule for %q: %w", rule.path, err)
 		}
@@ -363,7 +371,16 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 		proxyEnvAddr = addr
 	}
 
-	if err := applyLandlockSandbox(guestHome, workDir, nvxHome, a.ReadExecRoots); err != nil {
+	// A procfs of the sandbox's own, before Landlock restricts this process.
+	// Bun cannot run a script or an install without /proc; the grant below is
+	// made only if this succeeds, because the alternative is granting the host's
+	// -- see mountPrivateProc.
+	privateProc := true
+	if err := mountPrivateProc(); err != nil {
+		privateProc = false
+		LogWarn("Could not give the sandbox its own /proc (%v); it stays denied, and a runtime that reads it (Bun) will not run contained.", err)
+	}
+	if err := applyLandlockSandbox(guestHome, workDir, nvxHome, a.ReadExecRoots, privateProc); err != nil {
 		LogError("Landlock isolation failed: %v", err)
 		return 1
 	}
