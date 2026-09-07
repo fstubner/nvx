@@ -613,20 +613,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-* **A contained `npm install` failed on Linux and macOS unless the session had
-  run `nvx use`.** npm on those platforms is a script that resolves `node`
-  through PATH. Inside the sandbox that PATH leads with nvx's shim directory —
-  the arrangement `nvx env` and `init-shims` produce — so npm found the `node`
-  shim, and the shim could not resolve a version from inside the sandbox, where
-  `NVX_HOME` is scrubbed and `HOME` is the throwaway guest profile. The install
-  died with "Could not find real executable for node". A session that had run
-  `nvx use` put the runtime's own directory on PATH first and worked, which is
-  why this was invisible. The pinned runtime's bin directory now leads the
-  contained PATH, which is the right order inside a sandbox: a nested `node` or
-  `npm` should be the pinned runtime running inside the containment already
-  active, not a shim trying to start a second one. Windows was never affected —
-  `npm.cmd` resolves `node.exe` next to itself. Both platforms' smoke tests now
-  install a package through the sandbox.
+* **Inside the sandbox on Linux and macOS, a nested `node` lookup did not get
+  the runtime nvx pinned.** npm on those platforms is a script that resolves
+  `node` through PATH. Inside the sandbox that PATH leads with nvx's shim
+  directory, the arrangement `nvx env` and `init-shims` produce, so npm found
+  the `node` shim, and the shim could not resolve a version from in there, where
+  `NVX_HOME` is scrubbed and `HOME` is the throwaway guest profile. It then fell
+  back to any non-nvx `node` it could see, and the two platforms failed
+  differently:
+
+  - **macOS ran the wrong runtime, silently.** Measured on a runner: the
+    contained process was on the pinned v22.23.2 while a nested lookup got the
+    machine's own v24.20.0. The install succeeded, under a runtime nobody chose.
+  - **Linux failed outright**, because its sandbox only permits execution from
+    an allowlist that a stray `node` is usually outside of: "Could not find real
+    executable for node", and no install. Where a permitted one does exist,
+    Linux is silent about it too, measured as pinned v22.23.2 against a nested
+    v20.20.2.
+
+  A session that had run `nvx use` was unaffected either way, which is why this
+  went unseen. The pinned runtime's bin directory now leads the contained PATH,
+  which is the right order inside a sandbox: a nested `node` or `npm` should be
+  the pinned runtime running inside the containment already active, not a shim
+  trying to start a second one. Windows was never affected, since `npm.cmd`
+  resolves `node.exe` next to itself. Both platforms' smoke tests now install a
+  package through the sandbox and check that a nested lookup gets the pinned
+  version.
 
 * **The Docker provider could not write to your project on Linux.** The
   container drops every capability, which is right, but it also ran as root,
