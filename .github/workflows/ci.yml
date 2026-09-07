@@ -401,6 +401,8 @@ jobs:
           console.log('HOME=', process.env.HOME, 'NVX_HOME=', process.env.NVX_HOME||'<unset>');
           console.log('PATH=', process.env.PATH);
           console.log('env node ->', cp.execSync('command -v node || echo none', {shell:'/bin/sh'}).toString().trim());
+          console.log('pinned version   =', process.version);
+          console.log('what a nested lookup gets =', cp.execSync('node -p process.version', {shell:'/bin/sh'}).toString().trim());
         " 2>&1 | tail -12
 
     - name: macOS containment enforcement
