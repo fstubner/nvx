@@ -69,6 +69,15 @@ func runNspawnSandbox(config SandboxConfig) int {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
+	// Said before the run, because the cleanup is manual. nvx is root here --
+	// systemd-nspawn requires it -- and the working directory is bound in
+	// writable, so anything the command creates in the project belongs to root
+	// on the host: a later `npm install` as yourself then fails on files you
+	// cannot replace. Not fixed by a user-namespace mapping, which would change
+	// what this provider does and cannot be tested on the platforms nvx's CI
+	// runs. This provider is experimental and behind NVX_EXPERIMENTAL for
+	// reasons of exactly this shape.
+	LogWarn("systemd-nspawn runs as root, so files this command creates in %s will be owned by root on your machine.", cwd)
 	LogInfo("Running in systemd-nspawn sandbox (session %s): %s %s", sandboxID, config.Command, strings.Join(config.Args, " "))
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
