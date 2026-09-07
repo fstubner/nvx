@@ -36,8 +36,8 @@ func TestDoctorFixNamesThePathEntriesItRemoves(t *testing.T) {
 	}
 	keep := `C:\Program Files\Git\cmd`
 	orig := readUserPath
-	readUserPath = func() (string, error) {
-		return strings.Join([]string{runtimeBin, keep}, ";"), nil
+	readUserPath = func() (string, bool, error) {
+		return strings.Join([]string{runtimeBin, keep}, ";"), true, nil
 	}
 	t.Cleanup(func() { readUserPath = orig })
 
