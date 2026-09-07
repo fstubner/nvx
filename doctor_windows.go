@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -31,7 +30,7 @@ func repairPersistentPathImpl(nvxHome string, apply bool) (bool, error) {
 		return false, fmt.Errorf("NVX_HOME is inside the temporary directory (%s); "+
 			"refusing to put it in your persistent PATH, since that outlives the directory", shimDir)
 	}
-	existing, err := readUserPath()
+	existing, expandable, err := readUserPath()
 	if err != nil {
 		return false, err
 	}
@@ -63,20 +62,17 @@ func repairPersistentPathImpl(nvxHome string, apply bool) (bool, error) {
 		// front it.
 		return true, nil
 	}
-	// setx truncates at 1024 chars; use PowerShell's [Environment] setter which
-	// does not, matching what install.ps1 uses. The new PATH is passed via an
-	// environment variable so no quoting/injection issues arise.
-	ps := "[Environment]::SetEnvironmentVariable('Path', $env:__NVX_NEWPATH, 'User')"
-	// Windows PowerShell has a fixed home under the system directory; take it
-	// from there rather than from the PATH this very call is repairing.
-	powershell, err := systemToolPath(`WindowsPowerShell\v1.0\powershell.exe`)
-	if err != nil {
+	// Written through the registry, with the type it already had.
+	//
+	// This used to go through PowerShell's [Environment]::SetEnvironmentVariable,
+	// which always writes REG_SZ. Windows ships the User PATH as REG_EXPAND_SZ,
+	// so the repair converted the type on every machine it ran on, and any entry
+	// spelled %USERPROFILE%\bin or %JAVA_HOME%\bin stopped being expanded and
+	// quietly stopped resolving. setx was rejected before that for truncating at
+	// 1024 characters; writing the value directly has neither limit nor the
+	// conversion, and keeps the broadcast the .NET setter was doing for us.
+	if err := setUserPath(fixed, expandable); err != nil {
 		return false, fmt.Errorf("set User PATH: %w", err)
-	}
-	cmd := exec.Command(powershell, "-NoProfile", "-Command", ps)
-	cmd.Env = append(cmd.Environ(), "__NVX_NEWPATH="+fixed)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return false, fmt.Errorf("set User PATH: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return true, nil
 }
@@ -84,12 +80,30 @@ func repairPersistentPathImpl(nvxHome string, apply bool) (bool, error) {
 // readUserPath returns the persistent User PATH as the registry holds it. A
 // variable so a test can hand the repair a PATH of its own and check what the
 // repair says about it, without touching the registry.
-var readUserPath = func() (string, error) {
+var readUserPath = func() (value string, expand bool, err error) {
 	out, err := runWinCmd(15*time.Second, "reg", "query", `HKCU\Environment`, "/v", "Path")
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return parseRegPath(string(out)), nil
+	return parseRegPath(string(out)), parseRegExpandable(string(out)), nil
+}
+
+// setUserPath writes the User PATH back, preserving the type it was stored as.
+// A variable so a test can watch what the repair would write without a machine
+// carrying the result afterwards.
+var setUserPath = func(value string, expand bool) error {
+	if err := setRegistryStringValue("Environment", "Path", value, expand); err != nil {
+		return err
+	}
+	broadcastEnvironmentChange()
+	return nil
+}
+
+// parseRegExpandable reports whether `reg query` said the value is
+// REG_EXPAND_SZ -- the type Windows ships the User PATH as, and the one that
+// makes %USERPROFILE%in resolve.
+func parseRegExpandable(regOut string) bool {
+	return strings.Contains(regOut, "REG_EXPAND_SZ")
 }
 
 // parseRegPath extracts the value from `reg query ... /v Path` output.

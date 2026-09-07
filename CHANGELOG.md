@@ -613,6 +613,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx doctor --fix` no longer changes the type of your User PATH.** Windows
+  stores that value as `REG_EXPAND_SZ`, which is what makes an entry written as
+  `%USERPROFILE%in` or `%JAVA_HOME%in` resolve — the value is expanded when
+  it is read. The repair wrote it back through
+  `[Environment]::SetEnvironmentVariable`, which always writes `REG_SZ`, so it
+  converted the type on every machine it ran on and any such entry silently
+  stopped resolving. That is a repair breaking PATH entries while reporting that
+  it had repaired PATH. The value is now written directly to the registry with
+  the type it already had, in either direction, and the notification that tells
+  running programs the environment moved is sent as before.
+
+  A machine already converted stays as it is: the repair preserves what it
+  finds, it does not guess that a `REG_SZ` PATH was meant to be expandable.
+
 * **Bun could not run inside the Linux sandbox.** `bun --version` worked, and
   everything real did not: `bun script.js` aborted, and `bun install` failed
   with "JSON document is too deeply nested" and "StackOverflow" against a
