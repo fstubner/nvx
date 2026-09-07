@@ -3,7 +3,9 @@
 package main
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -18,24 +20,23 @@ import (
 // it was never written. The helper is not macOS-specific, so it is tested
 // wherever the suite runs on a unix.
 func TestTerminatingNvxTerminatesTheSandboxedChild(t *testing.T) {
-	cmd := exec.Command("/bin/sh", "-c", "sleep 60")
+	// The child announces itself by creating a file rather than through any
+	// state this test shares with the helper: cmd.Process is written by Start,
+	// so watching it from here would be a race, and was one.
+	ready := filepath.Join(t.TempDir(), "started")
+	cmd := exec.Command("/bin/sh", "-c", "touch "+ready+"; sleep 60")
 	errs := make(chan error, 1)
-	started := make(chan struct{})
-	go func() {
-		// runChildForwardingSignals starts the child itself; signal the test
-		// once it is running rather than guessing at a delay.
-		go func() {
-			for cmd.Process == nil {
-				time.Sleep(2 * time.Millisecond)
-			}
-			close(started)
-		}()
-		errs <- runChildForwardingSignals(cmd)
-	}()
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the child never started")
+	go func() { errs <- runChildForwardingSignals(cmd) }()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the child never started")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 
 	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
@@ -47,7 +48,6 @@ func TestTerminatingNvxTerminatesTheSandboxedChild(t *testing.T) {
 		// The child exited because the signal reached it. Which error it
 		// carries depends on whether the child took SIGTERM or the escalation.
 	case <-time.After(childTerminationGrace + 10*time.Second):
-		_ = cmd.Process.Kill()
 		t.Fatal("nvx was terminated and the sandboxed child was still running")
 	}
 }
