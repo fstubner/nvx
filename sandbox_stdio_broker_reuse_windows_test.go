@@ -71,11 +71,26 @@ func roundTrip(t *testing.T, ch *stdioChannel, use int) {
 	}
 
 	msg := "use " + string(rune('0'+use)) + "\n"
-	var wrote uint32
-	if err := syscall.WriteFile(writer, []byte(msg), &wrote, nil); err != nil {
-		syscall.CloseHandle(childEnd)
-		syscall.CloseHandle(nodeEnd)
-		t.Fatalf("use %d: write: %v", use, err)
+	// Bounded, like the reads below. A write to a pipe instance nobody is
+	// draining blocks in the kernel with no deadline of its own, and when that
+	// happened on a CI runner the whole job sat for ten minutes and then died
+	// with a stack trace instead of a sentence. One occurrence, never reproduced
+	// in 40 local runs, cause not established -- so the point of this is that
+	// the next one says which step stalled.
+	wrote := make(chan error, 1)
+	go func() {
+		var n uint32
+		wrote <- syscall.WriteFile(writer, []byte(msg), &n, nil)
+	}()
+	select {
+	case err := <-wrote:
+		if err != nil {
+			syscall.CloseHandle(childEnd)
+			syscall.CloseHandle(nodeEnd)
+			t.Fatalf("use %d: write: %v", use, err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("use %d: the write never completed; nothing is draining this channel", use)
 	}
 
 	got := make(chan string, 1)
