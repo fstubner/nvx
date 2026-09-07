@@ -174,4 +174,40 @@ expect "READ_HOST=DENIED"
 # it worth having.
 expect "EGRESS=DENIED"
 
-echo "Docker sandbox smoke passed: ran in a container, project mounted both ways, host filesystem absent, egress denied."
+# Phase 2: an actual install, which is what anyone reaches for this provider to
+# do and the one thing that had never been tried. It failed the first time it
+# was: the container stopped running as root (correctly), the scrubbed
+# environment left it with no HOME, and npm resolved its cache to / and died
+# with EACCES. Nothing in the argument-level tests could have shown that.
+#
+# open, not offline: the registry has to be reachable, and docker cannot enforce
+# the allowlist proxy mode, so this is the only network mode an install can use
+# under this provider. Worth seeing plainly -- an install under docker is
+# unfiltered egress.
+cat > "$NVX_HOME/policy.json" <<JSON
+{"isolation":{"enabled":true,"filesystem":{"provider":"docker"},"network":{"mode":"open"}}}
+JSON
+printf '%s' '{"name":"probe","version":"1.0.0","dependencies":{"ms":"2.1.3"}}' > package.json
+
+echo "Installing a package through the docker provider..."
+set +e
+INSTALL="$("$NVX" -y --strict shim npm install 2>&1)"
+IRC=$?
+set -e
+if [[ $IRC -ne 0 ]]; then
+  echo "$INSTALL" >&2
+  echo "npm install through the docker provider failed (exit $IRC)" >&2
+  exit 1
+fi
+if [[ ! -f node_modules/ms/package.json ]]; then
+  echo "$INSTALL" >&2
+  echo "npm install reported success but installed nothing" >&2
+  exit 1
+fi
+MODOWNER="$(stat -c %u node_modules/ms/package.json)"
+if [[ "$MODOWNER" != "$(id -u)" ]]; then
+  echo "installed files are owned by uid $MODOWNER, not by you ($(id -u))" >&2
+  exit 1
+fi
+
+echo "Docker sandbox smoke passed: ran in a container, project mounted both ways, host filesystem absent, egress denied, and npm install works and leaves files you own."

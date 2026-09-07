@@ -624,6 +624,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that synthesises ownership, which is why this was invisible on a Windows
   machine and stayed invisible while the provider had no test that ran it.
 
+  `npm install` then failed for a second reason found by fixing the first: the
+  environment is scrubbed, so the container had no `HOME`, npm resolved its
+  cache to the filesystem root, and a container no longer running as root could
+  not create it. The container now gets `HOME=/tmp`, the tmpfs nvx already
+  mounts — writable whatever user it runs as, and discarded with the container,
+  like the throwaway home the native providers give a contained process. The
+  smoke test installs a real package and checks the files belong to you.
+
 * **Installing from a local path or a git URL no longer fails as an unknown
   package.** `npm install ./vendor/thing.tgz`, `../sibling`, `file:../lib` and
   `github:user/repo` are ordinary npm specs and none of them names a registry

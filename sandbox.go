@@ -397,6 +397,17 @@ func dockerRunArgs(imageName, cwd string, config SandboxConfig, egress *EgressPr
 
 	args = append(args, "-v", fmt.Sprintf("%s:/app", cwd), "-w", "/app")
 
+	// A writable HOME, on the tmpfs this container already has.
+	//
+	// The environment is scrubbed, so the container got no HOME at all, and a
+	// tool that needs one falls back to the filesystem root: npm resolved its
+	// cache to /.npm and `npm install` died with EACCES trying to create it,
+	// since the container no longer runs as root. Measured on a Linux runner.
+	// /tmp is the right target -- it is a tmpfs nvx mounts, writable by any uid,
+	// and discarded with the container, which matches the ephemeral guest home
+	// the native providers give a contained process.
+	args = append(args, "-e", "HOME=/tmp")
+
 	scrubbed := scrubEnvironmentAllowing("", config.PassEnv)
 	reportEnvScrub(config.NvxHome, scrubbed)
 	cleanEnv := applyProxyEnv(scrubbed.Env, egress)
