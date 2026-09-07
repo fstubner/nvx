@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Docker provider smoke test — run after go build
+#
+# The docker provider had no automated coverage of any kind: no test called its
+# launch function, and no CI step or script mentioned docker. What was tested
+# was the argument list it builds, which is not the same as the container that
+# results from it -- the mounts, the dropped capabilities and `--network none`
+# were asserted as strings and never once observed to do anything. Three sibling
+# providers were retired for being in exactly this position; this one works, so
+# it gets a test instead.
+#
+# Asserts, inside a real container launched by nvx: that the command ran in a
+# container at all, that the project is mounted and writable both ways, that the
+# rest of the host filesystem is not there, and that offline mode denies an
+# outbound connection.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+NVX="$ROOT/nvx"
+
+if [[ ! -x "$NVX" ]]; then
+  echo "Build nvx first: go build -o nvx ." >&2
+  exit 1
+fi
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+  # Linux only, like the native smoke next to it. The host-filesystem assertion
+  # below reads an absolute host path from inside the container, which is a real
+  # question on Linux and a meaningless one where the host paths do not exist in
+  # a Linux container's namespace anyway.
+  echo "Linux-only smoke test; skipping." >&2
+  exit 0
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker not installed; skipping Docker provider smoke." >&2
+  exit 0
+fi
+if ! docker info >/dev/null 2>&1; then
+  echo "the docker daemon is not responding; skipping Docker provider smoke." >&2
+  exit 0
+fi
+
+# nvx names the image from the Node version the session is using, so this is the
+# tag it will ask for. A major tag rather than an exact version: an exact one
+# ties the run to Docker Hub having published that release's tag yet, which is a
+# way for this to fail for a reason that has nothing to do with nvx. Overridable
+# so a developer can point it at an image already on the machine instead of
+# pulling several hundred megabytes to run the script once.
+NODE_VERSION="${NVX_SMOKE_NODE_VERSION:-22}"
+IMAGE="node:${NODE_VERSION}"
+
+echo "Fetching ${IMAGE} (the image nvx will ask docker for)..."
+if ! docker pull -q "$IMAGE" >/dev/null 2>&1; then
+  echo "could not pull ${IMAGE}" >&2
+  exit 1
+fi
+
+PROJ="$(mktemp -d)"
+HOST_SECRET="$HOME/nvx-docker-smoke-host-probe.txt"
+trap 'rm -rf "$PROJ" "$HOST_SECRET"' EXIT
+echo "host-only content" > "$HOST_SECRET"
+
+export NVX_HOME="$PROJ/nvxhome"
+mkdir -p "$NVX_HOME"
+# Docker is the one provider that supplies its own runtime: node comes from the
+# image, so there is nothing to install. What nvx needs is the version the
+# session is on, which it reads from PATH exactly as `nvx use` sets it -- hence
+# the directory rather than an install.
+mkdir -p "$NVX_HOME/versions/node/v${NODE_VERSION}/bin"
+export PATH="$NVX_HOME/versions/node/v${NODE_VERSION}/bin:$PATH"
+
+# offline, not the default proxy mode: docker does not enforce an allowlist, so
+# nvx refuses proxy mode under it. offline and loopback are the two it does
+# enforce, and offline is the one with something to observe.
+cat > "$NVX_HOME/policy.json" <<JSON
+{"isolation":{"enabled":true,"filesystem":{"provider":"docker"},"network":{"mode":"offline"}}}
+JSON
+
+cd "$PROJ"
+cat > probe.js <<'JS'
+const fs = require('fs');
+const net = require('net');
+const out = [];
+out.push('IN_CONTAINER=' + (fs.existsSync('/.dockerenv') ? 'YES' : 'NO'));
+out.push('CWD=' + process.cwd());
+try { fs.writeFileSync('wrote-inside.txt', 'ok'); out.push('WRITE_PROJECT=ALLOWED'); }
+catch { out.push('WRITE_PROJECT=DENIED'); }
+try { fs.readFileSync(process.argv[2]); out.push('READ_HOST=ALLOWED'); }
+catch { out.push('READ_HOST=DENIED'); }
+require('dns').lookup('example.com', (err) => {
+  out.push('DNS=' + (err ? 'DENIED' : 'ALLOWED'));
+  const s = net.connect({ host: '1.1.1.1', port: 443 });
+  const done = (verdict) => { out.push('EGRESS=' + verdict); console.log(out.join('\n')); process.exit(0); };
+  s.setTimeout(5000);
+  s.on('connect', () => done('ALLOWED'));
+  s.on('error', () => done('DENIED'));
+  s.on('timeout', () => done('TIMEOUT'));
+});
+JS
+
+echo "Running a contained probe through the docker provider..."
+# stderr kept, and the exit code checked here rather than left to set -e: when
+# the run fails there is nothing else to go on, and a bare "exited 1" in a CI
+# log is the shape of failure that takes an afternoon to reproduce.
+set +e
+REPORT="$("$NVX" -y --strict shim node probe.js "$HOST_SECRET" 2>&1)"
+RC=$?
+set -e
+echo "--- contained run reported ---"
+echo "$REPORT"
+echo "------------------------------"
+if [[ $RC -ne 0 ]]; then
+  echo "the contained run through the docker provider failed (exit $RC)" >&2
+  exit 1
+fi
+
+expect() {
+  if ! grep -qx "$1" <<<"$REPORT"; then
+    echo "expected the contained process to report $1" >&2
+    exit 1
+  fi
+}
+
+# It really was a container, and the project really is where the command runs.
+expect "IN_CONTAINER=YES"
+expect "CWD=/app"
+# The mount carries writes both ways: allowed inside, and visible on the host.
+expect "WRITE_PROJECT=ALLOWED"
+if [[ ! -f "$PROJ/wrote-inside.txt" ]]; then
+  echo "the project is mounted, but a write inside it never reached the host" >&2
+  exit 1
+fi
+# And nothing else of the host is there. The file exists and is readable to this
+# user outside the container, so a DENIED here is the mount boundary and not a
+# missing file.
+if [[ ! -r "$HOST_SECRET" ]]; then
+  echo "the host probe file is unreadable outside the container; the READ_HOST assertion would be meaningless" >&2
+  exit 1
+fi
+expect "READ_HOST=DENIED"
+# offline means offline. The connection is what is asserted; the name lookup is
+# reported and deliberately NOT asserted, because it could not be shown to
+# discriminate: with the policy flipped to an open network the same probe still
+# reported DNS=DENIED, so asserting it would be asserting something never
+# observed to fail. EGRESS did flip to ALLOWED in that run, which is what makes
+# it worth having.
+expect "EGRESS=DENIED"
+
+echo "Docker sandbox smoke passed: ran in a container, project mounted both ways, host filesystem absent, egress denied."

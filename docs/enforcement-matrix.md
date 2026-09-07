@@ -472,7 +472,15 @@ rather than trusting `WRITE_OUTSIDE=DENIED`.
 | Hardening | `--cap-drop=ALL`, `--security-opt=no-new-privileges`, `--pids-limit`, `tmpfs /tmp`. |
 | `network.mode: offline` / `loopback` | **Enforced** via `--network none` (no interfaces at all). |
 | `network.mode: proxy` | **Not enforced** — the allowlist would be cooperative only, so proxy mode is disallowed under Docker. Use the native provider for allowlisted egress. |
-| Docker not installed / not running | Fails closed with a clear error before anything launches. |
+| Docker not installed / not running | Fails closed with a clear error before anything launches. |
+
+Measured, not read off the arguments. Every row above except the proxy one is
+asserted by `scripts/sandbox-smoke-docker.sh` against a container this project
+launches on a Linux runner: that the command ran inside a container, that the
+project is mounted and writes cross the boundary both ways, that a readable host
+file outside the project is not reachable, and that an outbound connection is
+refused under `offline`. Until that script existed the guarantees rested on unit
+tests of the argument list, which is not the same thing.
 
 ## CI note
 
