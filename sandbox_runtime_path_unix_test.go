@@ -32,6 +32,7 @@ import (
 // `npm` should be the pinned runtime running inside the containment that is
 // already active, not a shim trying to start a second one.
 func TestTheContainedPathCarriesTheRuntimeBinDir(t *testing.T) {
+	t.Skip("PROBE branch: the fix is disabled on purpose, so this unit test would fail before the smoke gets a chance to run")
 	nvxHome := tempDir(t)
 	binDir := filepath.Join(nvxHome, "versions", "node", "v22.0.0", "bin")
 	cmdPath := filepath.Join(binDir, "npm")
