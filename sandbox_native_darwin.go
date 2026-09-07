@@ -49,7 +49,9 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	}
 
 	LogInfo("macOS Seatbelt isolation active")
-	if err := cmd.Run(); err != nil {
+	// Not cmd.Run: a signalled nvx has to take the sandboxed process with it.
+	// See runChildForwardingSignals for what that covers and what it cannot.
+	if err := runChildForwardingSignals(cmd); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			// A non-zero exit with no child output usually means sandbox-exec
 			// itself rejected the launch (bad profile / unresolved command).
