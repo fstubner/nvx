@@ -367,6 +367,35 @@ jobs:
           exit 1
         fi
 
+    # TEMPORARY probe, not for main: does `npm install` work through the docker
+    # provider now that the container runs as the invoking user? The runner's uid
+    # is 1001 and the node image's own user is 1000, so there is no passwd entry
+    # for it inside the container and HOME may not resolve anywhere writable.
+    - name: PROBE npm install under docker
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash
+      timeout-minutes: 10
+      continue-on-error: true
+      run: |
+        go build -o nvx .
+        P="$HOME/nvx-npm-probe"; rm -rf "$P"; mkdir -p "$P"
+        export NVX_HOME="$P/nvxhome"
+        mkdir -p "$NVX_HOME/versions/node/v22/bin"
+        export PATH="$NVX_HOME/versions/node/v22/bin:$PATH"
+        printf '%s' '{"isolation":{"enabled":true,"filesystem":{"provider":"docker"},"network":{"mode":"open"}}}' > "$NVX_HOME/policy.json"
+        cd "$P"
+        printf '%s' '{"name":"probe","version":"1.0.0","dependencies":{"ms":"2.1.3"}}' > package.json
+        echo "host uid: $(id -u):$(id -g)"
+        set +e
+        "$GITHUB_WORKSPACE/nvx" -y --strict shim npm install 2>&1 | tail -40
+        echo "install exit: ${PIPESTATUS[0]}"
+        set -e
+        echo "--- what landed:"
+        ls -ln . | head -10
+        ls -ln node_modules 2>&1 | head -5
+        echo "--- HOME as the container saw it:"
+        docker run --rm --user "$(id -u):$(id -g)" node:22 sh -lc 'echo HOME=$HOME; id; touch $HOME/x 2>&1 || echo "cannot write HOME"'
+
     # The smoke script checks a sandboxed process can write its own working
     # directory, which would pass against a sandbox that blocks nothing. The
     # enforcement script is the one that can fail: it asserts what must be
