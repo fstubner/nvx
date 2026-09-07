@@ -144,7 +144,7 @@ func runReadOnlyRootProbeChild() {
 			return
 		}
 	}
-	if err := applyLandlockSandboxForABI(abi, os.Getenv("NVX_TEST_GUEST"), os.Getenv("NVX_TEST_WORK"), nvxHome, nil); err != nil {
+	if err := applyLandlockSandboxForABI(abi, os.Getenv("NVX_TEST_GUEST"), os.Getenv("NVX_TEST_WORK"), nvxHome, nil, false); err != nil {
 		fmt.Printf("SETUP_FAILED=%v\n", err)
 		return
 	}

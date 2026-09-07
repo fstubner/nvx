@@ -613,6 +613,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Bun could not run inside the Linux sandbox.** `bun --version` worked, and
+  everything real did not: `bun script.js` aborted, and `bun install` failed
+  with "JSON document is too deeply nested" and "StackOverflow" against a
+  65-byte `package.json` that parses fine outside. Bun reads `/proc/self` to
+  size its stack, and every read under `/proc` inside the sandbox was refused,
+  because the Landlock ruleset granted nothing there. Node never reads it, which
+  is why only Bun was affected and why this went unnoticed.
+
+  The sandbox now gets a `/proc` **of its own** rather than the grant alone.
+  Nothing had remounted it, so the one visible inside was the host's, listing
+  every process on the machine — `cmdline` for all of them, `environ` for the
+  user's own, which is where credentials live. Granting that would have been
+  worse than the bug. Instead the supervisor takes a private mount namespace and
+  mounts a fresh procfs, and since it is already PID 1 of its own PID namespace,
+  what a contained process sees is itself and its children: measured at two
+  entries, with a planted host process invisible. If that mount fails, the grant
+  is withheld and the run says so.
+
+* **A contained process could not find the other runtime.** nvx put the launched
+  runtime's directory on the contained PATH, so a script run by Bun that called
+  `node` fell through to the machine's own Node — on Windows, to
+  `C:\Program Files
+odejs
+ode.exe`, which the container then refused — and a
+  script run by Node could not resolve `bun` at all. A postinstall calling the
+  other runtime is ordinary. Both runtimes nvx manages are now on the contained
+  PATH, the launched one first.
+
 * **Inside the sandbox on Linux and macOS, a nested `node` lookup did not get
   the runtime nvx pinned.** npm on those platforms is a script that resolves
   `node` through PATH. Inside the sandbox that PATH leads with nvx's shim
