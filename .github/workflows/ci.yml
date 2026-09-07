@@ -380,6 +380,29 @@ jobs:
         chmod +x scripts/sandbox-smoke-macos.sh scripts/sandbox-enforcement-macos.sh
         ./scripts/sandbox-smoke-macos.sh
 
+    - name: PROBE what a contained process resolves node to
+      if: matrix.os == 'macos-latest'
+      shell: bash
+      continue-on-error: true
+      run: |
+        P="$HOME/nvx-macos-probe"; rm -rf "$P"; mkdir -p "$P"
+        export NVX_HOME="$P/nvxhome"; mkdir -p "$NVX_HOME"
+        ./nvx -y install 22 >/dev/null 2>&1; ./nvx -y default 22 >/dev/null 2>&1
+        ./nvx init-shims >/dev/null 2>&1
+        echo "--- shim dir:"; ls "$NVX_HOME/bin"
+        echo "--- npm as nvx resolves it:"
+        ls -l "$NVX_HOME"/versions/node/*/bin/npm || true
+        head -1 "$(readlink -f "$NVX_HOME"/versions/node/*/bin/npm)" || true
+        cd "$P"
+        echo "--- inside the sandbox, with the shim dir leading PATH:"
+        PATH="$NVX_HOME/bin:$PATH" "$GITHUB_WORKSPACE/nvx" -y --strict shim node -e "
+          const cp=require('child_process');
+          console.log('execPath=', process.execPath);
+          console.log('HOME=', process.env.HOME, 'NVX_HOME=', process.env.NVX_HOME||'<unset>');
+          console.log('PATH=', process.env.PATH);
+          console.log('env node ->', cp.execSync('command -v node || echo none', {shell:'/bin/sh'}).toString().trim());
+        " 2>&1 | tail -12
+
     - name: macOS containment enforcement
       if: matrix.os == 'macos-latest'
       shell: bash
