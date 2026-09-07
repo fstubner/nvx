@@ -108,6 +108,17 @@ func isCreateProcessMissingFile(err error) bool {
 	return strings.Contains(msg, "cannot find the file") || strings.Contains(msg, "the system cannot find")
 }
 
+// Long on purpose, and kept that way.
+//
+// This is one Win32 sequence: build the attribute list, pin the inherited
+// handles, hand over the security capabilities, create the process, assign the
+// job object. Every acquisition here is paired with a defer or a KeepAlive in
+// the same scope, and the pairing is the correctness argument -- a security
+// attribute collected between its assignment and CreateProcess is a live defect
+// class this file has already been audited for. Splitting the sequence into
+// helpers moves each acquisition away from the call that must outlive it, which
+// is how that defect gets reintroduced silently. Extract from here only with a
+// test that fails when a lifetime is broken.
 func launchAppContainerProcessOnce(
 	cmdPath string,
 	args []string,
