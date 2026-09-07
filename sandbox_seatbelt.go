@@ -130,7 +130,8 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 	}
 
 	LogInfo("Running in Seatbelt sandbox (session %s): %s %s", sandboxID, config.Command, strings.Join(config.Args, " "))
-	if err := cmd.Run(); err != nil {
+	// Not cmd.Run: a signalled nvx has to take the sandboxed process with it.
+	if err := runChildForwardingSignals(cmd); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode()
 		}

@@ -631,6 +631,11 @@ Environment:
                          'nvx report'. Off by default. These lines are rendered,
                          so they can contain paths and package names
   NVX_YES=true           Auto-approve prompts (same as -y)
+  NVX_NONINTERACTIVE=1   Deny every prompt instead of asking, so a run that
+                         needs approval fails rather than waits
+  NVX_TRUST_YES=true     Approve trust prompts specifically -- adding an egress
+                         host, trusting a tool or a project policy. -y and
+                         --agent-mode deliberately do not
   NVX_HOME=<dir>         Use a different nvx home instead of ~/.nvx
 
 Examples:
@@ -1616,6 +1621,12 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 	var osvQueries []OSVQuery
 
 	for _, arg := range args {
+		// Classified before the name/version split, which would mangle a git URL
+		// carrying a user@host.
+		if kind := nonRegistrySpecKind(arg); kind != "" {
+			LogWarn("%s is %s rather than a registry package name; the blocklist, typosquat, advisory and release-age checks do not apply to it.", arg, kind)
+			continue
+		}
 		pkgName, versionQuery := parsePackageQuery(arg)
 		if pkgName == "" {
 			continue

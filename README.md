@@ -196,6 +196,12 @@ Options:
                            `nvx audit`. Off by default; a local debugging aid
   --agent-mode             Equivalent to -y -q; also settable with
                            NVX_AGENT_MODE=1
+  NVX_NONINTERACTIVE=1     (env) Deny every prompt instead of asking, so a run
+                           needing approval fails rather than waits
+  NVX_TRUST_YES=true       (env) Approve trust prompts specifically — adding an
+                           egress host, trusting a tool or a project policy.
+                           -y and --agent-mode deliberately do not
+  NVX_HOME=<dir>           (env) Use a different nvx home instead of ~/.nvx
 ```
 
 ### Zero-config sandbox

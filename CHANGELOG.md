@@ -592,6 +592,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Installing from a local path or a git URL no longer fails as an unknown
+  package.** `npm install ./vendor/thing.tgz`, `../sibling`, `file:../lib` and
+  `github:user/repo` are ordinary npm specs and none of them names a registry
+  package, but nvx asked the registry for each one, got a 404, and asked whether
+  to proceed without metadata checks -- a question that denies when there is no
+  terminal, so the install failed under an agent or in CI, blaming registry
+  metadata for something that was never in a registry. Those specs are now
+  recognised, and the run says which checks do not apply to them. A registry
+  name is checked exactly as before.
+
+* **A sandboxed process on macOS no longer outlives an nvx that was told to
+  stop.** macOS has no kill-on-parent-death primitive -- Windows uses a job
+  object, Linux a PID namespace -- and nvx installed no signal handler at all,
+  so `kill <nvx>` left the contained process running, holding its port or its
+  work. Interrupt and terminate are now passed to the child, and terminate is
+  followed by a kill if it has not exited within five seconds. `kill -9` and the
+  child's own grandchildren remain outside what this can cover.
+
 * **Another tool's `policy.json` is no longer read as an nvx policy.** nvx
   accepts `.nvx-policy.json` and, as a convenience, a bare `policy.json`, and it
   searches every directory above the project. That bare name belongs to several
