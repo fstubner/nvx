@@ -132,4 +132,30 @@ if [[ ! -f node_modules/ms/package.json ]]; then
   exit 1
 fi
 
+# And that a nested lookup gets the runtime nvx pinned, not merely some node.
+#
+# This is the half an install alone does not show. Measured on a macOS runner
+# with the PATH fix removed: the contained process was running the pinned
+# v22.23.2, and a nested `node` resolved to the machine's own v24.20.0 -- npm
+# found nvx's shim on PATH, and the shim's fallback picked whatever non-nvx node
+# it could see. The install still succeeded, silently, under a runtime nobody
+# chose. On a machine with no other node the same lookup fails outright instead,
+# which is what Linux showed. Both are the same defect; only one of them is loud.
+cat > nested.js <<'JS'
+const cp = require('child_process');
+const nested = cp.execSync('node -p process.version', { shell: '/bin/sh' }).toString().trim();
+console.log(nested === process.version
+  ? 'NESTED_OK ' + nested
+  : 'NESTED_MISMATCH pinned=' + process.version + ' nested=' + nested);
+JS
+set +e
+NESTED="$(PATH="$NVX_HOME/bin:$PATH" "$NVX" -y --strict shim node nested.js 2>&1)"
+NRC=$?
+set -e
+if [[ $NRC -ne 0 ]] || ! grep -q "NESTED_OK" <<<"$NESTED"; then
+  echo "$NESTED" >&2
+  echo "a nested lookup inside the sandbox did not get the pinned runtime" >&2
+  exit 1
+fi
+
 echo "Linux sandbox smoke passed."
