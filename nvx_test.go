@@ -839,45 +839,6 @@ func TestBuildSeatbeltProfile(t *testing.T) {
 	}
 }
 
-func TestResolveWslcNodeImage(t *testing.T) {
-	nvxHome := filepath.Join("home", "user", ".nvx")
-
-	tests := []struct {
-		pinned   string
-		expected string
-	}{
-		{"v20.11.0", "node:20.11.0"},
-		{"20", "node:20"},
-		{"", "node:latest"},
-	}
-
-	for _, tc := range tests {
-		res := resolveWslcNodeImage(nvxHome, tc.pinned)
-		if res != tc.expected {
-			t.Errorf("resolveWslcNodeImage(pinned=%q) = %q, expected %q", tc.pinned, res, tc.expected)
-		}
-	}
-}
-
-func TestContainerSafeEnv(t *testing.T) {
-	env := containerSafeEnv()
-	if len(env) == 0 {
-		t.Fatal("expected non-empty container env allowlist")
-	}
-	found := false
-	for _, e := range env {
-		if e == "NVX_SANDBOX=1" {
-			found = true
-		}
-		if strings.HasPrefix(strings.ToUpper(e), "AWS_") || strings.HasPrefix(strings.ToUpper(e), "GITHUB_") {
-			t.Errorf("container env must not include host secrets, got %q", e)
-		}
-	}
-	if !found {
-		t.Error("expected NVX_SANDBOX=1 in container env")
-	}
-}
-
 func TestLoadPolicyCascading(t *testing.T) {
 	// Create temporary workspace
 	tmpDir, err := os.MkdirTemp("", "nvx-policy-test-*")

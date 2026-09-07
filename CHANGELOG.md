@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+* **The `wsl`, `wslc` and `systemd-nspawn` containment providers.** All three
+  arrived in one commit that added six backends at once, and none was ever
+  asked for by a design document, exercised by a test, or run by any CI
+  machine. What they carried instead were defects: none of them received the
+  network context, so `isolation.network.mode: offline` was accepted and
+  silently ignored under all three, and nspawn additionally required root and
+  bind-mounted the project writable, leaving root-owned files behind that a
+  later install as yourself could not replace.
+
+  `native` and `docker` remain, plus `sandbox-exec` on macOS. Naming a removed
+  provider in a policy or on `--filesystem-provider` is an unknown provider: the
+  run stops rather than falling back to something else. Measured across all
+  seven retired names, including with `NVX_EXPERIMENTAL=1` set.
+
+  `NVX_EXPERIMENTAL` is gone with them, since those three were the only thing it
+  gated. The refusal message now lists the providers that do exist, taken from
+  the registry rather than written out by hand, which is how it came to omit
+  the macOS one.
+
 ### Added
 
 * **`isolation.filesystem.allow_read_exec`: let a contained tool reach a program
