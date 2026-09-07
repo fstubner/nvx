@@ -613,6 +613,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The Windows installer no longer flattens `%VAR%` entries in your PATH, or
+  changes its type.** `install.ps1` read the User PATH with
+  `[Environment]::GetEnvironmentVariable`, which *expands* a `REG_EXPAND_SZ`
+  value, and wrote it back with `SetEnvironmentVariable`, which always writes
+  `REG_SZ`. So installing nvx on a machine whose PATH contained
+  `%USERPROFILE%\bin` replaced it with today's expansion of that path and
+  converted the value's type, both permanently. Measured against a scratch key:
+  the expanding read turns `%USERPROFILE%\bin;C:\Windows` into
+  `C:\Users\<you>\bin;C:\Windows`. The installer now reads the raw value,
+  writes it back with the type it found, and sends the change notification the
+  .NET setter used to send.
+
 * **`nvx doctor --fix` no longer changes the type of your User PATH.** Windows
   stores that value as `REG_EXPAND_SZ`, which is what makes an entry written as
   `%USERPROFILE%in` or `%JAVA_HOME%in` resolve — the value is expanded when
