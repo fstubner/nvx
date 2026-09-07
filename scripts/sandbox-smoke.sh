@@ -89,4 +89,47 @@ if "$NVX" -y --strict shim node -e "require('fs').writeFileSync(process.env.HOME
 fi
 rm -f "$HOST_PROBE"
 
+# An actual install, which is what the sandbox is mostly for and what no test on
+# this platform had ever run. Windows has had one since a contained `npm install`
+# was found to hang forever; Linux and macOS asserted only that a contained
+# `node -e` could write a file. An install exercises a different set of things --
+# the runtime's own child processes, a writable HOME for the npm cache, the
+# registry through the egress proxy -- and the docker provider turned out to fail
+# on two of those the first time anyone tried one.
+#
+# No --strict: an install is contained at the default level, so this is the path
+# a person actually takes.
+echo "Installing a package through the sandbox..."
+PKG="$PROJ/pkgtest"
+mkdir -p "$PKG"
+cd "$PKG"
+printf '%s' '{"name":"probe","version":"1.0.0","dependencies":{"ms":"2.1.3"}}' > package.json
+# The shim directory leads PATH, which is what `nvx env` and init-shims leave
+# behind and the arrangement the README describes. It is also the one that
+# broke: npm resolves node through PATH, found nvx's node SHIM there, and the
+# shim could not resolve a version inside the sandbox because NVX_HOME is
+# scrubbed and HOME is the throwaway guest profile. A session that had also run
+# `nvx use` worked, which is why this went unseen.
+set +e
+INSTALL="$(PATH="$NVX_HOME/bin:$PATH" "$NVX" -y shim npm install 2>&1)"
+IRC=$?
+set -e
+if [[ $IRC -ne 0 ]]; then
+  echo "$INSTALL" >&2
+  echo "a contained npm install failed (exit $IRC)" >&2
+  exit 1
+fi
+# It was contained. Without this the install could pass by running outside the
+# sandbox entirely, which is the failure this script exists to catch.
+if ! grep -q "isolation active" <<<"$INSTALL"; then
+  echo "$INSTALL" >&2
+  echo "the install ran, but nothing says it was contained" >&2
+  exit 1
+fi
+if [[ ! -f node_modules/ms/package.json ]]; then
+  echo "$INSTALL" >&2
+  echo "the install reported success but installed nothing" >&2
+  exit 1
+fi
+
 echo "Linux sandbox smoke passed."

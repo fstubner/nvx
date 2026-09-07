@@ -86,6 +86,11 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 		return sandboxDidNotStart(config, "the command could not be resolved", 127)
 	}
 
+	// The runtime's own bin directory leads the contained PATH, so a nested
+	// lookup finds the pinned runtime rather than nvx's shim. See
+	// withRuntimeBinOnPath for the install this was measured to break.
+	cleanEnv = withRuntimeBinOnPath(cleanEnv, cmdPath, config.NvxHome)
+
 	workDir := config.WorkDir
 	if workDir == "" {
 		workDir, _ = os.Getwd()
