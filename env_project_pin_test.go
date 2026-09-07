@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,9 +24,13 @@ func captureStderrHere(t *testing.T, fn func()) string {
 	os.Stderr = w
 	done := make(chan string, 1)
 	go func() {
-		buf := make([]byte, 64*1024)
-		n, _ := r.Read(buf)
-		done <- string(buf[:n])
+		// Read to EOF, not once. A single Read returns the first chunk the
+		// writer happened to flush, so a test looking for its own message got
+		// whatever was printed before it instead -- which depends on the machine:
+		// one assertion passed locally and failed on CI, where an earlier warning
+		// about scrubbed environment variables filled the first read.
+		all, _ := io.ReadAll(r)
+		done <- string(all)
 	}()
 	fn()
 	os.Stderr = orig
