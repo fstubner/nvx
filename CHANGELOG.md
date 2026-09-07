@@ -613,6 +613,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A contained `npm install` failed on Linux and macOS unless the session had
+  run `nvx use`.** npm on those platforms is a script that resolves `node`
+  through PATH. Inside the sandbox that PATH leads with nvx's shim directory —
+  the arrangement `nvx env` and `init-shims` produce — so npm found the `node`
+  shim, and the shim could not resolve a version from inside the sandbox, where
+  `NVX_HOME` is scrubbed and `HOME` is the throwaway guest profile. The install
+  died with "Could not find real executable for node". A session that had run
+  `nvx use` put the runtime's own directory on PATH first and worked, which is
+  why this was invisible. The pinned runtime's bin directory now leads the
+  contained PATH, which is the right order inside a sandbox: a nested `node` or
+  `npm` should be the pinned runtime running inside the containment already
+  active, not a shim trying to start a second one. Windows was never affected —
+  `npm.cmd` resolves `node.exe` next to itself. Both platforms' smoke tests now
+  install a package through the sandbox.
+
 * **The Docker provider could not write to your project on Linux.** The
   container drops every capability, which is right, but it also ran as root,
   which is not: root without `CAP_DAC_OVERRIDE` has no privilege over files
