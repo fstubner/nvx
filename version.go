@@ -495,7 +495,15 @@ func MigrateLegacyNodeVersions(nvxHome string) {
 			}
 			oldPath := filepath.Join(legacyDir, entry.Name())
 			newPath := filepath.Join(nodeDir, entry.Name())
-			_ = os.Rename(oldPath, newPath)
+			// Say so when it fails. The error was discarded, so a version that
+			// could not be moved -- destination already present from a
+			// half-finished migration, a file held open, a permission problem --
+			// stayed in a directory nothing reads any more. `nvx list` then omits
+			// a runtime that is installed, with no hint that it exists or where.
+			if err := os.Rename(oldPath, newPath); err != nil {
+				LogWarn("Could not move %s into the current layout (%v). It is still at %s and will not be listed until it is moved to %s.",
+					entry.Name(), err, oldPath, newPath)
+			}
 		}
 	}
 }

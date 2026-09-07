@@ -509,7 +509,7 @@ func collectProjectPolicyPaths(cwd, nvxHome string) []string {
 		if _, err := os.Stat(localPolicy1); err == nil {
 			localPaths = append(localPaths, localPolicy1)
 		} else if _, err := os.Stat(localPolicy2); err == nil {
-			if filepath.Clean(filepath.Dir(localPolicy2)) != filepath.Clean(nvxHome) {
+			if filepath.Clean(filepath.Dir(localPolicy2)) != filepath.Clean(nvxHome) && bareFileIsNvxPolicy(localPolicy2) {
 				localPaths = append(localPaths, localPolicy2)
 			}
 		}

@@ -61,13 +61,7 @@ func LevenshteinDistance(s, t string) int {
 			if s[i-1] == t[j-1] {
 				d[i][j] = d[i-1][j-1]
 			} else {
-				d[i][j] = min(
-					d[i-1][j]+1,
-					min(
-						d[i][j-1]+1,
-						d[i-1][j-1]+1,
-					),
-				)
+				d[i][j] = min(d[i-1][j]+1, d[i][j-1]+1, d[i-1][j-1]+1)
 			}
 		}
 	}
@@ -601,13 +595,6 @@ func publishAgeShouldWarn(pubTime time.Time, minAgeHours int, now time.Time) boo
 		return false
 	}
 	return now.Sub(pubTime) < time.Duration(minAgeHours)*time.Hour
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // resolveVersionQuery turns whatever followed the "@" into a concrete version

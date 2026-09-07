@@ -592,6 +592,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Another tool's `policy.json` is no longer read as an nvx policy.** nvx
+  accepts `.nvx-policy.json` and, as a convenience, a bare `policy.json`, and it
+  searches every directory above the project. That bare name belongs to several
+  other tools -- Open Policy Agent bundles, IAM exports, Terraform -- so one
+  sitting anywhere above a project produced a trust prompt for a file nobody
+  wrote for nvx, warnings that its keys were misspelt nvx settings, and a pinned
+  hash that broke whenever the other tool rewrote it. A bare `policy.json` now
+  counts only if it carries at least one setting nvx knows; the explicit
+  `.nvx-policy.json` is always read.
+
+* **A cached Bun release list stops standing in for the real one after 30 days.**
+  When GitHub could not be reached, any cache was accepted at any age, so a
+  machine off the network for months resolved `bun latest` to whatever was
+  newest back then and said only that a fetch had failed. Past the bound it now
+  fails and says how old the list is; inside it, the fallback warning states the
+  age too. Installing an exact version offline is unaffected -- that path never
+  consults this list.
+
+* **A Node version that cannot be migrated to the current layout is reported.**
+  Versions installed by an older nvx live in `~/.nvx/versions/<v>` and are moved
+  under `versions/node` on startup. The move's error was discarded, so a version
+  that could not be moved -- a leftover directory of the same name, a file held
+  open, a permission problem -- stayed where nothing looks for it, missing from
+  `nvx list` with nothing to say why.
+
 * **Leaving a project takes its shims off PATH.** Each project gets its own
   shim directory under `~/.nvx/project-bin`, put at the front of PATH on
   entering the project. Stale entries for the other per-project directory, the

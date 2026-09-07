@@ -992,6 +992,12 @@ func TestLoadPolicyCascading(t *testing.T) {
 }
 
 func TestParseStartupFlagsQuietAndAgentMode(t *testing.T) {
+	// parseStartupFlags writes these package globals directly, and every test
+	// that runs after this one inherits whatever it left behind -- quietFlag
+	// stayed true, suppressing log output a later test might be asserting on.
+	// Restoring them keeps the package's outcomes independent of test order.
+	savedQuiet, savedAgent := quietFlag, agentModeFlag
+	t.Cleanup(func() { quietFlag, agentModeFlag = savedQuiet, savedAgent })
 	quietFlag = false
 	agentModeFlag = false
 	args := []string{"nvx", "-q", "--agent-mode", "install", "20"}
