@@ -43,6 +43,21 @@ type githubReleaseCache struct {
 	Versions  []string  `json:"versions"` // newest first, e.g. ["v1.2.19", ...]
 }
 
+// bunReleaseCacheMaxAge bounds how long a cached release list may stand in for
+// the real one when GitHub cannot be reached. Chosen so a laptop offline for a
+// trip still resolves `latest`, while a list old enough to be missing several
+// patch releases fails loudly instead.
+const bunReleaseCacheMaxAge = 30 * 24 * time.Hour
+
+// humanDays renders an age in whole days, for a message a reader acts on.
+func humanDays(d time.Duration) string {
+	days := int(d.Hours() / 24)
+	if days == 1 {
+		return "1 day"
+	}
+	return fmt.Sprintf("%d days", days)
+}
+
 func bunCachePath(nvxHome string) string {
 	return filepath.Join(nvxHome, "cache", "bun-releases.json")
 }
@@ -73,12 +88,26 @@ func fetchBunReleases(nvxHome string) ([]string, error) {
 		}
 	}
 
-	versions, err := fetchBunReleasesFromGitHub()
+	versions, err := fetchBunReleaseList()
 	if err != nil {
 		if data, rerr := os.ReadFile(cachePath); rerr == nil {
 			var c githubReleaseCache
 			if json.Unmarshal(data, &c) == nil && len(c.Versions) > 0 {
-				LogWarn("Using cached Bun release list (network fetch failed: %v)", err)
+				age := time.Since(c.FetchedAt)
+				// Bounded, and the age is stated. An unbounded fallback meant a
+				// machine off the network for months resolved "latest" to
+				// whatever was newest back then and said only that a fetch had
+				// failed. Bun ships security fixes in patch releases, so that is
+				// a wrong answer rather than a slightly old one. Inside the bound
+				// the fallback is what keeps an afternoon offline working; past
+				// it, an exact version still installs, since that path never
+				// consults this list.
+				if age > bunReleaseCacheMaxAge {
+					return nil, fmt.Errorf("could not reach GitHub for the Bun release list (%v), and the cached one is %s old; "+
+						"install an exact version (for example `nvx install bun v1.2.19`) or retry when the network is back",
+						err, humanDays(age))
+				}
+				LogWarn("Using a cached Bun release list %s old (network fetch failed: %v)", humanDays(age), err)
 				return c.Versions, nil
 			}
 		}
@@ -92,6 +121,10 @@ func fetchBunReleases(nvxHome string) ([]string, error) {
 	}
 	return versions, nil
 }
+
+// fetchBunReleaseList is the network call, behind a variable so a test can put
+// nvx offline without a network of its own.
+var fetchBunReleaseList = fetchBunReleasesFromGitHub
 
 func fetchBunReleasesFromGitHub() ([]string, error) {
 	req, err := http.NewRequest("GET", "https://api.github.com/repos/oven-sh/bun/releases?per_page=100", nil)
