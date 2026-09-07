@@ -41,6 +41,11 @@ func runChildForwardingSignals(cmd *exec.Cmd) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	// Read once, here, and hand the value to the watcher. cmd.Process is written
+	// by Start, so a watcher that read cmd.Process itself would be racing this
+	// function -- caught by the race detector, and a real one: the watcher can
+	// observe the field before Start has finished writing it.
+	proc := cmd.Process
 	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	done := make(chan struct{})
@@ -48,7 +53,6 @@ func runChildForwardingSignals(cmd *exec.Cmd) error {
 		for {
 			select {
 			case sig := <-sigs:
-				proc := cmd.Process
 				if proc == nil {
 					continue
 				}
