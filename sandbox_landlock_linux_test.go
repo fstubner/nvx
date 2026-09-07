@@ -21,7 +21,7 @@ import (
 func TestLandlockSandboxCanStartACommand(t *testing.T) {
 	if os.Getenv("NVX_TEST_LANDLOCK_CHILD") == "1" {
 		if err := applyLandlockSandbox(
-			os.Getenv("NVX_TEST_GUEST"), os.Getenv("NVX_TEST_WORK"), os.Getenv("NVX_TEST_NVXHOME"), nil,
+			os.Getenv("NVX_TEST_GUEST"), os.Getenv("NVX_TEST_WORK"), os.Getenv("NVX_TEST_NVXHOME"), nil, false,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "SANDBOX_SETUP_FAILED: %v\n", err)
 			os.Exit(2)
@@ -86,7 +86,7 @@ func TestLandlockAcceptsEveryConfiguredReadRoot(t *testing.T) {
 	workDir := tempDir(t)
 	nvxHome := tempDir(t)
 
-	for _, rule := range landlockReadOnlyRules(nvxHome) {
+	for _, rule := range landlockReadOnlyRules(nvxHome, false) {
 		if err := landlockAddRule(fd, rule.access, rule.path); err != nil {
 			t.Errorf("kernel rejected read rule for %q (access %#x): %v", rule.path, rule.access, err)
 		}
@@ -105,7 +105,7 @@ func TestLandlockAcceptsEveryConfiguredReadRoot(t *testing.T) {
 // invariant behind the fix: a rule for a non-directory must not carry
 // READ_DIR, because Landlock validates rights against the inode type.
 func TestLandlockReadOnlyRulesDropDirRightsOnDeviceFiles(t *testing.T) {
-	for _, rule := range landlockReadOnlyRules("") {
+	for _, rule := range landlockReadOnlyRules("", false) {
 		if rule.path != "/dev/null" {
 			continue
 		}

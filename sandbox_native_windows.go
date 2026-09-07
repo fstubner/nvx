@@ -185,12 +185,23 @@ func applyProjectGrants(config SandboxConfig, sid uintptr, scope, guestHome, wor
 // Pure apart from writing the two preload files into the guest home, and
 // deliberately holds nothing that must outlive it -- the stdio channel broker
 // stays in the caller, because closing it early would take the pipes with it.
-func containedEnv(env []string, guestHome, cmdPath string) []string {
+func containedEnv(env []string, guestHome, cmdPath, nvxHome string) []string {
 	// Put the resolved runtime's directory on PATH so tools spawned inside the
 	// sandbox (e.g. an npx-installed CLI whose launcher calls `node`) can find it.
 	// The host's own node dir is on PATH but is not accessible to the container;
 	// this directory is granted RX above.
 	env = prependPath(env, filepath.Dir(cmdPath))
+
+	// And the other runtime nvx manages, behind it. Measured inside a contained
+	// bun: a script calling `node` fell through to the machine's own node.exe
+	// under Program Files, which this container then denied, and
+	// inside a contained node `bun` could not be resolved at all. A postinstall
+	// calling the other runtime is ordinary. Prepended in reverse so the launched
+	// runtime still leads. See containedRuntimeBinDirs.
+	dirs := containedRuntimeBinDirs(cmdPath, nvxHome)
+	for i := len(dirs) - 1; i >= 0; i-- {
+		env = prependPath(env, dirs[i])
+	}
 
 	// The preserve-symlinks flags above only cover the process nvx launches.
 	// npm scripts spawn further node processes, whose own entry-point resolution
@@ -344,7 +355,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1, errSandboxDidNotStart
 	}
 
-	cleanEnv = containedEnv(cleanEnv, guestHome, cmdPath)
+	cleanEnv = containedEnv(cleanEnv, guestHome, cmdPath, config.NvxHome)
 
 	// Streaming capture needs a stream, which the preload's temp files cannot
 	// be. Contained code cannot create a named pipe, so nvx creates a small pool
