@@ -613,6 +613,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The Docker provider could not write to your project on Linux.** The
+  container drops every capability, which is right, but it also ran as root,
+  which is not: root without `CAP_DAC_OVERRIDE` has no privilege over files
+  owned by you, so a project directory could not be entered at `0700` and could
+  not be written at `0755`. Under `npm install` that is every write the install
+  makes. The container now runs as the invoking user on Linux, which also keeps
+  what it writes owned by you rather than by root. macOS and Windows are
+  unaffected and unchanged: Docker Desktop presents the mount through a shim
+  that synthesises ownership, which is why this was invisible on a Windows
+  machine and stayed invisible while the provider had no test that ran it.
+
 * **Installing from a local path or a git URL no longer fails as an unknown
   package.** `npm install ./vendor/thing.tgz`, `../sibling`, `file:../lib` and
   `github:user/repo` are ordinary npm specs and none of them names a registry

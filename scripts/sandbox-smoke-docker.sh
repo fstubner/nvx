@@ -11,8 +11,8 @@
 #
 # Asserts, inside a real container launched by nvx: that the command ran in a
 # container at all, that the project is mounted and writable both ways, that the
-# rest of the host filesystem is not there, and that offline mode denies an
-# outbound connection.
+# rest of the host filesystem is not there, that what it writes belongs to the
+# user rather than to root, and that offline mode denies an outbound connection.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -56,7 +56,14 @@ if ! docker pull -q "$IMAGE" >/dev/null 2>&1; then
   exit 1
 fi
 
-PROJ="$(mktemp -d)"
+# Under $HOME, not the system temp directory. The daemon has to be able to see
+# the path it is asked to bind-mount, and its /tmp is often not the shell's:
+# docker.service runs with PrivateTmp on many distributions, and Docker Desktop's
+# daemon lives outside the WSL distro entirely. Either way `docker run -v` on a
+# /tmp path silently mounts an empty directory instead of the project, and the
+# command fails with the runtime reporting the script it was given is missing --
+# which is what this script did on its first CI run.
+PROJ="$(mktemp -d "$HOME/nvx-docker-smoke.XXXXXX")"
 HOST_SECRET="$HOME/nvx-docker-smoke-host-probe.txt"
 trap 'rm -rf "$PROJ" "$HOST_SECRET"' EXIT
 echo "host-only content" > "$HOST_SECRET"
@@ -99,6 +106,17 @@ require('dns').lookup('example.com', (err) => {
 });
 JS
 
+# Preflight: the daemon can see the project. Without this the failure surfaces as
+# the runtime not finding its own script, which reads as an nvx bug and is not
+# one. Skipping rather than failing, because a developer whose daemon cannot
+# reach this path has an environment fact, not a regression -- and the CI step
+# treats a run that does not reach the end as a failure regardless.
+if ! docker run --rm --user "$(id -u):$(id -g)" -v "$PROJ:/app" -w /app "$IMAGE" node -e "require('fs').accessSync('probe.js')" >/dev/null 2>&1; then
+  echo "this docker daemon cannot bind-mount $PROJ (it sees an empty directory)," >&2
+  echo "so the provider cannot be exercised here. Skipping Docker provider smoke." >&2
+  exit 0
+fi
+
 echo "Running a contained probe through the docker provider..."
 # stderr kept, and the exit code checked here rather than left to set -e: when
 # the run fails there is nothing else to go on, and a bare "exited 1" in a CI
@@ -129,6 +147,15 @@ expect "CWD=/app"
 expect "WRITE_PROJECT=ALLOWED"
 if [[ ! -f "$PROJ/wrote-inside.txt" ]]; then
   echo "the project is mounted, but a write inside it never reached the host" >&2
+  exit 1
+fi
+# And it belongs to the person who ran nvx. A container writing as root through a
+# bind mount leaves files in the project that its owner cannot replace, which is
+# one of the things the systemd-nspawn provider was retired for; the same trap
+# is one flag away in any docker launch.
+OWNER="$(stat -c %u "$PROJ/wrote-inside.txt")"
+if [[ "$OWNER" != "$(id -u)" ]]; then
+  echo "a file the contained process created is owned by uid $OWNER, not by you ($(id -u))" >&2
   exit 1
 fi
 # And nothing else of the host is there. The file exists and is readable to this

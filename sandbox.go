@@ -379,6 +379,22 @@ func dockerRunArgs(imageName, cwd string, config SandboxConfig, egress *EgressPr
 		args = append(args, "--network", "none")
 	}
 
+	// As the invoking user, on Linux. --cap-drop=ALL takes CAP_DAC_OVERRIDE with
+	// everything else, so root inside the container has no privilege over files
+	// owned by the user outside it: a project directory at 0700 could not be
+	// entered and one at 0755 could not be written, which is every write an
+	// install makes. Running as the user fixes both, and avoids the alternative
+	// -- keeping the capability and leaving root-owned files in the project,
+	// which is one of the things the systemd-nspawn provider was retired for.
+	//
+	// Not on macOS or Windows: Docker Desktop presents the mount through a
+	// filesystem shim that synthesises ownership, the containers work there
+	// without it, and a host uid means nothing to that shim. That difference is
+	// why this went unnoticed -- it cannot be reproduced on a Windows machine.
+	if runtime.GOOS == "linux" {
+		args = append(args, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()))
+	}
+
 	args = append(args, "-v", fmt.Sprintf("%s:/app", cwd), "-w", "/app")
 
 	scrubbed := scrubEnvironmentAllowing("", config.PassEnv)
