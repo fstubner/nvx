@@ -1,8 +1,9 @@
+//go:build !windows
+
 package main
 
 import (
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -22,14 +23,15 @@ import (
 // install succeeded. Windows escaped it because npm.cmd resolves node.exe next
 // to itself rather than through PATH.
 //
+// Not built on Windows: it resolves node next to npm.cmd rather than through
+// PATH, so there is nothing here for it to check, and a test that only ever
+// skips there trips the probe gate that treats an unexplained skip as a failure.
+//
 // So the runtime's bin directory goes on the contained PATH, ahead of anything
 // the user had. Inside the sandbox that is the right order: a nested `node` or
 // `npm` should be the pinned runtime running inside the containment that is
 // already active, not a shim trying to start a second one.
 func TestTheContainedPathCarriesTheRuntimeBinDir(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows resolves node next to npm.cmd, and its PATH order is measured by the AppContainer probes")
-	}
 	nvxHome := tempDir(t)
 	binDir := filepath.Join(nvxHome, "versions", "node", "v22.0.0", "bin")
 	cmdPath := filepath.Join(binDir, "npm")
@@ -55,9 +57,6 @@ func TestTheContainedPathCarriesTheRuntimeBinDir(t *testing.T) {
 // added: the point is to make nvx's own runtime resolvable, not to widen what a
 // contained process can reach by name.
 func TestAnUnmanagedCommandDirIsNotAddedToTheContainedPath(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix-only PATH construction")
-	}
 	nvxHome := tempDir(t)
 	before := []string{"PATH=/usr/bin:/bin"}
 
