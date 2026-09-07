@@ -346,6 +346,27 @@ jobs:
         # not grant. See applyLinuxNamespaces.
         ./scripts/sandbox-enforcement-linux.sh
 
+    # The docker provider had no coverage at all until this step: no test called
+    # its launch function, and nothing here mentioned docker. Its argument list
+    # was asserted as strings, which is not the same as observing the container
+    # those strings produce. Three sibling providers were retired for being in
+    # that position; this one works, so it gets a test.
+    #
+    # ubuntu-latest ships docker, so a skip here is not an environment fact, it
+    # is the step verifying nothing -- same rule as the privileged step above.
+    - name: Docker provider smoke
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash
+      timeout-minutes: 10
+      run: |
+        go build -o nvx .
+        chmod +x scripts/sandbox-smoke-docker.sh
+        ./scripts/sandbox-smoke-docker.sh 2>&1 | tee /tmp/docker-smoke.log
+        if ! grep -q 'Docker sandbox smoke passed' /tmp/docker-smoke.log; then
+          echo "::error::the Docker provider smoke did not run to completion; it is verifying nothing"
+          exit 1
+        fi
+
     # The smoke script checks a sandboxed process can write its own working
     # directory, which would pass against a sandbox that blocks nothing. The
     # enforcement script is the one that can fail: it asserts what must be
