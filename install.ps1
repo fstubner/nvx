@@ -19,7 +19,32 @@ if (-not (Test-Path $binDir)) {
 }
 
 # 1. Update PATH environment variables for User
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+#
+# Read raw, not through [Environment]::GetEnvironmentVariable: that one EXPANDS
+# a REG_EXPAND_SZ value, so an entry written as %USERPROFILE%in comes back as
+# the expanded path, and writing it back would bake today's expansion into the
+# registry for ever. DoNotExpandEnvironmentNames keeps what the user actually
+# wrote.
+$envKey = 'HKCU:\Environment'
+$envItem = Get-Item -Path $envKey
+$userPath = $envItem.GetValue(
+    'Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+
+# And remember the type, because Windows ships this value as REG_EXPAND_SZ and
+# that is what makes %VAR% entries resolve at all. The obvious writer,
+# [Environment]::SetEnvironmentVariable, always writes REG_SZ -- so this
+# installer used to convert the type on every machine it ran on, and every
+# variable-spelled entry on it silently stopped resolving. nvx had the same bug
+# in `doctor --fix`; this is the same fix.
+$pathKind = 'ExpandString'
+try {
+    if ($envItem.GetValueKind('Path') -eq [Microsoft.Win32.RegistryValueKind]::String) {
+        $pathKind = 'String'
+    }
+} catch {
+    # No Path value yet on a fresh profile: ExpandString is what Windows would
+    # have created.
+}
 $pathParts = $userPath -split ';'
 $modified = $false
 
@@ -38,7 +63,30 @@ if (-not $hasBin) {
 
 if ($modified) {
     Write-Host "Adding nvx paths to your User environment variables..."
-    [Environment]::SetEnvironmentVariable("Path", $userPath, "User")
+    Set-ItemProperty -Path $envKey -Name 'Path' -Value $userPath -Type $pathKind
+
+    # Tell running programs the environment moved. [Environment]::SetEnvironment-
+    # Variable did this as part of its own work; a plain registry write does not,
+    # and without it Explorer keeps handing its stale copy to everything launched
+    # from it until the next sign-in. Best effort: the value is already written,
+    # and a machine that will not compile the P/Invoke should not fail the
+    # install over a notification.
+    try {
+        if (-not ('Nvx.Native' -as [type])) {
+            Add-Type -Namespace 'Nvx' -Name 'Native' -MemberDefinition @'
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam,
+    string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@
+        }
+        $result = [UIntPtr]::Zero
+        # HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG, 5s.
+        [void][Nvx.Native]::SendMessageTimeout(
+            [IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
+    } catch {
+        Write-Host "  (could not notify running programs; new terminals will still pick this up)"
+    }
+
     # Update current session path
     $env:PATH = "$binDir;$env:PATH"
 }
