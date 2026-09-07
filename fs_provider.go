@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 )
 
@@ -28,36 +29,37 @@ type FilesystemProvider interface {
 	Available() error
 	// SupportsNetworkMode reports whether the backend truly enforces the mode.
 	SupportsNetworkMode(mode string) bool
-	// Experimental backends require NVX_EXPERIMENTAL=1 to be selected.
-	Experimental() bool
 	Run(req SandboxRequest) int
 }
 
 var filesystemProviders = map[string]FilesystemProvider{
-	"native":         nativeFSProvider{},
-	"docker":         dockerFSProvider{},
-	"sandbox-exec":   seatbeltFSProvider{},
-	"seatbelt":       seatbeltFSProvider{},
-	"wslc":           wslcFSProvider{},
-	"wsl-container":  wslcFSProvider{},
-	"container":      wslcFSProvider{},
-	"wsl":            wslFSProvider{},
-	"wsl-distro":     wslFSProvider{},
-	"systemd-nspawn": nspawnFSProvider{},
-	"nspawn":         nspawnFSProvider{},
+	"native":       nativeFSProvider{},
+	"docker":       dockerFSProvider{},
+	"sandbox-exec": seatbeltFSProvider{},
+	"seatbelt":     seatbeltFSProvider{},
+}
+
+// supportedProviderNames lists the canonical name of every registered backend,
+// for the message a person sees when they name one that does not exist. Derived
+// from the registry rather than written out, because the written-out version
+// omitted the macOS provider and nobody noticed until that message became the
+// only place the valid names appear.
+func supportedProviderNames() string {
+	seen := map[string]bool{}
+	var names []string
+	for _, p := range filesystemProviders {
+		if n := p.Name(); !seen[n] {
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 func lookupFilesystemProvider(name string) (FilesystemProvider, bool) {
 	p, ok := filesystemProviders[strings.ToLower(strings.TrimSpace(name))]
 	return p, ok
-}
-
-func experimentalProvidersEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("NVX_EXPERIMENTAL"))) {
-	case "1", "true", "yes":
-		return true
-	}
-	return false
 }
 
 func commandExists(name string) bool {
@@ -69,9 +71,8 @@ func commandExists(name string) bool {
 
 type nativeFSProvider struct{}
 
-func (nativeFSProvider) Name() string       { return "native" }
-func (nativeFSProvider) Available() error   { return nil }
-func (nativeFSProvider) Experimental() bool { return false }
+func (nativeFSProvider) Name() string     { return "native" }
+func (nativeFSProvider) Available() error { return nil }
 func (nativeFSProvider) SupportsNetworkMode(mode string) bool {
 	return providerSupportsNetworkMode("native", mode)
 }
@@ -83,8 +84,7 @@ func (nativeFSProvider) Run(req SandboxRequest) int {
 
 type dockerFSProvider struct{}
 
-func (dockerFSProvider) Name() string       { return "docker" }
-func (dockerFSProvider) Experimental() bool { return false }
+func (dockerFSProvider) Name() string { return "docker" }
 func (dockerFSProvider) SupportsNetworkMode(mode string) bool {
 	return providerSupportsNetworkMode("docker", mode)
 }
@@ -107,8 +107,7 @@ func (dockerFSProvider) Run(req SandboxRequest) int {
 
 type seatbeltFSProvider struct{}
 
-func (seatbeltFSProvider) Name() string       { return "sandbox-exec" }
-func (seatbeltFSProvider) Experimental() bool { return false }
+func (seatbeltFSProvider) Name() string { return "sandbox-exec" }
 func (seatbeltFSProvider) SupportsNetworkMode(mode string) bool {
 	return providerSupportsNetworkMode("seatbelt", mode)
 }
@@ -120,57 +119,4 @@ func (seatbeltFSProvider) Available() error {
 }
 func (seatbeltFSProvider) Run(req SandboxRequest) int {
 	return runSeatbeltSandbox(req.Config, req.NetCtx)
-}
-
-// experimental backends --------------------------------------------------------
-
-type wslcFSProvider struct{}
-
-func (wslcFSProvider) Name() string       { return "wslc" }
-func (wslcFSProvider) Experimental() bool { return true }
-func (wslcFSProvider) SupportsNetworkMode(mode string) bool {
-	return providerSupportsNetworkMode("wslc", mode)
-}
-func (wslcFSProvider) Available() error {
-	if !commandExists("wsl") && !commandExists("wsl.exe") {
-		return fmt.Errorf("wsl.exe not found")
-	}
-	return nil
-}
-func (wslcFSProvider) Run(req SandboxRequest) int {
-	return runWslcSandbox(req.Config, req.Config.NvxHome, req.Pinned)
-}
-
-type wslFSProvider struct{}
-
-func (wslFSProvider) Name() string       { return "wsl" }
-func (wslFSProvider) Experimental() bool { return true }
-func (wslFSProvider) SupportsNetworkMode(mode string) bool {
-	return providerSupportsNetworkMode("wsl", mode)
-}
-func (wslFSProvider) Available() error {
-	if !commandExists("wsl") && !commandExists("wsl.exe") {
-		return fmt.Errorf("wsl.exe not found")
-	}
-	return nil
-}
-func (wslFSProvider) Run(req SandboxRequest) int {
-	return runWslSandbox(req.Config)
-}
-
-type nspawnFSProvider struct{}
-
-func (nspawnFSProvider) Name() string       { return "systemd-nspawn" }
-func (nspawnFSProvider) Experimental() bool { return true }
-func (nspawnFSProvider) SupportsNetworkMode(mode string) bool {
-	return providerSupportsNetworkMode("systemd-nspawn", mode)
-}
-func (nspawnFSProvider) Available() error {
-	if !commandExists("systemd-nspawn") {
-		return fmt.Errorf("systemd-nspawn not found")
-	}
-	return nil
-}
-func (nspawnFSProvider) Run(req SandboxRequest) int {
-	return runNspawnSandbox(req.Config)
 }

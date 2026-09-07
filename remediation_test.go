@@ -96,8 +96,8 @@ func TestDockerRunArgsEnforcesOfflineAndHardening(t *testing.T) {
 	}
 }
 
-func TestFilesystemProviderRegistryAndExperimentalGating(t *testing.T) {
-	for _, alias := range []string{"native", "docker", "seatbelt", "sandbox-exec", "wslc", "container", "wsl", "nspawn", "systemd-nspawn"} {
+func TestFilesystemProviderRegistryResolvesEveryAlias(t *testing.T) {
+	for _, alias := range []string{"native", "docker", "seatbelt", "sandbox-exec"} {
 		if _, ok := lookupFilesystemProvider(alias); !ok {
 			t.Errorf("expected registry to resolve alias %q", alias)
 		}
@@ -106,17 +106,11 @@ func TestFilesystemProviderRegistryAndExperimentalGating(t *testing.T) {
 		t.Error("unknown provider must not resolve")
 	}
 
-	firstClass := []string{"native", "docker", "sandbox-exec"}
-	for _, name := range firstClass {
-		p, _ := lookupFilesystemProvider(name)
-		if p.Experimental() {
-			t.Errorf("%s must not be experimental", name)
-		}
-	}
-	for _, name := range []string{"wsl", "wslc", "systemd-nspawn"} {
-		p, _ := lookupFilesystemProvider(name)
-		if !p.Experimental() {
-			t.Errorf("%s must be experimental", name)
+	// The retired backends resolve to nothing, so naming one in a policy is an
+	// unknown provider and stops the run rather than picking a substitute.
+	for _, gone := range []string{"wsl", "wslc", "wsl-container", "wsl-distro", "container", "nspawn", "systemd-nspawn"} {
+		if _, ok := lookupFilesystemProvider(gone); ok {
+			t.Errorf("retired provider %q still resolves", gone)
 		}
 	}
 }
@@ -754,9 +748,9 @@ func TestProviderSupportsNetworkModeFailsClosedForUnenforcedProviders(t *testing
 		mode     string
 	}{
 		{"docker", "proxy"},
+		// A name no longer in the registry: the mode table must still refuse it
+		// rather than treat an unrecognised backend as capable.
 		{"wsl", "offline"},
-		{"wslc", "loopback"},
-		{"systemd-nspawn", "proxy"},
 	}
 	for _, tc := range blocked {
 		if providerSupportsNetworkMode(tc.provider, tc.mode) {

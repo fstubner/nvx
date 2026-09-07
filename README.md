@@ -181,8 +181,7 @@ onto npm, and nvx does not reinterpret a word that belongs to another tool:
 
 Passed to the wrapped command only, not before it:
   --filesystem-provider=<name>  Override isolation.filesystem.provider
-                           (native | docker; experimental: wsl, wslc,
-                           systemd-nspawn). `nvx npm --filesystem-provider=…`,
+                           (native | docker). `nvx npm --filesystem-provider=…`,
                            not `nvx --filesystem-provider=… npm`
 
 Options:
@@ -288,7 +287,9 @@ Policies cascade: the global policy applies everywhere, and local policy files m
 * **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary). See the [enforcement matrix](docs/enforcement-matrix.md) for exact guarantees.
   - `native` (default): AppContainer (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Zero-config, fail-closed.
   - `docker`: runs in a container (hardened; `offline`/`loopback` enforced via `--network none`). Requires Docker running.
-  - `wsl`, `wslc`, `systemd-nspawn`: experimental; require `NVX_EXPERIMENTAL=1`.
+
+  Any other name is an error and stops the run. `wsl`, `wslc` and
+  `systemd-nspawn` have been removed; see the changelog for why.
 * **`isolation.network.mode`**: How egress is governed.
   - `proxy` (default): parent-process HTTP CONNECT + SOCKS5 proxy with policy allowlist; injects `HTTP_PROXY` / `HTTPS_PROXY`.
   - `open`: no egress filtering.

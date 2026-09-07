@@ -286,7 +286,7 @@ jobs:
         fi
         # -run selects only the namespace-gated tests; a skip here means the
         # environment still cannot host them, which is worth seeing in the log.
-        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone|TestNspawnWarns' . 2>&1 | tee /tmp/priv.log
+        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone' . 2>&1 | tee /tmp/priv.log
         # A failure, not a warning. This said "it is verifying nothing" and then
         # let the job go green, so the condition it names could persist
         # indefinitely -- which is what happened on Linux before 2026-08-23, when

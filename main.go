@@ -615,8 +615,9 @@ Options:
                          two numbers must differ; the in-sandbox one is printed
                          and set as NVX_CONNECT_<host>. Must come BEFORE the
                          command
-  --filesystem-provider=<name>  Override isolation.filesystem.provider. Passed
-                         TO the command: nvx npm --filesystem-provider=...
+  --filesystem-provider=<name>  Override isolation.filesystem.provider
+                         (native | docker). Passed TO the command:
+                         nvx npm --filesystem-provider=...
   -y, --yes              Auto-approve all prompts
   -q, --quiet            Suppress success/info messages (errors and warnings still print)
   --verbose              Show what nvx is doing on the way: checks, session ids, permission work

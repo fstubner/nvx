@@ -47,31 +47,24 @@ func TestRunSandboxRefusesAnUnknownFilesystemProvider(t *testing.T) {
 	}
 }
 
-// And an experimental provider needs to be asked for. wsl, wslc and nspawn are
-// unfinished; running under one because a policy file named it, with no opt-in,
-// is containment the user was told they had and did not.
-func TestRunSandboxRefusesAnExperimentalProviderUnlessEnabled(t *testing.T) {
-	t.Setenv("NVX_EXPERIMENTAL", "")
-	nvxHome := tempDir(t)
-	marker, cmdPath := markerCommand(t)
-
-	var code int
+// The refusal names every provider that does exist.
+//
+// With the experimental backends retired, this message is the only place a
+// person is told what the valid names are, and it was a hand-written list that
+// omitted the macOS one. Derived from the registry now, so a provider added or
+// removed cannot leave the message behind.
+func TestTheRefusalListsEveryProviderThereIs(t *testing.T) {
 	out := captureStderrHere(t, func() {
-		code = runSandbox(SandboxConfig{
-			NvxHome:            nvxHome,
-			Command:            cmdPath,
-			FilesystemProvider: "systemd-nspawn",
+		runSandbox(SandboxConfig{
+			NvxHome:            tempDir(t),
+			Command:            "does-not-matter",
+			FilesystemProvider: "definitely-not-a-provider",
 		})
 	})
-
-	if code == 0 {
-		t.Fatal("an experimental containment provider ran without NVX_EXPERIMENTAL")
-	}
-	if !strings.Contains(out, "experimental") {
-		t.Fatalf("the run stopped, but not because the provider is experimental:\n%s", out)
-	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("the command ran under an experimental provider that was never enabled")
+	for _, name := range []string{"native", "docker", "sandbox-exec"} {
+		if !strings.Contains(out, name) {
+			t.Fatalf("the refusal does not mention the %s provider:\n%s", name, out)
+		}
 	}
 }
 

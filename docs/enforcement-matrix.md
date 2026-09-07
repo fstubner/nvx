@@ -12,8 +12,11 @@ silently.
   network namespace + seccomp, macOS Seatbelt (`sandbox-exec`).
 - **docker**: runs the command in a container. Supported and hardened, but
   requires Docker to be installed and running.
-- **experimental** (`wsl`, `wslc`, `systemd-nspawn`): present but require
-  `NVX_EXPERIMENTAL=1`. Not covered by the guarantees below.
+`wsl`, `wslc` and `systemd-nspawn` have been removed. They were never
+exercised by any test or runner, took no network context (so
+`network.mode: offline` was silently ignored under them), and nspawn required
+root and left root-owned files in the project. A name that is not in the list
+above stops the run.
 
 ## Native provider
 

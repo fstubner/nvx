@@ -418,15 +418,11 @@ func runSandbox(config SandboxConfig) int {
 	}
 	fsProvider, ok := lookupFilesystemProvider(providerName)
 	if !ok {
-		LogError("Unknown filesystem provider %q. Supported: native, docker.", providerName)
+		LogError("Unknown filesystem provider %q. Supported: %s.", providerName, supportedProviderNames())
 		return 1
 	}
 	canonical := fsProvider.Name()
 
-	if fsProvider.Experimental() && !experimentalProvidersEnabled() {
-		LogError("Filesystem provider %q is experimental and unsupported. Set NVX_EXPERIMENTAL=1 to enable it, or use the native or docker provider.", canonical)
-		return 1
-	}
 	if err := fsProvider.Available(); err != nil {
 		LogError("Filesystem provider %q is not available: %v", canonical, err)
 		return 1
