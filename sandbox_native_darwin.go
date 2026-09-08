@@ -18,6 +18,20 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	}
 	sandboxExec := seatbeltExecPath
 
+	// Before the profile is rendered: the relays resolve the in-sandbox ports the
+	// profile has to name. runSeatbeltSandbox does the same, and both are written
+	// out rather than shared, because the shared thing they would call is three
+	// lines and the two launch paths differ in everything around them. The
+	// comment below is what happens when one of them is changed and the other is
+	// not, so a future change here belongs there too.
+	connectEnv, stopConnect, err := startSeatbeltConnectRelays(&netCtx)
+	if err != nil {
+		LogError("Could not open a path to a host service for the sandbox: %v", err)
+		return 1, errSandboxDidNotStart
+	}
+	defer stopConnect()
+	cleanEnv = append(cleanEnv, connectEnv...)
+
 	// Only the guest home and the working directory are writable. This used to also
 	// pass config.NvxHome and the runtime binary's directory, which let any
 	// sandboxed process rewrite policy.json, self-approve grants, poison

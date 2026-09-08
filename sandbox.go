@@ -503,8 +503,11 @@ func runSandbox(config SandboxConfig) int {
 		if len(netCtx.ExposePorts) > 0 {
 			LogWarn("--expose is a Windows feature; ports are not published on %s.", runtime.GOOS)
 		}
-		if len(netCtx.ConnectPorts) > 0 {
-			LogWarn("--connect is a Windows feature; the sandbox cannot reach host services on %s.", runtime.GOOS)
+		// macOS carries --connect through the Seatbelt relay; Linux does not have
+		// it yet, and the sandbox there sits in a network namespace of its own, so
+		// a host service is unreachable until it does.
+		if len(netCtx.ConnectPorts) > 0 && runtime.GOOS != "darwin" {
+			LogWarn("--connect is not implemented on %s; the sandbox cannot reach host services there.", runtime.GOOS)
 		}
 	}
 
