@@ -576,6 +576,13 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   than an exclusion: an exclusion stops your machine scanning that path, which is
   a real reduction in your own protection, and it does nothing for anyone else.
 
+- **Bun in the sandbox, per platform.** Measured 2026-09-08 with Bun 1.4.2:
+  contained on **macOS** it runs scripts and installs packages correctly, and
+  on **Linux** it does too, but only since the sandbox began mounting a
+  procfs of its own — Bun reads `/proc/self` to size its stack, and before
+  that a contained `bun install` failed with "JSON document is too deeply
+  nested" against a valid file. Windows has its own version floor, below.
+
 - **Bun needs 1.4.x to work inside the Windows sandbox.** Measured 2026-09-06:
   Bun **1.4.2** runs contained correctly — `bun install`, `bunx`, relative-path
   reads and writes all work. Bun **1.3.1** fails every relative-path operation
