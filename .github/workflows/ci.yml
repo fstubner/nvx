@@ -275,6 +275,24 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: ./scripts/test-install-path.ps1
+    # Only when something above already failed, and only on Windows.
+    #
+    # Five of 34 CI runs on 2026-09-07/08 failed here with socket creation or
+    # connection errors, always in the heaviest step. None of it reproduced on
+    # real hardware: 51,200 AF_UNIX round trips, three full suite runs in one
+    # process under the race detector, and 2,000 forced AppContainer launch
+    # failures all came back clean, and failing and passing jobs ran the same
+    # runner image. So the question left standing is whether the host's sockets
+    # were working at the moment the job failed, and that question took a day to
+    # answer by hand.
+    #
+    # This does not retry anything and does not make a failing test pass. Its own
+    # green or red is the answer: red here means the environment, green means the
+    # failure above is real and worth reading.
+    - name: Is this runner's network stack healthy?
+      if: failure() && matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/check-network-stack.ps1
     - name: Installer shell-profile test
       if: matrix.os != 'windows-latest'
       shell: bash
