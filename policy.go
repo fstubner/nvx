@@ -16,8 +16,15 @@ type Policy struct {
 	EnforceIgnoreScripts bool                `json:"enforce_ignore_scripts"`
 	Typosquatting        TyposquattingPolicy `json:"typosquatting"`
 	ReleaseAge           ReleaseAgePolicy    `json:"release_age"`
-	Runtime              RuntimeConfig       `json:"runtime"`
-	Isolation            IsolationPolicy     `json:"isolation"`
+	// InstallScripts and Vulnerabilities carry the per-target exemptions for the
+	// two remaining install-time checks. Each waives its own check and nothing
+	// else: an exemption that reaches across to a second check cannot express the
+	// narrower of the two intents, which is what typosquatting.trusted_packages
+	// doing double duty cost until 0.6.0.
+	InstallScripts  InstallScriptsPolicy `json:"install_scripts,omitempty"`
+	Vulnerabilities VulnerabilityPolicy  `json:"vulnerabilities,omitempty"`
+	Runtime         RuntimeConfig        `json:"runtime"`
+	Isolation       IsolationPolicy      `json:"isolation"`
 	// A pointer so an unset Prompts serializes away entirely rather than as
 	// "prompts": {}, which pointed readers at three keys that were removed for
 	// doing nothing. Kept on the struct so existing policy files still parse.
@@ -55,6 +62,42 @@ type ReleaseAgePolicy struct {
 	Enabled         *bool    `json:"enabled,omitempty"`
 	MinAgeHours     int      `json:"min_age_hours,omitempty"`
 	TrustedPackages []string `json:"trusted_packages,omitempty"`
+}
+
+// InstallScriptsPolicy names packages whose install scripts may run without
+// asking.
+//
+// A package with a preinstall/postinstall gets a prompt, because that is
+// arbitrary code running at install time. For a handful of packages the answer
+// is always yes -- esbuild, sharp and Playwright fetch a platform binary in
+// theirs -- and answering the same prompt forever teaches a person to approve
+// prompts without reading them, which is the opposite of what it is for.
+//
+// Empty by default: nothing is exempt until it is named. Naming one waives BOTH
+// the prompt and enforce_ignore_scripts for that package, which is what makes
+// "block install scripts except for these" expressible; the run says which
+// package it let through, so an exemption cannot apply invisibly. Adding an entry
+// counts as loosening, so a project file naming one needs approval.
+type InstallScriptsPolicy struct {
+	TrustedPackages []string `json:"trusted_packages,omitempty"`
+}
+
+// VulnerabilityPolicy names OSV advisories that have been assessed and accepted.
+//
+// By advisory ID rather than by package, because that is the decision a person
+// actually makes: "GHSA-xxxx does not apply to how we use this" is a judgement
+// about one finding, where exempting a package waives every advisory it will ever
+// have, including the ones published tomorrow.
+//
+// No severity floor and no off switch. A floor is not offered because nvx reads
+// only the id and summary from OSV's batch response -- there is no severity to
+// compare against, and inventing a threshold nvx cannot evaluate would be a
+// setting that silently did nothing. An off switch is not offered because the
+// allowlist is the same capability with a record of what was accepted.
+//
+// Empty by default. Adding an entry counts as loosening.
+type VulnerabilityPolicy struct {
+	AllowedAdvisories []string `json:"allowed_advisories,omitempty"`
 }
 
 type RuntimeConfig struct {
@@ -217,6 +260,10 @@ func DefaultPolicy() Policy {
 			MinAgeHours:     24,
 			TrustedPackages: []string{},
 		},
+		// Both empty, and that is the default that matters: every install-time
+		// check applies to every package until a policy names one.
+		InstallScripts:  InstallScriptsPolicy{TrustedPackages: []string{}},
+		Vulnerabilities: VulnerabilityPolicy{AllowedAdvisories: []string{}},
 		Runtime: RuntimeConfig{
 			Default:  "node",
 			Versions: map[string]string{},
@@ -362,7 +409,7 @@ func (p Policy) ReleaseAgeMinHours() int {
 // IsTrustedPackage returns true when pkgName is listed in typosquatting.trusted_packages,
 // or matches a wildcard pattern (e.g. "@myorg/*", "internal-*").
 func (p Policy) IsTrustedPackage(pkgName string) bool {
-	return packageListMatches(p.Typosquatting.TrustedPackages, pkgName)
+	return policyListMatches(p.Typosquatting.TrustedPackages, pkgName)
 }
 
 // IsReleaseAgeTrusted reports whether release_age.trusted_packages waives the
@@ -373,13 +420,26 @@ func (p Policy) IsTrustedPackage(pkgName string) bool {
 // installing this" are different judgements, and a single list meant making
 // both to express either.
 func (p Policy) IsReleaseAgeTrusted(pkgName string) bool {
-	return packageListMatches(p.ReleaseAge.TrustedPackages, pkgName)
+	return policyListMatches(p.ReleaseAge.TrustedPackages, pkgName)
 }
 
-// packageListMatches compares a package name against a list of names and globs,
-// case-insensitively. Shared so the two trusted lists cannot drift in how they
-// match, which is the kind of difference nobody would think to test for.
-func packageListMatches(list []string, pkgName string) bool {
+// InstallScriptsTrusted reports whether install_scripts.trusted_packages lets
+// this package's install scripts run without asking.
+func (p Policy) InstallScriptsTrusted(pkgName string) bool {
+	return policyListMatches(p.InstallScripts.TrustedPackages, pkgName)
+}
+
+// IsAllowedAdvisory reports whether vulnerabilities.allowed_advisories accepts
+// this OSV advisory.
+func (p Policy) IsAllowedAdvisory(advisoryID string) bool {
+	return policyListMatches(p.Vulnerabilities.AllowedAdvisories, advisoryID)
+}
+
+// policyListMatches compares one value against a list of literals and globs,
+// case-insensitively. Shared by every exemption list so they cannot drift in how
+// they match -- a glob accepted by one and not another is the kind of difference
+// nobody thinks to test until a policy file silently stops exempting something.
+func policyListMatches(list []string, pkgName string) bool {
 	lower := strings.ToLower(pkgName)
 	for _, t := range list {
 		tLower := strings.ToLower(strings.TrimSpace(t))
@@ -827,6 +887,17 @@ func policyLoosens(before, after Policy) bool {
 	if hostsAdded(before.ReleaseAge.TrustedPackages, after.ReleaseAge.TrustedPackages) {
 		return true
 	}
+	// Letting a package's install scripts run unasked is the largest of these
+	// exemptions: it is arbitrary code at install time, and the prompt it skips is
+	// the last thing standing between a compromised postinstall and a machine.
+	if hostsAdded(before.InstallScripts.TrustedPackages, after.InstallScripts.TrustedPackages) {
+		return true
+	}
+	// Accepting an advisory is a judgement about a known vulnerability. A project
+	// file making it for the developer is exactly what this gate is for.
+	if hostsAdded(before.Vulnerabilities.AllowedAdvisories, after.Vulnerabilities.AllowedAdvisories) {
+		return true
+	}
 	// Lowering the typosquat edit distance finds fewer typosquats. The default is
 	// 2; a project file setting 1 halves what the check catches, and MergePolicies
 	// takes any positive local value, so it applies. Nothing here noticed.
@@ -896,6 +967,30 @@ func policyLoosens(before, after Policy) bool {
 	return false
 }
 
+// unionLists merges a project file's entries into the global ones, keeping the
+// global order and dropping case-insensitive duplicates.
+//
+// A union rather than a replacement, which is the rule every list in MergePolicies
+// follows: a project file can add to what the developer allowed and can never
+// take an entry off it. policyLoosens then makes each addition something they
+// approve.
+func unionLists(global, local []string) []string {
+	out := append([]string{}, global...)
+	seen := make(map[string]bool, len(global))
+	for _, v := range global {
+		seen[strings.ToLower(strings.TrimSpace(v))] = true
+	}
+	for _, v := range local {
+		key := strings.ToLower(strings.TrimSpace(v))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, v)
+	}
+	return out
+}
+
 func MergePolicies(global, local Policy) Policy {
 	merged := global
 
@@ -942,17 +1037,9 @@ func MergePolicies(global, local Policy) Policy {
 	// Unioned, like every other list here: a project file can add to the global
 	// one and cannot take an entry off it. policyLoosens then makes each addition
 	// something the developer approves.
-	releaseTrusted := make(map[string]bool)
-	for _, t := range global.ReleaseAge.TrustedPackages {
-		releaseTrusted[strings.ToLower(t)] = true
-	}
-	for _, t := range local.ReleaseAge.TrustedPackages {
-		tLower := strings.ToLower(t)
-		if !releaseTrusted[tLower] {
-			releaseTrusted[tLower] = true
-			merged.ReleaseAge.TrustedPackages = append(merged.ReleaseAge.TrustedPackages, t)
-		}
-	}
+	merged.ReleaseAge.TrustedPackages = unionLists(global.ReleaseAge.TrustedPackages, local.ReleaseAge.TrustedPackages)
+	merged.InstallScripts.TrustedPackages = unionLists(global.InstallScripts.TrustedPackages, local.InstallScripts.TrustedPackages)
+	merged.Vulnerabilities.AllowedAdvisories = unionLists(global.Vulnerabilities.AllowedAdvisories, local.Vulnerabilities.AllowedAdvisories)
 
 	if local.Isolation.EnabledSet {
 		merged.Isolation.Enabled = local.Isolation.Enabled
