@@ -380,6 +380,34 @@ jobs:
         chmod +x scripts/sandbox-smoke-macos.sh scripts/sandbox-enforcement-macos.sh
         ./scripts/sandbox-smoke-macos.sh
 
+    # TEMPORARY probe, not for main: does Bun work inside the macOS sandbox?
+    # Linux was broken until the sandbox got its own /proc; Windows is measured
+    # and documented; macOS has never been checked either way.
+    - name: PROBE bun inside the macOS sandbox
+      if: matrix.os == 'macos-latest'
+      shell: bash
+      continue-on-error: true
+      run: |
+        P="$HOME/nvx-bun-probe"; rm -rf "$P"; mkdir -p "$P"
+        export NVX_HOME="$P/nvxhome"; mkdir -p "$NVX_HOME"
+        NVX="$GITHUB_WORKSPACE/nvx"
+        "$NVX" -y install bun >/dev/null 2>&1 || { echo 'bun install failed'; exit 0; }
+        "$NVX" -y default bun >/dev/null 2>&1
+        "$NVX" init-shims >/dev/null 2>&1
+        export PATH="$NVX_HOME/bin:$PATH"
+        cd "$P"
+        echo 'console.log("BUN_SCRIPT_OK " + Bun.version);' > b.js
+        echo '{"name":"probe","version":"1.0.0","dependencies":{"ms":"2.1.3"}}' > package.json
+        echo '--- contained bun --version:'
+        "$NVX" -y --strict shim bun --version 2>&1 | tail -2
+        echo '--- contained bun -e:'
+        "$NVX" -y --strict shim bun -e 'console.log("EVAL_OK")' 2>&1 | tail -3
+        echo '--- contained bun run script:'
+        "$NVX" -y --strict shim bun run b.js 2>&1 | tail -4
+        echo '--- contained bun install:'
+        "$NVX" -y --strict shim bun install 2>&1 | tail -4
+        echo '--- node_modules:'
+        ls node_modules 2>/dev/null | head -3
     - name: macOS containment enforcement
       if: matrix.os == 'macos-latest'
       shell: bash
