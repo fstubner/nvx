@@ -371,6 +371,20 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 		proxyEnvAddr = addr
 	}
 
+	// The in-sandbox half of --connect, on the same relay pattern and for the
+	// same reason: the service is outside this namespace, and a UNIX socket is
+	// what crosses. Started before the sandbox closes around this process, so a
+	// listener that cannot bind stops the run rather than leaving the tool to
+	// discover it.
+	if len(a.ConnectPorts) > 0 {
+		stopConnect, cerr := startContainedConnectListeners(relayCtx, guestHome, a.ConnectPorts)
+		if cerr != nil {
+			LogError("Could not open the sandbox's path to a host service: %v", cerr)
+			return 1
+		}
+		defer stopConnect()
+	}
+
 	// A procfs of the sandbox's own, before Landlock restricts this process.
 	// Bun cannot run a script or an install without /proc; the grant below is
 	// made only if this succeeds, because the alternative is granting the host's

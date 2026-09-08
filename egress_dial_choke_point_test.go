@@ -42,6 +42,11 @@ func TestEveryOutboundDialIsANamedChokePoint(t *testing.T) {
 			"--connect on macOS: the same decision as the Windows site above, reached without a tunnel because " +
 				"the sandbox shares the host's loopback there. A literal loopback address the user named on the " +
 				"command line or in the policy; nothing a sandboxed process asked for is resolved here."},
+		{"sandbox_connect_linux.go", `net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(hostPort)`,
+			"--connect on Linux: the parent's half, outside the namespace. A literal loopback address the user " +
+				"named; the contained side can only ask for the tunnel, never for a destination."},
+		{"sandbox_connect_linux.go", `d.DialContext(ctx, "unix", sock)`,
+			"--connect tunnel plumbing: a UNIX socket nvx itself created in this run's guest home."},
 		{"sandbox_relay.go", `d.DialContext(ctx, "unix", sockPath)`,
 			"in-container relay to the egress proxy over a UNIX socket nvx created; the proxy then applies the allowlist."},
 	}

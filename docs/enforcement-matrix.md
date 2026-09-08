@@ -49,7 +49,7 @@ whether the kernel honours it is not.
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes⁵ (TCP and UDP; UDP refused at bind) |
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
 | Any loopback service reachable | No, unless the policy lists it¹¹ | No (loopback-only netns) | No⁶ (proxy port only) |
-| One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | No | Via `--connect` for one run¹² |
+| One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | Via `--connect` for one run, except in `offline`/`loopback`¹² | Via `--connect` for one run¹² |
 | Another project's sandbox reachable over loopback | No¹⁰ (per-project package) | No (each has its own netns) | Untested |
 | A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
@@ -628,7 +628,23 @@ contained fetch twice, once without `--connect` and once with, and fails if the
 first one succeeds. A macOS that stopped enforcing the profile's network rules
 would fail that smoke.
 
-Linux has no `--connect`. Its sandbox sits in a loopback-only network namespace,
-where the host's services are unreachable at the routing layer, so closing this
-needs the relay treatment the egress proxy already gets over AF_UNIX. The flag
-warns there and the run continues.
+**Linux tunnels it, the way the egress proxy is already tunnelled.** Its sandbox
+sits in a network namespace of its own, so 127.0.0.1 in there is a different
+127.0.0.1 and no permission grants a route to yours. The supervisor listens on
+the in-sandbox port inside the namespace and forwards over a UNIX socket in the
+guest home, which crosses because it is a filesystem object; nvx dials the real
+service from outside. No peer check is needed there either, and for a stronger
+reason than on macOS: another sandbox has its own namespace and its own guest
+home, so neither half is addressable from it.
+
+`offline` and `loopback` are the exception, and the refusal is loud. Both install
+`buildOfflineNetworkFilter`, which denies `connect()` outright and denies creating
+any AF_INET or AF_INET6 socket -- so a contained tool cannot dial the in-sandbox
+listener at all. Carrying `--connect` there would mean granting those modes an IP
+socket, which is the thing they exist to withhold. nvx says so and names the modes
+that can carry it, rather than accepting the flag and doing nothing.
+
+`scripts/sandbox-smoke.sh` runs the same two-sided check the macOS one does, and
+the negative half is load-bearing in a different way: a network namespace that
+silently failed to be created would leave the sandbox on this machine's loopback,
+and the positive result alone would then prove nothing.
