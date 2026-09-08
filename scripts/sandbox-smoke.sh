@@ -201,12 +201,35 @@ cat > "$NVX_HOME/policy.json" <<'JSON'
 { "isolation": { "network": { "mode": "loopback" } } }
 JSON
 LOOPBACK_OUT="$("$NVX" -y --strict shim node -e "$LOOPBACK_PROBE" 2>&1 | grep '^CONNECT=' || true)"
-rm -f "$NVX_HOME/policy.json"
 echo "  proxy said (loopback mode): ${LOOPBACK_OUT:-<nothing>}"
 if [[ "$LOOPBACK_OUT" != "CONNECT=200" ]]; then
+  rm -f "$NVX_HOME/policy.json"
   echo "network.mode loopback did not reach a service on 127.0.0.1" >&2
   exit 1
 fi
+
+# And a raw connection, which is the half a proxy cannot carry.
+#
+# client.js dials 127.0.0.1:$SVC_PORT itself and knows nothing about HTTP_PROXY,
+# so this only passes if the loopback traffic is being redirected out of the
+# namespace. The very same command was run above under the default mode and
+# reported FAILED, which is the control -- that is what proves this is the mode
+# doing it rather than the sandbox having a route it should not.
+#
+# This is what "at their own addresses, over any protocol" means, and what
+# separates the mode from --connect: no port named anywhere, nothing in the
+# command line, and a client that was never told it was in a sandbox.
+set +e
+RAW_OUT="$(PATH="$NVX_HOME/bin:$PATH" "$NVX" -y --strict shim node "$PROJ/client.js" "$SVC_PORT" 2>&1)"
+RAWRC=$?
+set -e
+rm -f "$NVX_HOME/policy.json"
+if [[ $RAWRC -ne 0 ]] || ! grep -q "GOT SERVICE_OK" <<<"$RAW_OUT"; then
+  echo "$RAW_OUT" >&2
+  echo "a raw connection to 127.0.0.1:$SVC_PORT was not carried in loopback mode (exit $RAWRC)" >&2
+  exit 1
+fi
+echo "  a raw connection reached the service too"
 
 kill $SVC_PID 2>/dev/null || true
 trap 'rm -rf "$PROJ"' EXIT
