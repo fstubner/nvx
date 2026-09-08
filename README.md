@@ -247,6 +247,12 @@ Corporate policies can be defined globally in `~/.nvx/policy.json` and customize
     "min_age_hours": 24,
     "trusted_packages": ["chrome-devtools-mcp", "@upstash/*"]
   },
+  "install_scripts": {
+    "trusted_packages": ["esbuild", "sharp"]
+  },
+  "vulnerabilities": {
+    "allowed_advisories": ["GHSA-xxxx-yyyy-zzzz"]
+  },
   "runtime": {
     "default": "node",
     "versions": { "node": "20" }
@@ -285,6 +291,26 @@ Policies cascade: the global policy applies everywhere, and local policy files m
 
 ### Policy Reference
 * **`enforce_ignore_scripts`**: When `true`, this forces npm/yarn/pnpm to install packages with `--ignore-scripts`. This blocks execution of hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine.
+* **Per-check exemptions.** Every install-time check applies to every package
+  until a policy names an exception, and each list waives only its own check —
+  naming a package in one never affects another. Adding an entry to any of them is
+  a loosening, so a project file doing it needs approval.
+  - **`typosquatting.trusted_packages`**: this name is not a misspelling of a
+    popular one. Names and globs.
+  - **`release_age.trusted_packages`**: skip the cooling-off window for this
+    package. Use it for a package that publishes often and is started
+    non-interactively, such as an MCP server.
+  - **`install_scripts.trusted_packages`**: run this package's install scripts
+    without asking, and past `enforce_ignore_scripts` — which is how "block
+    install scripts except for these" is written. `esbuild`, `sharp` and
+    Playwright fetch a platform binary in theirs. The sharpest of these
+    exemptions: it is arbitrary code at install time, and every run that uses one
+    says which package it let through.
+  - **`vulnerabilities.allowed_advisories`**: accept an OSV advisory you have
+    assessed, by ID. Per advisory rather than per package, so a finding published
+    after your assessment still stops the install. There is no severity floor,
+    because nvx reads only the id and summary from OSV's batch response and a
+    threshold it cannot evaluate would be a setting that silently did nothing.
 * **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary). See the [enforcement matrix](docs/enforcement-matrix.md) for exact guarantees.
   - `native` (default): AppContainer (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Zero-config, fail-closed.
   - `docker`: runs in a container (hardened; `offline`/`loopback` enforced via `--network none`). Requires Docker running. Does not carry `--connect`, and says so when asked: the relay needs a process of nvx's inside the sandbox, and this provider launches the target command as the container's only process.
