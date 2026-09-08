@@ -89,6 +89,69 @@ if "$NVX" -y --strict shim node -e "require('fs').writeFileSync(process.env.HOME
 fi
 rm -f "$HOST_PROBE"
 
+# --connect: the sandbox reaches one named service on this machine, and only
+# because it was named.
+#
+# Linux is the platform where the negative half is structural rather than a
+# permission: the sandbox has its own network namespace, so 127.0.0.1 in there is
+# not this machine's. The check runs anyway and runs first, because a namespace
+# that silently failed to be created would leave the sandbox sharing this one --
+# and then the positive result below would prove nothing at all.
+echo "Testing --connect against a service on this machine..."
+cat > "$PROJ/service.js" <<'JS'
+const fs = require('fs'), http = require('http');
+const s = http.createServer((q, r) => r.end('SERVICE_OK'));
+s.listen(0, '127.0.0.1', () => fs.writeFileSync(process.argv[2], String(s.address().port)));
+JS
+node "$PROJ/service.js" "$PROJ/port.txt" &
+SVC_PID=$!
+trap 'kill $SVC_PID 2>/dev/null || true; rm -rf "$PROJ"' EXIT
+for _ in $(seq 1 50); do [[ -s "$PROJ/port.txt" ]] && break; sleep 0.1; done
+if [[ ! -s "$PROJ/port.txt" ]]; then
+  echo "the stand-in host service never reported its port" >&2
+  exit 1
+fi
+SVC_PORT="$(cat "$PROJ/port.txt")"
+
+# Dials NVX_CONNECT_<port> when nvx published it, and the service's own port
+# otherwise -- which is what the unreachable-without-it check needs.
+cat > "$PROJ/client.js" <<'JS'
+const http = require('http');
+const host = process.argv[2];
+const port = process.env['NVX_CONNECT_' + host] || host;
+http.get({ host: '127.0.0.1', port: Number(port) }, res => {
+  let b = '';
+  res.on('data', d => (b += d));
+  res.on('end', () => console.log('GOT ' + b));
+}).on('error', e => console.log('FAILED ' + e.code));
+JS
+
+set +e
+NOCONNECT="$("$NVX" -y --strict shim node "$PROJ/client.js" "$SVC_PORT" 2>&1)"
+set -e
+if grep -q "GOT SERVICE_OK" <<<"$NOCONNECT"; then
+  echo "$NOCONNECT" >&2
+  echo "a contained process reached 127.0.0.1:$SVC_PORT with no --connect; it is sharing this machine's network namespace" >&2
+  exit 1
+fi
+if ! grep -q "FAILED" <<<"$NOCONNECT"; then
+  echo "$NOCONNECT" >&2
+  echo "the unreachable-without-it check did not run: the probe neither connected nor reported a failure" >&2
+  exit 1
+fi
+
+set +e
+CONNECTED="$("$NVX" -y --strict --connect "$SVC_PORT" shim node "$PROJ/client.js" "$SVC_PORT" 2>&1)"
+CRC=$?
+set -e
+if [[ $CRC -ne 0 ]] || ! grep -q "GOT SERVICE_OK" <<<"$CONNECTED"; then
+  echo "$CONNECTED" >&2
+  echo "--connect did not reach the service (exit $CRC)" >&2
+  exit 1
+fi
+kill $SVC_PID 2>/dev/null || true
+trap 'rm -rf "$PROJ"' EXIT
+
 # An actual install, which is what the sandbox is mostly for and what no test on
 # this platform had ever run. Windows has had one since a contained `npm install`
 # was found to hang forever; Linux and macOS asserted only that a contained

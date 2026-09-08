@@ -503,11 +503,14 @@ func runSandbox(config SandboxConfig) int {
 		if len(netCtx.ExposePorts) > 0 {
 			LogWarn("--expose is a Windows feature; ports are not published on %s.", runtime.GOOS)
 		}
-		// macOS carries --connect through the Seatbelt relay; Linux does not have
-		// it yet, and the sandbox there sits in a network namespace of its own, so
-		// a host service is unreachable until it does.
-		if len(netCtx.ConnectPorts) > 0 && runtime.GOOS != "darwin" {
-			LogWarn("--connect is not implemented on %s; the sandbox cannot reach host services there.", runtime.GOOS)
+		// --connect is carried on all three platforms now. What Linux cannot do is
+		// carry it in the two modes whose seccomp filter refuses the contained
+		// process any IP socket at all -- see connectUnsupportedForMode. Said out
+		// loud rather than silently dropped: a developer who asked for a port and
+		// got nothing debugs their own service first, and finds nothing wrong.
+		if len(netCtx.ConnectPorts) > 0 && runtime.GOOS == "linux" && connectUnsupportedForMode(netCtx.Mode) {
+			LogWarn("--connect cannot be honoured in network.mode %q on Linux: that mode denies the sandbox every IP socket, including the one it would use to reach the tunnel.", netCtx.Mode)
+			LogInfo("Use network.mode \"proxy\" (the default) or \"open\" for this run.")
 		}
 	}
 

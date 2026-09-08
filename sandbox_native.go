@@ -310,6 +310,28 @@ func connectEnvVar(hostPort int) string {
 	return "NVX_CONNECT_" + strconv.Itoa(hostPort)
 }
 
+// connectUnsupportedForMode reports the Linux network modes whose seccomp filter
+// denies the sandbox the socket --connect needs. Lives here rather than in
+// sandbox_connect_linux.go because the dispatcher that warns compiles everywhere.
+//
+// offline and loopback both install buildOfflineNetworkFilter, which refuses
+// connect() outright and refuses to create any AF_INET or AF_INET6 socket. A
+// contained tool therefore cannot dial the in-namespace listener at all, and
+// nothing on nvx's side of the boundary can change that. Making it work would
+// mean granting those modes an IP socket, which is the thing they exist to
+// withhold -- so the flag is refused out loud instead.
+//
+// Trimmed as well as lowercased, like every other reader of this field: a policy
+// carrying "offline " with a trailing space was once enough to make a mode mean
+// something else entirely.
+func connectUnsupportedForMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "offline", "loopback":
+		return true
+	}
+	return false
+}
+
 // parseConnectSpec reads "9222" or "9222:19222" as host[:inside].
 //
 // Host-first, the mirror of parseExposeSpec's container-first: in both cases the

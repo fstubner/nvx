@@ -610,7 +610,7 @@ Options:
                          listens on, so the host can reach it. The two numbers
                          must differ. Omit the host port to have one picked and
                          printed. Must come BEFORE the command
-  --connect <host>[:<in>]  (Windows, macOS) Let the sandbox reach ONE service already
+  --connect <host>[:<in>]  Let the sandbox reach ONE service already
                          running on your machine, over a tunnel nvx dials. The
                          two numbers must differ; the in-sandbox one is printed
                          and set as NVX_CONNECT_<host>. Must come BEFORE the
