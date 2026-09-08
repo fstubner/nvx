@@ -38,6 +38,10 @@ func TestEveryOutboundDialIsANamedChokePoint(t *testing.T) {
 			"--expose tunnel plumbing: a UNIX socket nvx itself created."},
 		{"sandbox_expose_windows.go", `net.DialTimeout("tcp", local`,
 			"--expose: the contained server's own loopback port, configured by the user. Not a name."},
+		{"sandbox_connect_darwin.go", `net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(r.hostPort)`,
+			"--connect on macOS: the same decision as the Windows site above, reached without a tunnel because " +
+				"the sandbox shares the host's loopback there. A literal loopback address the user named on the " +
+				"command line or in the policy; nothing a sandboxed process asked for is resolved here."},
 		{"sandbox_relay.go", `d.DialContext(ctx, "unix", sockPath)`,
 			"in-container relay to the egress proxy over a UNIX socket nvx created; the proxy then applies the allowlist."},
 	}
