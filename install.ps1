@@ -1,6 +1,12 @@
 param(
     [switch]$InsecureSkipChecksum,
-    [switch]$UseLocalBinary
+    [switch]$UseLocalBinary,
+    # Define the functions and stop, so scripts/test-install-path.ps1 can
+    # exercise the PATH logic below without installing anything. The PATH write
+    # is the one line in this installer that has already shipped a defect --
+    # it converted every %VAR% entry on the machine into today's expansion of
+    # it -- and it had no test because there was no way to reach it.
+    [switch]$LibraryOnly
 )
 
 # Installer script for nvx (Node Version X-platform)
@@ -11,66 +17,56 @@ $ErrorActionPreference = 'Stop'
 $nvxHome = Join-Path $HOME ".nvx"
 $binDir = Join-Path $nvxHome "bin"
 
-Write-Host "Setting up nvx directories..."
-
-# Create nvx directories if they do not exist
-if (-not (Test-Path $binDir)) {
-    New-Item -ItemType Directory -Path $binDir -Force | Out-Null
-}
-
-# 1. Update PATH environment variables for User
+# Puts $BinDir at the front of the User PATH, preserving both what is stored
+# and how it is stored.
 #
 # Read raw, not through [Environment]::GetEnvironmentVariable: that one EXPANDS
 # a REG_EXPAND_SZ value, so an entry written as %USERPROFILE%\bin comes back as
-# the expanded path, and writing it back would bake today's expansion into the
-# registry for ever. DoNotExpandEnvironmentNames keeps what the user actually
-# wrote.
-$envKey = 'HKCU:\Environment'
-$envItem = Get-Item -Path $envKey
-$userPath = $envItem.GetValue(
-    'Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+# the expanded path and writing it back would bake today's expansion into the
+# registry for ever. And write with the type it already had, because Windows
+# ships this value as REG_EXPAND_SZ and [Environment]::SetEnvironmentVariable
+# always writes REG_SZ -- this installer used to convert it on every machine it
+# ran on, after which no %VAR% entry resolved again. nvx had the same bug in
+# `doctor --fix`.
+#
+# Returns $true when it changed something.
+function Set-NvxUserPath {
+    param(
+        [Parameter(Mandatory)][string]$BinDir,
+        [string]$KeyPath = 'HKCU:\Environment'
+    )
 
-# And remember the type, because Windows ships this value as REG_EXPAND_SZ and
-# that is what makes %VAR% entries resolve at all. The obvious writer,
-# [Environment]::SetEnvironmentVariable, always writes REG_SZ -- so this
-# installer used to convert the type on every machine it ran on, and every
-# variable-spelled entry on it silently stopped resolving. nvx had the same bug
-# in `doctor --fix`; this is the same fix.
-$pathKind = 'ExpandString'
-try {
-    if ($envItem.GetValueKind('Path') -eq [Microsoft.Win32.RegistryValueKind]::String) {
-        $pathKind = 'String'
+    $item = Get-Item -Path $KeyPath
+    $userPath = $item.GetValue(
+        'Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+
+    $kind = 'ExpandString'
+    try {
+        if ($item.GetValueKind('Path') -eq [Microsoft.Win32.RegistryValueKind]::String) {
+            $kind = 'String'
+        }
+    } catch {
+        # No Path value yet on a fresh profile: ExpandString is what Windows
+        # would have created.
     }
-} catch {
-    # No Path value yet on a fresh profile: ExpandString is what Windows would
-    # have created.
-}
-$pathParts = $userPath -split ';'
-$modified = $false
 
-# Prepend bin directory (for nvx binary itself)
-$hasBin = $false
-foreach ($part in $pathParts) {
-    $cleanPart = $part.Trim().TrimEnd('\')
-    if ($cleanPart -eq $binDir.TrimEnd('\')) {
-        $hasBin = $true
+    foreach ($part in ($userPath -split ';')) {
+        if ($part.Trim().TrimEnd('\') -eq $BinDir.TrimEnd('\')) {
+            return $false
+        }
     }
-}
-if (-not $hasBin) {
-    $userPath = "$binDir;$userPath"
-    $modified = $true
+
+    Set-ItemProperty -Path $KeyPath -Name 'Path' -Value "$BinDir;$userPath" -Type $kind
+    return $true
 }
 
-if ($modified) {
-    Write-Host "Adding nvx paths to your User environment variables..."
-    Set-ItemProperty -Path $envKey -Name 'Path' -Value $userPath -Type $pathKind
-
-    # Tell running programs the environment moved. [Environment]::SetEnvironment-
-    # Variable did this as part of its own work; a plain registry write does not,
-    # and without it Explorer keeps handing its stale copy to everything launched
-    # from it until the next sign-in. Best effort: the value is already written,
-    # and a machine that will not compile the P/Invoke should not fail the
-    # install over a notification.
+# Tells running programs the environment moved. [Environment]::SetEnvironment-
+# Variable did this as part of its own work; a plain registry write does not,
+# and without it Explorer keeps handing its stale copy to everything launched
+# from it until the next sign-in. Best effort: the value is already written by
+# the time this runs, and a machine that will not compile the P/Invoke should
+# not fail an install over a notification.
+function Send-NvxEnvironmentChange {
     try {
         if (-not ('Nvx.Native' -as [type])) {
             Add-Type -Namespace 'Nvx' -Name 'Native' -MemberDefinition @'
@@ -86,10 +82,25 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wP
     } catch {
         Write-Host "  (could not notify running programs; new terminals will still pick this up)"
     }
-
-    # Update current session path
-    $env:PATH = "$binDir;$env:PATH"
 }
+
+if ($LibraryOnly) { return }
+
+Write-Host "Setting up nvx directories..."
+
+# Create nvx directories if they do not exist
+if (-not (Test-Path $binDir)) {
+    New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+}
+
+
+# 1. Update PATH environment variables for User
+if (Set-NvxUserPath -BinDir $binDir) {
+    Write-Host "Adding nvx paths to your User environment variables..."
+    Send-NvxEnvironmentChange
+}
+# Update current session path
+$env:PATH = "$binDir;$env:PATH"
 
 # 2. Check and configure PowerShell Execution Policy
 $policy = Get-ExecutionPolicy -Scope CurrentUser
