@@ -244,7 +244,8 @@ Corporate policies can be defined globally in `~/.nvx/policy.json` and customize
   },
   "release_age": {
     "enabled": true,
-    "min_age_hours": 24
+    "min_age_hours": 24,
+    "trusted_packages": ["chrome-devtools-mcp", "@upstash/*"]
   },
   "runtime": {
     "default": "node",
@@ -847,9 +848,18 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   { "command": "npx", "args": ["-y", "your-pkg@1.2.3"] }
   ```
 
-  The third is to widen the window in policy (`release_age.min_age_hours`) or add
-  the package to `typosquatting.trusted_packages`, which exempts it — both of
-  which give up the check everywhere, so prefer the first two.
+  ```jsonc
+  // 3. exempt just this package, in ~/.nvx/policy.json
+  { "release_age": { "trusted_packages": ["your-pkg", "@your-scope/*"] } }
+  ```
+
+  The third keeps the cooling-off window for everything else, which
+  `release_age.min_age_hours` does not — that widens the window for every package
+  you install.
+
+  Until 0.6.0 the only exemption list was `typosquatting.trusted_packages`, which
+  waived typosquat detection at the same time. It no longer waives the
+  release-age window; a file still using it that way is told to move the entry.
 
 - **On Windows and macOS, a contained tool needs `--connect` to reach a service
   running on your machine.** The other direction, and the same reason: the

@@ -1700,11 +1700,20 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 		}
 
 		// 4. Release Age Check (supply chain cooling-off window)
-		if policy.ReleaseAgeEnabled() && !policy.IsTrustedPackage(pkgName) && publishAgeShouldWarn(pubTime, policy.ReleaseAgeMinHours(), time.Now()) {
+		// Only the release-age list waives the release-age check now. Until
+		// 2026-09-08 typosquatting.trusted_packages did as well, so a file written
+		// against that would quietly start prompting again -- and in the case this
+		// feature exists for, a non-interactive MCP launch, a prompt is a denial. So
+		// that file gets told what to change instead of discovering it.
+		if policy.ReleaseAgeEnabled() && !policy.IsReleaseAgeTrusted(pkgName) && publishAgeShouldWarn(pubTime, policy.ReleaseAgeMinHours(), time.Now()) {
 			age := time.Since(pubTime)
 			windowHours := policy.ReleaseAgeMinHours()
 			msg := fmt.Sprintf("Package %s@%s was published only %.1f hours ago (on %s). Supply chain compromises are often caught within %d hours. Proceed?",
 				pkgName, resolvedVer, age.Hours(), pubTime.Format("2006-01-02 15:04:05"), windowHours)
+			if policy.IsTrustedPackage(pkgName) {
+				LogWarn("%s is in typosquatting.trusted_packages, which no longer waives this check.", pkgName)
+				LogInfo("Add it to release_age.trusted_packages to skip the cooling-off window for it.")
+			}
 			if !PromptYesNo(msg) {
 				LogError("Installation aborted: the release-age warning was not approved.")
 				return 1, "a package version was published inside the release-age cooling-off window"
