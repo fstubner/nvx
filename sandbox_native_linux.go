@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,6 +44,17 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1, errSandboxDidNotStart
 	}
 
+	// Host services this run may reach. Opened here, outside the namespace, and
+	// the in-sandbox port is resolved here too, so both numbers reach the
+	// supervisor already decided.
+	connectEnv, stopConnect, err := openConnectSockets(guestHome, &netCtx)
+	if err != nil {
+		LogError("Could not open a path to a host service for the sandbox: %v", err)
+		return 1, errSandboxDidNotStart
+	}
+	defer stopConnect()
+	cleanEnv = append(cleanEnv, connectEnv...)
+
 	args := []string{
 		"__landlock-exec",
 		"--guest-home=" + guestHome,
@@ -51,6 +63,9 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		"--network-mode=" + netCtx.Mode,
 		"--command=" + config.Command,
 		"--egress-socket=" + netCtx.EgressSocketPath,
+	}
+	for _, m := range netCtx.ConnectPorts {
+		args = append(args, fmt.Sprintf("--connect=%d:%d", m.Host, m.Inside))
 	}
 	for _, root := range config.ReadExecRoots {
 		args = append(args, "--read-exec="+root)

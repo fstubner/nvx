@@ -7,7 +7,6 @@ import (
 	"net"
 	"strconv"
 	"sync"
-	"time"
 )
 
 // Letting a contained process on macOS reach one named service on your machine.
@@ -42,11 +41,6 @@ import (
 // <inside>, because its own profile permits only its own proxy ports. The one
 // mode where a sandbox may dial all of loopback is `loopback`, whose entire
 // meaning is that it may.
-
-// connectDialTimeout bounds the dial to the real service. A service that is not
-// running should fail the contained connection promptly rather than leaving the
-// tool waiting on a connection nvx knows it cannot complete.
-const connectDialTimeout = 5 * time.Second
 
 // connectRelay is one host service the sandbox may reach, and the listener that
 // carries traffic to it.

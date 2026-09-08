@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **`--connect` works on Linux, in the modes that can carry it.** The third
+  platform, and the one where the sandbox is furthest from your machine: it runs
+  in a network namespace of its own, so 127.0.0.1 inside it is a different
+  127.0.0.1 and no permission grants a route to yours.
+
+  The traffic crosses the way the egress proxy's already does. The supervisor
+  listens on the in-sandbox port inside the namespace and forwards over a UNIX
+  socket in the guest home -- a filesystem object, which a network namespace does
+  not touch -- and nvx dials your service from outside it.
+
+  No peer check here, and for a firmer reason than on macOS: another sandbox has
+  its own namespace and its own guest home, so neither half of this is
+  addressable from it.
+
+  **`offline` and `loopback` cannot carry it, and say so.** Both modes deny the
+  contained process every IP socket, which includes the one it would use to reach
+  the tunnel. Making the flag work there would mean granting those modes exactly
+  what they exist to withhold, so nvx refuses out loud and names the modes that do
+  carry it. The default, `proxy`, is one of them.
+
+  `scripts/sandbox-smoke.sh` drives it on CI against a real service, running the
+  same contained fetch without `--connect` first. On Linux that half catches
+  something specific: a network namespace that silently failed to be created would
+  leave the sandbox on the machine's own loopback, and the positive result alone
+  would then prove nothing.
+
 * **`--connect` works on macOS.** A contained tool can reach one service already
   running on your machine -- a browser with remote debugging on, a local
   database, an emulator -- named one port at a time, the same way as on Windows:

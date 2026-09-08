@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 )
 
 // Helpers shared by the tunnels that carry traffic across a sandbox boundary:
@@ -11,6 +12,12 @@ import (
 //
 // Portable code that lived in the Windows files while Windows was the only
 // caller.
+
+// connectDialTimeout bounds a --connect relay's dial to the real service. A
+// service that is not running should fail the contained connection promptly
+// rather than leaving the tool waiting on a connection nvx knows it cannot
+// complete.
+const connectDialTimeout = 5 * time.Second
 
 // freeLoopbackPort asks the OS for a port and returns it. Racy in principle, and
 // the same approach the expose listener uses; the window is microseconds and the
