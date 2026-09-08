@@ -613,6 +613,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The installer's PATH update is now tested.** That single write had already
+  shipped one defect and had no coverage, because the logic sat inline in a
+  script that installs software when you run it. It is now a function the
+  installer calls, `install.ps1 -LibraryOnly` defines it without installing
+  anything, and a Windows CI step exercises it against a scratch registry key:
+  an expandable PATH keeps its type and its variables, a plain one is not
+  converted, and running it twice does not add the directory twice.
+
 * **The Windows installer no longer flattens `%VAR%` entries in your PATH, or
   changes its type.** `install.ps1` read the User PATH with
   `[Environment]::GetEnvironmentVariable`, which *expands* a `REG_EXPAND_SZ`

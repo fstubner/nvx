@@ -265,6 +265,16 @@ jobs:
     # installer, which is why it went unnoticed. Runs on macOS too: that is where
     # bash is a LOGIN shell and reads .bash_profile rather than .bashrc, the case
     # the profile-selection logic exists for.
+    # The installer's PATH write, against a scratch registry key. That one line
+    # already shipped a defect -- it replaced every %VAR% entry with that day's
+    # expansion and stored the result as plain text, so nothing expanded again
+    # -- and it had no test, because the logic sat inline in a script that
+    # installs software when you run it. install.ps1 -LibraryOnly is the hook
+    # that makes it reachable.
+    - name: Installer PATH test
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/test-install-path.ps1
     - name: Installer shell-profile test
       if: matrix.os != 'windows-latest'
       shell: bash
