@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -411,4 +412,31 @@ func normalizeConnectPorts(specs []string) []connectMapping {
 		out = append(out, m)
 	}
 	return out
+}
+
+// loopbackRedirectMode reports the mode whose meaning is "the services on this
+// machine are reachable". Portable, because the parent's half of the Linux
+// redirect is decided in a file that compiles everywhere.
+//
+// Trimmed and lowercased, like every other reader of this field.
+func loopbackRedirectMode(mode string) bool {
+	return strings.ToLower(strings.TrimSpace(mode)) == "loopback"
+}
+
+// portOfAddr pulls the port out of a "host:port" the relay reported, returning 0
+// when there is none. 0 is skipped by the rule builder rather than excluded, so
+// an absent proxy relay costs nothing.
+func portOfAddr(addr string) int {
+	if addr == "" {
+		return 0
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		return 0
+	}
+	return p
 }

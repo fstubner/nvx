@@ -385,6 +385,33 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 		defer stopConnect()
 	}
 
+	// network.mode loopback: every loopback TCP connection goes to the host's
+	// service of that name, rather than to this namespace's empty loopback.
+	//
+	// nvx's own listeners are excluded, so the egress proxy and any --connect
+	// port keep reaching what they were built to reach instead of taking a hop
+	// through this.
+	//
+	// A failure here warns and carries on. Without the rules the sandbox keeps
+	// the reach it had before they existed -- loopback destinations through the
+	// egress proxy -- which is narrower than intended, so there is nothing to
+	// fail closed against, and refusing to run would turn a missing iptables into
+	// a broken sandbox.
+	if loopbackRedirectMode(networkMode) {
+		exclude := []int{portOfAddr(proxyEnvAddr)}
+		for _, m := range a.ConnectPorts {
+			exclude = append(exclude, m.Inside)
+		}
+		stopRedirect, rerr := startLoopbackRedirect(relayCtx, guestHome, exclude)
+		if rerr != nil {
+			LogWarn("network.mode loopback cannot redirect this sandbox's loopback traffic (%v).", rerr)
+			LogInfo("Services on 127.0.0.1 stay reachable through nvx's proxy, so HTTP and HTTPS still work; a raw connection to a local service does not.")
+		} else {
+			defer stopRedirect()
+			LogDetail("Loopback services on this machine are reachable from the sandbox")
+		}
+	}
+
 	// A procfs of the sandbox's own, before Landlock restricts this process.
 	// Bun cannot run a script or an install without /proc; the grant below is
 	// made only if this succeeds, because the alternative is granting the host's

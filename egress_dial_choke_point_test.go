@@ -42,6 +42,17 @@ func TestEveryOutboundDialIsANamedChokePoint(t *testing.T) {
 			"--connect on macOS: the same decision as the Windows site above, reached without a tunnel because " +
 				"the sandbox shares the host's loopback there. A literal loopback address the user named on the " +
 				"command line or in the policy; nothing a sandboxed process asked for is resolved here."},
+		{"sandbox_loopback_redirect_linux.go", `net.DialTimeout("tcp", target, connectDialTimeout)`,
+			"network.mode loopback: the parent dialling the host service a redirected connection was for. " +
+				"THE enforcement point for that mode -- the address comes from the kernel's SO_ORIGINAL_DST, " +
+				"never from a name, and the four lines above this refuse anything that is not loopback, because " +
+				"the socket carrying the request sits where the contained process can reach it."},
+		{"sandbox_loopback_redirect_linux.go", `net.Dial("unix", r.sock)`,
+			"network.mode loopback plumbing: a UNIX socket nvx itself created in this run's guest home."},
+		{"sandbox_loopback_redirect_linux.go", `d := net.Dialer{`,
+			"network.mode loopback: reaching a service the SANDBOX is running, inside its own namespace. " +
+				"Marked so the redirect rules skip it; it cannot leave the namespace, which is the point of trying " +
+				"it before the host."},
 		{"sandbox_connect_linux.go", `net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(hostPort)`,
 			"--connect on Linux: the parent's half, outside the namespace. A literal loopback address the user " +
 				"named; the contained side can only ask for the tunnel, never for a destination."},
