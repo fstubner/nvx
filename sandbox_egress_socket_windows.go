@@ -35,14 +35,23 @@ func windowsEgressSocketPath(guestHome string) string {
 // windowsEgressNeedsRelay reports whether this network mode routes the contained
 // process through the parent's proxy.
 //
-//   - offline/loopback grant no capabilities and get no relay: with no
-//     internetClient the AppContainer cannot reach the network at all, which is
-//     the enforcement those modes ask for.
+//   - offline grants no capabilities and gets no relay: with no internetClient
+//     the AppContainer cannot reach the network at all, which is the enforcement
+//     that mode asks for.
 //   - open grants internetClient and connects directly, by request.
-//   - everything else (proxy, the default) uses the relay.
+//   - everything else -- proxy, the default, and loopback -- uses the relay.
+//
+// loopback sat with offline until 2026-09-08, which made it a synonym for it on
+// this platform: the mode's meaning is "reach the services on 127.0.0.1", and a
+// sandbox with no capability and no relay reached nothing. It gets the relay for
+// the same reason proxy does, and reaches no further: the AppContainer still
+// holds no network capability, the parent proxy decides every destination, and
+// what makes this mode different from proxy is one rule there
+// (EgressProxy.allowed) permitting loopback destinations without an allow_hosts
+// entry.
 func windowsEgressNeedsRelay(mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "offline", "loopback", "open":
+	case "offline", "open":
 		return false
 	default:
 		return true
