@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+* **The docker provider no longer accepts `--connect` in silence.** It never
+  carried the flag: `dockerRunArgs` did not read the connect ports at all, so a
+  command line or a policy asking for one launched a container that could not
+  reach the service, with nothing on screen connecting the two. Exactly the
+  failure the flag exists to prevent, one layer down.
+
+  It cannot carry it, and the reason is structural rather than a missing
+  `docker run` argument. Every relay nvx runs has an in-sandbox half that is a
+  process of nvx's own; the Docker provider has none, because it launches the
+  target command as the container's only process. The container also has a
+  network namespace of its own, and in `offline` and `loopback` -- the only two
+  modes this provider enforces -- `--network none` leaves it nothing but its own
+  loopback.
+
+  So it now says so, and names the native provider as the way to get the service.
+
 ### Added
 
 * **`--connect` works on Linux, in the modes that can carry it.** The third
