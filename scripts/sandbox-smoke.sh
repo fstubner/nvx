@@ -149,6 +149,65 @@ if [[ $CRC -ne 0 ]] || ! grep -q "GOT SERVICE_OK" <<<"$CONNECTED"; then
   echo "--connect did not reach the service (exit $CRC)" >&2
   exit 1
 fi
+
+# network.mode: loopback reaches the same service, and the default mode does not.
+#
+# The mode's definition lives in the egress proxy: a loopback destination is
+# permitted without an allow_hosts entry, and only in this mode. On this platform
+# it was unreachable until 2026-09-08, because loopback shared offline's seccomp
+# filter -- which denies connect() outright, so the contained process could not
+# reach the proxy that implements the mode. Nothing noticed: the only test of the
+# mode was of that proxy rule, in a state where the proxy could not be consulted.
+#
+# Asked as a CONNECT to the proxy, for the reason spelled out in
+# scripts/sandbox-smoke-egress.sh: nothing in Node core reads HTTPS_PROXY, so an
+# ordinary request measures a direct connection, which inside this namespace dies
+# without the allowlist ever being consulted. The status code IS the decision --
+# 200 tunnelled, 403 refused -- which an exit code cannot tell apart from "never
+# reached the proxy".
+#
+# Both modes are run, and the default one first. Alone, a 200 in loopback mode
+# would equally be what a sandbox with an accidental route out looks like.
+echo "Testing network.mode loopback against the same service..."
+LOOPBACK_PROBE=$(cat <<JS
+const http = require('http');
+const u = new URL(process.env.HTTPS_PROXY);
+const req = http.request({
+  host: u.hostname, port: u.port, method: 'CONNECT', path: '127.0.0.1:$SVC_PORT',
+  headers: { 'Proxy-Authorization': 'Basic ' +
+    Buffer.from(decodeURIComponent(u.username) + ':' + decodeURIComponent(u.password)).toString('base64') },
+});
+req.on('connect', (res, socket) => { socket.destroy(); console.log('CONNECT=' + res.statusCode); process.exit(0); });
+req.on('response', res => { console.log('CONNECT=' + res.statusCode); process.exit(0); });
+req.on('error', e => { console.log('CONNECT=error ' + e.message); process.exit(0); });
+req.end();
+JS
+)
+
+DEFAULT_MODE_OUT="$("$NVX" -y --strict shim node -e "$LOOPBACK_PROBE" 2>&1 | grep '^CONNECT=' || true)"
+echo "  proxy said (default mode): ${DEFAULT_MODE_OUT:-<nothing>}"
+if [[ "$DEFAULT_MODE_OUT" == "CONNECT=200" ]]; then
+  echo "the default mode tunnelled to a loopback service with no allow_hosts entry" >&2
+  exit 1
+fi
+if [[ -z "$DEFAULT_MODE_OUT" ]]; then
+  echo "the contained process never reached the proxy, so the mode was not exercised" >&2
+  exit 1
+fi
+
+# Written to the global policy, which is the developer's own file. A project
+# policy asking for this mode is a loosening and needs approval, deliberately.
+cat > "$NVX_HOME/policy.json" <<'JSON'
+{ "isolation": { "network": { "mode": "loopback" } } }
+JSON
+LOOPBACK_OUT="$("$NVX" -y --strict shim node -e "$LOOPBACK_PROBE" 2>&1 | grep '^CONNECT=' || true)"
+rm -f "$NVX_HOME/policy.json"
+echo "  proxy said (loopback mode): ${LOOPBACK_OUT:-<nothing>}"
+if [[ "$LOOPBACK_OUT" != "CONNECT=200" ]]; then
+  echo "network.mode loopback did not reach a service on 127.0.0.1" >&2
+  exit 1
+fi
+
 kill $SVC_PID 2>/dev/null || true
 trap 'rm -rf "$PROJ"' EXIT
 

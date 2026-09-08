@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`network.mode: loopback` did nothing on Windows, Linux and Docker.** Each
+  treated it as `offline`, so a mode whose name says "the services on 127.0.0.1
+  are reachable" reached none of them. Windows granted no network capability and
+  started no relay; Linux gave it the offline seccomp filter, which denies
+  `connect()` outright, so the contained process could not even reach the proxy
+  that implements the mode.
+
+  Windows and Linux now route it through the relay, exactly as `proxy` mode does.
+  Neither gains any OS-level reach: Windows still holds no network capability,
+  Linux still runs in its own network namespace, and every destination is still
+  the parent proxy's decision. The one difference from `proxy` is the rule that
+  defines the mode -- a loopback destination is allowed without an `allow_hosts`
+  entry.
+
+  **The mode covers different traffic on macOS than elsewhere.** There it is
+  granted in the Seatbelt profile, so any protocol reaches any local port,
+  including a raw connection to a database. Through a proxy it covers what a
+  proxy-aware client sends, which is HTTP and HTTPS. Both are written down rather
+  than smoothed over; closing the gap either way is a decision, not a fix.
+
+  Docker keeps `--network none` in this mode, for the reason it refuses `proxy`:
+  the allowlist would be advisory, since nothing stops a tool ignoring the proxy.
+
+  Measured on Linux CI as a CONNECT to the proxy in both modes -- refused under
+  the default, tunnelled under `loopback`. The default-mode half is the control: a
+  success alone is also what a sandbox with an accidental route out looks like.
+
 * **A project policy could switch the sandbox to `network.mode: loopback` without
   approval, and on macOS that handed it every local service.** The approval gate
   ranks the modes by how much a contained process can reach, and `loopback` was

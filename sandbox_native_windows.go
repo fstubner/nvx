@@ -545,7 +545,7 @@ func windowsSandboxNetwork(mode string) (capabilitySIDs []string, useRelay bool)
 		return nil, true
 	}
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "offline", "loopback":
+	case "offline":
 		return nil, false // no capabilities: the sandbox has no network at all
 	}
 	return []string{capabilityInternetClientSID}, false // "open", by request

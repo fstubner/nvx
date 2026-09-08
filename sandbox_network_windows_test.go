@@ -31,13 +31,35 @@ func TestWindowsSandboxNetworkDefaultUsesTheRelay(t *testing.T) {
 // TestWindowsSandboxNetworkOfflineGrantsNothing covers the modes that were already
 // enforced without elevation: no network capability means no network at all.
 func TestWindowsSandboxNetworkOfflineGrantsNothing(t *testing.T) {
-	for _, mode := range []string{"offline", "loopback", "OFFLINE", " loopback "} {
+	for _, mode := range []string{"offline", "OFFLINE", " offline "} {
 		caps, useRelay := windowsSandboxNetwork(mode)
 		if len(caps) != 0 {
 			t.Errorf("mode %q granted capabilities %v, want none", mode, caps)
 		}
 		if useRelay {
 			t.Errorf("mode %q should not start an egress relay; it has no egress", mode)
+		}
+	}
+}
+
+// loopback reaches the services on this machine without holding a network
+// capability of its own.
+//
+// The mode was indistinguishable from offline here until 2026-09-08: no
+// capability and no relay, so a sandbox in the mode whose entire meaning is
+// "reach 127.0.0.1" reached nothing. What it must NOT gain along the way is a
+// capability -- internetClient would let the container connect wherever it liked
+// and take the allowlist out of the path entirely. The route is the relay, so
+// every destination is still the parent proxy's decision, and the only thing
+// this mode changes is one rule there.
+func TestWindowsLoopbackModeRelaysAndHoldsNoCapability(t *testing.T) {
+	for _, mode := range []string{"loopback", "LOOPBACK", " loopback "} {
+		caps, useRelay := windowsSandboxNetwork(mode)
+		if len(caps) != 0 {
+			t.Errorf("mode %q granted capabilities %v; the container must reach the network only through the relay", mode, caps)
+		}
+		if !useRelay {
+			t.Errorf("mode %q got no relay, so it cannot reach the loopback services that are its whole purpose", mode)
 		}
 	}
 }

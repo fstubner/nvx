@@ -48,7 +48,7 @@ whether the kernel honours it is not.
 | Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes⁵ (TCP and UDP; UDP refused at bind) |
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
-| Any loopback service reachable | No, unless the policy lists it¹¹ | No (loopback-only netns) | No⁶ (proxy port only) |
+| Any loopback service reachable | No, unless the policy lists it¹¹, or `network.mode: loopback`¹³ | No, unless the policy lists it, or `network.mode: loopback`¹³ | No⁶ (proxy port only), or `network.mode: loopback`¹³ |
 | One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | Via `--connect` for one run, except in `offline`/`loopback`¹² | Via `--connect` for one run¹² |
 | Another project's sandbox reachable over loopback | No¹⁰ (per-project package) | No (each has its own netns) | Untested |
 | A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
@@ -665,3 +665,44 @@ native provider. `TestDockerSaysItCannotCarryConnect` covers every platform and
 mode, against `connectRefusalFor` -- a pure function for the reason `dockerRunArgs`
 is one, since reaching the decision through the launch path needs Docker
 installed and a sandbox that starts.
+
+¹³ **`network.mode: loopback`, and what it means on each platform.**
+
+The mode's definition lives in one rule in the egress proxy: a loopback
+destination is permitted without an `allow_hosts` entry, and only in this mode.
+
+Until 2026-09-08 that rule was unreachable on three of the four backends, so the
+mode was `offline` by another name wherever it was not macOS. Windows granted no
+network capability and started no relay. Linux gave it `buildOfflineNetworkFilter`,
+which denies `connect()` outright, so the contained process could not reach the
+proxy that implements the mode. Docker runs it with `--network none`. Nothing
+caught it because the only test of the mode was of the proxy rule itself, in a
+state where the proxy could not be consulted.
+
+Windows and Linux now route it through the relay, exactly as `proxy` mode does.
+Neither gains any OS-level reach: Windows still holds no network capability,
+Linux still runs in its own network namespace, and every destination is still the
+parent proxy's decision. The single difference from `proxy` is that one rule.
+
+**So the mode covers different traffic on macOS than it does elsewhere, and that
+is worth stating rather than smoothing over.** macOS grants loopback in the
+Seatbelt profile, so the sandbox reaches any local port over any protocol,
+including a raw connection to a database. Windows and Linux reach loopback
+through an HTTP proxy, which covers what a proxy-aware client sends and does not
+cover a raw socket. Closing that gap on Linux would need transparent redirection
+inside the namespace (iptables plus a `SO_ORIGINAL_DST` relay), which is a
+dependency and a mechanism this project does not otherwise carry; narrowing macOS
+to match would remove a capability people on that platform have today. Neither is
+done here.
+
+Docker still refuses the mode's reach, for the reason it refuses `proxy`: nvx
+would be handing the container a proxy address and trusting it to use one, so the
+allowlist would be advisory. `--network none` stands.
+
+`scripts/sandbox-smoke.sh` measures it on Linux CI, as a CONNECT to the proxy in
+both modes: refused under the default, tunnelled under `loopback`. The default-mode
+half is the control, since a 200 alone is also what a sandbox with an accidental
+route out would produce. Windows has unit coverage of the two decisions
+(`TestWindowsLoopbackModeRelaysAndHoldsNoCapability`) and no end-to-end run, which
+is the same standing as every other Windows row here: hosted runners refuse to
+create AppContainer children.

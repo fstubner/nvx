@@ -45,11 +45,17 @@ func TestDefaultGuestHomeLeavesRoomForTheSocket(t *testing.T) {
 }
 
 // TestWindowsEgressNeedsRelayCoversEveryMode ties the relay decision to the modes
-// that must not have one. "open" is the documented opt-out and offline/loopback
-// have no egress to allowlist; everything else, including an unset mode, must be
-// relayed rather than silently connecting direct.
+// that must not have one. "open" is the documented opt-out and offline has no
+// egress to allowlist; everything else, including an unset mode, must be relayed
+// rather than silently connecting direct.
+//
+// loopback was in the first list until 2026-09-08, which made it offline by
+// another name on this platform: no capability and no relay reaches nothing, and
+// this mode exists to reach the services on 127.0.0.1. It relays, like proxy,
+// and the capability check in sandbox_network_windows_test.go is what keeps that
+// from meaning more.
 func TestWindowsEgressNeedsRelayCoversEveryMode(t *testing.T) {
-	for _, mode := range []string{"open", "OPEN", " open ", "offline", "loopback", "LOOPBACK"} {
+	for _, mode := range []string{"open", "OPEN", " open ", "offline", "OFFLINE"} {
 		if windowsEgressNeedsRelay(mode) {
 			t.Errorf("mode %q should not use the relay", mode)
 		}
@@ -57,7 +63,7 @@ func TestWindowsEgressNeedsRelayCoversEveryMode(t *testing.T) {
 	// An unrecognised or empty mode must fail towards enforcement, not away from
 	// it: reaching the direct path by typo is how an allowlist quietly stops
 	// applying.
-	for _, mode := range []string{"proxy", "PROXY", "", "  ", "prxy", "strict"} {
+	for _, mode := range []string{"proxy", "PROXY", "", "  ", "prxy", "strict", "loopback", "LOOPBACK"} {
 		if !windowsEgressNeedsRelay(mode) {
 			t.Errorf("mode %q must use the relay; anything unrecognised has to fail towards enforcement", mode)
 		}
