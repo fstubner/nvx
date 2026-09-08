@@ -300,6 +300,16 @@ type connectMapping struct {
 	Inside int
 }
 
+// connectEnvVar names the variable that tells the contained tool where to dial.
+//
+// The in-sandbox port cannot be the host's, so a tool cannot simply use the
+// number its documentation gives. Publishing it in the environment means a
+// wrapper script or a tool that reads its endpoint from configuration needs
+// nothing hardcoded: NVX_CONNECT_9222=19222 for `--connect 9222`.
+func connectEnvVar(hostPort int) string {
+	return "NVX_CONNECT_" + strconv.Itoa(hostPort)
+}
+
 // parseConnectSpec reads "9222" or "9222:19222" as host[:inside].
 //
 // Host-first, the mirror of parseExposeSpec's container-first: in both cases the

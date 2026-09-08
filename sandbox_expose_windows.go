@@ -5,11 +5,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 )
 
@@ -213,34 +211,7 @@ func maintainExposeTunnel(ctx context.Context, sock, local string) {
 	}
 }
 
-// spliceConns copies in both directions until either side is done, then closes
-// both. Half-close is deliberately not preserved: an HTTP client that finishes
-// its request and waits for a response needs the other direction to stay open,
-// and closing both on the first EOF would cut the response short -- so each
-// direction runs to completion before anything is closed.
-func spliceConns(a, b net.Conn) {
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		_, _ = io.Copy(a, b)
-		closeWrite(a)
-	}()
-	go func() {
-		defer wg.Done()
-		_, _ = io.Copy(b, a)
-		closeWrite(b)
-	}()
-	wg.Wait()
-	_ = a.Close()
-	_ = b.Close()
-}
-
-// closeWrite signals end-of-stream to the peer without tearing down the other
-// direction, where the connection type supports it.
-func closeWrite(c net.Conn) {
-	type writeCloser interface{ CloseWrite() error }
-	if wc, ok := c.(writeCloser); ok {
-		_ = wc.CloseWrite()
-	}
-}
+// spliceConns and closeWrite live in sandbox_conn_splice.go. They were here
+// while Windows was the only platform that joined two connections; the macOS
+// --connect relay needs the same half-close behaviour, and a second copy of it
+// is how the two would drift.

@@ -245,24 +245,8 @@ func startConnectListeners(ctx context.Context, guestHome string, m connectMappi
 	return inside, nil
 }
 
-// connectEnvVar names the variable that tells the contained tool where to dial.
-//
-// The in-sandbox port cannot be the host's, so a tool cannot simply use the
-// number its documentation gives. Publishing it in the environment means a
-// wrapper script or a tool that reads its endpoint from configuration needs
-// nothing hardcoded: NVX_CONNECT_9222=19222 for `--connect 9222`.
-func connectEnvVar(hostPort int) string {
-	return "NVX_CONNECT_" + strconv.Itoa(hostPort)
-}
+// connectEnvVar lives in sandbox_native.go, next to connectMapping, since macOS
+// publishes the same variable.
 
-// freeLoopbackPort asks the OS for a port and returns it. Racy in principle, and
-// the same approach the expose listener uses; the window is microseconds and the
-// alternative is guessing a number that might already be taken.
-func freeLoopbackPort() int {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0
-	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
-}
+// freeLoopbackPort lives in sandbox_conn_splice.go, with the other helpers the
+// tunnels share across platforms.

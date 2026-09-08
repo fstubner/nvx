@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+* **`--connect` works on macOS.** A contained tool can reach one service already
+  running on your machine -- a browser with remote debugging on, a local
+  database, an emulator -- named one port at a time, the same way as on Windows:
+
+  ```
+  nvx --connect 9222:19222 npx some-tool --endpoint http://127.0.0.1:19222
+  ```
+
+  It was Windows-only because that is where it was built, and the flag warned
+  and did nothing elsewhere. The need is the same on macOS: in the default
+  `proxy` mode the Seatbelt profile permits outbound connections to the egress
+  proxy's own ports and nothing else, so a contained tool cannot reach your
+  database either.
+
+  macOS could have taken a shortcut. The sandbox shares the host's loopback
+  there, so permitting the service's own port in the profile would have worked,
+  with no listener and no second port number. nvx runs the relay anyway and the
+  profile opens only the relay's port. That keeps one meaning for the flag on
+  both platforms -- the same command line, the same two-number rule, the same
+  `NVX_CONNECT_<port>` -- and keeps the property the feature is for: the
+  contained process chooses when to connect, and nvx chooses to what.
+
+  No peer check on macOS, unlike Windows, and that is a measured difference
+  rather than an omission. Windows needs one because every sandbox on a machine
+  shares a package identity and could otherwise reach another's tunnel. On macOS
+  a process outside any sandbox can already open the service itself, so the relay
+  hands it nothing, and another sandbox cannot reach the relay's port because its
+  own profile permits only its own proxy ports.
+
+  `scripts/sandbox-smoke-macos.sh` drives it on CI hardware against a real
+  service, and runs the same contained fetch **without** `--connect` first. That
+  order is the point: if macOS ever stopped enforcing the profile's network
+  rules, the fetch would succeed either way and a one-sided test would pass while
+  measuring nothing.
+
+  Linux still does not have it, and the warning there now says so plainly instead
+  of calling `--connect` a Windows feature. Linux is the harder one: its sandbox
+  runs in a loopback-only network namespace, so your services are unreachable at
+  the routing layer, and closing that needs the relay treatment the egress proxy
+  already gets over AF_UNIX.
+
 ## [0.6.0] - 2026-09-08
 
 ### Removed

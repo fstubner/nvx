@@ -49,7 +49,7 @@ whether the kernel honours it is not.
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes⁵ (TCP and UDP; UDP refused at bind) |
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
 | Any loopback service reachable | No, unless the policy lists it¹¹ | No (loopback-only netns) | No⁶ (proxy port only) |
-| One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | No | No |
+| One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | No | Via `--connect` for one run¹² |
 | Another project's sandbox reachable over loopback | No¹⁰ (per-project package) | No (each has its own netns) | Untested |
 | A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
@@ -472,8 +472,10 @@ rather than trusting `WRITE_OUTSIDE=DENIED`.
 | Hardening | `--cap-drop=ALL`, `--security-opt=no-new-privileges`, `--pids-limit`, `tmpfs /tmp`. |
 | `network.mode: offline` / `loopback` | **Enforced** via `--network none` (no interfaces at all). |
 | `network.mode: proxy` | **Not enforced** — the allowlist would be cooperative only, so proxy mode is disallowed under Docker. Use the native provider for allowlisted egress. |
-| Docker not installed / not running | Fails closed with a clear error before anything launches. |
-
+| Docker not installed / not running | Fails closed with a clear error before anything launches. |
+
+
+
 Measured, not read off the arguments. Every row above except the proxy one is
 asserted by `scripts/sandbox-smoke-docker.sh` against a container this project
 launches on a Linux runner: that the command ran inside a container, that the
@@ -600,3 +602,33 @@ that run only; it used to be written into the grants store for ever.
 So `--connect` is no longer "the only route to a host service" — it is the only
 *ephemeral, peer-verified* one. `allow_hosts` is the durable form, and being
 durable is why it has to be written down rather than agreed to at a prompt.
+
+
+¹² **`--connect` on macOS.**
+
+macOS shares its loopback with the sandbox, so a host service is denied there
+rather than unreachable: the Seatbelt profile in `proxy` mode permits the egress
+proxy's own ports and stops at that. The profile could therefore name the
+service's port and be done with it. nvx runs a listener anyway and opens only
+that listener's port, which keeps one meaning for the flag across platforms --
+the same command, the same two-number rule, the same `NVX_CONNECT_<port>`, and
+the same property that nvx picks the destination while the contained process
+picks the moment.
+
+Windows needs a peer check on its tunnel because every sandbox there shares one
+package identity. macOS needs none: a process outside any sandbox can open the
+service directly already, and another sandbox cannot reach the listener, since
+its own profile permits only its own proxy ports.
+
+Two things back this. `TestSeatbeltConnectOpensTheRelayPortAndNotTheService`
+asserts the generated profile names the listener and not the service, which is
+the profile-only confidence every other macOS row carries.
+`scripts/sandbox-smoke-macos.sh` goes further on CI hardware: it runs the same
+contained fetch twice, once without `--connect` and once with, and fails if the
+first one succeeds. A macOS that stopped enforcing the profile's network rules
+would fail that smoke.
+
+Linux has no `--connect`. Its sandbox sits in a loopback-only network namespace,
+where the host's services are unreachable at the routing layer, so closing this
+needs the relay treatment the egress proxy already gets over AF_UNIX. The flag
+warns there and the run continues.

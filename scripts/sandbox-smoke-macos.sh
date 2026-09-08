@@ -58,6 +58,68 @@ if [[ $rc -ne 0 || ! -f "$PROBE" ]]; then
   exit 1
 fi
 
+# --connect: the sandbox reaches one named service on this machine, and only
+# because it was named.
+#
+# Both directions are checked, and the order matters. Without the negative run
+# first, a positive result proves nothing: if macOS were not enforcing the
+# profile's network rules at all, the contained fetch would succeed whether or
+# not --connect was passed, and this test would pass while measuring nothing.
+echo "Testing --connect against a service on this machine..."
+cat > "$PROJ/service.js" <<'JS'
+const fs = require('fs'), http = require('http');
+const s = http.createServer((q, r) => r.end('SERVICE_OK'));
+s.listen(0, '127.0.0.1', () => fs.writeFileSync(process.argv[2], String(s.address().port)));
+JS
+node "$PROJ/service.js" "$PROJ/port.txt" &
+SVC_PID=$!
+trap 'kill $SVC_PID 2>/dev/null || true; rm -rf "$PROJ"' EXIT
+for _ in $(seq 1 50); do [[ -s "$PROJ/port.txt" ]] && break; sleep 0.1; done
+if [[ ! -s "$PROJ/port.txt" ]]; then
+  echo "the stand-in host service never reported its port" >&2
+  exit 1
+fi
+SVC_PORT="$(cat "$PROJ/port.txt")"
+
+# Dials NVX_CONNECT_<port> when nvx published it, and the service's own port
+# otherwise -- which is what the uncontained-reach check needs.
+cat > "$PROJ/client.js" <<'JS'
+const http = require('http');
+const host = process.argv[2];
+const port = process.env['NVX_CONNECT_' + host] || host;
+http.get({ host: '127.0.0.1', port: Number(port) }, res => {
+  let b = '';
+  res.on('data', d => (b += d));
+  res.on('end', () => console.log('GOT ' + b));
+}).on('error', e => console.log('FAILED ' + e.code));
+JS
+
+set +e
+NOCONNECT="$("$NVX" -y --strict shim node "$PROJ/client.js" "$SVC_PORT" 2>&1)"
+set -e
+if grep -q "GOT SERVICE_OK" <<<"$NOCONNECT"; then
+  echo "$NOCONNECT" >&2
+  echo "a contained process reached 127.0.0.1:$SVC_PORT with no --connect; the Seatbelt network rules are not containing it" >&2
+  exit 1
+fi
+if ! grep -q "FAILED" <<<"$NOCONNECT"; then
+  echo "$NOCONNECT" >&2
+  echo "the uncontained-reach check did not run: the probe neither connected nor reported a failure" >&2
+  exit 1
+fi
+
+set +e
+CONNECTED="$("$NVX" -y --strict --connect "$SVC_PORT" shim node "$PROJ/client.js" "$SVC_PORT" 2>&1)"
+CRC=$?
+set -e
+if [[ $CRC -ne 0 ]] || ! grep -q "GOT SERVICE_OK" <<<"$CONNECTED"; then
+  echo "$CONNECTED" >&2
+  echo "--connect did not reach the service (exit $CRC)" >&2
+  exit 1
+fi
+kill $SVC_PID 2>/dev/null || true
+trap 'rm -rf "$PROJ"' EXIT
+
 # An actual install: see the Linux sibling for why. It exercises the runtime's
 # own child processes, a writable HOME for the npm cache and the registry
 # through the egress proxy, none of which a `node -e` touches -- and the docker

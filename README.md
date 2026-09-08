@@ -173,11 +173,11 @@ onto npm, and nvx does not reinterpret a word that belongs to another tool:
                            refuses connections into an AppContainer. The two
                            numbers must differ; omit the host one to have a free
                            port picked and printed. Grants no network capability
-  --connect <host>[:<in>]  (Windows) Let the sandbox reach one service already
-                           running on your machine — the mirror of `--expose`.
-                           Give the port your service uses; nvx runs a listener
-                           inside the sandbox and dials the real one itself. The
-                           two numbers must differ. Grants no network capability
+  --connect <host>[:<in>]  (Windows, macOS) Let the sandbox reach one service
+                           already running on your machine — the mirror of
+                           `--expose`. Give the port your service uses; nvx runs
+                           a listener and dials the real one itself. The two
+                           numbers must differ. Grants no network capability
 
 Passed to the wrapped command only, not before it:
   --filesystem-provider=<name>  Override isolation.filesystem.provider
@@ -337,7 +337,7 @@ system.
 | Raw TCP/UDP bypass blocked at OS | Yes — measured (no network capability granted) | Yes — CI (netns + seccomp UDP deny) | Yes — CI (TCP and UDP; which layer refuses TCP is untested) |
 | Fail-closed if FS/network primitive missing | Yes — measured | Yes — CI (Landlock 5.13+, iproute2 for netns) | Yes — CI (refuses to run without `sandbox-exec`) |
 | A contained server reachable from the host | Only via `--expose` | Yes | Yes |
-| One named host service reachable from the sandbox | Only via `--connect` | No | No |
+| One named host service reachable from the sandbox | Only via `--connect` | No | Only via `--connect` |
 
 **What backs the Windows column, and what does not.** Every "measured" above means
 a person ran it on a real Windows machine before a release. **No automated check
@@ -846,10 +846,10 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   the package to `typosquatting.trusted_packages`, which exempts it — both of
   which give up the check everywhere, so prefer the first two.
 
-- **On Windows, a contained tool needs `--connect` to reach a service running on
-  your machine.** The other direction, and the same reason: the sandbox has no
-  route to your loopback, and the egress proxy refuses host loopback destinations
-  on purpose. A contained tool that has to talk to something you are already
+- **On Windows and macOS, a contained tool needs `--connect` to reach a service
+  running on your machine.** The other direction, and the same reason: the
+  sandbox has no route to your loopback, and the egress proxy refuses host
+  loopback destinations on purpose. A contained tool that has to talk to something you are already
   running — a browser with remote debugging on, a local database, a device
   emulator — gets there one named port at a time:
 
@@ -883,6 +883,25 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   that is not part of this run, so a concurrent sandbox is turned away and the
   refusal is logged. It fails closed: a peer nvx cannot place inside this run does
   not get through.
+
+  **macOS reaches the same place by a different route.** What stops a contained
+  tool there is the Seatbelt profile, which in the default `proxy` mode permits
+  outbound connections to the egress proxy's own ports and nothing else. So the
+  profile could simply name your service's port and be done. nvx runs the relay
+  anyway, and the profile opens only the relay's port: the command, the two-number
+  rule and `NVX_CONNECT_<port>` then mean the same thing on both platforms, and
+  the sandbox reaches a pipe whose far end nvx chose rather than an address it
+  could have guessed.
+
+  The peer check above is Windows-only, and is not missing on macOS. There, a
+  process outside any sandbox can already open your service directly, so the relay
+  hands it nothing; another sandbox cannot reach the relay's port, because its own
+  profile permits only its own proxy ports.
+
+  **Linux does not have `--connect` yet.** The flag warns and the run continues.
+  The sandbox there sits in a network namespace of its own, so your loopback is
+  not merely denied but unreachable, and closing that needs the same kind of relay
+  nvx already runs for the egress proxy.
 
   In a policy file it is `isolation.network.connect_ports`, and adding one counts
   as loosening, so a project cannot grant itself a host port without approval.
