@@ -101,7 +101,7 @@ var setUserPath = func(value string, expand bool) error {
 
 // parseRegExpandable reports whether `reg query` said the value is
 // REG_EXPAND_SZ -- the type Windows ships the User PATH as, and the one that
-// makes %USERPROFILE%in resolve.
+// makes %USERPROFILE%\bin resolve.
 func parseRegExpandable(regOut string) bool {
 	return strings.Contains(regOut, "REG_EXPAND_SZ")
 }

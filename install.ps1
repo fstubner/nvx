@@ -21,7 +21,7 @@ if (-not (Test-Path $binDir)) {
 # 1. Update PATH environment variables for User
 #
 # Read raw, not through [Environment]::GetEnvironmentVariable: that one EXPANDS
-# a REG_EXPAND_SZ value, so an entry written as %USERPROFILE%in comes back as
+# a REG_EXPAND_SZ value, so an entry written as %USERPROFILE%\bin comes back as
 # the expanded path, and writing it back would bake today's expansion into the
 # registry for ever. DoNotExpandEnvironmentNames keeps what the user actually
 # wrote.

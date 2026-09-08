@@ -627,7 +627,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **`nvx doctor --fix` no longer changes the type of your User PATH.** Windows
   stores that value as `REG_EXPAND_SZ`, which is what makes an entry written as
-  `%USERPROFILE%in` or `%JAVA_HOME%in` resolve — the value is expanded when
+  `%USERPROFILE%\bin` or `%JAVA_HOME%\bin` resolve — the value is expanded when
   it is read. The repair wrote it back through
   `[Environment]::SetEnvironmentVariable`, which always writes `REG_SZ`, so it
   converted the type on every machine it ran on and any such entry silently
