@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+* **`release_age.trusted_packages`: skip the cooling-off window for one package,
+  and only that.** The window holds back a version published in the last 24 hours
+  because a supply-chain compromise is usually caught inside it. Waiving it for a
+  package you trust needed `typosquatting.trusted_packages` before, which also
+  turned off typosquat detection for that name -- two unrelated judgements that
+  could not be made separately.
+
+  ```json
+  { "release_age": { "trusted_packages": ["chrome-devtools-mcp", "@upstash/*"] } }
+  ```
+
+  Names and globs, matched case-insensitively, by the same matcher the typosquat
+  list uses. Adding one counts as loosening, so a project file naming a package
+  needs approval like any other exemption.
+
+  The case that forced it is an MCP server on a floating version. Its client
+  starts it non-interactively, where a prompt is denied rather than asked, so a
+  version published that morning stops the server starting with no way to answer.
+  The alternatives were to widen the window for every package or to switch the
+  check off.
+
+  **`typosquatting.trusted_packages` no longer waives the release-age window.**
+  A policy relying on that will see the prompt return -- and in the
+  non-interactive case a denial -- so when a package is in that list and the
+  window trips, nvx names the list and says which one to move it to instead of
+  leaving the change to be discovered.
+
 ### Fixed
 
 * **`network.mode: loopback` did nothing on Windows, Linux and Docker.** Each

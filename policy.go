@@ -38,10 +38,23 @@ type TyposquattingPolicy struct {
 }
 
 // ReleaseAgePolicy warns when installing npm package versions published within
-// min_age_hours. Trusted packages (typosquatting.trusted_packages) are exempt.
+// min_age_hours.
+//
+// TrustedPackages waives the cooling-off window for the names it lists, and
+// nothing else. Until 2026-09-08 the only way to waive it was
+// typosquatting.trusted_packages, which also turned off typosquat detection for
+// that name -- so the narrow intent ("this package is exactly what it says it
+// is, I do not need to wait a day") could not be expressed without giving up an
+// unrelated check. The two lists are separate now, and each waives its own.
+//
+// The case that forced it: an MCP server whose package publishes often. Its
+// client starts it non-interactively, where a prompt is denied rather than
+// asked, so a version published that morning stops the server from starting at
+// all with no way to answer.
 type ReleaseAgePolicy struct {
-	Enabled     *bool `json:"enabled,omitempty"`
-	MinAgeHours int   `json:"min_age_hours,omitempty"`
+	Enabled         *bool    `json:"enabled,omitempty"`
+	MinAgeHours     int      `json:"min_age_hours,omitempty"`
+	TrustedPackages []string `json:"trusted_packages,omitempty"`
 }
 
 type RuntimeConfig struct {
@@ -200,8 +213,9 @@ func DefaultPolicy() Policy {
 			TrustedPackages: []string{},
 		},
 		ReleaseAge: ReleaseAgePolicy{
-			Enabled:     boolPtr(true),
-			MinAgeHours: 24,
+			Enabled:         boolPtr(true),
+			MinAgeHours:     24,
+			TrustedPackages: []string{},
 		},
 		Runtime: RuntimeConfig{
 			Default:  "node",
@@ -348,9 +362,30 @@ func (p Policy) ReleaseAgeMinHours() int {
 // IsTrustedPackage returns true when pkgName is listed in typosquatting.trusted_packages,
 // or matches a wildcard pattern (e.g. "@myorg/*", "internal-*").
 func (p Policy) IsTrustedPackage(pkgName string) bool {
+	return packageListMatches(p.Typosquatting.TrustedPackages, pkgName)
+}
+
+// IsReleaseAgeTrusted reports whether release_age.trusted_packages waives the
+// cooling-off window for this package.
+//
+// A separate list from the typosquat one on purpose. "This name is not a
+// misspelling of a popular package" and "I do not need to wait a day before
+// installing this" are different judgements, and a single list meant making
+// both to express either.
+func (p Policy) IsReleaseAgeTrusted(pkgName string) bool {
+	return packageListMatches(p.ReleaseAge.TrustedPackages, pkgName)
+}
+
+// packageListMatches compares a package name against a list of names and globs,
+// case-insensitively. Shared so the two trusted lists cannot drift in how they
+// match, which is the kind of difference nobody would think to test for.
+func packageListMatches(list []string, pkgName string) bool {
 	lower := strings.ToLower(pkgName)
-	for _, t := range p.Typosquatting.TrustedPackages {
-		tLower := strings.ToLower(t)
+	for _, t := range list {
+		tLower := strings.ToLower(strings.TrimSpace(t))
+		if tLower == "" {
+			continue
+		}
 		if tLower == lower {
 			return true
 		}
@@ -786,6 +821,12 @@ func policyLoosens(before, after Policy) bool {
 	if hostsAdded(before.Typosquatting.TrustedPackages, after.Typosquatting.TrustedPackages) {
 		return true
 	}
+	// Same for the release-age list, and for the same reason: a project file that
+	// names a package here is asking to skip the cooling-off window for it, which
+	// is the window's whole point on the day a compromise lands.
+	if hostsAdded(before.ReleaseAge.TrustedPackages, after.ReleaseAge.TrustedPackages) {
+		return true
+	}
 	// Lowering the typosquat edit distance finds fewer typosquats. The default is
 	// 2; a project file setting 1 halves what the check catches, and MergePolicies
 	// takes any positive local value, so it applies. Nothing here noticed.
@@ -897,6 +938,20 @@ func MergePolicies(global, local Policy) Policy {
 	}
 	if local.ReleaseAge.MinAgeHours > 0 {
 		merged.ReleaseAge.MinAgeHours = local.ReleaseAge.MinAgeHours
+	}
+	// Unioned, like every other list here: a project file can add to the global
+	// one and cannot take an entry off it. policyLoosens then makes each addition
+	// something the developer approves.
+	releaseTrusted := make(map[string]bool)
+	for _, t := range global.ReleaseAge.TrustedPackages {
+		releaseTrusted[strings.ToLower(t)] = true
+	}
+	for _, t := range local.ReleaseAge.TrustedPackages {
+		tLower := strings.ToLower(t)
+		if !releaseTrusted[tLower] {
+			releaseTrusted[tLower] = true
+			merged.ReleaseAge.TrustedPackages = append(merged.ReleaseAge.TrustedPackages, t)
+		}
 	}
 
 	if local.Isolation.EnabledSet {
