@@ -1681,7 +1681,14 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 		}
 
 		// 3. Installation Script Execution Check
-		if hasScripts {
+		if hasScripts && policy.InstallScriptsTrusted(pkgName) {
+			// Said out loud every time, and as a warning rather than a detail. The
+			// exemption skips the one prompt standing between a compromised
+			// postinstall and this machine, so the run that used it says so whether
+			// or not anyone asked for detail.
+			LogWarn("Running %s@%s install scripts unasked: it is named in install_scripts.trusted_packages.", pkgName, resolvedVer)
+			auditLog(nvxHome, "install_scripts_exempt", map[string]string{"package": pkgName, "version": resolvedVer})
+		} else if hasScripts {
 			LogWarn("Package %s@%s contains installation scripts (preinstall/postinstall/install).", pkgName, resolvedVer)
 			LogWarn("Malicious packages often execute rogue code during the install phase.")
 			if policy.EnforceIgnoreScripts {
@@ -1737,9 +1744,10 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 				return 1, "its vulnerability checks could not be completed"
 			}
 			LogWarn("Proceeding without vulnerability database results.")
-		} else if len(vulns) > 0 {
+		} else if remaining, accepted := splitAllowedAdvisories(policy, vulns); len(remaining) > 0 {
+			reportAcceptedAdvisories(nvxHome, accepted)
 			LogError("Vulnerability Scan Alert: Found active vulnerabilities!")
-			for pkgKey, list := range vulns {
+			for pkgKey, list := range remaining {
 				fmt.Fprintf(os.Stderr, "  \x1b[31m●\x1b[0m %s:\n", pkgKey)
 				for _, v := range list {
 					fmt.Fprintf(os.Stderr, "    - %s: %s\n", v.ID, v.Summary)
@@ -1750,6 +1758,12 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 				LogError("Installation aborted: the vulnerability warning was not approved.")
 				return 1, "a package has a known active vulnerability and the warning was not approved"
 			}
+		} else if len(accepted) > 0 {
+			// Every advisory found was one the policy accepts. Reported, and never
+			// as "clean": a scan that found something and was told to allow it is a
+			// different state from one that found nothing, and printing the latter
+			// would be nvx misreporting its own result.
+			reportAcceptedAdvisories(nvxHome, accepted)
 		} else {
 			LogDetail("Vulnerability scan clean. No active CVEs found.")
 		}

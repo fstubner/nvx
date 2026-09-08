@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **`install_scripts.trusted_packages` and `vulnerabilities.allowed_advisories`:
+  the last two install-time checks can be waived for a named target.** Both are
+  empty by default, so every check still applies to every package until a policy
+  names an exception, and each waives only its own check.
+
+  ```json
+  {
+    "install_scripts": { "trusted_packages": ["esbuild", "sharp"] },
+    "vulnerabilities": { "allowed_advisories": ["GHSA-xxxx-yyyy-zzzz"] }
+  }
+  ```
+
+  **Install scripts** were on/off for the whole machine: `enforce_ignore_scripts`
+  blocked them everywhere, and otherwise every package with a postinstall raised
+  the same prompt. `esbuild`, `sharp` and Playwright fetch a platform binary in
+  theirs, so the answer is always yes -- and a prompt whose answer is always yes
+  teaches a person to approve prompts without reading them, which is the opposite
+  of what it is for. Naming a package waives the prompt and
+  `enforce_ignore_scripts` together, which is how "block install scripts except
+  for these" is expressed. It is the sharpest of these exemptions, so every run
+  that uses one says which package it let through, and records it.
+
+  **Vulnerabilities** had no setting at all: a package with a known advisory
+  prompted on every install, and the only way past it was to answer. Advisories
+  are accepted by ID, not by package, because that matches the decision a person
+  makes -- "this finding does not apply to how we use it" -- where exempting the
+  package would also waive the advisory published after that assessment. A scan
+  whose findings were all accepted reports them rather than reporting "clean".
+
+  No severity floor, and that is a limit rather than an omission: nvx reads only
+  the id and summary from OSV's batch response, so there is no severity to compare
+  against, and a threshold it could not evaluate would be a setting that silently
+  did nothing.
+
 * **`release_age.trusted_packages`: skip the cooling-off window for one package,
   and only that.** The window holds back a version published in the last 24 hours
   because a supply-chain compromise is usually caught inside it. Waiving it for a

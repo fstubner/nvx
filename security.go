@@ -667,3 +667,44 @@ func resolveVersionQuery(versionQuery string, meta NpmRegistryMetadata) (string,
 
 	return "", fmt.Errorf("%q is not an exact version, a dist-tag or a range nvx can resolve; nvx cannot check a version it cannot resolve", q)
 }
+
+// splitAllowedAdvisories separates the advisories a policy has accepted from the
+// ones it has not.
+//
+// Filtered here rather than by skipping the whole scan for a package: an
+// exemption is for one assessed finding, and dropping the package from the query
+// would also hide the advisory published after the assessment was made.
+//
+// Returns two maps in the same shape as the scan's own result, so the reporting
+// path is unchanged for anything not exempt.
+func splitAllowedAdvisories(policy Policy, found map[string][]OSVVuln) (remaining, accepted map[string][]OSVVuln) {
+	remaining = map[string][]OSVVuln{}
+	accepted = map[string][]OSVVuln{}
+	for pkgKey, list := range found {
+		for _, v := range list {
+			if policy.IsAllowedAdvisory(v.ID) {
+				accepted[pkgKey] = append(accepted[pkgKey], v)
+				continue
+			}
+			remaining[pkgKey] = append(remaining[pkgKey], v)
+		}
+	}
+	return remaining, accepted
+}
+
+// reportAcceptedAdvisories names what was allowed through, and records it.
+//
+// One line per advisory, on the console rather than only in the audit log. A
+// vulnerability that a policy file waived is the thing a person most needs to see
+// when they wonder why an install went quiet.
+func reportAcceptedAdvisories(nvxHome string, accepted map[string][]OSVVuln) {
+	for pkgKey, list := range accepted {
+		for _, v := range list {
+			LogWarn("Allowing a known vulnerability in %s: %s is named in vulnerabilities.allowed_advisories.", pkgKey, v.ID)
+			auditLog(nvxHome, "vulnerability_allowed", map[string]string{
+				"package":  pkgKey,
+				"advisory": v.ID,
+			})
+		}
+	}
+}
