@@ -55,6 +55,19 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	defer stopConnect()
 	cleanEnv = append(cleanEnv, connectEnv...)
 
+	// network.mode loopback reaches host services at their own addresses, over a
+	// relay the supervisor installs inside the namespace. This is the parent's
+	// half: the socket it carries them to, and the check that only loopback
+	// addresses are dialled.
+	if loopbackRedirectMode(netCtx.Mode) {
+		stopLoopback, lerr := openLoopbackSocket(guestHome, config.NvxHome)
+		if lerr != nil {
+			LogError("Could not open the loopback path for the sandbox: %v", lerr)
+			return 1, errSandboxDidNotStart
+		}
+		defer stopLoopback()
+	}
+
 	args := []string{
 		"__landlock-exec",
 		"--guest-home=" + guestHome,

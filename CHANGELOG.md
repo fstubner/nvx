@@ -23,18 +23,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defines the mode -- a loopback destination is allowed without an `allow_hosts`
   entry.
 
-  **The mode covers different traffic on macOS than elsewhere.** There it is
-  granted in the Seatbelt profile, so any protocol reaches any local port,
-  including a raw connection to a database. Through a proxy it covers what a
-  proxy-aware client sends, which is HTTP and HTTPS. Both are written down rather
-  than smoothed over; closing the gap either way is a decision, not a fix.
+  **Linux carries raw connections too.** Every loopback TCP connection in the
+  namespace is redirected to a relay, which asks the kernel what the connection
+  was for and carries it to the parent; the parent dials that address, and refuses
+  any that is not loopback. So a tool reaching your local database at
+  127.0.0.1:5432 arrives at 127.0.0.1:5432, with nothing named on the command line
+  and no second port number -- which is the difference between this mode and
+  `--connect`.
+
+  The refusal is the enforcement point rather than a formality: the socket sits in
+  the guest home, so a contained process can skip the relay, open it directly and
+  ask for any address it likes.
+
+  A server the **sandbox itself** runs stays reachable from inside it. The relay
+  tries the sandbox's own namespace before the host, so a contained `npm run dev`
+  on 127.0.0.1:3000 and a contained test client still find each other. nvx's own
+  listeners are excluded from the redirect, so egress does not take a hop through
+  it.
+
+  A Linux host whose kernel will not take the rules -- no iptables, or no nat
+  table inside an unprivileged user namespace -- falls back to the proxy-mediated
+  reach and says so. What is lost there is reach, not containment.
+
+  **Windows still covers only what a proxy-aware client sends.** Its reach comes
+  from the proxy alone, so a raw socket to a local database works on macOS and
+  Linux and does not there. Recorded rather than smoothed over.
 
   Docker keeps `--network none` in this mode, for the reason it refuses `proxy`:
   the allowlist would be advisory, since nothing stops a tool ignoring the proxy.
 
-  Measured on Linux CI as a CONNECT to the proxy in both modes -- refused under
-  the default, tunnelled under `loopback`. The default-mode half is the control: a
-  success alone is also what a sandbox with an accidental route out looks like.
+  Measured on Linux CI twice: as a CONNECT to the proxy in both modes -- refused
+  under the default, tunnelled under `loopback` -- and as a raw connection from a
+  client that knows nothing about HTTP_PROXY, which only arrives if the redirect
+  is carrying it. The same raw client ran under the default mode and failed, which
+  is the control: without it, success would equally be what a sandbox with an
+  accidental route out looks like.
 
 * **A project policy could switch the sandbox to `network.mode: loopback` without
   approval, and on macOS that handed it every local service.** The approval gate

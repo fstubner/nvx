@@ -684,25 +684,41 @@ Neither gains any OS-level reach: Windows still holds no network capability,
 Linux still runs in its own network namespace, and every destination is still the
 parent proxy's decision. The single difference from `proxy` is that one rule.
 
-**So the mode covers different traffic on macOS than it does elsewhere, and that
-is worth stating rather than smoothing over.** macOS grants loopback in the
-Seatbelt profile, so the sandbox reaches any local port over any protocol,
-including a raw connection to a database. Windows and Linux reach loopback
-through an HTTP proxy, which covers what a proxy-aware client sends and does not
-cover a raw socket. Closing that gap on Linux would need transparent redirection
-inside the namespace (iptables plus a `SO_ORIGINAL_DST` relay), which is a
-dependency and a mechanism this project does not otherwise carry; narrowing macOS
-to match would remove a capability people on that platform have today. Neither is
-done here.
+**Linux carries raw connections too, by redirecting them.** Every loopback TCP
+connection in the namespace is sent to a relay, which asks the kernel through
+`SO_ORIGINAL_DST` what the connection was for and carries it to the parent over
+AF_UNIX; the parent dials that address, and refuses any that is not loopback.
+That refusal is the enforcement point, and it is not a formality: the socket sits
+in the guest home, so a contained process can skip the relay, open it directly
+and name whatever address it likes. The address the tool dialled is the address
+reached, which is the whole difference from `--connect`.
+
+Two things it does not break. nvx's own listeners inside the namespace -- the
+egress proxy relay and any `--connect` port -- are excluded by rules that precede
+the redirect, so egress does not take a hop through this. And a server the
+SANDBOX runs stays reachable from inside it: the relay tries the namespace before
+the host, so a contained dev server on 127.0.0.1:3000 and a contained test client
+still find each other rather than reaching the developer's own port 3000.
+
+A host whose kernel will not take the rules -- no iptables, or no nat table
+inside an unprivileged user namespace -- falls back to the proxy-mediated reach
+and says so. That is the safe direction rather than a fail-closed case: what is
+lost is reach, not containment.
+
+**Windows still covers only what a proxy-aware client sends**, since its reach
+comes from the proxy alone. A raw socket to a local database works on macOS and
+Linux and does not on Windows. Recorded rather than smoothed over.
 
 Docker still refuses the mode's reach, for the reason it refuses `proxy`: nvx
 would be handing the container a proxy address and trusting it to use one, so the
 allowlist would be advisory. `--network none` stands.
 
-`scripts/sandbox-smoke.sh` measures it on Linux CI, as a CONNECT to the proxy in
-both modes: refused under the default, tunnelled under `loopback`. The default-mode
-half is the control, since a 200 alone is also what a sandbox with an accidental
-route out would produce. Windows has unit coverage of the two decisions
+`scripts/sandbox-smoke.sh` measures it on Linux CI twice over. As a CONNECT to the
+proxy in both modes -- refused under the default, tunnelled under `loopback` -- and
+then as a raw connection from a client that knows nothing about HTTP_PROXY, which
+only arrives if the redirect is carrying it. The same raw client ran earlier under
+the default mode and reported a failure, which is the control: without it, success
+here would equally be what a sandbox with an accidental route out looks like. Windows has unit coverage of the two decisions
 (`TestWindowsLoopbackModeRelaysAndHoldsNoCapability`) and no end-to-end run, which
 is the same standing as every other Windows row here: hosted runners refuse to
 create AppContainer children.
