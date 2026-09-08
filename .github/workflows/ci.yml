@@ -391,7 +391,11 @@ jobs:
         P="$HOME/nvx-bun-probe"; rm -rf "$P"; mkdir -p "$P"
         export NVX_HOME="$P/nvxhome"; mkdir -p "$NVX_HOME"
         NVX="$GITHUB_WORKSPACE/nvx"
-        "$NVX" -y install bun >/dev/null 2>&1 || { echo 'bun install failed'; exit 0; }
+        echo '--- nvx install bun:'
+        "$NVX" -y install bun 2>&1 | tail -6 || true
+        echo '--- installed versions:'
+        ls "$NVX_HOME/versions/bun" 2>&1 | head -3
+        arch
         "$NVX" -y default bun >/dev/null 2>&1
         "$NVX" init-shims >/dev/null 2>&1
         export PATH="$NVX_HOME/bin:$PATH"
