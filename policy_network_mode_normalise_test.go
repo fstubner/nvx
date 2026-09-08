@@ -106,7 +106,7 @@ func TestAskingForAStricterModeIsNotALoosening(t *testing.T) {
 	before := DefaultPolicy()
 	normalizePolicy(&before)
 
-	for _, mode := range []string{"offline ", "offline", " loopback"} {
+	for _, mode := range []string{"offline ", "offline", " offline"} {
 		after := DefaultPolicy()
 		after.Isolation.Network.Mode = mode
 		normalizePolicy(&after)
@@ -115,9 +115,15 @@ func TestAskingForAStricterModeIsNotALoosening(t *testing.T) {
 		}
 	}
 
+	// " loopback" was in that list until 2026-09-08, as a second example of a
+	// padded strict mode. It is not a strict mode: it reaches every service on
+	// 127.0.0.1, where the default reaches the ones allow_hosts names. Padding is
+	// still covered above, by the case that belongs there.
+	// See TestSwitchingToLoopbackModeAsksForApproval.
+
 	// ...and open still is one, padded or not, or the prompt stops protecting the
 	// case it exists for.
-	for _, mode := range []string{"open", "open ", " OPEN "} {
+	for _, mode := range []string{"open", "open ", " OPEN ", "loopback", " LOOPBACK "} {
 		after := DefaultPolicy()
 		after.Isolation.Network.Mode = mode
 		normalizePolicy(&after)

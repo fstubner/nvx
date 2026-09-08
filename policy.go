@@ -700,11 +700,25 @@ func ensureProjectPolicyTrust(nvxHome string) error {
 	return nil
 }
 
+// networkModeRank orders the modes by how much a contained process can reach,
+// so policyLoosens can tell a project file asking for permission from one giving
+// it up. Only the order matters; the numbers are not stored anywhere.
+//
+// loopback ranked alongside offline until 2026-09-08, which put it BELOW proxy
+// and made switching proxy -> loopback read as a tightening. It is the opposite:
+// proxy reaches a loopback service only when allow_hosts names it, and loopback
+// reaches every service on 127.0.0.1 without naming any. So a project policy
+// could hand a contained install the developer's database, dev servers and local
+// agents, and the approval gate saw a project asking for something stricter.
+//
+// It sits below open, which reaches the whole internet, and above proxy.
 func networkModeRank(mode string) int {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "open":
+		return 4
+	case "loopback":
 		return 3
-	case "offline", "loopback":
+	case "offline":
 		return 1
 	default: // proxy and unknown
 		return 2

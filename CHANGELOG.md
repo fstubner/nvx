@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A project policy could switch the sandbox to `network.mode: loopback` without
+  approval, and on macOS that handed it every local service.** The approval gate
+  ranks the modes by how much a contained process can reach, and `loopback` was
+  ranked with `offline`, below `proxy` -- so a project file changing `proxy` to
+  `loopback` read as asking for something *stricter* and was applied silently.
+
+  It is the opposite. `proxy` reaches a loopback service when `allow_hosts` names
+  it; `loopback` reaches every service on 127.0.0.1 without naming any. A
+  `.nvx-policy.json` lives in the repository, so this was one line in a pull
+  request pointing a contained install at the developer's database, their other
+  projects' dev servers, and any local agent.
+
+  Live on macOS, where the Seatbelt profile grants all of localhost in that mode.
+  Windows, Linux and Docker treated `loopback` as `offline`, so there was nothing
+  reachable to hand over -- which is also why nothing caught it.
+
+  `loopback` now ranks between `proxy` and `open`, so selecting it asks for
+  approval like any other loosening.
+
 * **The docker provider no longer accepts `--connect` in silence.** It never
   carried the flag: `dockerRunArgs` did not read the connect ports at all, so a
   command line or a policy asking for one launched a container that could not
