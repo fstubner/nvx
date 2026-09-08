@@ -100,6 +100,16 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 		return 127
 	}
 
+	// Before the profile is rendered: the relays resolve the in-sandbox ports the
+	// profile has to name.
+	connectEnv, stopConnect, err := startSeatbeltConnectRelays(&netCtx)
+	if err != nil {
+		LogError("Could not open a path to a host service for the sandbox: %v", err)
+		return 1
+	}
+	defer stopConnect()
+	cleanEnv = append(cleanEnv, connectEnv...)
+
 	// Only the guest home and the working directory are writable — matching
 	// the Windows AppContainer and Linux Landlock write scope. nvxHome (and
 	// therefore versions/*/npm_global, grants/, policy.json) and the runtime
@@ -230,6 +240,19 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	case "offline":
 		// Nothing. `(deny default)` above already refuses everything; emitting no
 		// network rule at all is what makes offline mean offline.
+	}
+
+	// Host services named by --connect, in every mode, including offline: the
+	// developer naming one has said which single service this run may reach, and
+	// offline means "no network of your own", not "nothing nvx was asked to hand
+	// you". The port here is nvx's own listener, never the service's own port,
+	// so the sandbox reaches the relay and nvx dials the service -- see
+	// sandbox_connect_darwin.go. A mapping with no resolved in-sandbox port
+	// yields no rule, so a relay that failed to bind cannot widen the profile.
+	for _, m := range netCtx.ConnectPorts {
+		if m.Inside > 0 {
+			fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"localhost:%d\"))\n", m.Inside)
+		}
 	}
 
 	return b.String()
