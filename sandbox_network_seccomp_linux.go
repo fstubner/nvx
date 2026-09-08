@@ -66,9 +66,21 @@ func seccompFilterForMode(networkMode string) (filter []syscall.SockFilter, want
 	switch strings.ToLower(strings.TrimSpace(networkMode)) {
 	case "open", "":
 		return nil, false
-	case "offline", "loopback":
+	case "offline":
 		return buildOfflineNetworkFilter(), true
-	case "proxy":
+	case "proxy", "loopback":
+		// loopback shared offline's filter until 2026-09-08, which made it a
+		// synonym for offline here: that filter denies connect() outright, so the
+		// contained process could not reach a loopback service, nvx's own relay, or
+		// anything else. The mode's meaning is the opposite.
+		//
+		// It takes proxy's filter because it IS proxy plus one rule, and that rule
+		// lives in the egress proxy rather than in the kernel. What the filter has
+		// to permit is identical: a TCP socket to reach the in-namespace relay,
+		// AF_UNIX to cross to the parent, and no UDP. The namespace still blocks
+		// every non-loopback route, and the parent proxy still decides every
+		// destination -- so a host outside the allowlist is refused in this mode
+		// exactly as it is in proxy.
 		return buildProxyNetworkFilter(), true
 	default:
 		return nil, false

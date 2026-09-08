@@ -293,7 +293,13 @@ Policies cascade: the global policy applies everywhere, and local policy files m
 * **`isolation.network.mode`**: How egress is governed.
   - `proxy` (default): parent-process HTTP CONNECT + SOCKS5 proxy with policy allowlist; injects `HTTP_PROXY` / `HTTPS_PROXY`.
   - `open`: no egress filtering.
-  - `offline` / `loopback`: block non-loopback egress at the proxy.
+  - `offline`: no network at all.
+  - `loopback`: the services on your own 127.0.0.1 are reachable without an
+    `allow_hosts` entry; everything else is blocked. On Windows and Linux that
+    means *through nvx's proxy*, so it reaches proxy-aware tools' HTTP and HTTPS
+    traffic and not a raw socket to a database; on macOS the sandbox shares your
+    loopback directly, so any protocol works. Selecting it in a project policy is
+    a loosening and needs approval.
 * **`runtime.versions`**: Pin runtime versions used inside the sandbox (e.g. `"node": "20"`).
 * **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project (`<project>/.nvx/npm_global`) instead of being shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch. Because that directory goes on your PATH, a project file that turns this on counts as a loosening and needs the same approval as an egress host.
 
@@ -923,9 +929,18 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   What is still untested there: which layer refuses the outbound connection the
   probe does observe being refused — DNS or connect — which on macOS is a real
   distinction rather than a pedantic one.
-- **On macOS, `network.mode: loopback` reaches every service on 127.0.0.1** — that
-  being the mode's entire purpose. The default `proxy` mode reaches only nvx's own
-  egress proxy, and `offline` reaches nothing.
+- **`network.mode: loopback` reaches services on 127.0.0.1 — by two different
+  routes, and they do not cover the same traffic.** On macOS the Seatbelt profile
+  grants loopback directly, so any protocol reaches any local port. On Windows and
+  Linux the sandbox has no route of its own and the reach comes from nvx's egress
+  proxy permitting loopback destinations, so it covers what a proxy-aware client
+  sends — HTTP and HTTPS — and not a raw connection to a local database. The
+  default `proxy` mode reaches loopback only where `allow_hosts` names it, and
+  `offline` reaches nothing.
+
+  Until 2026-09-08 the mode did nothing at all on Windows, Linux and Docker: each
+  treated it as `offline`, so a mode whose name says "reach these services"
+  reached none of them.
 
   Until 2026-08-20 that was not true: every restricted mode granted all of
   loopback, so a contained install could reach your database or another project's
