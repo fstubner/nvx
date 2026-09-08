@@ -496,21 +496,20 @@ func runSandbox(config SandboxConfig) int {
 		netCtx.HTTPProxyHost, netCtx.HTTPProxyPort = egress.HTTPListenHostPort()
 		netCtx.SOCKSProxyHost, netCtx.SOCKSProxyPort = egress.SOCKSListenHostPort()
 	}
-	// Both port tunnels are implemented for AppContainer only. Said out loud
-	// rather than silently ignored: a developer who asked for a port and got
-	// nothing debugs their own server first, and finds nothing wrong with it.
-	if runtime.GOOS != "windows" {
-		if len(netCtx.ExposePorts) > 0 {
-			LogWarn("--expose is a Windows feature; ports are not published on %s.", runtime.GOOS)
-		}
-		// --connect is carried on all three platforms now. What Linux cannot do is
-		// carry it in the two modes whose seccomp filter refuses the contained
-		// process any IP socket at all -- see connectUnsupportedForMode. Said out
-		// loud rather than silently dropped: a developer who asked for a port and
-		// got nothing debugs their own service first, and finds nothing wrong.
-		if len(netCtx.ConnectPorts) > 0 && runtime.GOOS == "linux" && connectUnsupportedForMode(netCtx.Mode) {
-			LogWarn("--connect cannot be honoured in network.mode %q on Linux: that mode denies the sandbox every IP socket, including the one it would use to reach the tunnel.", netCtx.Mode)
-			LogInfo("Use network.mode \"proxy\" (the default) or \"open\" for this run.")
+	// --expose is implemented for AppContainer only. Said out loud rather than
+	// silently ignored: a developer who asked for a port and got nothing debugs
+	// their own server first, and finds nothing wrong with it.
+	if runtime.GOOS != "windows" && len(netCtx.ExposePorts) > 0 {
+		LogWarn("--expose is a Windows feature; ports are not published on %s.", runtime.GOOS)
+	}
+	// --connect is carried by the native and sandbox-exec providers on all three
+	// platforms. The two cases below are where it cannot be, and each is reported
+	// for the same reason as above: a flag accepted in silence is the defect this
+	// feature keeps being fixed for.
+	if len(netCtx.ConnectPorts) > 0 {
+		if warn, hint := connectRefusalFor(canonical, runtime.GOOS, netCtx.Mode); warn != "" {
+			LogWarn("%s", warn)
+			LogInfo("%s", hint)
 		}
 	}
 
