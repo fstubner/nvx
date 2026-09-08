@@ -648,3 +648,20 @@ that can carry it, rather than accepting the flag and doing nothing.
 the negative half is load-bearing in a different way: a network namespace that
 silently failed to be created would leave the sandbox on this machine's loopback,
 and the positive result alone would then prove nothing.
+
+**The docker provider carries none of this, and reports it.** Every relay above
+has an in-sandbox half that is a process of nvx's: the AppContainer supervisor,
+the Landlock supervisor, or, on macOS, nvx itself on the other side of a profile
+rule. The Docker provider has no such process -- it launches the target command
+as the container's only one -- and the container has a network namespace of its
+own, so there is nothing inside it to listen on the in-sandbox port. In `offline`
+and `loopback`, the only two modes this provider enforces, `--network none` leaves
+the container its own loopback and nothing else regardless.
+
+Until 2026-09-08 this was silent: `dockerRunArgs` never read ConnectPorts, so a
+policy carrying `connect_ports` launched a container that could not reach the
+service, with nothing on screen connecting the two. It now warns and names the
+native provider. `TestDockerSaysItCannotCarryConnect` covers every platform and
+mode, against `connectRefusalFor` -- a pure function for the reason `dockerRunArgs`
+is one, since reaching the decision through the launch path needs Docker
+installed and a sandbox that starts.

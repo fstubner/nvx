@@ -286,7 +286,7 @@ Policies cascade: the global policy applies everywhere, and local policy files m
 * **`enforce_ignore_scripts`**: When `true`, this forces npm/yarn/pnpm to install packages with `--ignore-scripts`. This blocks execution of hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine.
 * **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary). See the [enforcement matrix](docs/enforcement-matrix.md) for exact guarantees.
   - `native` (default): AppContainer (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Zero-config, fail-closed.
-  - `docker`: runs in a container (hardened; `offline`/`loopback` enforced via `--network none`). Requires Docker running.
+  - `docker`: runs in a container (hardened; `offline`/`loopback` enforced via `--network none`). Requires Docker running. Does not carry `--connect`, and says so when asked: the relay needs a process of nvx's inside the sandbox, and this provider launches the target command as the container's only process.
 
   Any other name is an error and stops the run. `wsl`, `wslc` and
   `systemd-nspawn` have been removed; see the changelog for why.

@@ -310,6 +310,38 @@ func connectEnvVar(hostPort int) string {
 	return "NVX_CONNECT_" + strconv.Itoa(hostPort)
 }
 
+// connectRefusalFor reports why --connect cannot be honoured for this
+// combination, or "" when it can. A pure function for the reason dockerRunArgs
+// and seccompFilterForMode are: the decision is reachable in a test on any
+// machine, where the code path around it needs Docker installed, a sandbox that
+// starts, and the right operating system.
+//
+// Nothing here is a refusal to RUN. The command still runs contained; what the
+// caller loses is the one host service they named, which they are told about
+// rather than left to find.
+func connectRefusalFor(provider, goos, mode string) (warn, hint string) {
+	if strings.EqualFold(strings.TrimSpace(provider), "docker") {
+		// Structural, and not a `docker run` flag away. The container gets a
+		// network namespace of its own, so reaching a host service means relaying
+		// across that boundary -- and the relay's in-sandbox half is a process nvx
+		// runs INSIDE the sandbox, which this provider does not have: it launches
+		// the target command as the container's only process. In offline and
+		// loopback, the two modes it enforces, `--network none` leaves the
+		// container nothing but its own loopback anyway.
+		return "--connect is not carried by the docker provider; the sandbox cannot reach 127.0.0.1 on your machine.",
+			"Use the native provider (isolation.filesystem.provider, or --filesystem-provider=native) for a run that needs a host service."
+	}
+	// Linux only. Windows and macOS carry --connect in every mode, because
+	// neither one's containment refuses the contained process a loopback socket:
+	// the AppContainer tunnel and the Seatbelt relay are both independent of the
+	// network mode. Linux's seccomp filter is not.
+	if goos == "linux" && connectUnsupportedForMode(mode) {
+		return fmt.Sprintf("--connect cannot be honoured in network.mode %q on Linux: that mode denies the sandbox every IP socket, including the one it would use to reach the tunnel.", mode),
+			`Use network.mode "proxy" (the default) or "open" for this run.`
+	}
+	return "", ""
+}
+
 // connectUnsupportedForMode reports the Linux network modes whose seccomp filter
 // denies the sandbox the socket --connect needs. Lives here rather than in
 // sandbox_connect_linux.go because the dispatcher that warns compiles everywhere.
