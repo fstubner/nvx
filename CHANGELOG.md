@@ -1777,7 +1777,7 @@ ode.exe`, which the container then refused — and a
   covered by an enforcement probe; no probe covers this feature, and the claim is
   gone rather than reworded.
 
-## [0.5.7] - 2026-08-28
+## [0.5.7] - cut, never published
 
 ### Fixed (found by an independent acceptance pass before release)
 
