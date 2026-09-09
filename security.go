@@ -395,6 +395,13 @@ type OSVResult struct {
 type OSVVuln struct {
 	ID      string `json:"id"`
 	Summary string `json:"summary"`
+	// Severity is the advisory's own rating -- CRITICAL, HIGH, MODERATE, LOW --
+	// as the database reports it, or "" when it could not be established.
+	//
+	// Empty is load-bearing rather than a missing nicety: an advisory whose
+	// severity is unknown is treated as above any floor a policy sets, so a
+	// lookup that failed can never quietly drop a finding below the line.
+	Severity string `json:"-"`
 }
 
 // ScanVulnerabilitiesBatch queries the OSV API for multiple packages in a single batch request
@@ -456,7 +463,7 @@ func ScanVulnerabilitiesBatch(packages []OSVQuery) (map[string][]OSVVuln, error)
 		}
 		if len(res.Vulns) > 0 {
 			key := fmt.Sprintf("%s@%s", query.Package.Name, query.Version)
-			results[key] = fillVulnSummaries(client, res.Vulns)
+			results[key] = fillVulnDetails(client, res.Vulns)
 		}
 	}
 	return results, nil
@@ -473,39 +480,56 @@ func ScanVulnerabilitiesBatch(packages []OSVQuery) (map[string][]OSVVuln, error)
 // exactly today's output, so this can only improve the message and never block an
 // install on a second network call. Bounded to a handful of lookups because the
 // list is what one install matched, not the whole database.
-func fillVulnSummaries(client *http.Client, vulns []OSVVuln) []OSVVuln {
+func fillVulnDetails(client *http.Client, vulns []OSVVuln) []OSVVuln {
 	const maxDetailLookups = 10
 	for i := range vulns {
-		if i >= maxDetailLookups || vulns[i].Summary != "" || vulns[i].ID == "" {
+		if i >= maxDetailLookups || vulns[i].ID == "" {
 			continue
 		}
-		if s := fetchVulnSummary(client, vulns[i].ID); s != "" {
-			vulns[i].Summary = s
+		summary, severity := fetchVulnDetail(client, vulns[i].ID)
+		if vulns[i].Summary == "" && summary != "" {
+			vulns[i].Summary = summary
 		}
+		vulns[i].Severity = severity
 	}
 	return vulns
 }
 
-func fetchVulnSummary(client *http.Client, id string) string {
+// fetchVulnDetail reads the one-line description and the severity from one
+// advisory record.
+//
+// Both come from the same request, which is why a severity floor costs nothing
+// extra: this lookup already happened for the summary. The cap above is
+// unchanged, and an advisory past it keeps an empty severity -- which blocks,
+// rather than passing a floor it was never measured against.
+func fetchVulnDetail(client *http.Client, id string) (summary, severity string) {
 	// url.PathEscape on the id: it comes from a network response, and it is
 	// interpolated into a request path.
 	resp, err := client.Get("https://api.osv.dev/v1/vulns/" + url.PathEscape(id))
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return ""
+		return "", ""
 	}
 	var detail struct {
 		Summary string `json:"summary"`
 		Details string `json:"details"`
+		// GitHub's advisories, which the npm ecosystem is almost entirely made of,
+		// carry the rating as a word here. The sibling `severity` field holds CVSS
+		// vectors instead, which would have to be scored to compare -- see
+		// severityRank for why that is not attempted.
+		DatabaseSpecific struct {
+			Severity string `json:"severity"`
+		} `json:"database_specific"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&detail); err != nil {
-		return ""
+		return "", ""
 	}
+	severity = detail.DatabaseSpecific.Severity
 	if detail.Summary != "" {
-		return detail.Summary
+		return detail.Summary, severity
 	}
 	// Some advisories carry only the long form. One line of it beats nothing.
 	if detail.Details != "" {
@@ -513,9 +537,9 @@ func fetchVulnSummary(client *http.Client, id string) string {
 		if len(first) > 160 {
 			first = first[:157] + "..."
 		}
-		return first
+		return first, severity
 	}
-	return ""
+	return "", severity
 }
 
 // NpmRegistryMetadata represents minimal package info from registry
@@ -682,11 +706,11 @@ func splitAllowedAdvisories(policy Policy, found map[string][]OSVVuln) (remainin
 	accepted = map[string][]OSVVuln{}
 	for pkgKey, list := range found {
 		for _, v := range list {
-			if policy.IsAllowedAdvisory(v.ID) {
-				accepted[pkgKey] = append(accepted[pkgKey], v)
+			if policy.BlocksInstall(v) {
+				remaining[pkgKey] = append(remaining[pkgKey], v)
 				continue
 			}
-			remaining[pkgKey] = append(remaining[pkgKey], v)
+			accepted[pkgKey] = append(accepted[pkgKey], v)
 		}
 	}
 	return remaining, accepted
@@ -697,13 +721,22 @@ func splitAllowedAdvisories(policy Policy, found map[string][]OSVVuln) (remainin
 // One line per advisory, on the console rather than only in the audit log. A
 // vulnerability that a policy file waived is the thing a person most needs to see
 // when they wonder why an install went quiet.
-func reportAcceptedAdvisories(nvxHome string, accepted map[string][]OSVVuln) {
+func reportAcceptedAdvisories(nvxHome string, policy Policy, accepted map[string][]OSVVuln) {
 	for pkgKey, list := range accepted {
 		for _, v := range list {
-			LogWarn("Allowing a known vulnerability in %s: %s is named in vulnerabilities.allowed_advisories.", pkgKey, v.ID)
+			reason := "it is named in vulnerabilities.allowed_advisories"
+			why := "allowlisted"
+			if !policy.IsAllowedAdvisory(v.ID) {
+				reason = fmt.Sprintf("its severity (%s) is below vulnerabilities.min_severity (%s)",
+					strings.ToLower(v.Severity), policy.Vulnerabilities.MinSeverity)
+				why = "below_min_severity"
+			}
+			LogWarn("Allowing a known vulnerability in %s: %s -- %s.", pkgKey, v.ID, reason)
 			auditLog(nvxHome, "vulnerability_allowed", map[string]string{
 				"package":  pkgKey,
 				"advisory": v.ID,
+				"severity": v.Severity,
+				"reason":   why,
 			})
 		}
 	}
