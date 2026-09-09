@@ -22,6 +22,13 @@ func captureStderrHere(t *testing.T, fn func()) string {
 	}
 	orig := os.Stderr
 	os.Stderr = w
+	// Restored with defer, not after fn(). fn() is arbitrary test code, and a
+	// t.Fatal or t.Skip inside it runs deferred functions and then Goexits --
+	// skipping any plain statement below. The package's stderr would stay pointed
+	// at this pipe for every test that ran afterwards, so their output would
+	// vanish into a reader nobody is draining. Restoring here costs nothing and
+	// removes a way for one test's failure to change what later tests observe.
+	defer func() { os.Stderr = orig }()
 	done := make(chan string, 1)
 	go func() {
 		// Read to EOF, not once. A single Read returns the first chunk the
@@ -33,7 +40,6 @@ func captureStderrHere(t *testing.T, fn func()) string {
 		done <- string(all)
 	}()
 	fn()
-	os.Stderr = orig
 	_ = w.Close()
 	out := <-done
 	_ = r.Close()
