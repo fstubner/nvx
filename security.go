@@ -23,25 +23,17 @@ var EmbeddedPopularPackages = []string{
 
 // Policy types and LoadPolicy live in policy.go.
 
-// IsBlocked checks if a package name matches any blocked package patterns
+// IsBlocked reports whether blocked_packages names this package.
+//
+// Through policyListMatches, like every exemption list. It used to have a
+// matcher of its own that understood a literal name and a TRAILING "*" and
+// nothing else, so `blocked_packages: ["*-malware", "evil-?-pkg"]` parsed,
+// validated, and blocked nothing at all -- while the same patterns in
+// release_age.trusted_packages worked, because that list goes through the
+// shared matcher. The asymmetry ran the wrong way: the list that widens access
+// understood more syntax than the list that withdraws it.
 func (p Policy) IsBlocked(pkgName string) bool {
-	pkgName = strings.ToLower(strings.TrimSpace(pkgName))
-	for _, pattern := range p.BlockedPackages {
-		pattern = strings.ToLower(strings.TrimSpace(pattern))
-		if pattern == "" {
-			continue
-		}
-		if pattern == pkgName {
-			return true
-		}
-		if strings.HasSuffix(pattern, "*") {
-			prefix := strings.TrimSuffix(pattern, "*")
-			if strings.HasPrefix(pkgName, prefix) {
-				return true
-			}
-		}
-	}
-	return false
+	return policyListMatches(p.BlockedPackages, pkgName)
 }
 
 // LevenshteinDistance calculates the edit distance between two strings
@@ -469,7 +461,8 @@ func ScanVulnerabilitiesBatch(packages []OSVQuery) (map[string][]OSVVuln, error)
 	return results, nil
 }
 
-// fillVulnSummaries fetches the one-line description for each advisory.
+// fillVulnDetails fetches the one-line description and the severity for each
+// advisory.
 //
 // /v1/querybatch answers with ids and modification times only -- no summary --
 // so every advisory printed as "GHSA-xxxx-xxxx-xxxx: " with nothing after the

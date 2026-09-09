@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+* **`blocked_packages` understood only a trailing `*`.** Every other policy list
+  goes through one shared matcher that takes `*` and `?` anywhere; the blocklist
+  had a matcher of its own that recognised a literal name or a trailing star and
+  nothing else. So `"*-malware"` and `"evil-?-pkg"` parsed, validated, produced no
+  warning, and blocked nothing. The asymmetry ran the wrong way -- the lists that
+  widen access understood more syntax than the list that withdraws it. The
+  blocklist now uses the shared matcher.
+
+* **Approving a registry-metadata failure also gave up the vulnerability scan,
+  without saying so.** When nvx cannot resolve a package's metadata it asks
+  whether to proceed; approving skips the rest of the checks for that package,
+  including the OSV advisory lookup, because advisories are queried by exact
+  version and the version is what could not be resolved. The question named only
+  "metadata checks", so a run could report nothing about a package it had never
+  asked about. nvx cannot scan without a version; the prompt and the warning now
+  say that is what approving costs.
+
+### Changed
+
+* **macOS: the `sandbox-exec` provider's availability check now asks about the
+  same path the launcher uses.** It had the path written out a second time, so a
+  test that puts nvx on a machine with no `sandbox-exec` -- the only way to check
+  that nvx refuses rather than running uncontained -- could not reach the provider
+  gate.
+
+* **The tests that need an AF_UNIX socket skip on a long temporary directory
+  rather than failing.** The socket path limit is 104 bytes and includes whatever
+  `TMPDIR` is; under an agent harness's scratch directory that produced a
+  151-byte path and turned six tests red for a reason unrelated to the code. The
+  skip names the limit and the path.
+
+* **Removed the pre-AppContainer low-integrity token path** (five functions and
+  six constants on Windows, plus their no-op Linux twins). Nothing had called any
+  of it since containment moved to AppContainer security capabilities. Code that
+  compiles and looks like the security model, but is not the security model, is
+  the wrong thing to leave in the file someone opens to find out how containment
+  works. Also removed the two helpers that read permissions out of icacls' printed
+  text, superseded by reading the access mask off the entry.
+
+* **`nvx report` and the Docker provider's environment.** SECURITY.md now records
+  that `docker run` takes allowed environment values as `-e KEY=VALUE`, so they
+  are visible in the process list to other processes running as you while the
+  container starts. nvx keeps them out of its own output; the argument list is
+  docker's. The native providers are unaffected.
+
 ## [0.6.0] - 2026-09-09
 
 ### Added

@@ -378,8 +378,11 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// Network. In proxy mode (the default) the container is granted NO network
 	// capability at all, and reaches the parent's egress proxy through an in-
 	// container relay -- so the allowlist is enforced by the OS rather than
-	// merely advertised in HTTP_PROXY. offline/loopback also grant nothing and get
-	// no relay. Only network.mode "open" grants internetClient and connects direct.
+	// merely advertised in HTTP_PROXY. loopback grants no capability either and
+	// gets the same relay, with the parent permitting loopback destinations;
+	// offline grants nothing and gets no relay, which is what makes it offline.
+	// Only network.mode "open" grants internetClient and connects direct.
+	// windowsEgressNeedsRelay is where that split is decided.
 	networkCaps, useRelay := windowsSandboxNetwork(netCtx.Mode)
 	if !useRelay {
 		cleanEnv = stripProxyEnv(cleanEnv)

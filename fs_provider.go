@@ -111,9 +111,18 @@ func (seatbeltFSProvider) Name() string { return "sandbox-exec" }
 func (seatbeltFSProvider) SupportsNetworkMode(mode string) bool {
 	return providerSupportsNetworkMode("seatbelt", mode)
 }
+
+// Available asks about seatbeltExecPath, the same variable the launcher uses.
+//
+// It had the path written out again, so the one seam that can put nvx on a
+// machine with no sandbox-exec -- the real file cannot be removed from a running
+// system -- moved the launcher and left this check answering about the real one.
+// A test proving nvx refuses rather than running uncontained therefore could not
+// reach the provider gate at all: it would report the provider available and only
+// the launcher would refuse.
 func (seatbeltFSProvider) Available() error {
-	if _, err := os.Stat("/usr/bin/sandbox-exec"); err != nil {
-		return fmt.Errorf("/usr/bin/sandbox-exec not found (macOS only)")
+	if _, err := os.Stat(seatbeltExecPath); err != nil {
+		return fmt.Errorf("%s not found (macOS only)", seatbeltExecPath)
 	}
 	return nil
 }

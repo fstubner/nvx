@@ -8,12 +8,6 @@ import (
 	"syscall"
 )
 
-// applySandboxIsolation on Linux is handled by the Landlock child path.
-func applySandboxIsolation(cmd *exec.Cmd, guestHome string) {
-	_ = cmd
-	_ = guestHome
-}
-
 // applyLinuxNamespaces gives the target its own mount namespace, which is what
 // stops a bind mount being used to reach around the Landlock rules.
 //
@@ -51,5 +45,3 @@ func applyLinuxNamespaces(cmd *exec.Cmd, guestHome string) {
 
 	LogInfo("Linux namespace isolation active (NEWNS; user and PID namespaces owned by the supervisor)")
 }
-
-func closeTokenHandle(cmd *exec.Cmd) {}
