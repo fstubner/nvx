@@ -272,6 +272,80 @@ Deferred with intent, not built:
   `docs/enforcement-matrix.md` is the authority; where it and this document
   disagree, that matrix is right and this file is stale.
 
+## Where this sits next to an agent sandbox
+
+Docker Sandboxes (announced 2026-09) runs a coding agent inside a microVM: only
+the project workspace is mounted, the agent cannot reach the host Docker daemon,
+and network access is governed by allow and deny lists. macOS and Windows today,
+Linux listed as future work, driven through an `sbx` CLI. Other agent harnesses
+are converging on the same shape.
+
+This is a neighbouring layer rather than a competitor, and the distinction is
+worth being precise about because it decides what nvx is still for.
+
+**An agent sandbox contains a session. nvx contains a command.** The VM boundary
+holds for as long as the agent runs, around everything it does. nvx's boundary is
+drawn around one `npm install`, one `npx`, one postinstall script, and it applies
+whether or not an agent is involved -- a developer typing the command themselves
+gets the same treatment.
+
+**Inside a microVM, most of nvx's containment is redundant, and that is fine to
+say.** If the blast radius is already a disposable VM with no host filesystem and
+no host credentials, then "a postinstall cannot read `~/.aws`" is a guarantee
+something else is already making. A reader who runs their agent that way should
+know which parts of this product still earn their place.
+
+### What survives inside an agent sandbox
+
+- **The supply-chain checks.** Isolation says nothing about what was installed. A
+  microVM will not tell anyone that a version was published eleven hours ago,
+  that a name is one edit from a popular package, that an advisory exists against
+  it, or that it runs an install script. Those are decisions about *whether to
+  install*, and no boundary answers them.
+- **The project is mounted, and the project is the deliverable.** A compromised
+  package that writes a backdoor into the workspace has done its work inside the
+  VM. That change gets committed and shipped, and the VM being disposable does
+  not undo it.
+- **Egress.** Whatever the sandbox legitimately holds -- private source, a
+  resolved secret, a customer record from a dev database -- can leave over any
+  connection it is allowed to make. This is why agent sandboxes are adding
+  network policy at all, and it is the guarantee nvx enforces per host, at the
+  OS, for the command that most wants to phone home.
+- **Runtime management.** Version pinning and switching are not security features
+  and do not stop being needed.
+
+### The argument that there is nothing left to steal
+
+Pair a microVM with secret references -- 1Password's `op://` and its equivalents,
+where nothing sensitive is written to disk and a secret is resolved at the moment
+it is used -- and the case for any of this gets much weaker. That combination
+removes the two largest categories outright: credential theft at rest, and damage
+to the host.
+
+It is a good argument and it is worth stating where it stops.
+
+A secret reference protects a secret **at rest, not in use**. `op run` resolves
+`op://vault/item/field` into the environment of a process, and from that moment
+the plaintext is inside the sandbox, readable by anything else running there --
+including the postinstall script that arrived thirty seconds earlier. The
+reference moves the exposure from "always" to "while the command runs", which is
+a real reduction and is not the same as nothing to steal.
+
+And the things that remain are the things that were reachable on purpose: the
+source, the resolved secret, the database the developer connected the sandbox to.
+`--connect` and `network.mode: loopback` exist because people need that reach;
+Docker lists host service access as future work for the same reason. Every such
+grant is a hole someone asked for, and the sandbox holding it is the one running
+the untrusted code.
+
+**So the honest position: for a developer inside a well-configured agent sandbox
+with no standing credentials, nvx's filesystem containment is close to
+redundant, and its value is the supply-chain checks, egress control per host, and
+the audit trail of what was allowed.** That is a smaller product than the one
+this document describes elsewhere, and it is the right one to describe for that
+reader. Claiming the full set of guarantees matters equally in both settings
+would be the kind of overstatement the honesty condition above exists to prevent.
+
 ## Anti-goals
 
 - Resolving dependencies or writing lockfiles.
