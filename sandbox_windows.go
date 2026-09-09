@@ -5,7 +5,6 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"syscall"
 	"time"
@@ -16,8 +15,6 @@ var (
 	modAdvapi32                           = syscall.NewLazyDLL("advapi32.dll")
 	modKernel32                           = syscall.NewLazyDLL("kernel32.dll")
 	procOpenProcessToken                  = modAdvapi32.NewProc("OpenProcessToken")
-	procDuplicateTokenEx                  = modAdvapi32.NewProc("DuplicateTokenEx")
-	procSetTokenInformation               = modAdvapi32.NewProc("SetTokenInformation")
 	procGetCurrentProcess                 = modKernel32.NewProc("GetCurrentProcess")
 	procCreateProcessAsUserW              = modAdvapi32.NewProc("CreateProcessAsUserW")
 	procLocalFree                         = modKernel32.NewProc("LocalFree")
@@ -30,15 +27,10 @@ var (
 )
 
 const (
-	TOKEN_DUPLICATE            = 0x0002
-	TOKEN_QUERY                = 0x0008
-	TOKEN_ADJUST_DEFAULT       = 0x0080
-	TOKEN_ASSIGN_PRIMARY       = 0x0001
-	TOKEN_ALL_ACCESS           = 0xF01FF
-	SecurityImpersonation      = 2
-	TokenPrimary               = 1
-	TokenIntegrityLevel        = 25
-	SECURITY_MANDATORY_LOW_RID = 0x1000
+	TOKEN_DUPLICATE      = 0x0002
+	TOKEN_QUERY          = 0x0008
+	TOKEN_ADJUST_DEFAULT = 0x0080
+	TOKEN_ASSIGN_PRIMARY = 0x0001
 
 	EXTENDED_STARTUPINFO_PRESENT                = 0x00080000
 	CREATE_UNICODE_ENVIRONMENT                  = 0x00000400
@@ -55,20 +47,20 @@ type SID_AND_ATTRIBUTES struct {
 	Attributes uint32
 }
 
-// TOKEN_MANDATORY_LABEL for setting a token integrity level.
-type TOKEN_MANDATORY_LABEL struct {
-	Label SID_AND_ATTRIBUTES
-}
-
-// applySandboxIsolation is unused on the hardened native path (see
-// applyWindowsNativeIsolation). Kept as a no-op stub for any legacy callers.
-func applySandboxIsolation(cmd *exec.Cmd, guestHome string) {
-	_ = cmd
-	_ = guestHome
-}
-
-// labelLowIntegrity applies a low mandatory integrity label to a directory for
-// compatibility with legacy constrained launch paths.
+// The low-integrity TOKEN path that used to live here is gone.
+//
+// It duplicated this process's token, lowered its mandatory integrity level and
+// handed the result to CreateProcessAsUser -- the containment nvx had before
+// AppContainers, and nothing called any of it. What replaced it is the
+// AppContainer itself: the profile SID and per-project capabilities are passed
+// as security capabilities at CreateProcess time, which is a stronger boundary
+// and a different mechanism, so there was no path back to the token version.
+//
+// Deleted rather than kept "in case": five functions and six constants that
+// compile, look like the security model, and are not the security model are a
+// worse thing to leave in a file someone reads to find out how containment
+// works. The DIRECTORY label below is a different thing and is still applied.
+//
 // labelLowIntegrity applies a low mandatory integrity label to dir and its
 // contents. Time-boxed like every other icacls call: this one previously had no
 // timeout at all, and it walks the tree (/t), so a large persistent tool profile
@@ -78,89 +70,6 @@ func labelLowIntegrity(dir string) error {
 	out, err := runWinCmd(20*time.Second, "icacls", dir, "/setintegritylevel", "(OI)(CI)Low", "/t", "/c", "/q")
 	if err != nil {
 		return fmt.Errorf("icacls failed: %v (%s)", err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// tryApplyLowIntegrity assigns a duplicated low-integrity primary token to cmd.
-func tryApplyLowIntegrity(cmd *exec.Cmd) error {
-	token, err := createLowIntegrityPrimaryToken()
-	if err != nil {
-		return err
-	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
-		Token:         token,
-	}
-	return nil
-}
-
-// createLowIntegrityPrimaryToken duplicates the current process token and
-// lowers its mandatory integrity level to S-1-16-4096.
-func createLowIntegrityPrimaryToken() (syscall.Token, error) {
-	var processToken syscall.Token
-	currentProcess, _, _ := procGetCurrentProcess.Call()
-	ret, _, err := procOpenProcessToken.Call(
-		currentProcess,
-		uintptr(TOKEN_DUPLICATE|TOKEN_QUERY|TOKEN_ADJUST_DEFAULT|TOKEN_ASSIGN_PRIMARY),
-		uintptr(unsafe.Pointer(&processToken)),
-	)
-	if ret == 0 {
-		return 0, fmt.Errorf("OpenProcessToken failed: %v", err)
-	}
-	defer func() {
-		_ = syscall.CloseHandle(syscall.Handle(processToken))
-	}()
-
-	var newToken syscall.Token
-	ret, _, err = procDuplicateTokenEx.Call(
-		uintptr(processToken),
-		uintptr(TOKEN_ALL_ACCESS),
-		0,
-		uintptr(SecurityImpersonation),
-		uintptr(TokenPrimary),
-		uintptr(unsafe.Pointer(&newToken)),
-	)
-	if ret == 0 {
-		return 0, fmt.Errorf("DuplicateTokenEx failed: %v", err)
-	}
-
-	if err := applyLowIntegrityToToken(newToken); err != nil {
-		_ = syscall.CloseHandle(syscall.Handle(newToken))
-		return 0, err
-	}
-	return newToken, nil
-}
-
-// applyLowIntegrityToToken lowers the mandatory integrity level on an existing token.
-func applyLowIntegrityToToken(token syscall.Token) error {
-	var lowSid *syscall.SID
-	sidPtr, err := syscall.UTF16PtrFromString("S-1-16-4096")
-	if err != nil {
-		return fmt.Errorf("UTF16PtrFromString failed: %v", err)
-	}
-
-	err = convertStringSidToSid(sidPtr, &lowSid)
-	if err != nil {
-		return fmt.Errorf("ConvertStringSidToSidW failed: %v", err)
-	}
-	defer procLocalFree.Call(uintptr(unsafe.Pointer(lowSid)))
-
-	tml := TOKEN_MANDATORY_LABEL{
-		Label: SID_AND_ATTRIBUTES{
-			Sid:        uintptr(unsafe.Pointer(lowSid)),
-			Attributes: 0x00000020, // SE_GROUP_INTEGRITY
-		},
-	}
-
-	ret, _, err := procSetTokenInformation.Call(
-		uintptr(token),
-		uintptr(TokenIntegrityLevel),
-		uintptr(unsafe.Pointer(&tml)),
-		uintptr(unsafe.Sizeof(tml)),
-	)
-	if ret == 0 {
-		return fmt.Errorf("SetTokenInformation(integrity): %v", err)
 	}
 	return nil
 }
@@ -177,10 +86,4 @@ func convertStringSidToSid(stringSid *uint16, sid **syscall.SID) error {
 		return err
 	}
 	return nil
-}
-
-func closeTokenHandle(cmd *exec.Cmd) {
-	if cmd.SysProcAttr != nil && cmd.SysProcAttr.Token != 0 {
-		_ = syscall.CloseHandle(syscall.Handle(cmd.SysProcAttr.Token))
-	}
 }
