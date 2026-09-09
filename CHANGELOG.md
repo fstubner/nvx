@@ -94,6 +94,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The audit log recorded every refused launch with the same reason.** A real
+  log held 73 `sandbox_not_started` entries, all reading "the sandbox did not
+  start" -- the text of the sentinel error itself. That answers "was this
+  contained?" and not "why was it not?", and it was the largest security-relevant
+  event in the file. Found by reading one back.
+
+  Every refusal site already told the person watching what went wrong in its own
+  words; only the machine-readable cause was missing. The launchers now attach a
+  fixed reason to the sentinel -- the appcontainer profile was unavailable, the
+  seatbelt profile could not be written, the loopback path could not be opened,
+  and fourteen others -- and `errors.Is` still matches, so nothing that only
+  wanted the fact of a refusal changes.
+
+  The reason is a literal chosen at the call site, never a rendered error, which
+  is the rule LogWarn already follows for this destination: a rendered message can
+  carry a package URL with credentials in it, and this file goes to disk. A test
+  parses the source and fails on anything that is not a string literal.
+
+
 * **Upgrading nvx while something was running from it kept the old binary, and
   said the upgrade worked.** The copy ended in a plain rename, which Windows
   refuses for a file being executed, so it was abandoned with a warning -- and

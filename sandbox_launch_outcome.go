@@ -24,6 +24,29 @@ import "errors"
 // wording, only the machine-readable fact that the command did not run.
 var errSandboxDidNotStart = errors.New("the sandbox did not start")
 
+// sandboxRefusal is errSandboxDidNotStart with the cause attached.
+//
+// The sentinel alone turned out to be too little. Every refusal site reports its
+// own cause to the person watching, and the audit log recorded the sentinel's
+// own text for all of them -- so 73 entries in one real log read "the sandbox
+// did not start" and nothing else, which answers "was this contained?" and not
+// "why was it not?". Reading them back is how that was noticed.
+//
+// The reason is a fixed string chosen at the call site, never a rendered error,
+// for the reason the file comment above gives: a rendered message can carry a
+// package URL with credentials in it, and this log goes to disk.
+// TestEveryRefusalReasonIsALiteral pins that.
+//
+// Unwrap keeps errors.Is(err, errSandboxDidNotStart) true, so every caller that
+// only wants the machine-readable fact is unaffected.
+type sandboxRefusal struct{ reason string }
+
+func (e sandboxRefusal) Error() string { return e.reason }
+func (e sandboxRefusal) Unwrap() error { return errSandboxDidNotStart }
+
+// refusedToStart names why containment could not be established.
+func refusedToStart(reason string) error { return sandboxRefusal{reason: reason} }
+
 // sandboxDidNotStart records that a command never ran contained, and returns the
 // exit code to give for it.
 //
