@@ -161,8 +161,10 @@ func captureStderr(t *testing.T, fn func()) string {
 	defer f.Close()
 	orig := os.Stderr
 	os.Stderr = f
+	// See captureStderrHere: a t.Fatal or t.Skip inside fn() Goexits, and a plain
+	// restore below it never runs.
+	defer func() { os.Stderr = orig }()
 	fn()
-	os.Stderr = orig
 	data, err := os.ReadFile(f.Name())
 	if err != nil {
 		t.Fatal(err)

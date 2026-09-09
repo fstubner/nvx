@@ -425,8 +425,10 @@ func TestDoctorDiagnosesAPolicyItCannotRead(t *testing.T) {
 		t.Fatal(perr)
 	}
 	os.Stderr = w
+	// See captureStderrHere: restored with defer so a failure inside runDoctor
+	// cannot leave the package's stderr pointed at this pipe.
+	defer func() { os.Stderr = stderr }()
 	code := runDoctor(nvxHome, false)
-	os.Stderr = stderr
 	_ = w.Close()
 	out, _ := io.ReadAll(r)
 	_ = r.Close()

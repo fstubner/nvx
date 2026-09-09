@@ -40,7 +40,13 @@ func TestRunSandboxRefusesAnUnknownFilesystemProvider(t *testing.T) {
 	// to some other provider would also return non-zero when that provider's
 	// own launch failed, and the run would look refused when it was not.
 	if !strings.Contains(out, "Unknown filesystem provider") {
-		t.Fatalf("the run stopped, but not because the provider was rejected:\n%s", out)
+		// The exit code and the byte count are in the message because the output
+		// alone has already failed to explain one CI failure: it arrived empty,
+		// which says the run stopped without printing anything and leaves no way to
+		// tell which branch returned. Both facts are cheap here, and the second
+		// occurrence of a flake is not.
+		t.Fatalf("the run stopped with exit %d, and not because the provider was rejected; stderr was %d bytes:\n%s",
+			code, len(out), out)
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("the command ran despite the containment provider being unknown")
