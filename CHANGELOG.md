@@ -94,6 +94,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Upgrading nvx while something was running from it kept the old binary, and
+  said the upgrade worked.** The copy ended in a plain rename, which Windows
+  refuses for a file being executed, so it was abandoned with a warning -- and
+  `Generated PATH shims` printed straight after, so the upgrade reported success
+  and installed nothing. Anyone with an MCP server or a long-running command
+  going through nvx would hit it, and the symptom is a version that does not
+  change.
+
+  The shims already handled this: a busy file is renamed aside and deleted on a
+  later run once nothing holds it. nvx's own binary was the one file in that
+  directory not getting the same treatment.
+
+  The rename-aside now also puts the original back if the replacement cannot be
+  put in its place. Between the two steps there is a moment with nothing at the
+  destination, and leaving it that way is worse than not having tried: for a shim
+  it is a command gone from PATH, for nvx itself every shim pointing at nothing.
+
+  Measured on Windows against a target held by a running process, the same
+  command both ways: without the fix, "Could not update ... Access is denied" and
+  the installed binary unchanged; with it, replaced and no warning, and the
+  leftover cleared on the next run once its holder exited.
+
+
 * **`network.mode: loopback` did nothing on Windows, Linux and Docker.** Each
   treated it as `offline`, so a mode whose name says "the services on 127.0.0.1
   are reachable" reached none of them. Windows granted no network capability and
