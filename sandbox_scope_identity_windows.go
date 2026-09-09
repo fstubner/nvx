@@ -271,48 +271,13 @@ func staleAppContainerSIDsOn(path string) []string {
 	return sids
 }
 
-// rightsAfterSID returns the parenthesised groups icacls prints after "<sid>:",
-// e.g. "(OI)(CI)(M)" or "(X,RA)". Empty when the line has no rights to read.
-func rightsAfterSID(line, sid string) string {
-	_, rest, ok := strings.Cut(line, sid+":")
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(rest)
-}
-
-// aceGrantsMoreThanTraverse reports whether an ACE grants anything beyond the
-// traverse+read-attributes pair the current design uses.
+// The two helpers that used to sit here read rights out of the TEXT icacls
+// prints -- splitting "(OI)(CI)(M)" into tokens and asking whether any of them
+// was more than X or RA.
 //
-// Unreadable rights count as NOT stale on purpose. This drives both a security
-// claim shown to the user and a removal; asserting either from an ACE we could
-// not parse is how the false positive above happened, and staying quiet is the
-// safer failure -- the legacy grants this looks for print their mask plainly.
-func aceGrantsMoreThanTraverse(rights string) bool {
-	var tokens []string
-	for _, group := range strings.Split(rights, ")") {
-		group = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(group), "("))
-		if group == "" {
-			continue
-		}
-		for _, tok := range strings.Split(group, ",") {
-			switch tok = strings.ToUpper(strings.TrimSpace(tok)); tok {
-			case "":
-				// nothing
-			case "OI", "CI", "IO", "NP", "I":
-				// Inheritance flags, not access rights.
-			default:
-				tokens = append(tokens, tok)
-			}
-		}
-	}
-	if len(tokens) == 0 {
-		return false
-	}
-	for _, tok := range tokens {
-		if tok != "X" && tok != "RA" {
-			return true
-		}
-	}
-	return false
-}
+// They are gone because the question is now answered from the access mask on the
+// entry itself, in staleAppContainerSIDsOn above. That is the same change that
+// removed the parsing bugs: a project path containing the literal "(I)" made an
+// entry read as inherited, and the traverse pair had to be recognised in either
+// order. A parallel text-based answer to a question already answered structurally
+// is exactly the kind of second implementation those bugs came from.

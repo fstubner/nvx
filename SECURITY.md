@@ -275,6 +275,14 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   provider, `network.mode: offline` is enforced via `--network none`, but
   proxy-mode allowlisting is cooperative only and therefore disabled by
   default for that provider.
+- **Docker passes allowed environment values on the command line.** `docker run`
+  takes them as `-e KEY=VALUE`, so anything `isolation.environment.allow` lets
+  through is visible in the process list to other processes running as you for as
+  long as the container is starting. nvx keeps those values out of its own output
+  and out of `nvx report`, and that is all it can do: the argument list belongs to
+  `docker`. The native providers on Windows, Linux and macOS pass the environment
+  directly to the child and are unaffected. If a token matters more than the
+  container does, use the native provider for it.
 - **nvx is not a malware scanner.** The supply-chain checks reduce risk from
   common attack patterns; they do not guarantee detection of a determined,
   novel attacker. Treat nvx as defense-in-depth, not a guarantee.

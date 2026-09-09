@@ -1671,12 +1671,32 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 		LogDetail("Verifying package %q...", pkgName)
 		resolvedVer, pubTime, hasScripts, err := resolveNpmPackageDetailsForVerify(pkgName, versionQuery)
 		if err != nil {
-			msg := fmt.Sprintf("Could not verify registry metadata for %s: %v. Proceed without metadata checks?", pkgName, err)
+			// The prompt names the vulnerability scan as well, because skipping it
+			// is what approving here actually does.
+			//
+			// Three checks hang off this metadata: install scripts, release age, and
+			// -- through the resolved version appended at the bottom of this loop --
+			// the OSV advisory scan. The `continue` below skips all three, and the
+			// question asked about "metadata checks", which reads as the registry
+			// lookup that just failed rather than as the CVE check further down. So
+			// someone approving a transient registry error also silently gave up the
+			// advisory scan for that package, and the run reported no vulnerabilities
+			// because it never asked.
+			//
+			// nvx cannot run the scan anyway: OSV is queried by exact version, and
+			// the version is what could not be resolved. What was missing is saying
+			// so.
+			msg := fmt.Sprintf("Could not verify registry metadata for %s: %v. "+
+				"Proceed without metadata checks AND without the vulnerability scan for it?", pkgName, err)
 			if !PromptYesNo(msg) {
 				LogError("Installation aborted because registry metadata could not be verified.")
 				return 1, "the registry metadata for a package could not be verified"
 			}
-			LogWarn("Proceeding without registry metadata checks for %s.", pkgName)
+			// One literal, not two joined with "+": TestEveryLogWarnUsesALiteralFormat
+			// requires the format to be a single literal, because that is what makes
+			// "a rendered warning cannot carry runtime data into audit.log" checkable
+			// by parsing rather than by reading.
+			LogWarn("Proceeding without registry metadata checks for %s, and without scanning it for known vulnerabilities: advisories are looked up by exact version, and its version could not be resolved.", pkgName)
 			continue
 		}
 

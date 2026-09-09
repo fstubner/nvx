@@ -226,7 +226,7 @@ func TestCheckTyposquatting(t *testing.T) {
 
 func TestPolicyBlocked(t *testing.T) {
 	p := Policy{
-		BlockedPackages: []string{"bad-package", "danger-*", ""},
+		BlockedPackages: []string{"bad-package", "danger-*", "*-malware", "evil-?-pkg", ""},
 	}
 
 	tests := []struct {
@@ -238,6 +238,13 @@ func TestPolicyBlocked(t *testing.T) {
 		{"danger-zone", true},
 		{"danger-ous", true},
 		{"safe-danger-zone", false},
+		// A glob that is not a trailing "*". The blocklist had a matcher of its
+		// own that understood only a literal or a trailing star, so both of these
+		// were accepted into a policy file and blocked nothing.
+		{"crypto-malware", true},
+		{"malware-crypto", false},
+		{"evil-x-pkg", true},
+		{"evil-xx-pkg", false},
 	}
 
 	for _, tc := range tests {

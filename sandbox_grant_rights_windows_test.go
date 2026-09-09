@@ -87,8 +87,8 @@ func TestSupervisingTheProcessTreePublishesTheJobForThePeerCheck(t *testing.T) {
 // "already granted", so the modify grant is skipped and the wrong answer cached --
 // and the sandbox then cannot write a directory it was supposed to own.
 //
-// This goes through appContainerHasGrantFor against real icacls output, not
-// through satisfies() directly. A first version called rightsAfterSID itself and
+// This goes through appContainerHasGrantFor against a real permission, not
+// through satisfies() directly. A first version pulled the rights out itself and
 // then asserted on satisfies, which tested neither the call site nor the wiring:
 // restoring the whole-line judgement left it passing.
 func TestRightsAreReadFromTheEntryNotThePath(t *testing.T) {
