@@ -1270,7 +1270,13 @@ func installNvxCopy(src, dst string) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	if err := os.Rename(tmp, dst); err != nil {
+	// replaceFile, not os.Rename: on Windows the running nvx.exe cannot be
+	// replaced, and every shim in that directory is a hard link to it -- so one
+	// MCP server or dev command still running is enough to make an upgrade fail
+	// here. It used to warn and keep the old binary, which is an upgrade that
+	// reports success and installs nothing. The old file is renamed aside instead,
+	// and sweepStaleShimExes deletes it on a later run once nothing holds it.
+	if err := replaceFile(tmp, dst); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
