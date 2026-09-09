@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -23,6 +24,15 @@ import (
 func TestRunSandboxRefusesAnUnknownFilesystemProvider(t *testing.T) {
 	nvxHome := tempDir(t)
 	marker, cmdPath := markerCommand(t)
+
+	// Recorded before the call, because it decides which path runSandbox takes.
+	// runSandbox returns through execBareCommand when a session is already
+	// active, and that path never reaches the provider check -- so it is the one
+	// way to get a non-zero exit with nothing printed, which is exactly what a CI
+	// failure showed and what no local run has reproduced. Nothing else in the
+	// package touches this counter, so it should always be zero here; the next
+	// failure says whether that held.
+	sessionDepth := atomic.LoadInt32(&sandboxSessionActive)
 
 	var code int
 	out := captureStderrHere(t, func() {
@@ -45,8 +55,8 @@ func TestRunSandboxRefusesAnUnknownFilesystemProvider(t *testing.T) {
 		// which says the run stopped without printing anything and leaves no way to
 		// tell which branch returned. Both facts are cheap here, and the second
 		// occurrence of a flake is not.
-		t.Fatalf("the run stopped with exit %d, and not because the provider was rejected; stderr was %d bytes:\n%s",
-			code, len(out), out)
+		t.Fatalf("the run stopped with exit %d (sandbox session depth on entry: %d), and not because the provider was rejected; stderr was %d bytes:\n%s",
+			code, sessionDepth, len(out), out)
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("the command ran despite the containment provider being unknown")
