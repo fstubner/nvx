@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -121,10 +122,23 @@ type loopbackServer struct {
 
 func (s *loopbackServer) serve(conn net.Conn) {
 	header := make([]byte, loopbackRedirectHeaderLen)
+	// Bounded, because the other end of this socket is the contained process.
+	//
+	// Without a deadline, a sandbox that opens connections and never sends the
+	// header holds a goroutine and a descriptor in the PARENT for each one, for
+	// as long as the run lasts -- untrusted code choosing how much of nvx's own
+	// process to occupy. The Windows tunnel bounds the same read for the same
+	// reason (readPeerHeader in sandbox_connect_windows.go); this one did not.
+	//
+	// Cleared once the header is in, so the splice that follows is not cut off
+	// mid-transfer: the limit is on how long the sandbox may take to say what it
+	// wants, never on how long the traffic then runs.
+	_ = conn.SetReadDeadline(time.Now().Add(connectDialTimeout))
 	if _, err := io.ReadFull(conn, header); err != nil {
 		_ = conn.Close()
 		return
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 	ip := net.IP(header[1:17])
 	if header[0] == 4 {
 		ip = ip[:4]
