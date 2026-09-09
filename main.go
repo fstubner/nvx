@@ -1745,7 +1745,7 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 			}
 			LogWarn("Proceeding without vulnerability database results.")
 		} else if remaining, accepted := splitAllowedAdvisories(policy, vulns); len(remaining) > 0 {
-			reportAcceptedAdvisories(nvxHome, accepted)
+			reportAcceptedAdvisories(nvxHome, policy, accepted)
 			LogError("Vulnerability Scan Alert: Found active vulnerabilities!")
 			for pkgKey, list := range remaining {
 				fmt.Fprintf(os.Stderr, "  \x1b[31m●\x1b[0m %s:\n", pkgKey)
@@ -1763,7 +1763,7 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 			// as "clean": a scan that found something and was told to allow it is a
 			// different state from one that found nothing, and printing the latter
 			// would be nvx misreporting its own result.
-			reportAcceptedAdvisories(nvxHome, accepted)
+			reportAcceptedAdvisories(nvxHome, policy, accepted)
 		} else {
 			LogDetail("Vulnerability scan clean. No active CVEs found.")
 		}
