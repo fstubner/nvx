@@ -251,7 +251,8 @@ Corporate policies can be defined globally in `~/.nvx/policy.json` and customize
     "trusted_packages": ["esbuild", "sharp"]
   },
   "vulnerabilities": {
-    "allowed_advisories": ["GHSA-xxxx-yyyy-zzzz"]
+    "allowed_advisories": ["GHSA-xxxx-yyyy-zzzz"],
+    "min_severity": "high"
   },
   "runtime": {
     "default": "node",
@@ -308,9 +309,13 @@ Policies cascade: the global policy applies everywhere, and local policy files m
     says which package it let through.
   - **`vulnerabilities.allowed_advisories`**: accept an OSV advisory you have
     assessed, by ID. Per advisory rather than per package, so a finding published
-    after your assessment still stops the install. There is no severity floor,
-    because nvx reads only the id and summary from OSV's batch response and a
-    threshold it cannot evaluate would be a setting that silently did nothing.
+    after your assessment still stops the install.
+  - **`vulnerabilities.min_severity`**: `low`, `moderate` (or `medium`), `high` or
+    `critical`. Advisories below the floor are reported and do not stop the
+    install. Unset by default, which stops on every advisory. An advisory nvx
+    could not rate stops the install at every floor — the rating comes from a
+    network lookup, so a failed one must never be why a finding slipped under the
+    line — and an unrecognised value is no floor at all, reported at load time.
 * **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary). See the [enforcement matrix](docs/enforcement-matrix.md) for exact guarantees.
   - `native` (default): AppContainer (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Zero-config, fail-closed.
   - `docker`: runs in a container (hardened; `offline`/`loopback` enforced via `--network none`). Requires Docker running. Does not carry `--connect`, and says so when asked: the relay needs a process of nvx's inside the sandbox, and this provider launches the target command as the container's only process.

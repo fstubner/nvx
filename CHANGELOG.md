@@ -38,10 +38,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package would also waive the advisory published after that assessment. A scan
   whose findings were all accepted reports them rather than reporting "clean".
 
-  No severity floor, and that is a limit rather than an omission: nvx reads only
-  the id and summary from OSV's batch response, so there is no severity to compare
-  against, and a threshold it could not evaluate would be a setting that silently
-  did nothing.
+* **`vulnerabilities.min_severity`: stop on the advisories that matter, report the
+  rest.** `low`, `moderate` (or `medium`), `high` or `critical`. Unset by default,
+  which stops on every advisory, and that default does not change.
+
+  The rating comes from the advisory record's own severity, read from the lookup
+  nvx already makes to fill in each summary -- so the floor costs no extra
+  requests.
+
+  **An advisory nvx could not rate stops the install at every floor.** That
+  lookup is bounded and best-effort, so an empty severity means "not measured",
+  and treating it as low would turn a failed request, a rate limit, or an advisory
+  past the lookup cap into a finding that quietly passed. An unrecognised
+  `min_severity` is no floor at all, and is reported at load time rather than
+  ignored.
+
+  Measured against lodash@4.17.15, whose six advisories are three HIGH and three
+  MODERATE: with the floor at `high`, the three moderate ones are reported as
+  below it and the three high ones still stop the install; at `critical`, all six
+  are reported and the install proceeds. Each line names the advisory, its
+  severity and the floor it fell under.
+
+  Words rather than CVSS scores. OSV carries both, and the words are what GitHub's
+  advisories -- which the npm ecosystem is almost entirely made of -- always
+  carry. Scoring a CVSS vector by hand would be a second implementation of a
+  specification, in the one place where getting it subtly wrong means an advisory
+  silently drops below a floor.
 
 * **`release_age.trusted_packages`: skip the cooling-off window for one package,
   and only that.** The window holds back a version published in the last 24 hours

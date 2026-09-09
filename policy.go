@@ -89,15 +89,87 @@ type InstallScriptsPolicy struct {
 // about one finding, where exempting a package waives every advisory it will ever
 // have, including the ones published tomorrow.
 //
-// No severity floor and no off switch. A floor is not offered because nvx reads
-// only the id and summary from OSV's batch response -- there is no severity to
-// compare against, and inventing a threshold nvx cannot evaluate would be a
-// setting that silently did nothing. An off switch is not offered because the
-// allowlist is the same capability with a record of what was accepted.
+// MinSeverity is the other half: a floor below which an advisory is reported
+// and does not stop the install. Empty by default, which means every advisory
+// stops it, and that default does not change.
 //
-// Empty by default. Adding an entry counts as loosening.
+// The severity comes from the advisory record's own rating, read from the same
+// lookup nvx already makes to fill in each summary -- so the floor costs no extra
+// requests. An advisory whose severity could not be established is treated as
+// above every floor: a lookup that failed must never be the reason a finding
+// slipped under the line.
+//
+// No off switch, because the two settings here are already that capability with
+// a record of what was accepted and why.
 type VulnerabilityPolicy struct {
 	AllowedAdvisories []string `json:"allowed_advisories,omitempty"`
+	MinSeverity       string   `json:"min_severity,omitempty"`
+}
+
+// Severity words, ordered. Anything unrecognised -- including an empty string --
+// is severityUnknown, which compares above every floor.
+const (
+	severityUnknown = iota
+	severityLow
+	severityModerate
+	severityHigh
+	severityCritical
+)
+
+// severityRank maps an advisory's rating to a comparable number.
+//
+// Words rather than CVSS scores. OSV carries both -- `database_specific.severity`
+// as LOW/MODERATE/HIGH/CRITICAL, and `severity` as CVSS vector strings -- and the
+// words are what GitHub's advisories, which the npm ecosystem is almost entirely
+// made of, always carry. Scoring a CVSS v3 vector by hand to compare it is a
+// second implementation of a specification, in a place where getting it subtly
+// wrong means an advisory silently drops below a floor.
+//
+// "medium" is accepted for "moderate" because that is the word most other tools
+// use, and a policy that says medium and means it should not fail open.
+func severityRank(severity string) int {
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "low":
+		return severityLow
+	case "moderate", "medium":
+		return severityModerate
+	case "high":
+		return severityHigh
+	case "critical":
+		return severityCritical
+	default:
+		return severityUnknown
+	}
+}
+
+// SeverityFloor returns the configured floor, and whether one is set.
+//
+// An unrecognised value returns false, so a typo leaves every advisory blocking
+// rather than silently setting a floor nobody chose. normalizeVulnerabilityPolicy
+// warns about it at load time.
+func (p Policy) SeverityFloor() (int, bool) {
+	rank := severityRank(p.Vulnerabilities.MinSeverity)
+	return rank, rank != severityUnknown
+}
+
+// BlocksInstall reports whether one advisory should stop the install.
+//
+// Fail-closed twice over: an advisory nvx could not rate blocks whatever the
+// floor says, and a policy with no floor blocks everything, which is the
+// behaviour that existed before a floor could be set.
+func (p Policy) BlocksInstall(v OSVVuln) bool {
+	if p.IsAllowedAdvisory(v.ID) {
+		return false
+	}
+	floor, ok := p.SeverityFloor()
+	if !ok {
+		return true
+	}
+	rank := severityRank(v.Severity)
+	if rank == severityUnknown {
+		return true
+	}
+	return rank >= floor
 }
 
 type RuntimeConfig struct {
@@ -371,10 +443,38 @@ func normalizePolicy(p *Policy) {
 	// edge: defaulting it wrote a value that reads as a security decision
 	// ("non_interactive": "deny") into every policy while nothing consulted it.
 	normalizeReleaseAgePolicy(&p.ReleaseAge)
+	normalizeVulnerabilityPolicy(&p.Vulnerabilities)
 }
 
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+// normalizeVulnerabilityPolicy reports a min_severity nvx does not recognise.
+//
+// Left as written rather than corrected, because every unrecognised value means
+// "no floor" and no floor is the strict answer. Said out loud all the same: a
+// policy that asked for a floor and got none has been ignored, and silently
+// ignoring a security setting is the failure this codebase keeps finding.
+func normalizeVulnerabilityPolicy(v *VulnerabilityPolicy) {
+	raw := strings.TrimSpace(v.MinSeverity)
+	if raw == "" {
+		return
+	}
+	if severityRank(raw) == severityUnknown {
+		warnUnknownSeverityOnce(raw)
+		return
+	}
+	v.MinSeverity = strings.ToLower(raw)
+}
+
+var unknownSeverityOnce sync.Map
+
+func warnUnknownSeverityOnce(value string) {
+	if _, seen := unknownSeverityOnce.LoadOrStore(value, true); seen {
+		return
+	}
+	LogWarn("Unrecognized vulnerabilities.min_severity %q; every advisory will stop an install. Use low, moderate, high or critical.", value)
 }
 
 func normalizeReleaseAgePolicy(r *ReleaseAgePolicy) {
@@ -898,6 +998,12 @@ func policyLoosens(before, after Policy) bool {
 	if hostsAdded(before.Vulnerabilities.AllowedAdvisories, after.Vulnerabilities.AllowedAdvisories) {
 		return true
 	}
+	// Raising the floor lets more advisories through. No floor is the strictest
+	// state, so severityUnknown sorting to 0 gives the comparison the right shape
+	// on its own: anything to nothing is a widening, nothing to anything is not.
+	if beforeFloor, afterFloor := severityRank(before.Vulnerabilities.MinSeverity), severityRank(after.Vulnerabilities.MinSeverity); afterFloor > beforeFloor {
+		return true
+	}
 	// Lowering the typosquat edit distance finds fewer typosquats. The default is
 	// 2; a project file setting 1 halves what the check catches, and MergePolicies
 	// takes any positive local value, so it applies. Nothing here noticed.
@@ -1040,6 +1146,9 @@ func MergePolicies(global, local Policy) Policy {
 	merged.ReleaseAge.TrustedPackages = unionLists(global.ReleaseAge.TrustedPackages, local.ReleaseAge.TrustedPackages)
 	merged.InstallScripts.TrustedPackages = unionLists(global.InstallScripts.TrustedPackages, local.InstallScripts.TrustedPackages)
 	merged.Vulnerabilities.AllowedAdvisories = unionLists(global.Vulnerabilities.AllowedAdvisories, local.Vulnerabilities.AllowedAdvisories)
+	if local.Vulnerabilities.MinSeverity != "" {
+		merged.Vulnerabilities.MinSeverity = local.Vulnerabilities.MinSeverity
+	}
 
 	if local.Isolation.EnabledSet {
 		merged.Isolation.Enabled = local.Isolation.Enabled
