@@ -229,6 +229,34 @@ jobs:
           $unexpected | ForEach-Object { Write-Host "::error::$_" }
           exit 1
         }
+
+        # A non-zero code with nothing failing is worth explaining rather than
+        # exiting on in silence.
+        #
+        # On 2026-09-09 this step failed on main with "ok github.com/fstubner/nvx
+        # 86.146s" in the log, counts of pass=602 skip=38 fail=0, and every skip
+        # reason already on the allowlist above. Nothing said what had gone wrong.
+        #
+        # The capture on line 165 was suspected and cleared: `native | Tee-Object`
+        # followed by `$LASTEXITCODE` was measured on pwsh 7 returning 0, 1 and 7
+        # correctly, so the code is real and the cause is something go test emitted
+        # that no "--- FAIL" line covers -- a build or vet error, a panic, a race
+        # report, a package that never reported. Those lines are pulled out here.
+        #
+        # The step still fails on the code. What changes is that the next
+        # occurrence says what it is failing on instead of leaving someone to read
+        # 8000 lines of log for it.
+        if ($code -ne 0 -and $fail -eq 0) {
+          Write-Host "::error::go test exited $code with no failing test; the lines below are what it printed instead"
+          $why = Select-String -Path probe.log -Pattern '^(FAIL|# |panic:|fatal error:|WARNING: DATA RACE|.*\[build failed\])' |
+            Select-Object -First 20
+          if ($why) {
+            $why | ForEach-Object { Write-Host "::error::$($_.Line.Trim())" }
+          } else {
+            Write-Host "::error::nothing in probe.log explains it either; the last 20 lines follow"
+            Get-Content probe.log -Tail 20 | ForEach-Object { Write-Host "::error::$_" }
+          }
+        }
         exit $code
 
     - name: Windows sandbox smoke
