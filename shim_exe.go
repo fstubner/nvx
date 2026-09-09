@@ -172,17 +172,38 @@ func replaceFile(tmp, dst string) error {
 	if err == nil {
 		return nil
 	}
-	if rerr := os.Rename(dst, asideName(dst)); rerr != nil {
+	aside := asideName(dst)
+	if rerr := os.Rename(dst, aside); rerr != nil {
 		return err
 	}
-	return os.Rename(tmp, dst)
+	if rerr := os.Rename(tmp, dst); rerr != nil {
+		// Put it back. Between the two renames there is a moment with no file at
+		// dst, and leaving it that way would be worse than not having tried: for a
+		// shim it is a command that has vanished from PATH, and for nvx.exe itself
+		// it is every shim pointing at nothing. The original is still intact under
+		// the aside name, so this is recoverable and worth recovering.
+		if back := os.Rename(aside, dst); back != nil {
+			return fmt.Errorf("%w (and %s could not be restored from %s: %v)", rerr, dst, aside, back)
+		}
+		return rerr
+	}
+	return nil
 }
 
 // asideName is where a file that is executing gets moved so its name can be
-// reused. sweepStaleShimExes matches it.
+// reused.
+//
+// The suffix is what sweepStaleShimExes globs for, so the two are one decision
+// written twice; TestAsideFilesAreTheOnesTheSweepRemoves holds them together.
+// A name the sweep does not match is not a broken build -- it is a bin directory
+// that accumulates a copy of nvx per upgrade, for ever, with nothing to say so.
 func asideName(dst string) string {
-	return fmt.Sprintf("%s.stale-%d", dst, os.Getpid())
+	return fmt.Sprintf("%s%s%d", dst, asideSuffix, os.Getpid())
 }
+
+// asideSuffix marks a file that was renamed out of the way because it could not
+// be replaced while running.
+const asideSuffix = ".stale-"
 
 // sameSizeAndTime reports whether b is a copy of a made by refreshLink: same
 // size, same modification time. Only consulted when they are not the same file.
@@ -202,7 +223,15 @@ func sameSizeAndTime(a, b string) bool {
 // they were running at the time. One still running refuses to delete, which is
 // the correct outcome and not an error.
 func sweepStaleShimExes(shimDir string) {
-	matches, err := filepath.Glob(filepath.Join(shimDir, "*.exe.stale-*"))
+	// Both shapes: a shim (npm.exe.stale-123) and nvx itself
+	// (nvx.exe.stale-123), which is renamed aside by the same helper whenever a
+	// running shim holds it. Every shim on Windows is a hard link to nvx.exe, so
+	// one MCP server left running is enough to make an upgrade take this path.
+	//
+	// Removal failing is the ordinary case rather than an error: the file is
+	// still executing, which is why it was renamed instead of replaced. The next
+	// run clears it.
+	matches, err := filepath.Glob(filepath.Join(shimDir, "*"+asideSuffix+"*"))
 	if err != nil {
 		return
 	}
