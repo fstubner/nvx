@@ -14,7 +14,7 @@ import (
 func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath string, cleanEnv []string, netCtx NetworkLaunchContext) (int, error) {
 	if _, err := os.Stat(seatbeltExecPath); err != nil {
 		LogError("native sandbox requires sandbox-exec at %s.", seatbeltExecPath)
-		return 1, errSandboxDidNotStart
+		return 1, refusedToStart("sandbox-exec is not present on this machine")
 	}
 	sandboxExec := seatbeltExecPath
 
@@ -27,7 +27,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	connectEnv, stopConnect, err := startSeatbeltConnectRelays(&netCtx)
 	if err != nil {
 		LogError("Could not open a path to a host service for the sandbox: %v", err)
-		return 1, errSandboxDidNotStart
+		return 1, refusedToStart("a path to a host service could not be opened")
 	}
 	defer stopConnect()
 	cleanEnv = append(cleanEnv, connectEnv...)
@@ -45,7 +45,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	profilePath, removeProfile, err := writeSeatbeltProfile(config.NvxHome, profile)
 	if err != nil {
 		LogError("Failed to write the Seatbelt profile: %v", err)
-		return 1, errSandboxDidNotStart
+		return 1, refusedToStart("the seatbelt profile could not be written")
 	}
 	defer removeProfile()
 
@@ -76,7 +76,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 			return exitErr.ExitCode(), nil
 		}
 		LogError("Seatbelt execution failed: %v", err)
-		return 1, errSandboxDidNotStart
+		return 1, refusedToStart("the seatbelt sandbox could not be launched")
 	}
 	return 0, nil
 }

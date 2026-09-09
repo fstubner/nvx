@@ -41,7 +41,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	exe, err := os.Executable()
 	if err != nil {
 		LogError("Failed to resolve nvx executable: %v", err)
-		return 1, errSandboxDidNotStart
+		return 1, refusedToStart("the nvx executable could not be resolved")
 	}
 
 	// Host services this run may reach. Opened here, outside the namespace, and
@@ -50,7 +50,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	connectEnv, stopConnect, err := openConnectSockets(guestHome, &netCtx)
 	if err != nil {
 		LogError("Could not open a path to a host service for the sandbox: %v", err)
-		return 1, errSandboxDidNotStart
+		return 1, refusedToStart("a path to a host service could not be opened")
 	}
 	defer stopConnect()
 	cleanEnv = append(cleanEnv, connectEnv...)
@@ -63,7 +63,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		stopLoopback, lerr := openLoopbackSocket(guestHome, config.NvxHome)
 		if lerr != nil {
 			LogError("Could not open the loopback path for the sandbox: %v", lerr)
-			return 1, errSandboxDidNotStart
+			return 1, refusedToStart("the loopback path could not be opened")
 		}
 		defer stopLoopback()
 	}
@@ -133,7 +133,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 			return exitErr.ExitCode(), nil
 		}
 		LogError("Landlock sandbox execution failed: %v", err)
-		return 1, errSandboxDidNotStart
+		return 1, refusedToStart("the landlock sandbox could not be launched")
 	}
 	return 0, nil
 }

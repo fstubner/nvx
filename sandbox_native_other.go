@@ -29,5 +29,5 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	LogError("No OS-native sandbox is available on %s; nvx contains commands on Windows, Linux and macOS only.", runtime.GOOS)
 	LogInfo("Refusing to run rather than running this command unprotected.")
 	LogInfo("To run it without containment, and accept that: nvx --no-sandbox %s", config.Command)
-	return 1, errSandboxDidNotStart
+	return 1, refusedToStart("this platform has no os-native sandbox")
 }

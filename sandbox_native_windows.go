@@ -305,7 +305,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	sid, err := ensureAppContainerSID(pkgName)
 	if err != nil {
 		LogError("AppContainer profile unavailable: %v", err)
-		return 1, errSandboxDidNotStart
+		return 1, refusedToStart("the appcontainer profile was unavailable")
 	}
 	defer syscall.LocalFree(syscall.Handle(sid))
 
@@ -317,7 +317,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// name is known only here, it is created here.
 	if err := os.MkdirAll(filepath.Join(guestHome, "AppData", "Local", "Packages", pkgName, "AC", "Temp"), 0700); err != nil {
 		LogError("Could not create the sandbox temp directory: %v", err)
-		return 1, errSandboxDidNotStart
+		return 1, refusedToStart("the sandbox temp directory could not be created")
 	}
 
 	// Package-manager workflows used to require the elevated `nvx setup` grants,
@@ -346,13 +346,13 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	scopeCaps, launchDir, err := applyProjectGrants(config, sid, scope, guestHome, workDir)
 	if err != nil {
 		LogError("%v", err)
-		return 1, errSandboxDidNotStart
+		return 1, refusedToStart("the sandbox writable roots could not be granted")
 	}
 
 	cmdPath, launchArgs, err := containedCommand(config, cmdPath)
 	if err != nil {
 		LogError("%v", err)
-		return 1, errSandboxDidNotStart
+		return 1, refusedToStart("the sandbox writable roots could not be granted")
 	}
 
 	cleanEnv = containedEnv(cleanEnv, guestHome, cmdPath, config.NvxHome)
@@ -405,7 +405,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		e, perr := publishExposedPort(exposeCtx, guestHome, m)
 		if perr != nil {
 			LogError("Could not publish port %d from the sandbox: %v", m.Container, perr)
-			return 1, errSandboxDidNotStart
+			return 1, refusedToStart("a port could not be published from the sandbox")
 		}
 		defer e.Close()
 		// The host port is the one the developer types, and it is deliberately not
@@ -421,7 +421,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		c, cerr := openConnectPort(exposeCtx, config.NvxHome, guestHome, m)
 		if cerr != nil {
 			LogError("Could not open a path to 127.0.0.1:%d for the sandbox: %v", m.Host, cerr)
-			return 1, errSandboxDidNotStart
+			return 1, refusedToStart("a path to a host service could not be opened")
 		}
 		defer c.Close()
 		if netCtx.ConnectPorts[i].Inside == 0 {
@@ -441,7 +441,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 			// restore the unrestricted egress this whole path exists to remove.
 			LogError("Egress relay setup failed (fail-closed): %v", err)
 			LogInfo("To run without the egress allowlist, set network.mode to \"open\" in your nvx policy.")
-			return 1, errSandboxDidNotStart
+			return 1, refusedToStart("the egress relay could not be set up")
 		}
 	}
 
@@ -462,7 +462,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		LogWarn("The staged sandbox supervisor is unusable; replacing it and retrying once.")
 		if rerr := restageSupervisor(config.NvxHome, cmdPath); rerr != nil {
 			LogError("Could not replace the sandbox supervisor: %v", rerr)
-			return 1, errSandboxDidNotStart
+			return 1, refusedToStart("the sandbox supervisor could not be replaced")
 		}
 		exitCode, err = launchAppContainerProcess(
 			cmdPath, launchArgs, cleanEnv, launchDir, sid, 0, capabilitySIDs,
@@ -476,7 +476,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		// to someone who knows the cache file exists.
 		invalidateGrantCache()
 		LogError("AppContainer launch failed: %v", err)
-		return 1, errSandboxDidNotStart
+		return 1, refusedToStart("the appcontainer launch failed")
 	}
 	// Say it again, last, when the command failed and a stranded setup is why it
 	// probably failed.
