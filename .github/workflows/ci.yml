@@ -342,7 +342,12 @@ jobs:
         fi
         # -run selects only the namespace-gated tests; a skip here means the
         # environment still cannot host them, which is worth seeing in the log.
-        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone' . 2>&1 | tee /tmp/priv.log
+        # TestContainedProcess... is named here because unprivileged it SKIPS:
+        # Ubuntu 24.04's AppArmor refuses a mount namespace inside an unprivileged
+        # user namespace, so the private /proc the Bun fix depends on cannot be
+        # mounted. Leaving it out of this filter would mean it runs nowhere -- the
+        # exact shape of the drift that once left 31 of 41 probes matching nothing.
+        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone|TestContainedProcess' . 2>&1 | tee /tmp/priv.log
         # A failure, not a warning. This said "it is verifying nothing" and then
         # let the job go green, so the condition it names could persist
         # indefinitely -- which is what happened on Linux before 2026-08-23, when
