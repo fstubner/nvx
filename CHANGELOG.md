@@ -48,6 +48,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **A test whose setup lost a handle now retries, and skips rather than failing
+  if the host keeps refusing.** The same Windows condition that refuses a process
+  also refuses a file write: measured 2026-09-10, a test died at `write
+  ...\windows-setup.json: The handle is invalid` before a single assertion ran,
+  and the identical commit re-run was clean. This is the third face of one host
+  state, after cleanup (`removeAllBestEffort`) and reading the staged probe child
+  (`stageProbeChild`).
+
+  Applied at the two measured call sites only, not to the 135 `t.Fatal(err)`
+  setup sites across 52 Windows test files. A sweep that size would be
+  unreviewable and would make every one of those sites quieter about real
+  defects; machinery earns its place from a failure that happened. A persistent
+  refusal skips with a message saying an assertion was not checked, so a run
+  cannot report success for a probe that never executed.
+
 * **macOS: the `sandbox-exec` provider's availability check now asks about the
   same path the launcher uses.** It had the path written out a second time, so a
   test that puts nvx on a machine with no `sandbox-exec` -- the only way to check
