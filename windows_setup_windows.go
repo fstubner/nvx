@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,6 +30,41 @@ func runWinCmd(timeout time.Duration, name string, args ...string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
+	var out []byte
+	for attempt := 0; ; attempt++ {
+		out, err = runWinCmdOnce(timeout, name, tool, args...)
+		if err == nil || attempt == winCmdRetries-1 || !processNeverStarted(err) {
+			return out, err
+		}
+		time.Sleep(winCmdRetryPause)
+	}
+}
+
+// Windows sometimes refuses to create a process at all, briefly.
+//
+// Measured on a hosted runner 2026-09-09: `fork/exec
+// C:\Windows\system32\icacls.exe: The handle is invalid` out of
+// prepareAppContainerFilesystem, in the same second that AppContainer launches
+// were being refused and two probe children returned no output. The runner was
+// momentarily unable to make processes; nothing about nvx or the command was
+// wrong, and a plain re-run was clean.
+//
+// That reached a user as a sandbox refusing to start, because labelLowIntegrity
+// is on every contained launch here. nvx already treats this exact error as
+// transient when READING the probe child (stageProbeChild retries five times);
+// the same error creating a process was fatal. This closes that asymmetry.
+//
+// Five attempts at 200ms, the same shape as stageProbeChild rather than a second
+// invented one.
+const winCmdRetries = 5
+
+// winCmdRetryPause is a var so a test can drive the retry without sleeping.
+var winCmdRetryPause = 200 * time.Millisecond
+
+// runWinCmdOnce is a single attempt, replaceable so a test can make one fail.
+// The condition being handled cannot be produced on demand -- it is a state of
+// the machine -- so a seam is the only way the retry is checkable at all.
+var runWinCmdOnce = func(timeout time.Duration, name, tool string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, tool, args...).CombinedOutput()
@@ -36,6 +72,38 @@ func runWinCmd(timeout time.Duration, name string, args ...string) ([]byte, erro
 		return out, fmt.Errorf("%s timed out after %s", name, timeout)
 	}
 	return out, err
+}
+
+// errorInvalidHandle is ERROR_INVALID_HANDLE, what Windows returns when it
+// cannot hand out another handle.
+const errorInvalidHandle = 6
+
+// processNeverStarted reports whether err says the command was never launched.
+//
+// Deliberately narrow, in two ways that matter.
+//
+// The operation must be "fork/exec", which Go sets only when os.StartProcess
+// itself failed. That is what makes a retry safe regardless of what the command
+// would have done: it provably did not run, so re-running cannot repeat a side
+// effect. Idempotence of icacls and CheckNetIsolation is then a second line of
+// defence rather than the argument.
+//
+// And the code must be ERROR_INVALID_HANDLE, the one transient this has been
+// measured producing. A missing executable also fails at fork/exec and must not
+// be retried five times before saying so.
+//
+// Matched on the errno, not on the message. "The handle is invalid" is the
+// English text; the same failure on a localised Windows says something else, and
+// a check that reads as robust while never firing is worse than no check. The
+// exhaustion signatures next door match text because they arrive from several
+// layers with no common type -- here there is one.
+func processNeverStarted(err error) bool {
+	var pathErr *os.PathError
+	if !errors.As(err, &pathErr) || pathErr.Op != "fork/exec" {
+		return false
+	}
+	var errno syscall.Errno
+	return errors.As(pathErr.Err, &errno) && errno == errorInvalidHandle
 }
 
 var procGetTokenInformation = modAdvapi32.NewProc("GetTokenInformation")
