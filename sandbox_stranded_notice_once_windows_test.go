@@ -20,12 +20,14 @@ import (
 
 func TestTheStrandedSetupNoticeIsShownOnce(t *testing.T) {
 	nvxHome := tempDir(t)
-	if err := writeWindowsSetupState(nvxHome, windowsSetupState{
-		AppContainerSID: "S-1-15-2-1-2-3-4-5-6-7", // a package identity nothing launches under
-		GrantedPaths:    []string{`C:\`, `C:\Users`},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	// Through setupOrSkip: this exact write failed on a hosted runner with "The
+	// handle is invalid", failing the test before any assertion ran.
+	setupOrSkip(t, "record a stranded setup state", func() error {
+		return writeWindowsSetupState(nvxHome, windowsSetupState{
+			AppContainerSID: "S-1-15-2-1-2-3-4-5-6-7", // a package identity nothing launches under
+			GrantedPaths:    []string{`C:\`, `C:\Users`},
+		})
+	})
 	workDir := tempDir(t)
 
 	// A machine on which no drive root is granted, whatever this one's really are.
