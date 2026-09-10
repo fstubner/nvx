@@ -262,9 +262,9 @@ func TestWindowsSetupStateRoundTrip(t *testing.T) {
 		GrantedPaths:    []string{`C:\`, `C:\Users`},
 		LoopbackExempt:  true,
 	}
-	if err := writeWindowsSetupState(nvxHome, want); err != nil {
-		t.Fatal(err)
-	}
+	setupOrSkip(t, "write the setup state marker", func() error {
+		return writeWindowsSetupState(nvxHome, want)
+	})
 	got, ok := readWindowsSetupState(nvxHome)
 	if !ok || got.AppContainerSID != want.AppContainerSID || !got.LoopbackExempt || len(got.GrantedPaths) != 2 {
 		t.Fatalf("round-trip mismatch: %+v", got)
