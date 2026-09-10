@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -79,6 +80,29 @@ func TestContainedProcessReadsItsOwnProcAndNotTheHosts(t *testing.T) {
 		t.Fatalf("contained child failed: %v\noutput:\n%s", err, out)
 	}
 	got := parseProbeResults(string(out))
+
+	// Creating the namespaces and being allowed to USE them are different
+	// questions, and requireNamespaceSupport above only answers the first.
+	//
+	// supervisorSysProcAttr maps this user to root inside a new user namespace, so
+	// the child should hold CAP_SYS_ADMIN there and unshare(CLONE_NEWNS) should
+	// succeed. Ubuntu 24.04 hardens unprivileged user namespaces through AppArmor
+	// and strips it: the clone succeeds, the unshare comes back EPERM, and every
+	// assertion below then reads as a product failure caused by a distribution
+	// setting. Measured on the hosted runner, which is exactly that configuration
+	// -- the same reason TestNetns skips there via requireLoopbackControl.
+	//
+	// The operation itself is the probe: nothing else asks the real question, and a
+	// separate one could drift from it.
+	//
+	// This does NOT leave the test unverified. CI runs it again under sudo in the
+	// privileged containment step, where the restriction does not apply and where a
+	// skip is a hard failure -- so the -run filter there names this test, and the
+	// gate below cannot quietly become "never runs anywhere".
+	if strings.Contains(got["mount"], "operation not permitted") {
+		t.Skipf("this host refuses a mount namespace inside an unprivileged user namespace "+
+			"(Ubuntu 24.04 AppArmor); the privileged CI step covers it: mount=%s", got["mount"])
+	}
 
 	for _, want := range []struct{ key, val, why string }{
 		{"mount", "ok", "the sandbox must get a procfs of its own; without it the grant is withheld and Bun cannot run"},
