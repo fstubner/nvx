@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Windows: a contained launch could be refused because the machine briefly
+  could not create a process.** `prepareAppContainerFilesystem` labels the guest
+  home by running `icacls`, and when Windows momentarily runs out of handles that
+  call fails at `fork/exec` with `The handle is invalid` — the command never
+  starts. nvx reported it as a launch failure, so the sandbox refused to run for a
+  condition that clears by itself.
+
+  Measured on a hosted runner on 2026-09-09, in the same second that AppContainer
+  launches were being refused and two probe children returned no output at all;
+  the same commit re-run was clean. nvx already treated this exact error as
+  transient when reading the staged probe child, and as fatal when creating a
+  process — that asymmetry is what this closes.
+
+  Retried five times at 200ms, the shape already used elsewhere, and only when
+  the error says the process was never created (`fork/exec` plus
+  `ERROR_INVALID_HANDLE`). That is what makes re-running safe whatever the
+  command would have done. A missing executable also fails at `fork/exec` and is
+  still reported at once rather than after five waits, and the errno is matched
+  rather than the English text, which differs on a localised Windows.
+
 * **`blocked_packages` understood only a trailing `*`.** Every other policy list
   goes through one shared matcher that takes `*` and `?` anywhere; the blocklist
   had a matcher of its own that recognised a literal name or a trailing star and
