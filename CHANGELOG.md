@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+* **Fuzz targets for the egress proxy's two parsers.** The SOCKS5 handshake and
+  the HTTP CONNECT request are the only things nvx parses whose bytes come from
+  the contained process rather than from a person, and the proxy that parses them
+  runs in the parent, outside the containment, with real network access. A panic
+  there takes down the supervisor of a running sandbox; a hang holds an install
+  open. Until now they had unit tests for the shapes someone thought to write
+  down and nothing for the rest.
+
+  Four targets: the two connection handlers driven over `net.Pipe`, plus
+  `validEgressHost` and the proxy credential check. The two that matter assert
+  liveness rather than correctness — a parser refusing malformed input is doing
+  its job — while `validEgressHost` asserts that anything it accepts is free of
+  control characters, since what it accepts is printed to a terminal and written
+  to the audit log, and the credential check asserts that an accepted header
+  decodes to exactly this session's token.
+
+  The fuzz configuration cannot reach the network: the allowlist is empty and
+  `prompt_unknown` is false, so `allowed()` refuses before `dialVetted` is
+  called, and the resolver is stubbed because both handlers resolve the host
+  before consulting the allowlist. Measured 2026-09-11: 25 seconds per target,
+  no panic, no hang, no unauthorized acceptance, and no crasher written.
+
 ### Fixed
 
 * **Windows: a contained launch could be refused because the machine briefly
