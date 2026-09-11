@@ -33,6 +33,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The test suite no longer writes nvx's shell integration into your real
+  PowerShell profile.** `nvx doctor --fix` repairs two things a throwaway
+  `NVX_HOME` does not contain: the persistent PATH, and the shell profile. The
+  PATH write was given a test seam after it was caught prepending dead temp
+  directories to real user PATHs. The profile write was not, and kept going.
+
+  Redirecting `HOME` does not reliably contain it. On Windows nvx asks PowerShell
+  for `$PROFILE`, and where that lands depends on the machine: a CI runner's
+  PowerShell follows the redirected home, while one whose Documents folder is
+  redirected to OneDrive does not and answers with the real profile. A test cannot
+  tell the two apart, so any test reaching `doctor --fix` could append the
+  integration line outside its own temporary directory.
+
+  It is plainest in CI, where the runner starts clean: the Windows job's
+  unit-test step logged `Added the shell integration to
+  C:\Users\runneradmin\Documents\PowerShell\Microsoft.PowerShell_profile.ps1`,
+  and every later PowerShell step in that job then printed `The term 'nvx' is not
+  recognized` at startup, loading a line a test had planted.
+
+  The write is now replaceable in tests, the way the PATH repair already was, and
+  the tests that run `doctor --fix` replace it. Nothing about the shipped
+  behaviour of `nvx doctor --fix` changes.
+
+  The check that keeps it that way parses the test sources rather than matching
+  them with a pattern. A review caught the pattern version passing in two cases,
+  both then reproduced: a caller written the ordinary way for this suite,
+  `runDoctor(tempDir(t), true)`, never matched at all, because the expression
+  could not cross a nested bracket; and the stub was looked for anywhere in the
+  same file, so one careful test excused every other caller beside it. It now
+  looks per function, fails when it finds no callers at all rather than passing
+  by looking at nothing, and covers the remaining route — a test that runs the
+  built binary, where an in-process substitute cannot reach.
+
+  Two reasons it went unnoticed on developer machines, both accidents rather than
+  protection: under Git Bash `MSYSTEM` is set, so nvx picks bash and the
+  PowerShell branch never runs, and a developer's profile usually already loads
+  nvx, so the check short-circuits before writing.
+
 * **The Windows installer no longer changes your PowerShell execution policy
   without asking.** It set the policy to RemoteSigned behind a progress line,
   with `-Force` and errors suppressed. That is the setting PowerShell uses to

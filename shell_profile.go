@@ -102,8 +102,34 @@ func profileLoadsIntegration(path string) bool {
 	return false
 }
 
-// addIntegrationToProfile appends the line, creating the file if needed.
-func addIntegrationToProfile(path, shell string) error {
+// addIntegrationToProfile is a variable so tests can stop it touching the real
+// machine, for the same reason repairPersistentPath is one.
+//
+// It appends to the profile of whichever shell the host actually uses, and a
+// throwaway HOME does not reliably move that path. On Windows profilePathFor asks
+// pwsh for $PROFILE, and whether pwsh follows USERPROFILE depends on the machine:
+// a GitHub runner's does, while one whose Documents folder is redirected to
+// OneDrive does not, and there the answer is the developer's real profile. A test
+// cannot tell the two apart, so any test reaching runDoctor(home, true) could
+// append outside its own temp tree -- and did, to CI's profile: the Windows job's
+// unit-test step logged "Added the shell integration to
+// C:\Users\runneradmin\Documents\PowerShell\Microsoft.PowerShell_profile.ps1",
+// after which every later pwsh step in that job printed "The term 'nvx' is not
+// recognized" while loading the line a test had planted.
+//
+// It went unnoticed on developer machines for the two reasons that make a local
+// reproduction fail: MSYSTEM is set under Git Bash, so defaultShell() answers
+// "bash" and the PowerShell branch never runs, and a developer's profile already
+// loads nvx, so profileLoadsIntegration short-circuits before the write. Neither
+// is protection -- both are accidents of the machine it was run on.
+//
+// The seam is at the write alone. Everything above it -- finding the profile,
+// deciding whether the integration is present, and the report the user reads --
+// still runs for real in tests.
+var addIntegrationToProfile = addIntegrationToProfileImpl
+
+// addIntegrationToProfileImpl appends the line, creating the file if needed.
+func addIntegrationToProfileImpl(path, shell string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- a profile dir is not secret
 		return err
 	}

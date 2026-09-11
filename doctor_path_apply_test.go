@@ -29,6 +29,11 @@ func TestDoctorFixOnlyAppliesAPathRepairItAlreadyChecked(t *testing.T) {
 	}
 	t.Cleanup(func() { repairPersistentPath = restore })
 
+	// fix=true also reaches the shell-profile write, which lands in the real
+	// profile rather than under nvxHome. This test is about the PATH repair, so
+	// the profile write is stubbed rather than left to touch the machine.
+	stubProfileWrite(t)
+
 	nvxHome := tempDir(t)
 	_ = runDoctor(nvxHome, true)
 
