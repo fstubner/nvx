@@ -56,6 +56,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the tests that run `doctor --fix` replace it. Nothing about the shipped
   behaviour of `nvx doctor --fix` changes.
 
+  The check that keeps it that way parses the test sources rather than matching
+  them with a pattern. A review caught the pattern version passing in two cases,
+  both then reproduced: a caller written the ordinary way for this suite,
+  `runDoctor(tempDir(t), true)`, never matched at all, because the expression
+  could not cross a nested bracket; and the stub was looked for anywhere in the
+  same file, so one careful test excused every other caller beside it. It now
+  looks per function, fails when it finds no callers at all rather than passing
+  by looking at nothing, and covers the remaining route — a test that runs the
+  built binary, where an in-process substitute cannot reach.
+
   Two reasons it went unnoticed on developer machines, both accidents rather than
   protection: under Git Bash `MSYSTEM` is set, so nvx picks bash and the
   PowerShell branch never runs, and a developer's profile usually already loads
