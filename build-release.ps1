@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.5.0",
+    [string]$Version,
     [string]$GoVersion = "1.26.6"
 )
 
@@ -8,6 +8,30 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+
+# The stamped version comes from version.go, which TestAppVersionMatchesNewest-
+# ChangelogEntry already ties to the newest CHANGELOG heading. Deriving it here
+# means the binary, the changelog and this script cannot disagree.
+#
+# It used to default to a literal "0.5.0", written once and never revisited:
+# eight tags were cut past it, so every local build since has stamped a version
+# it was not. Bumping the literal would have restored the drift at the next
+# release; reading the one place that is already checked removes it.
+#
+# Note this is the LOCAL build path only. The published binaries are built by
+# .github/workflows/release.yml, which takes the version from the git tag, so
+# nothing released carried the stale default.
+if (-not $Version) {
+    $versionGo = Join-Path $PSScriptRoot "version.go"
+    $appVersion = [regex]::Match((Get-Content $versionGo -Raw), 'appVersion\s*=\s*"([^"]+)"')
+    if (-not $appVersion.Success) {
+        throw "Could not read appVersion from $versionGo. Pass -Version explicitly."
+    }
+    $Version = $appVersion.Groups[1].Value
+    Write-Host "Stamping version $Version, read from version.go." -ForegroundColor Cyan
+} else {
+    Write-Host "Stamping version $Version, given on the command line." -ForegroundColor Cyan
+}
 
 $scratchDir = Join-Path $env:TEMP "nvx-build"
 
