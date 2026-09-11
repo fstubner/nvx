@@ -33,6 +33,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The Windows installer no longer changes your PowerShell execution policy
+  without asking.** It set the policy to RemoteSigned behind a progress line,
+  with `-Force` and errors suppressed. That is the setting PowerShell uses to
+  decide what code it will run, and an installer should not move it on your
+  behalf; suppressing the error also meant a failed change read exactly like a
+  successful one, leaving the shell integration dead with nothing saying why.
+
+  It now explains what the change does and why nvx wants it, asks, and reports
+  what actually happened. Declining still installs nvx, and prints the one
+  command to run later. A non-interactive run changes nothing.
+
+  It also asked the wrong question. The check read the CurrentUser scope, which
+  is Undefined on any machine whose policy is set elsewhere — measured on a
+  developer machine on 2026-09-11: CurrentUser Undefined, effective RemoteSigned,
+  scripts running fine. It now reads the effective policy, so a machine that is
+  already fine is left alone.
+
+* **`build-release.ps1` stamped builds with a version from eight tags ago.** Its
+  `-Version` default was the literal `0.5.0`, written once and never revisited,
+  so any local build since has reported a version it was not. The default now
+  comes from `version.go`, which a test already holds equal to the newest
+  changelog entry, so the binary, the changelog and the build script cannot
+  disagree. Published releases were never affected — those are built by the
+  release workflow, which takes the version from the git tag.
+
 * **Windows: a contained launch could be refused because the machine briefly
   could not create a process.** `prepareAppContainerFilesystem` labels the guest
   home by running `icacls`, and when Windows momentarily runs out of handles that

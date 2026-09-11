@@ -84,6 +84,31 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wP
     }
 }
 
+# Does this execution policy stop PowerShell from loading a profile?
+#
+# Takes the EFFECTIVE policy, not the CurrentUser one. The check used to read
+# `Get-ExecutionPolicy -Scope CurrentUser`, which is Undefined on a machine whose
+# policy is set at any other scope -- measured here on 2026-09-11: CurrentUser
+# Undefined, effective RemoteSigned, scripts running perfectly well. Reading the
+# scope rather than the answer meant offering to change a setting that was
+# already fine.
+#
+# AllSigned is included because an unsigned profile does not load under it
+# either, and CurrentUser outranks LocalMachine in policy precedence, so the same
+# change is the same fix. Undefined at the effective level means no scope has set
+# one, which is Restricted on Windows client editions.
+function Test-NvxProfileBlockedByPolicy {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Policy)
+    return $Policy -in @('Restricted', 'AllSigned', 'Undefined')
+}
+
+# Only an explicit yes is a yes. Empty -- someone pressing Return at a [y/N]
+# prompt -- is no, which is what makes the prompt's default safe.
+function Test-NvxAffirmative {
+    param([AllowEmptyString()][string]$Answer)
+    return $Answer -match '^\s*(y|yes)\s*$'
+}
+
 if ($LibraryOnly) { return }
 
 Write-Host "Setting up nvx directories..."
@@ -102,11 +127,49 @@ if (Set-NvxUserPath -BinDir $binDir) {
 # Update current session path
 $env:PATH = "$binDir;$env:PATH"
 
-# 2. Check and configure PowerShell Execution Policy
-$policy = Get-ExecutionPolicy -Scope CurrentUser
-if ($policy -eq 'Restricted' -or $policy -eq 'Undefined') {
-    Write-Host "Configuring PowerShell execution policy to RemoteSigned..."
-    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction SilentlyContinue
+# 2. PowerShell execution policy.
+#
+# Load-bearing rather than a nicety: under Restricted -- the default on Windows
+# client editions -- PowerShell refuses to load $PROFILE at all, so the
+# integration line written in step 3 never runs and nvx never sees a shell.
+# RemoteSigned is the narrowest policy that allows it, and the CurrentUser scope
+# leaves the machine policy alone.
+#
+# It used to be changed silently: `-Force -ErrorAction SilentlyContinue`, behind
+# a progress line. An installer altering the rule its shell uses to decide what
+# code it will execute is not a progress line, and SilentlyContinue meant a
+# failure to do it read exactly like success -- the integration would then be
+# dead with nothing saying why. Ask, report what happened, and when the answer is
+# no, say what that costs and how to do it later.
+$interactive = ([Environment]::UserInteractive) -and (-not $env:CI) -and (-not $env:NVX_NONINTERACTIVE) -and ($Host.Name -ne 'Default Host')
+$policy = Get-ExecutionPolicy
+if (Test-NvxProfileBlockedByPolicy -Policy $policy) {
+    Write-Host ""
+    Write-Host "nvx's shell integration lives in your PowerShell profile, and this machine's"
+    Write-Host "execution policy ($policy) stops PowerShell from loading any profile."
+    Write-Host "RemoteSigned, for your user account only, lets local scripts run; anything"
+    Write-Host "downloaded still needs a signature. No other account is affected."
+
+    $consent = $false
+    if ($interactive) {
+        $consent = Test-NvxAffirmative (Read-Host "Set the CurrentUser execution policy to RemoteSigned? [y/N]")
+    } else {
+        Write-Host "This is not an interactive session, so it is left unchanged."
+    }
+
+    if ($consent) {
+        try {
+            Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+            Write-Host "Execution policy set to RemoteSigned for the current user."
+        } catch {
+            Write-Warning "Could not set the execution policy: $_"
+            $consent = $false
+        }
+    }
+    if (-not $consent) {
+        Write-Host "  nvx will still install, but 'nvx use' cannot change your shell until you run:"
+        Write-Host "    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser"
+    }
 }
 
 # 3. Add shell integration to PowerShell Profile
@@ -191,7 +254,6 @@ Write-Host "nvx has been successfully installed!"
 # after a one-time elevated grant. Offer it here (default: skip). It is entirely
 # optional and re-runnable later with 'nvx setup'.
 $nvxExe = Join-Path $binDir "nvx.exe"
-$interactive = ([Environment]::UserInteractive) -and (-not $env:CI) -and (-not $env:NVX_NONINTERACTIVE) -and ($Host.Name -ne 'Default Host')
 if ($interactive -and (Test-Path $nvxExe)) {
     Write-Host ""
     Write-Host "Optional: enable the Windows sandbox for package managers (npm/npx/yarn/pnpm)."

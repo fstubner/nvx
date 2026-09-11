@@ -303,6 +303,13 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: ./scripts/test-install-path.ps1
+    # The same hook, for the installer's other consequential decision: whether to
+    # offer to change the execution policy, and what counts as consent. It used
+    # to change it silently. Reads no real policy and writes none.
+    - name: Installer execution-policy test
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/test-install-policy.ps1
     # Only when something above already failed, and only on Windows.
     #
     # Five of 34 CI runs on 2026-09-07/08 failed here with socket creation or
