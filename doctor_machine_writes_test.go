@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -17,16 +16,25 @@ var fixCallRe = regexp.MustCompile(`runDoctor\([^)]*,\s*true\)`)
 // have been performed for real by the test suite.
 //
 // The PATH one was found first and given a seam. The profile one was not, and
-// kept writing: on Windows profilePathFor asks pwsh for $PROFILE, which answers
-// with the real Documents folder whatever HOME says, so every `go test` that
-// reached runDoctor(home, true) appended nvx's integration line to the
-// developer's own profile -- and to CI's, where the effect is visible. The
-// Windows job's unit-test step logged
+// kept writing. Redirecting HOME does not reliably contain it: on Windows
+// profilePathFor asks pwsh for $PROFILE, and where that lands depends on the
+// host. A GitHub runner's pwsh follows USERPROFILE, so a redirected home does
+// contain it; on a machine whose Documents folder is redirected to OneDrive it
+// does not, and the answer is the developer's own profile. A test cannot tell
+// which kind of host it is running on, so it stubs.
+//
+// Tests that did not stub wrote CI's profile. The Windows job's unit-test step
+// logged
 //
 //	✔ Added the shell integration to C:\Users\runneradmin\Documents\PowerShell\Microsoft.PowerShell_profile.ps1
 //
 // after which every later pwsh step in that job printed "The term 'nvx' is not
 // recognized" on startup, loading a line a test had planted.
+//
+// One caution when reading those logs: the success line is printed after the
+// write call returns, so a stubbed run prints it too. Measured -- a stubbed run
+// logged the line and created no file. It says which test reaches the write, and
+// is never evidence that a write happened.
 
 // stubProfileWrite makes the shell-profile write a no-op for one test.
 func stubProfileWrite(t *testing.T) {
@@ -93,45 +101,16 @@ func TestDoctorFixStillWritesTheIntegration(t *testing.T) {
 	}
 }
 
-// TestTheWindowsProfilePathIgnoresARedirectedHome states the fact the seam exists
-// for, without performing the write that demonstrates it.
+// There is deliberately no test asserting where the profile path lands relative
+// to a redirected home. It is host-dependent, and an earlier version of this file
+// asserted "outside" and failed CI for exactly that reason: on a windows-latest
+// runner profilePathFor resolved INSIDE the redirected home
+// (...\Temp\Test...\001\Documents\PowerShell\...), because that pwsh follows
+// USERPROFILE, while on this developer's machine it resolved to the OneDrive
+// Documents folder outside it. Either assertion is false on the other host.
 //
-// Redirecting HOME and USERPROFILE is the usual way a test keeps its writes to
-// itself, and for the profile write on Windows it does not work: profilePathFor
-// asks pwsh for $PROFILE, and pwsh answers from the real Documents folder --
-// OneDrive-redirected on many machines -- which no environment variable this test
-// can set will move. Measured here: with SHELL unset, defaultShell() answers
-// "powershell" and the path resolved to a location outside the temp home.
-//
-// So a test that reaches runDoctor(_, true) on Windows cannot be made safe by
-// redirecting the home. It has to stub the write, which is what the seam and the
-// caller check below are for. If this ever stops being true -- pwsh honouring
-// USERPROFILE, or nvx resolving the profile itself -- this test fails and the
-// stubbing can be reconsidered rather than cargo-culted.
-func TestTheWindowsProfilePathIgnoresARedirectedHome(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("only Windows resolves the profile path outside HOME")
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("SHELL", "")
-	t.Setenv("MSYSTEM", "")
-
-	if sh := defaultShell(); sh != "powershell" {
-		t.Fatalf("defaultShell() = %q with SHELL unset on Windows, want powershell; "+
-			"the rest of this test is about that branch", sh)
-	}
-	profile := profilePathFor("powershell")
-	if profile == "" {
-		t.Skip("pwsh did not report a $PROFILE on this host")
-	}
-	if strings.HasPrefix(strings.ToLower(profile), strings.ToLower(home)) {
-		t.Fatalf("profilePathFor resolved %s, inside the redirected home %s.\n"+
-			"If that is now reliable, the profile write no longer needs stubbing in tests.", profile, home)
-	}
-	t.Logf("profile resolves to %s, outside the test home -- hence the seam", profile)
-}
+// The seam and the caller check below are what hold regardless of which host runs
+// them, which is why the fix rests on those rather than on a fact about pwsh.
 
 // TestEveryDoctorFixCallerStubsTheProfileWrite reads the test sources.
 //

@@ -105,11 +105,13 @@ func profileLoadsIntegration(path string) bool {
 // addIntegrationToProfile is a variable so tests can stop it touching the real
 // machine, for the same reason repairPersistentPath is one.
 //
-// It appends to the profile of whichever shell the host actually uses, and that
-// path does not move with a throwaway HOME: on Windows profilePathFor asks pwsh
-// for $PROFILE, which answers with the real Documents folder (OneDrive-redirected
-// on many machines). Any test reaching runDoctor(home, true) therefore wrote the
-// developer's own profile -- and CI's, where it is visible: the Windows job's
+// It appends to the profile of whichever shell the host actually uses, and a
+// throwaway HOME does not reliably move that path. On Windows profilePathFor asks
+// pwsh for $PROFILE, and whether pwsh follows USERPROFILE depends on the machine:
+// a GitHub runner's does, while one whose Documents folder is redirected to
+// OneDrive does not, and there the answer is the developer's real profile. A test
+// cannot tell the two apart, so any test reaching runDoctor(home, true) could
+// append outside its own temp tree -- and did, to CI's profile: the Windows job's
 // unit-test step logged "Added the shell integration to
 // C:\Users\runneradmin\Documents\PowerShell\Microsoft.PowerShell_profile.ps1",
 // after which every later pwsh step in that job printed "The term 'nvx' is not

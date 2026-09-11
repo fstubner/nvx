@@ -37,10 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PowerShell profile.** `nvx doctor --fix` repairs two things a throwaway
   `NVX_HOME` does not contain: the persistent PATH, and the shell profile. The
   PATH write was given a test seam after it was caught prepending dead temp
-  directories to real user PATHs. The profile write was not, and kept going: on
-  Windows nvx asks PowerShell for `$PROFILE`, which answers from the real
-  Documents folder whatever `HOME` says, so any test reaching `doctor --fix`
-  appended the integration line to the developer's own profile.
+  directories to real user PATHs. The profile write was not, and kept going.
+
+  Redirecting `HOME` does not reliably contain it. On Windows nvx asks PowerShell
+  for `$PROFILE`, and where that lands depends on the machine: a CI runner's
+  PowerShell follows the redirected home, while one whose Documents folder is
+  redirected to OneDrive does not and answers with the real profile. A test cannot
+  tell the two apart, so any test reaching `doctor --fix` could append the
+  integration line outside its own temporary directory.
 
   It is plainest in CI, where the runner starts clean: the Windows job's
   unit-test step logged `Added the shell integration to
