@@ -1,6 +1,8 @@
-# Binaries
-nvx
-nvx.exe
+# Binaries. Anchored to the repo root: unanchored `nvx` also matched the
+# directory npm/nvx/, so the wrapper package was never committed and a fresh
+# checkout had no npm/nvx for release.yml to publish from.
+/nvx
+/nvx.exe
 *.exe
 *.exe~
 *.dll
@@ -20,6 +22,11 @@ Thumbs.db
 
 # Build distribution
 dist/
+
+# Platform binaries copied into the npm packages at publish time. Previously
+# ignored by the unanchored `nvx` rule above; named explicitly now that it is
+# anchored, so a publish run does not leave them as untracked files.
+npm/*/bin/nvx
 
 # Release Notes (Temporary)
 release-notes.md

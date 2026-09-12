@@ -1,0 +1,19 @@
+{
+  "name": "@fstubner/nvx",
+  "version": "0.0.0",
+  "description": "Contain what your agent installs. An OS sandbox for npm/npx/bun, plus a Node.js and Bun version manager.",
+  "keywords": ["sandbox", "security", "supply-chain", "npm", "agent", "node", "bun", "version-manager"],
+  "homepage": "https://github.com/fstubner/nvx",
+  "repository": { "type": "git", "url": "git+https://github.com/fstubner/nvx.git" },
+  "license": "MIT",
+  "bin": { "nvx": "bin/nvx.js" },
+  "files": ["bin/nvx.js", "README.md"],
+  "engines": { "node": ">=18" },
+  "optionalDependencies": {
+    "@fstubner/nvx-linux-x64": "0.0.0",
+    "@fstubner/nvx-linux-arm64": "0.0.0",
+    "@fstubner/nvx-darwin-x64": "0.0.0",
+    "@fstubner/nvx-darwin-arm64": "0.0.0",
+    "@fstubner/nvx-win32-x64": "0.0.0"
+  }
+}
