@@ -1,0 +1,666 @@
+package nvx
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+	"time"
+)
+
+// SandboxConfig holds the parameters for an isolated execution environment.
+type SandboxConfig struct {
+	// NvxHome is the root nvx directory (~/.nvx)
+	NvxHome string
+	// Command is the executable to run (e.g. "node", "npx", full path)
+	Command string
+	// Args are the arguments to pass to the command
+	Args []string
+	// WorkDir is the working directory for the sandboxed process (defaults to cwd)
+	WorkDir string
+	// FilesystemProvider overrides isolation.filesystem.provider from policy.
+	FilesystemProvider string
+	// ToolName is set when this invocation is a granted trusted tool (see
+	// ensureTrustedToolGrant) — the native sandbox uses a persistent per-tool
+	// guest profile instead of an ephemeral one for the run. Empty means "use
+	// the ephemeral guest home" (the default, contained behavior).
+	ToolName string
+	// ReadExecRoots are extra directories the contained process may read and
+	// execute from (isolation.filesystem.allow_read_exec), already expanded and
+	// made absolute. Never writable.
+	ReadExecRoots []string
+	// PassEnv are environment variables the project asked to keep inside the
+	// sandbox (isolation.environment.allow). A sensitive prefix still wins.
+	PassEnv []string
+}
+
+// sensitiveEnvPrefixes are environment variable prefixes that will be scrubbed
+// to prevent credential harvesting from sandboxed processes.
+var sensitiveEnvPrefixes = []string{
+	"AWS_",
+	"AZURE_",
+	"GCP_",
+	"GOOGLE_",
+	"GITHUB_",
+	"GITLAB_",
+	"NPM_TOKEN",
+	"NPM_AUTH",
+	"NODE_AUTH",
+	"SSH_",
+	"SECRET_",
+	"TOKEN_",
+	"API_KEY",
+	"PRIVATE_KEY",
+	"CREDENTIAL",
+	"PASSWORD",
+	"DOCKER_",
+	"KUBECONFIG",
+	"OPENAI_",
+	"ANTHROPIC_",
+	"HF_TOKEN",
+}
+
+// windowsAllowedEnvKeys are the only environment variables allowed through on Windows
+// when running in sandbox mode.
+var windowsAllowedEnvKeys = map[string]bool{
+	"PATH":                   true,
+	"PATHEXT":                true,
+	"SYSTEMROOT":             true,
+	"SYSTEMDRIVE":            true,
+	"COMSPEC":                true,
+	"TEMP":                   true,
+	"TMP":                    true,
+	"WINDIR":                 true,
+	"PROCESSOR_ARCHITECTURE": true,
+	"NUMBER_OF_PROCESSORS":   true,
+	"OS":                     true,
+}
+
+// unixAllowedEnvKeys are the only environment variables allowed through on Unix
+// when running in sandbox mode.
+var unixAllowedEnvKeys = map[string]bool{
+	"PATH":   true,
+	"TMPDIR": true,
+	"SHELL":  true,
+	"TERM":   true,
+	"LANG":   true,
+	"LC_ALL": true,
+	"USER":   true,
+}
+
+// generateSandboxID creates a short random identifier for an ephemeral sandbox session.
+func generateSandboxID() (string, error) {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate sandbox ID: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// getSandboxHomeDir returns the root directory for sandbox ephemeral homes.
+func getSandboxHomeDir(nvxHome string) string {
+	return filepath.Join(nvxHome, "sandbox_home")
+}
+
+// getToolHomeDir returns the root directory for persistent per-tool guest
+// profiles. It is a sibling of getSandboxHomeDir (the ephemeral root) so that
+// cleanupStaleSandboxes, which wipes sandbox_home, never touches persistent
+// tool state.
+func getToolHomeDir(nvxHome string) string {
+	return filepath.Join(nvxHome, "tool_home")
+}
+
+// toolHomeKey derives a stable directory name for a (project scope, tool)
+// pair, so a tool trusted in one project gets its own persistent profile that
+// is not shared with other projects or other tools.
+func toolHomeKey(scopeDir, toolName string) string {
+	h := sha256.Sum256([]byte(filepath.Clean(scopeDir) + "\x00" + strings.ToLower(toolName)))
+	return hex.EncodeToString(h[:])[:16]
+}
+
+// createProfileSkeleton creates the minimal directory structure a guest home
+// needs (scratch tmp + config/cache dirs) so a low-privilege sandboxed process
+// can write to expected locations.
+func createProfileSkeleton(guestHome string) error {
+	subdirs := []string{"tmp", ".config", ".cache"}
+	if runtime.GOOS == "windows" {
+		subdirs = append(subdirs, filepath.Join("AppData", "Roaming"), filepath.Join("AppData", "Local"))
+		// Windows ignores the TEMP nvx sets and redirects an AppContainer's temp to
+		// <LOCALAPPDATA>\Packages\<package>\AC\Temp. LOCALAPPDATA points into the
+		// guest home, so that lands here -- but nothing created it, so os.tmpdir()
+		// inside the sandbox was a path that did not exist and every mkdtemp there
+		// failed with ENOENT. That breaks any contained tool that writes a scratch
+		// file, which is most of them; it surfaced while diagnosing something else.
+		//
+		// The leaf is created by the Windows launch path now, not here: the package
+		// name became per-project, and this function does not know the project.
+		subdirs = append(subdirs, filepath.Join("AppData", "Local", "Packages"))
+	} else {
+		subdirs = append(subdirs, filepath.Join(".local", "share"))
+	}
+	for _, subdir := range subdirs {
+		if err := os.MkdirAll(filepath.Join(guestHome, subdir), 0700); err != nil {
+			return fmt.Errorf("failed to create guest profile subdirectory %s: %w", subdir, err)
+		}
+	}
+	return nil
+}
+
+// createGuestProfile creates an ephemeral guest home directory for the sandbox session.
+// Returns the path to the guest home and any error encountered.
+func createGuestProfile(nvxHome string, sandboxID string) (string, error) {
+	guestHome := filepath.Join(getSandboxHomeDir(nvxHome), sandboxID)
+	if err := os.MkdirAll(guestHome, 0700); err != nil {
+		return "", fmt.Errorf("failed to create guest profile directory: %w", err)
+	}
+	if err := createProfileSkeleton(guestHome); err != nil {
+		return "", err
+	}
+	// Record the owning process so `nvx cleanup` can tell this session apart from
+	// a crashed one's leftovers. See guestHomeIsInUse.
+	writeSessionOwner(guestHome, time.Now())
+	return guestHome, nil
+}
+
+// ensurePersistentGuestProfile returns a stable guest home for (scopeDir,
+// toolName), creating it (with the standard skeleton) on first use and reusing
+// it — without wiping existing state — thereafter. Unlike createGuestProfile,
+// this directory is never cleaned up after a run, so credentials a trusted
+// tool writes survive across invocations. It lives entirely under nvxHome and
+// never touches the user's real home.
+func ensurePersistentGuestProfile(nvxHome, scopeDir, toolName string) (string, error) {
+	guestHome := filepath.Join(getToolHomeDir(nvxHome), toolHomeKey(scopeDir, toolName))
+	if err := os.MkdirAll(guestHome, 0700); err != nil {
+		return "", fmt.Errorf("failed to create persistent tool profile: %w", err)
+	}
+	if err := createProfileSkeleton(guestHome); err != nil {
+		return "", err
+	}
+	return guestHome, nil
+}
+
+// cleanupGuestProfile removes the ephemeral guest home directory after the sandbox exits.
+func cleanupGuestProfile(nvxHome string, sandboxID string) {
+	guestHome := filepath.Join(getSandboxHomeDir(nvxHome), sandboxID)
+	if err := os.RemoveAll(guestHome); err != nil {
+		LogWarn("Failed to clean up sandbox guest profile at %s: %v", guestHome, err)
+	}
+}
+
+// scrubEnvironment filters the current process environment, removing sensitive
+// variables and only allowing known-safe keys through. When guestHome is
+// non-empty, home- and temp-related variables are redirected into the guest
+// profile; providers with their own filesystem view (e.g. Docker) pass "".
+//
+// Callers that can report what was removed should use scrubEnvironmentAllowing;
+// this drops the detail on the floor, which is what it did everywhere until
+// 2026-09-03 (see sandbox_env_scrub.go).
+func scrubEnvironment(guestHome string) []string {
+	return scrubEnvironmentAllowing(guestHome, nil).Env
+}
+
+// scrubEnvironmentAllowing is scrubEnvironment plus the two things a caller
+// needs to be honest about it: the extra keys a project asked to pass through
+// (isolation.environment.allow), and a record of what was removed.
+func scrubEnvironmentAllowing(guestHome string, passEnv []string) envScrubResult {
+	var allowed map[string]bool
+	if runtime.GOOS == "windows" {
+		allowed = windowsAllowedEnvKeys
+	} else {
+		allowed = unixAllowedEnvKeys
+	}
+	extra := passEnvSet(passEnv)
+	result := envScrubResult{Refused: refusedPassEnv(passEnv)}
+
+	var cleanEnv []string
+	for _, envVar := range os.Environ() {
+		parts := strings.SplitN(envVar, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := parts[0]
+		keyUpper := strings.ToUpper(key)
+
+		// Skip sensitive prefixes
+		isSensitive := false
+		for _, prefix := range sensitiveEnvPrefixes {
+			if strings.HasPrefix(keyUpper, prefix) {
+				isSensitive = true
+				break
+			}
+		}
+		// A sensitive prefix outranks isolation.environment.allow. See
+		// refusedPassEnv: a project-local file must not be able to hand a cloud
+		// credential to a package's install script.
+		if isSensitive {
+			result.Dropped = append(result.Dropped, key)
+			continue
+		}
+
+		// Only allow known-safe keys through, plus whatever the project named.
+		if !allowed[keyUpper] && !extra[keyUpper] {
+			result.Dropped = append(result.Dropped, key)
+			continue
+		}
+
+		// Temp dirs are redirected into the guest profile below so a
+		// low-privilege sandboxed process can still write scratch files. Not a
+		// drop worth reporting: the variable is set again a few lines down.
+		if guestHome != "" && (keyUpper == "TEMP" || keyUpper == "TMP" || keyUpper == "TMPDIR") {
+			continue
+		}
+
+		cleanEnv = append(cleanEnv, envVar)
+	}
+
+	// Redirect home- and temp-related variables to the guest profile
+	if guestHome != "" {
+		guestTmp := filepath.Join(guestHome, "tmp")
+		if runtime.GOOS == "windows" {
+			cleanEnv = append(cleanEnv,
+				fmt.Sprintf("USERPROFILE=%s", guestHome),
+				fmt.Sprintf("HOMEDRIVE=%s", filepath.VolumeName(guestHome)),
+				fmt.Sprintf("HOMEPATH=%s", strings.TrimPrefix(guestHome, filepath.VolumeName(guestHome))),
+				fmt.Sprintf("APPDATA=%s", filepath.Join(guestHome, "AppData", "Roaming")),
+				fmt.Sprintf("LOCALAPPDATA=%s", filepath.Join(guestHome, "AppData", "Local")),
+				fmt.Sprintf("TEMP=%s", guestTmp),
+				fmt.Sprintf("TMP=%s", guestTmp),
+			)
+		} else {
+			cleanEnv = append(cleanEnv,
+				fmt.Sprintf("HOME=%s", guestHome),
+				fmt.Sprintf("XDG_CONFIG_HOME=%s", filepath.Join(guestHome, ".config")),
+				fmt.Sprintf("XDG_CACHE_HOME=%s", filepath.Join(guestHome, ".cache")),
+				fmt.Sprintf("XDG_DATA_HOME=%s", filepath.Join(guestHome, ".local", "share")),
+				fmt.Sprintf("TMPDIR=%s", guestTmp),
+			)
+		}
+	}
+
+	// Sandbox depth indicator for nested invocations (internal).
+	cleanEnv = append(cleanEnv, "NVX_SANDBOX=1")
+
+	sort.Strings(result.Dropped)
+	result.Env = cleanEnv
+	return result
+}
+
+// NetworkLaunchContext carries egress proxy endpoints for OS network rules.
+type NetworkLaunchContext struct {
+	Mode           string
+	HTTPProxyHost  string
+	HTTPProxyPort  uint16
+	SOCKSProxyHost string
+	SOCKSProxyPort uint16
+	// EgressSocketPath is the UNIX socket the parent's egress proxy also listens
+	// on, for platforms that put the sandboxed process in a network namespace.
+	// A netns has no route to any allowlisted host, so the proxy must stay
+	// outside it; a UNIX socket is how the contained side still reaches it.
+	EgressSocketPath string
+	// ExposePorts maps ports inside the sandbox to ports on the host's loopback
+	// (isolation.network.expose_ports, or --expose). Windows only: it exists
+	// because Windows refuses connections INTO an AppContainer, which Linux and
+	// macOS do not do, so a contained server is already reachable there.
+	ExposePorts []exposeMapping
+	// ConnectPorts are host services the sandbox may reach
+	// (isolation.network.connect_ports, or --connect).
+	ConnectPorts []connectMapping
+}
+
+// runSandbox is the main entry point for executing a command inside the nvx sandbox.
+// It creates an ephemeral guest profile, scrubs the environment, applies OS-level
+// isolation primitives, runs the command, and cleans up afterward.
+// resolvePinnedCommandPath is defined in runtime_exec.go.
+
+// runDockerSandbox runs the execution request inside a Docker container. The
+// image comes from the runtime provider (node -> node:<ver>, bun -> oven/bun),
+// and offline/loopback network modes are enforced with `--network none`.
+func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string, egress *EgressProxy, rt RuntimeProvider, netCtx NetworkLaunchContext) int {
+	ver := pinnedVer
+	if ver == "" {
+		ver = getActiveShellVersionFor(nvxHome, rt.Name())
+	}
+	if ver == "" {
+		ver = getGlobalDefaultVersionFor(nvxHome, rt.Name())
+	}
+
+	imageName := rt.SandboxImage(ver)
+	if imageName == "" {
+		LogError("The %s runtime does not provide a Docker image; use the native provider.", rt.Name())
+		return 1
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "/"
+	}
+
+	dockerArgs := dockerRunArgs(imageName, cwd, config, egress, netCtx)
+	cmd := exec.Command("docker", dockerArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Variables by name, never by value: this line also reaches debug.log and
+	// the report bundle. See dockerLaunchLine.
+	LogInfo("Running in Docker sandbox: docker %s", dockerLaunchLine(dockerArgs))
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode()
+		}
+		LogError("Docker execution failed: %v. Make sure Docker is running.", err)
+		return 1
+	}
+
+	return 0
+}
+
+// dockerRunArgs builds the `docker run` argument list. It is a pure function so
+// the hardening flags and network handling can be unit-tested without Docker.
+func dockerRunArgs(imageName, cwd string, config SandboxConfig, egress *EgressProxy, netCtx NetworkLaunchContext) []string {
+	args := []string{
+		"run", "--rm", "-i",
+		"--cap-drop=ALL",
+		"--security-opt=no-new-privileges",
+		"--pids-limit=512",
+		"--tmpfs", "/tmp",
+	}
+
+	switch strings.ToLower(strings.TrimSpace(netCtx.Mode)) {
+	case "offline", "loopback":
+		// No network interfaces at all: genuine enforcement, not cooperative.
+		args = append(args, "--network", "none")
+	}
+
+	// As the invoking user, on Linux. --cap-drop=ALL takes CAP_DAC_OVERRIDE with
+	// everything else, so root inside the container has no privilege over files
+	// owned by the user outside it: a project directory at 0700 could not be
+	// entered and one at 0755 could not be written, which is every write an
+	// install makes. Running as the user fixes both, and avoids the alternative
+	// -- keeping the capability and leaving root-owned files in the project,
+	// which is one of the things the systemd-nspawn provider was retired for.
+	//
+	// Not on macOS or Windows: Docker Desktop presents the mount through a
+	// filesystem shim that synthesises ownership, the containers work there
+	// without it, and a host uid means nothing to that shim. That difference is
+	// why this went unnoticed -- it cannot be reproduced on a Windows machine.
+	if runtime.GOOS == "linux" {
+		args = append(args, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()))
+	}
+
+	args = append(args, "-v", fmt.Sprintf("%s:/app", cwd), "-w", "/app")
+
+	// A writable HOME, on the tmpfs this container already has.
+	//
+	// The environment is scrubbed, so the container got no HOME at all, and a
+	// tool that needs one falls back to the filesystem root: npm resolved its
+	// cache to /.npm and `npm install` died with EACCES trying to create it,
+	// since the container no longer runs as root. Measured on a Linux runner.
+	// /tmp is the right target -- it is a tmpfs nvx mounts, writable by any uid,
+	// and discarded with the container, which matches the ephemeral guest home
+	// the native providers give a contained process.
+	args = append(args, "-e", "HOME=/tmp")
+
+	scrubbed := scrubEnvironmentAllowing("", config.PassEnv)
+	reportEnvScrub(config.NvxHome, scrubbed)
+	cleanEnv := applyProxyEnv(scrubbed.Env, egress)
+	for _, envVar := range cleanEnv {
+		parts := strings.SplitN(envVar, "=", 2)
+		if len(parts) == 2 && parts[0] != "PATH" && parts[0] != "NVX_SANDBOX" {
+			args = append(args, "-e", envVar)
+		}
+	}
+
+	args = append(args, imageName, config.Command)
+	return append(args, config.Args...)
+}
+
+// runSandbox is the main entry point for executing a command inside the nvx sandbox.
+// It creates an ephemeral guest profile, scrubs the environment, applies OS-level
+// isolation primitives, runs the command, and cleans up afterward.
+func runSandbox(config SandboxConfig) int {
+	if inSandboxSession() {
+		return execBareCommand(config)
+	}
+
+	enterSandboxSession()
+	defer leaveSandboxSession()
+
+	policy, err := LoadPolicy(config.NvxHome)
+	if err != nil {
+		LogError("Failed to load policy: %v", err)
+		return 1
+	}
+
+	providerName := policy.FilesystemProvider()
+	if config.FilesystemProvider != "" {
+		providerName = strings.ToLower(config.FilesystemProvider)
+	}
+	fsProvider, ok := lookupFilesystemProvider(providerName)
+	if !ok {
+		LogError("Unknown filesystem provider %q. Supported: %s.", providerName, supportedProviderNames())
+		return 1
+	}
+	canonical := fsProvider.Name()
+
+	if err := fsProvider.Available(); err != nil {
+		LogError("Filesystem provider %q is not available: %v", canonical, err)
+		return 1
+	}
+	if !fsProvider.SupportsNetworkMode(policy.Isolation.Network.Mode) {
+		LogError("Filesystem provider %q does not enforce network.mode=%q. Use network.mode=open or the native provider.", canonical, policy.Isolation.Network.Mode)
+		return 1
+	}
+
+	rt := runtimeForShim(config.Command)
+	pinnedVer := policy.PinnedRuntimeVersion(rt.Name())
+
+	ctx := context.Background()
+	var egress *EgressProxy
+	// The egress proxy always runs here, in the parent. Linux native re-execs into
+	// a loopback-only network namespace, and that namespace has no route to any
+	// allowlisted host -- so a proxy started *inside* it (as this used to do) could
+	// never forward anything, which made proxy mode non-functional. The parent
+	// keeps real network access and the contained side reaches it over a UNIX
+	// socket (see prepareEgressSocket and startProxyRelay).
+	{
+		var err error
+		egress, err = startEgressProxy(ctx, policy, rt, config.NvxHome)
+		if err != nil {
+			LogError("Egress proxy failed: %v", err)
+			return 1
+		}
+		if egress != nil {
+			defer egress.Close()
+		}
+	}
+
+	netCtx := NetworkLaunchContext{
+		Mode:        policy.Isolation.Network.Mode,
+		ExposePorts: normalizeExposePorts(append(policy.Isolation.Network.ExposePorts, exposePortsFlag...)),
+		// Flag first, policy second. normalizeConnectPorts keeps the first entry for
+		// a given host port, and the developer typing --connect 9222:19222 has
+		// asked for a specific in-sandbox port -- usually because a command line
+		// names it. Policy-first silently handed them a different port with no
+		// warning, so the endpoint they hardcoded pointed at nothing.
+		ConnectPorts: normalizeConnectPorts(append(append([]string{}, connectPortsFlag...), policy.Isolation.Network.ConnectPorts...)),
+	}
+	if egress != nil {
+		netCtx.HTTPProxyHost, netCtx.HTTPProxyPort = egress.HTTPListenHostPort()
+		netCtx.SOCKSProxyHost, netCtx.SOCKSProxyPort = egress.SOCKSListenHostPort()
+	}
+	// --expose is implemented for AppContainer only. Said out loud rather than
+	// silently ignored: a developer who asked for a port and got nothing debugs
+	// their own server first, and finds nothing wrong with it.
+	if runtime.GOOS != "windows" && len(netCtx.ExposePorts) > 0 {
+		LogWarn("--expose is a Windows feature; ports are not published on %s.", runtime.GOOS)
+	}
+	// --connect is carried by the native and sandbox-exec providers on all three
+	// platforms. The two cases below are where it cannot be, and each is reported
+	// for the same reason as above: a flag accepted in silence is the defect this
+	// feature keeps being fixed for.
+	if len(netCtx.ConnectPorts) > 0 {
+		if warn, hint := connectRefusalFor(canonical, runtime.GOOS, netCtx.Mode); warn != "" {
+			LogWarn("%s", warn)
+			LogInfo("%s", hint)
+		}
+	}
+
+	return fsProvider.Run(SandboxRequest{
+		Config:  config,
+		Policy:  policy,
+		Runtime: rt,
+		Pinned:  pinnedVer,
+		Egress:  egress,
+		NetCtx:  netCtx,
+	})
+}
+
+func providerSupportsNetworkMode(provider, mode string) bool {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" || mode == "open" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "native", "sandbox-exec", "seatbelt":
+		return true
+	case "docker":
+		// Docker enforces offline/loopback with `--network none`. Proxy mode is
+		// cooperative-only under Docker (the allowlist is not truly enforced),
+		// so it stays disallowed and callers must use the native provider.
+		return mode == "offline" || mode == "loopback"
+	default:
+		return false
+	}
+}
+
+func execBareCommand(config SandboxConfig) int {
+	rt := runtimeForShim(config.Command)
+	activeVer := getActiveShellVersionFor(config.NvxHome, rt.Name())
+	if activeVer == "" {
+		activeVer = getGlobalDefaultVersionFor(config.NvxHome, rt.Name())
+	}
+	binaryPath := resolvePinnedCommandPath(config.Command, config.NvxHome, activeVer, rt)
+	if binaryPath == "" {
+		var err error
+		binaryPath, err = exec.LookPath(config.Command)
+		if err != nil {
+			LogError("Command not found: %s", config.Command)
+			return 127
+		}
+	}
+	cmd := exec.Command(binaryPath, config.Args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if config.WorkDir != "" {
+		cmd.Dir = config.WorkDir
+	}
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode()
+		}
+		return 1
+	}
+	return 0
+}
+
+// cleanupStaleSandboxes removes leftover EPHEMERAL sandbox homes from
+// previous sessions that failed to clean up (e.g., due to crashes). It
+// deliberately touches only sandbox_home, never tool_home (persistent
+// per-tool profiles), whose whole purpose is to survive across runs.
+//
+// STALE is the operative word, and it did not used to be: this deleted every
+// guest home unconditionally, so running `nvx cleanup` during a concurrent
+// `npm install` destroyed that install's HOME underneath it. npm lifecycles
+// routinely run several nvx processes at once, so the collision needed no
+// unusual usage at all. Sessions in use are now skipped -- see guestHomeIsInUse.
+// budget caps how many homes one call removes; zero or less means all of them.
+// Callers report what happened -- this returns counts rather than logging, so
+// the automatic caller can stay silent while `nvx cleanup` speaks.
+func cleanupStaleSandboxes(nvxHome string, budget int) (removed, skipped int) {
+	sandboxDir := getSandboxHomeDir(nvxHome)
+	entries, err := os.ReadDir(sandboxDir)
+	if err != nil {
+		return 0, 0 // Directory doesn't exist or can't be read
+	}
+
+	now := time.Now()
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if budget > 0 && removed >= budget {
+			break
+		}
+		fullPath := filepath.Join(sandboxDir, entry.Name())
+		if guestHomeIsInUse(fullPath, now) {
+			skipped++
+			continue
+		}
+		if err := os.RemoveAll(fullPath); err != nil {
+			LogWarn("Failed to clean stale sandbox: %s", entry.Name())
+			continue
+		}
+		removed++
+	}
+	return removed, skipped
+}
+
+// reclaimBudgetPerRun bounds the automatic sweep so one command never pays for a
+// whole backlog. Whatever is left waits for the next run; there is no deadline
+// on reclaiming disk nobody is using.
+const reclaimBudgetPerRun = 8
+
+// reclaimStaleSandboxes is the automatic sweep, run after a command finishes.
+//
+// A process killed outright cannot run its own cleanup -- defer does not survive
+// TerminateProcess or a power cut -- so leftovers are unavoidable and something
+// has to reclaim them later. That something should not be a command the user has
+// to know about: 91 guest homes had accumulated on the development machine
+// before anyone ran `nvx cleanup`, because nothing ever ran it.
+//
+// Safe to do unprompted because each guest home records its owning PID and
+// anything whose owner is alive is skipped -- the check added after an
+// unconditional version deleted a concurrent install's HOME out from under it.
+//
+// Deliberately NOT extended to supervisor copies. Those have no equivalent
+// liveness check, and pruning one that another nvx has staged but not yet
+// executed is exactly the race that made pruning explicit in the first place.
+// `nvx cleanup` still does that, where nothing is mid-launch.
+//
+// Runs after the command rather than before, so it never delays what was typed.
+func reclaimStaleSandboxes(nvxHome string) {
+	if nvxHome == "" {
+		return
+	}
+	cleanupStaleSandboxes(nvxHome, reclaimBudgetPerRun)
+	// AppContainer package profiles, on Windows. Swept here rather than only
+	// from `nvx cleanup` for the same reason guest homes are: a command nobody
+	// runs reclaims nothing. One profile is registered per project nvx has ever
+	// contained, and the first version of this swept only on an explicit cleanup
+	// AND only when no session at all was running -- which on a machine with a
+	// couple of long-lived MCP servers is never.
+	//
+	// Safe unprompted on the same terms: a package held by a live session is
+	// skipped, and one used inside the retention window is left alone so the
+	// common case never pays to re-register a profile it is about to use again.
+	sweepOrphanedSandboxPackages(nvxHome, reclaimBudgetPerRun)
+	// Logs rescued from failed runs. They had no sweep at all, so they
+	// accumulated for the life of the installation -- 3,146 directories and
+	// 181 MB on the development machine, which `nvx cleanup` also left alone.
+	//
+	// A larger budget than the sweeps above, because the work is not comparable: a
+	// guest home may hold a large tree and a package profile costs a registry
+	// write, while these are small directories of log files. At eight per run a
+	// three-thousand-folder backlog needs some four hundred commands to clear,
+	// which is not a reclaim so much as a rumour of one.
+	sweepRescuedLogs(nvxHome, rescuedLogBudgetPerRun)
+}

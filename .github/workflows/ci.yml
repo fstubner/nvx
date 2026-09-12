@@ -155,7 +155,7 @@ jobs:
         # works without an elevated setup. Measured 2026-09-03: a plain probe run
         # skipped 45 tests; the same run with a runtime installed and defaulted
         # skipped 7 and passed 491.
-        go build -o nvx.exe .
+        go build -o nvx.exe ./cmd/nvx
         $env:NVX_HOME = Join-Path $env:RUNNER_TEMP 'nvxprobehome'
         New-Item -ItemType Directory -Force -Path $env:NVX_HOME | Out-Null
         ./nvx.exe -y install 22
@@ -263,7 +263,7 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: |
-        go build -o nvx.exe .
+        go build -o nvx.exe ./cmd/nvx
         ./scripts/sandbox-smoke.ps1
         ./scripts/sandbox-smoke-egress.ps1
 
@@ -354,7 +354,7 @@ jobs:
         # user namespace, so the private /proc the Bun fix depends on cannot be
         # mounted. Leaving it out of this filter would mean it runs nowhere -- the
         # exact shape of the drift that once left 31 of 41 probes matching nothing.
-        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone|TestContainedProcess' . 2>&1 | tee /tmp/priv.log
+        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone|TestContainedProcess' ./internal/nvx 2>&1 | tee /tmp/priv.log
         # A failure, not a warning. This said "it is verifying nothing" and then
         # let the job go green, so the condition it names could persist
         # indefinitely -- which is what happened on Linux before 2026-08-23, when
@@ -371,7 +371,7 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       shell: bash
       run: |
-        go build -o nvx .
+        go build -o nvx ./cmd/nvx
         chmod +x scripts/sandbox-smoke.sh scripts/sandbox-smoke-egress.sh scripts/sandbox-enforcement-linux.sh
         # Same reason as the enforcement step below: Ubuntu 24.04's AppArmor
         # hardening lets an unprivileged user namespace be created but refuses
@@ -427,7 +427,7 @@ jobs:
       shell: bash
       timeout-minutes: 10
       run: |
-        go build -o nvx .
+        go build -o nvx ./cmd/nvx
         chmod +x scripts/sandbox-smoke-docker.sh
         ./scripts/sandbox-smoke-docker.sh 2>&1 | tee /tmp/docker-smoke.log
         if ! grep -q 'Docker sandbox smoke passed' /tmp/docker-smoke.log; then
@@ -444,7 +444,7 @@ jobs:
       if: matrix.os == 'macos-latest'
       shell: bash
       run: |
-        go build -o nvx .
+        go build -o nvx ./cmd/nvx
         chmod +x scripts/sandbox-smoke-macos.sh scripts/sandbox-enforcement-macos.sh
         ./scripts/sandbox-smoke-macos.sh
 

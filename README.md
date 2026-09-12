@@ -383,7 +383,7 @@ children — `CreateProcess` returns "Access is denied" for every executable —
 the containment probes skip in CI, and a skip is a pass. Since 2026-09-03 CI does
 fail if a probe skips for any reason *other* than that known host limitation,
 which catches a probe that quietly stops running; it cannot substitute for the
-manual gate. The last hand-run gate — `NVX_PROBE=1 go test -race -timeout 40m .`,
+manual gate. The last hand-run gate — `NVX_PROBE=1 go test -race -timeout 40m ./internal/nvx`,
 with a runtime installed and set as the global default — was **492 pass, 6 skip,
 0 fail** on 2026-09-03, the six skips being the ones `CONTRIBUTING.md` names. Weigh
 the Windows column as a person's word plus a reproducible command

@@ -26,7 +26,7 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   exit 0
 fi
 if [[ ! -x "$NVX" ]]; then
-  echo "Build nvx first: go build -o nvx ." >&2
+  echo "Build nvx first: go build -o nvx ./cmd/nvx" >&2
   exit 1
 fi
 if ! command -v node >/dev/null 2>&1; then

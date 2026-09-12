@@ -66,8 +66,8 @@ Windows, stage into WSL's own filesystem (not `/mnt`, which is slow and has
 different permission semantics), and run:
 
 ```sh
-GOOS=linux GOARCH=amd64 go build -o /tmp/nvx-linux .
-GOOS=linux GOARCH=amd64 go test -c -o /tmp/nvx-linux.test .   # the Linux-only tests
+GOOS=linux GOARCH=amd64 go build -o /tmp/nvx-linux ./cmd/nvx
+GOOS=linux GOARCH=amd64 go test -c -o /tmp/nvx-linux.test ./internal/nvx   # the Linux-only tests
 ```
 
 The test binary matters as much as the script. `sandbox_landlock_*_test.go` and
@@ -85,12 +85,12 @@ filesystem half only.
 Two commands, both of which need a real Windows machine:
 
 ```powershell
-go build -o nvx.exe .
+go build -o nvx.exe ./cmd/nvx
 ./scripts/sandbox-enforcement-windows.ps1
 ```
 
 ```powershell
-$env:NVX_PROBE=1; go test -race -timeout 40m .
+$env:NVX_PROBE=1; go test -race -timeout 40m ./internal/nvx
 ```
 
 **Install a runtime and set it as the global default first**, or a chunk of the
