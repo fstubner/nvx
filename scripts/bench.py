@@ -198,7 +198,7 @@ def resolve_nvx(given):
                   ", but nothing there can be executed here; built for another OS?")
     sys.exit(
         f"no runnable nvx binary here (looked for {' and '.join(names)} in {os.getcwd()}).{detail}\n"
-        f"Build one first:  go build -o {names[0]} ."
+        f"Build one first:  go build -o {names[0]} ./cmd/nvx"
     )
 
 

@@ -45,7 +45,7 @@ function Invoke-NativeCapture {
 }
 
 if (-not (Test-Path $nvx)) {
-    Write-Error "Build nvx.exe first (go build -o nvx.exe .)"
+    Write-Error "Build nvx.exe first (go build -o nvx.exe ./cmd/nvx)"
 }
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     # A failure, not a skip. This is the hand-run release gate on a machine the

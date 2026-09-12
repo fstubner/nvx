@@ -22,7 +22,7 @@ $ProgressPreference = 'SilentlyContinue'
 # .github/workflows/release.yml, which takes the version from the git tag, so
 # nothing released carried the stale default.
 if (-not $Version) {
-    $versionGo = Join-Path $PSScriptRoot "version.go"
+    $versionGo = Join-Path $PSScriptRoot "internal/nvx/version.go"
     $appVersion = [regex]::Match((Get-Content $versionGo -Raw), 'appVersion\s*=\s*"([^"]+)"')
     if (-not $appVersion.Success) {
         throw "Could not read appVersion from $versionGo. Pass -Version explicitly."
@@ -104,7 +104,7 @@ foreach ($target in $matrix) {
     $env:GOOS = $target.os
     $env:GOARCH = $target.arch
     
-    & $goExe build -ldflags="-s -w -X main.appVersion=$Version" -o $outPath .
+    & $goExe build -ldflags="-s -w -X github.com/fstubner/nvx/internal/nvx.appVersion=$Version" -o $outPath ./cmd/nvx
     
     # Reset env variables
     $env:GOOS = $null

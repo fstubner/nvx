@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NVX="$ROOT/nvx"
 
 if [[ ! -x "$NVX" ]]; then
-  echo "Build nvx first: go build -o nvx ." >&2
+  echo "Build nvx first: go build -o nvx ./cmd/nvx" >&2
   exit 1
 fi
 
