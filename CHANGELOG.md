@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **`nvx doctor` now tells you when a stray `package.json` has merged your
+  projects into one sandbox.** nvx works out which project a sandbox belongs to
+  by looking upward for the nearest manifest, so one sitting above a set of
+  projects quietly joins them together: something installed in either can then
+  read and write the other. Measured on 2026-09-01 — an install run in a home
+  directory left a manifest behind, and every project underneath it, including
+  nvx's own test fixtures, became a single scope. That was already written up
+  under Known limitations, together with the admission that nothing warned you.
+
+  Doctor now names the file, says what it means for you, and counts it as a
+  problem so the command exits non-zero. Only a home directory or the top of a
+  drive is reported, because those are the ones that sweep in projects that have
+  nothing to do with each other; a manifest one level up is an ordinary monorepo
+  and is left alone.
+
 * **Fuzz targets for the egress proxy's two parsers.** The SOCKS5 handshake and
   the HTTP CONNECT request are the only things nvx parses whose bytes come from
   the contained process rather than from a person, and the proxy that parses them
