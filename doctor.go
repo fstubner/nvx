@@ -108,13 +108,18 @@ func reportCollapsedProjectScope() bool {
 		return false
 	}
 
-	cleanRoot := filepath.Clean(root)
-	if strings.EqualFold(cleanRoot, filepath.Clean(cwd)) {
+	// Symlinks are resolved on both sides of every comparison. os.Getwd reports a
+	// resolved path while os.UserHomeDir does not, so a home directory reached
+	// through a link never matched and the check reported nothing at all. CI
+	// caught it on macOS, where the temporary directories are under /var -- itself
+	// a link to /private/var -- while Linux and Windows passed.
+	cleanRoot := resolveDirForScope(root)
+	if strings.EqualFold(cleanRoot, resolveDirForScope(cwd)) {
 		return false
 	}
 
 	home, homeErr := os.UserHomeDir()
-	isHome := homeErr == nil && strings.EqualFold(cleanRoot, filepath.Clean(home))
+	isHome := homeErr == nil && strings.EqualFold(cleanRoot, resolveDirForScope(home))
 	isVolumeRoot := strings.EqualFold(filepath.Clean(filepath.Dir(cleanRoot)), cleanRoot)
 	if !isHome && !isVolumeRoot {
 		return false
@@ -126,6 +131,18 @@ func reportCollapsedProjectScope() bool {
 	fmt.Println("         contained install in one can read and write the others.")
 	fmt.Println("         Delete or move that package.json to restore project isolation.")
 	return true
+}
+
+// resolveDirForScope cleans a directory path and resolves symlinks where it can,
+// falling back to the cleaned path when the target cannot be resolved -- a
+// directory that does not exist still has to compare as itself rather than as
+// the empty string.
+func resolveDirForScope(path string) string {
+	clean := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return resolved
+	}
+	return clean
 }
 
 // dirWithin reports whether path is at or below base after cleaning.

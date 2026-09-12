@@ -30,9 +30,18 @@ func TestReportCollapsedProjectScope(t *testing.T) {
 		if !reported {
 			t.Fatal("reportCollapsedProjectScope() = false, want true")
 		}
-		manifest := filepath.Join(home, "package.json")
+		// The reported path is the resolved one, because nvx compares resolved
+		// paths: os.Getwd answers with symlinks resolved and os.UserHomeDir does
+		// not. On macOS this temp home lives under /var, a link to /private/var,
+		// so asserting the unresolved spelling failed there while passing on Linux
+		// and Windows.
+		resolvedHome, err := filepath.EvalSymlinks(home)
+		if err != nil {
+			resolvedHome = home
+		}
+		manifest := filepath.Join(resolvedHome, "package.json")
 		if !strings.Contains(output, manifest) || !strings.Contains(output, "share one sandbox identity") {
-			t.Fatalf("report output = %q, want manifest path and explanation", output)
+			t.Fatalf("report output = %q, want manifest path %q and explanation", output, manifest)
 		}
 	})
 
@@ -90,6 +99,49 @@ func TestReportCollapsedProjectScope(t *testing.T) {
 		if reportCollapsedProjectScope() {
 			t.Fatal("a monorepo root was reported as collapsing scope; only the home directory " +
 				"and a volume root should be")
+		}
+	})
+
+	// The symlink case, which is the one CI caught. os.Getwd resolves symlinks
+	// and os.UserHomeDir does not, so comparing one spelling against the other
+	// reported nothing at all -- the check was dead on macOS, where the temporary
+	// directories live under /var, itself a link to /private/var.
+	//
+	// Written with an explicit link rather than relying on a platform's own
+	// layout, so Linux pins this too instead of leaving it to macOS alone. The
+	// three subtests above cannot: on a filesystem with no link in the path,
+	// removing the resolution changes nothing and they all still pass. Measured
+	// -- that sabotage passed on Windows.
+	t.Run("a home reached through a symlink is still detected", func(t *testing.T) {
+		base := t.TempDir()
+		realHome := filepath.Join(base, "real")
+		if err := os.MkdirAll(realHome, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		linkedHome := filepath.Join(base, "linked")
+		if err := os.Symlink(realHome, linkedHome); err != nil {
+			// Phrased to match the skip reason CI's probe step allows; a reason it
+			// does not recognise fails that step as a probe verifying nothing.
+			t.Skipf("creating symlinks on Windows needs privilege or Developer Mode: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(realHome, "package.json"), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		// HOME is the LINK, and the working directory is reached through it, so
+		// os.Getwd answers with the resolved path and the two spellings differ --
+		// exactly the mismatch that hid the manifest.
+		t.Setenv("HOME", linkedHome)
+		t.Setenv("USERPROFILE", linkedHome)
+		workDir := filepath.Join(linkedHome, "projects", "one")
+		if err := os.MkdirAll(workDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		chdirForCollapsedScopeTest(t, workDir)
+
+		if !reportCollapsedProjectScope() {
+			t.Fatal("a home directory reached through a symlink was not detected, so the check is " +
+				"comparing an unresolved path against a resolved one")
 		}
 	})
 }
