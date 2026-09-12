@@ -444,9 +444,11 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   probes caught it as a cross-project read, which is how it was found; deleting
   the file restored per-project isolation immediately.
 
-  `nvx doctor` does not check for this today, so nothing warns you. If contained
-  commands start behaving as though two projects are one, look for a
-  `package.json` above them.
+  `nvx doctor` reports it when the manifest sits in your home directory or at a
+  volume root — the cases that collapse many unrelated projects at once. A
+  manifest in an ordinary ancestor is a monorepo and is left alone, so if
+  contained commands start behaving as though two projects are one and doctor is
+  quiet, look for a `package.json` above them.
 - **Your own code is not contained by default.** Containment applies to installs and
   ad-hoc tool runners (`npx`, `bunx`). `npm run build`, `npm test` and `node` run
   uncontained under the default `standard` level, so a compromised dependency your

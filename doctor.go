@@ -83,6 +83,68 @@ func dirsEqual(a, b string) bool {
 	return ca == cb
 }
 
+// reportCollapsedProjectScope reports a manifest that makes unrelated projects
+// share one sandbox identity.
+//
+// nvx decides which project a sandbox belongs to by walking up to the nearest
+// package.json, so a stray one above a set of projects silently merges them --
+// a contained install in either can then read and write the other. Measured
+// 2026-09-01: an `npm install` run in C:\Users\Felix left a package.json there,
+// and every project beneath it, including nvx's own test fixtures under %TEMP%,
+// collapsed into one scope. Deleting the file restored isolation immediately.
+// README.md has carried it under Known limitations since, and said until now
+// that doctor did not check for it.
+//
+// Only the home directory and a volume root are reported. An ordinary ancestor
+// holding a manifest is a monorepo, which is the layout working as intended.
+func reportCollapsedProjectScope() bool {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+
+	root := findProjectRoot(cwd)
+	if root == "" {
+		return false
+	}
+
+	// Symlinks are resolved on both sides of every comparison. os.Getwd reports a
+	// resolved path while os.UserHomeDir does not, so a home directory reached
+	// through a link never matched and the check reported nothing at all. CI
+	// caught it on macOS, where the temporary directories are under /var -- itself
+	// a link to /private/var -- while Linux and Windows passed.
+	cleanRoot := resolveDirForScope(root)
+	if strings.EqualFold(cleanRoot, resolveDirForScope(cwd)) {
+		return false
+	}
+
+	home, homeErr := os.UserHomeDir()
+	isHome := homeErr == nil && strings.EqualFold(cleanRoot, resolveDirForScope(home))
+	isVolumeRoot := strings.EqualFold(filepath.Clean(filepath.Dir(cleanRoot)), cleanRoot)
+	if !isHome && !isVolumeRoot {
+		return false
+	}
+
+	manifest := filepath.Join(cleanRoot, "package.json")
+	fmt.Printf("  [FAIL] %s collapses sandbox isolation\n", manifest)
+	fmt.Println("         Projects beneath this directory share one sandbox identity, so a")
+	fmt.Println("         contained install in one can read and write the others.")
+	fmt.Println("         Delete or move that package.json to restore project isolation.")
+	return true
+}
+
+// resolveDirForScope cleans a directory path and resolves symlinks where it can,
+// falling back to the cleaned path when the target cannot be resolved -- a
+// directory that does not exist still has to compare as itself rather than as
+// the empty string.
+func resolveDirForScope(path string) string {
+	clean := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return resolved
+	}
+	return clean
+}
+
 // dirWithin reports whether path is at or below base after cleaning.
 func dirWithin(path, base string) bool {
 	rel, err := filepath.Rel(base, path)
@@ -235,6 +297,9 @@ func runDoctor(nvxHome string, fix bool) int {
 	// a loopback exemption an older `nvx setup` left behind, and grants an older
 	// nvx left on this project that every sandbox on the machine still holds.
 	weakened := reportSandboxWeakeners(nvxHome)
+	if reportCollapsedProjectScope() {
+		weakened = true
+	}
 	if reportStaleProjectGrantsHere(fix) {
 		weakened = true
 	}
