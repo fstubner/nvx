@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $nvx = Join-Path $root "nvx.exe"
 if (-not (Test-Path $nvx)) {
-    Write-Error "Build nvx.exe first (go build -o nvx.exe .)"
+    Write-Error "Build nvx.exe first (go build -o nvx.exe ./cmd/nvx)"
 }
 
 # Capturing a native command's stderr is incompatible with

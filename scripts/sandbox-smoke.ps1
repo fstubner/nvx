@@ -23,7 +23,7 @@ function Invoke-NativeCapture {
     return [pscustomobject]@{ Output = $out; ExitCode = $LASTEXITCODE }
 }
 if (-not (Test-Path $nvx)) {
-    Write-Error "Build nvx.exe first (go build -o nvx.exe .)"
+    Write-Error "Build nvx.exe first (go build -o nvx.exe ./cmd/nvx)"
 }
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Host "Node.js not available; skipping Windows sandbox smoke."

@@ -85,8 +85,8 @@ jobs:
             echo "Building ${outname} (${goos}/${goarch})"
             GOOS="$goos" GOARCH="$goarch" go build \
               -trimpath \
-              -ldflags "-s -w -X main.appVersion=${version}" \
-              -o "dist/${outname}" .
+              -ldflags "-s -w -X github.com/fstubner/nvx/internal/nvx.appVersion=${version}" \
+              -o "dist/${outname}" ./cmd/nvx
           }
 
           build linux  amd64 nvx-linux-amd64

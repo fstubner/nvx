@@ -108,7 +108,7 @@ profile (`~/.zshrc`, or `~/.bash_profile`).
 ## If you have Go installed (optional, 3 min)
 
 ```bash
-git clone https://github.com/fstubner/nvx && cd nvx && go build -o nvx . && \
+git clone https://github.com/fstubner/nvx && cd nvx && go build -o nvx ./cmd/nvx && \
   chmod +x scripts/sandbox-enforcement-macos.sh && ./scripts/sandbox-enforcement-macos.sh
 ```
 
