@@ -1,35 +1,33 @@
-# The same gate netscli runs on its site/ directory, with this repo as the
-# site root. Every step blocks; a check that is allowed to fail is a check
-# nobody reads.
+# The site's own gate, from product-site-template. Adapted in three ways, all
+# forced by the template living in a subdirectory of a public Go project rather
+# than being its own repo:
 #
-# It runs on a SELF-HOSTED runner. This repo is private, so GitHub-hosted
-# minutes are billed against the account, and that bill is the only reason
-# the choice is interesting -- self-hosted minutes are not metered.
+#   ubuntu-latest, not the template's self-hosted Windows runner. nvx is public,
+#   and the template ships a step that deliberately FAILS on a public repo
+#   because a fork's pull request would otherwise run its own code on a personal
+#   machine. Its own header names ubuntu-latest as the fix, and public repos get
+#   hosted minutes free, so there is nothing to weigh.
 #
-# Two things follow from that, and both matter:
+#   working-directory: site, so every step runs where the site is. The relative
+#   script paths inside the steps then work unchanged.
 #
-#   SECURITY. A self-hosted runner executes whatever the workflow says, on a
-#   real machine. That is fine while this repo is private and one person
-#   opens the pull requests. It stops being fine the moment the repo is
-#   public: a fork's pull request would run its own code here. If this repo
-#   is ever published, move back to `ubuntu-latest` in the same commit --
-#   public repos get GitHub-hosted minutes for free, so there is no reason
-#   not to.
-#
-#   ONE MACHINE. Jobs queue rather than run side by side, so this is one job
-#   rather than two: two jobs would checkout and `npm ci` twice, in series,
-#   for no gain. The step names still report separately.
-#
-# Setting the runner up is in the README under "Continuous integration".
-name: CI
+#   A paths filter. nvx's CI already runs several minutes on Windows, and a Go
+#   change has no business running browser sweeps. CHANGELOG.md is listed
+#   because the changelog page reads it.
+name: Site CI
 
 on:
   push:
     branches: [main]
+    paths: &site_paths
+      - 'site/**'
+      - 'CHANGELOG.md'
+      - '.github/workflows/site-ci.yml'
   pull_request:
+    paths: *site_paths
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: site-ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -38,7 +36,7 @@ permissions:
 jobs:
   site:
     name: Checks
-    runs-on: [self-hosted, windows]
+    runs-on: ubuntu-latest
     # The browser sweeps are the slow part, at a couple of minutes each. This
     # is a ceiling on a hang -- a wedged run on a self-hosted runner blocks
     # every later run, because there is only the one.
@@ -48,24 +46,8 @@ jobs:
         # Git Bash, so these are the same commands that work locally rather
         # than their PowerShell equivalents.
         shell: bash
+        working-directory: site
     steps:
-      # Before the checkout, deliberately: if this ever runs on a public repo,
-      # the job must stop before it fetches anything a fork wrote.
-      #
-      # The plan if this repo is published is to move back to `ubuntu-latest`
-      # in the same commit, and the plan is sound. This is here because plans
-      # like that are remembered on the day they are made and not six months
-      # later, and forgetting this one means a stranger's pull request runs
-      # its own code on a personal machine. A comment cannot enforce it; a
-      # step that fails can.
-      - name: Refuse to run self-hosted on a public repo
-        if: ${{ github.event.repository.private == false }}
-        run: |
-          echo "This repository is public and CI is on a self-hosted runner." >&2
-          echo "A fork's pull request would execute its own code on that machine." >&2
-          echo "Change runs-on to ubuntu-latest -- public repos get hosted minutes free." >&2
-          exit 1
-
       - uses: actions/checkout@v4
         with:
           # check:changelog compares dated headings against tags; with the
@@ -74,7 +56,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version-file: site/.nvmrc
           # No `cache: npm` here, deliberately. That option uploads the npm
           # cache to GitHub's cache service after every run and downloads it
           # before the next one -- which is a win on a fresh hosted VM and a

@@ -24,7 +24,9 @@ import { fileURLToPath } from 'node:url';
 
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const built = path.join(siteRoot, 'dist', 'changelog', 'index.html');
-const changelog = path.join(siteRoot, 'CHANGELOG.md');
+// The repository root's, not the site directory's: this site is a subtree
+// inside nvx, and the changelog page imports ../../../CHANGELOG.md.
+const changelog = path.join(siteRoot, '..', 'CHANGELOG.md');
 
 if (!fs.existsSync(built)) {
   console.error(`No built changelog at ${built}. Run \`npm run build\` first.`);

@@ -1,34 +1,25 @@
 import type { Branding, Meta } from './types';
 
-// Sample content. Everything in this directory describes one fictional
-// product -- "Example", a command-line tool -- so the site builds, renders
-// and passes its own checks out of the box. Replace it; the shell reads
-// these files and nothing else.
-
 export const meta: Meta = {
-  domain: 'https://example.com',
-  // Aim for a title under about 60 characters: that is what a search result
-  // shows. Lead with the product name, then what it is, in the words someone
-  // would actually search for.
-  title: 'Example — A Command-Line Tool for Doing One Thing',
-  // 150-160 characters. Longer gets truncated mid-sentence, and the end of
-  // the sentence is usually the part worth reading.
+  domain: 'https://nvx.run',
+  // Leads with the job, not the security layer: PRODUCT.md settles that the
+  // version manager is the main thing and containment the second.
+  title: 'nvx — a Node.js and Bun version manager with a sandbox',
   description:
-    'Example is a small command-line tool. Run it on Windows, macOS or Linux, script it from a terminal, and read its output as JSON when a program needs it.',
-  // Shown when the page is shared, where there is a little more room.
+    'Install, switch and pin Node.js and Bun on Windows, macOS and Linux. One static binary, no dependencies — and every install runs inside an OS sandbox that cannot read your SSH keys or reach hosts you did not allow.',
   ogDescription:
-    'A small command-line tool that runs on Windows, macOS and Linux, with JSON output for scripts.',
-  siteName: 'Example',
-  author: { name: 'Your Name', url: 'https://github.com/your-org' },
-  ogImage: 'https://example.com/assets/hero.png',
-  ogImageAlt: 'The Example command-line tool running in a terminal',
+    'A Node.js and Bun version manager for Windows, macOS and Linux that contains what it installs.',
+  siteName: 'nvx',
+  author: { name: 'Felix Stubner', url: 'https://github.com/fstubner' },
+  ogImage: 'https://nvx.run/assets/hero.png',
+  ogImageAlt: 'nvx switching Node.js versions and containing an npm install in a terminal',
   faviconPath: '/favicon.svg',
   themeColor: '#111',
 };
 
 export const branding: Branding = {
   wordmark: '/assets/wordmark.png',
-  wordmarkAlt: 'Example',
+  wordmarkAlt: 'nvx',
   accentGradient: 'linear-gradient(90deg,#16a34a,#22c55e 50%,#1edcff)',
   bg: '#111',
   fg: '#d4d4d4',

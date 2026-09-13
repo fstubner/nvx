@@ -3,8 +3,9 @@ import Page from '../layouts/Page.astro';
 import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
 import { site } from '../data/site';
-// The repo root's CHANGELOG.md: this site IS the repo, so two levels up.
-import changelogText from '../../CHANGELOG.md?raw';
+// nvx's CHANGELOG.md at the repository root. The site lives in site/, so
+// that is three levels up rather than the template's two.
+import changelogText from '../../../CHANGELOG.md?raw';
 import { renderReleaseListHtml } from '../scripts/changelog/render-static';
 import {
   changelogCopy,

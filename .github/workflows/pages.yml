@@ -1,0 +1,61 @@
+# Builds site/ and deploys it to GitHub Pages at nvx.run.
+#
+# Manual trigger ONLY for now (workflow_dispatch). The site currently carries
+# the template's sample content, and a push trigger would publish "Example" to
+# nvx.run the moment this merges. Add the push trigger in the same commit that
+# lands the real copy:
+#
+#   push:
+#     branches: [main]
+#     paths: ['site/**', 'CHANGELOG.md']
+#
+# CHANGELOG.md belongs in that list whenever it is added: the changelog page
+# imports the repository root's copy, so a release note changes the site.
+#
+# Prerequisite, once: repository Settings -> Pages -> Source = "GitHub Actions"
+# (not "Deploy from a branch"). This workflow expects that mode, and the custom
+# domain is served from site/public/CNAME.
+name: Deploy GitHub Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The changelog page reads dated headings and the check compares them
+          # against tags; the default shallow clone has none.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: site/.nvmrc
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

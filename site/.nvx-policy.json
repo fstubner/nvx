@@ -1,0 +1,7 @@
+{
+  "isolation": {
+    "network": {
+      "default_allow": ["googlechromelabs.github.io:443"]
+    }
+  }
+}
