@@ -65,7 +65,7 @@
      different components with their own scoped styles, and this is one
      decision, not two. */
   --ui-mark-filter: none;
-  --ui-mark-inset-ratio: 0.0778;
+  --ui-mark-inset-ratio: 0.2167;
 
   /* Tells the browser which way to draw the controls it renders itself: the
    * <select> popup in the theme control, native focus rings, and form
@@ -87,16 +87,16 @@
    * sites that need an alpha. There were 108 hard-coded copies of the old
    * value across 20 files before this; changing it should be one edit here.
    * The light theme's darker accent is in the light block below. */
-  --ui-accent: #22c55e;
-  --ui-accent-rgb: 34, 197, 94;
+  --ui-accent: #af6eeb;
+  --ui-accent-rgb: 175, 110, 235;
   /* Hover and other lifted states.
    *
    * #4ade80 was only a 1.31x luminance step up from the accent, against the
    * 1.52x the old teal pair had, so hovering a link looked like nothing
    * happened. #86efac restores a visible step at 1.63x. */
-  --ui-accent-bright: #86efac;
+  --ui-accent-bright: #dcbff6;
   /* Pale tint for active text on dark surfaces. */
-  --ui-accent-high: #a7f3c6;
+  --ui-accent-high: #f5edfd;
   /* Hover border for interactive chrome: the theme control in both bars, and
      the pagination links in the docs. Was declared only in the docs stack, so
      the landing bar's copy of the same control could not reach it and hovered
@@ -124,9 +124,12 @@
    *
    * Every stop now clears 4.5:1 on its own theme's page: 5.73 / 8.29 / 11.45
    * dark, 8.18 / 6.40 / 7.02 light. scripts/design-tokens.mjs checks them. */
-  --ui-brand-gradient-from: #16a34a;
-  --ui-brand-gradient-via: #22c55e;
-  --ui-brand-gradient-to: #1edcff;
+  --ui-brand-gradient-from: #9138e4;
+  --ui-brand-gradient-via: #af6eeb;
+  /* nvx's logo gradient ends in electric magenta (#FF007F). theme.mjs
+     rewrites only two of the three stops, so this one is set by hand;
+     it arrived as netscli's cyan. */
+  --ui-brand-gradient-to: #ff007f;
 
   /* ---- Cross-stack role channels -------------------------------------
    *
@@ -250,10 +253,10 @@ html[data-theme='light'] {
    * Depth inverts with the theme here as it does for surfaces: "bright" is a
    * hover state, which means further from the page, so on white it is DARKER
    * than the base accent rather than lighter. */
-  --ui-accent: #146b2e;
-  --ui-accent-rgb: 20, 107, 46;
-  --ui-accent-bright: #0e5122;
-  --ui-accent-high: #0a3d19;
+  --ui-accent: #731bc5;
+  --ui-accent-rgb: 115, 27, 197;
+  --ui-accent-bright: #5e16a2;
+  --ui-accent-high: #4f1287;
   /* White on the accent fill: 6.62:1 against #146b2e, where the dark theme's
      near-black would be 1.7:1. */
   --ui-on-accent: #ffffff;
@@ -263,9 +266,9 @@ html[data-theme='light'] {
      together. */
   --ui-hover-border: color-mix(in srgb, var(--ui-accent) 42%, rgba(var(--ui-lift-rgb), 0.1));
   /* The same arc, walked in the direction that stays legible on white. */
-  --ui-brand-gradient-from: #005a1e;
-  --ui-brand-gradient-via: #146b2e;
-  --ui-brand-gradient-to: #155e75;
+  --ui-brand-gradient-from: #591599;
+  --ui-brand-gradient-via: #731bc5;
+  --ui-brand-gradient-to: #a8005a;
 
   --ui-hairline-rgb: 17, 24, 39;
   /* On a light surface, raised is DARKER. See the note in the docs' token

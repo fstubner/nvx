@@ -8,7 +8,11 @@ const labels = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
 // has the hero's copyable one-liner already.
 const groups = [
   { key: 'desktop', title: 'Desktop app' },
-  { key: 'cli', title: 'CLI + terminal UI' },
+  // 'CLI + terminal UI' until 2026-09-13: the shell arrived carrying the
+  // product it was generalised from, which ships a TUI. nvx does not, so the
+  // label promised a surface that does not exist. Neutral wording belongs in
+  // the template -- worth pushing back upstream rather than keeping local.
+  { key: 'cli', title: 'Command line' },
 ] as const;
 ---
 <section id="install">

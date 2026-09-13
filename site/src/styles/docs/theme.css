@@ -15,7 +15,10 @@
 /* ---- Colour, dark ---------------------------------------------------- */
 html[data-theme='dark'],
 html[data-theme='dark'] ::backdrop {
-  --sl-color-accent-low: #0a2a13;
+  /* The one dark accent Starlight hard-codes; accent and accent-high
+     below read var(--ui-accent), so they re-branded themselves. This
+     arrived as netscli's darkest green. */
+  --sl-color-accent-low: #1c0a2e;
   --sl-color-accent: var(--ui-accent);
   --sl-color-accent-high: var(--ui-accent-high);
   --sl-color-white: #f4f4f4;
@@ -57,9 +60,12 @@ html[data-theme='dark'] ::backdrop {
 /* ---- Colour, light --------------------------------------------------- */
 html[data-theme='light'],
 html[data-theme='light'] ::backdrop {
-  --sl-color-accent-low: #dcf8e4;
-  --sl-color-accent: #146b2e;
-  --sl-color-accent-high: #0b4a1f;
+  /* Purple, matching the light accents theme.mjs derived in tokens.css.
+     These arrived hard-coded to netscli's green: the dark block above
+     reads var(--ui-accent) and re-branded itself, this one could not. */
+  --sl-color-accent-low: #ece1fb;
+  --sl-color-accent: #731bc5;
+  --sl-color-accent-high: #4f1287;
   --sl-color-white: #111827;
   --sl-color-gray-1: #243044;
   --sl-color-gray-2: #44516a;
