@@ -69,7 +69,7 @@ html[data-theme='light'] .sl-markdown-content .sl-heading-wrapper:hover .sl-anch
 }
 
 html[data-theme='light'] .sl-markdown-content a:hover {
-  color: #0e5a24;
+  color: var(--ui-accent-bright);
 }
 
 /* External links carry an arrow instead of Starlight's masked icon. */
@@ -106,7 +106,7 @@ html[data-theme='light'] .sl-markdown-content a[href^='http']::after {
 
 html[data-theme='light'] .external-link:hover::after,
 html[data-theme='light'] .sl-markdown-content a[href^='http']:hover::after {
-  color: #0e5a24;
+  color: var(--ui-accent-bright);
 }
 
 /* ---- Inline code ----------------------------------------------------- */

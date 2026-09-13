@@ -9,22 +9,9 @@
  * Registered first in astro.config.mjs's customCss and imported first in
  * layouts/Page.astro, so both stacks read the same declaration.
  *
- * site/design-tokens.json is GENERATED from this file and from
- * starlight/00-theme-tokens.css -- do not edit it by hand. Run
- * `node scripts/design-tokens.mjs --write` after changing a colour, and CI
- * fails if the committed copy has drifted from its source. It was
- * hand-maintained until 2026-08-29, on the reasoning that values reached
- * through --sl-color-text and other indirections are not always the declared
- * one; generating it reproduced eight of its ten hand-measured values exactly,
- * so that concern was real but did not apply to the keys the gate reads.
- *
- * That file is what the frontend contrast gate reads, and until it existed the
- * gate ran at the repository root, found the *desktop app's* tokens, and
- * reported a pass that said nothing about this site.
- *
- * The generator checks every text colour against every surface, not just
- * against the page background. That is what caught --sl-color-gray-3 at
- * 4.44:1 on the card surface while it measured 4.65:1 on the page.
+ * Contrast numbers in this file are measured, and the ones that are not
+ * covered by a gate are measured by hand -- scripts/contrast-sweep.mjs reads
+ * rendered pages, so it sees a token only where a page actually paints it.
  */
 :root {
   /* Total height of the top bar including its bottom border, on both the
@@ -35,28 +22,24 @@
 
   /* ---- Wordmark ------------------------------------------------------
    *
-   * The wordmark is 720px wide with its first 56 columns transparent, so the
-   * glyph starts 7.78% in and every bar has to pull it back by that much or
-   * the logo sits indented while the links beside it start at the gutter.
-   * wordmark-inset.mjs re-measures whichever asset meta.ts names.
+   * The asset carries transparent columns down its left edge, so a bar that
+   * renders it flush against the gutter shows the logo indented while the
+   * links beside it are not. Both bars cancel that with a negative translate
+   * sized from the asset's own margin, and scripts/wordmark-inset.mjs
+   * re-measures whichever file meta.ts names.
    *
    * Five rules did that with five different hand-tuned pixel values --
    * -10px on the landing bar, -18px on the docs bar, -8px below 72rem,
    * -24px !important below 50rem, and nothing at all on the landing page's
-   * narrow breakpoint -- so no two bars agreed. Measured against the asset,
-   * the docs bar overshot by 5.5px at desktop and by 14px below 50rem, which
-   * is the indent that looked wrong.
+   * narrow breakpoint -- so no two bars agreed.
    *
    * A ratio rather than a length because the transparent margin scales with
    * the rendered width, so the compensation has to as well: a breakpoint
-   * that narrows the wordmark sets --ui-mark-width and the inset
-   * follows. Do not pre-compose the two into a single length token -- a
-   * var() inside a custom property resolves where it is DECLARED, so the
-   * composed value would freeze at whatever :root said and quietly ignore
-   * every breakpoint.
-   *
-   * scripts/wordmark-inset.mjs re-derives the ratio from the PNG itself and
-   * fails if this value has drifted from it. */
+   * that narrows the wordmark sets --ui-mark-width and the inset follows.
+   * Do not pre-compose the two into a single length token -- a var() inside
+   * a custom property resolves where it is DECLARED, so the composed value
+   * would freeze at whatever :root said and quietly ignore every
+   * breakpoint. */
   --ui-mark-width: 160px;
 
   /* Both bars filter the wordmark through this. Dark leaves it alone; the
@@ -65,7 +48,8 @@
      different components with their own scoped styles, and this is one
      decision, not two. */
   --ui-mark-filter: none;
-  --ui-mark-inset-ratio: 0.2167;
+  /* 15 transparent columns of 720, per scripts/wordmark-inset.mjs. */
+  --ui-mark-inset-ratio: 0.0208;
 
   /* Tells the browser which way to draw the controls it renders itself: the
    * <select> popup in the theme control, native focus rings, and form
@@ -74,61 +58,48 @@
    * never loads that reset -- was drawn white over a near-black bar. */
   color-scheme: dark;
 
-  /* Brand accent.
-   *
-   * Was #0aae7a, which sits at hue 160 -- right on the green/teal boundary.
-   * In large areas it read green, but at 15px on the near-black background,
-   * with thin antialiased strokes, it read blue: inline links looked like a
-   * different colour from the buttons above them. #22c55e is hue 142 and
-   * reads green at any size. Contrast on the dark background went from
-   * 6.6:1 to 8.2:1 with it.
+  /* Brand accent, taken from nvx's own logo rather than from the template,
+   * which arrived carrying netscli's green.
    *
    * The -rgb form is the same colour as a bare triple, for the rgba() call
-   * sites that need an alpha. There were 108 hard-coded copies of the old
-   * value across 20 files before this; changing it should be one edit here.
-   * The light theme's darker accent is in the light block below. */
+   * sites that need an alpha. Changing the accent should be one edit here;
+   * there were 108 hard-coded copies of the old value across 20 files
+   * before these tokens existed. The light theme's darker accent is below.
+   *
+   * 5.62:1 on --ui-bg. */
   --ui-accent: #af6eeb;
   --ui-accent-rgb: 175, 110, 235;
-  /* Hover and other lifted states.
-   *
-   * #4ade80 was only a 1.31x luminance step up from the accent, against the
-   * 1.52x the old teal pair had, so hovering a link looked like nothing
-   * happened. #86efac restores a visible step at 1.63x. */
+  /* Hover and other lifted states: a visible step up from the accent, at
+     11.53:1. A pair that is too close reads as nothing happening. */
   --ui-accent-bright: #dcbff6;
-  /* Pale tint for active text on dark surfaces. */
+  /* Pale tint for active text on dark surfaces. 16.56:1. */
   --ui-accent-high: #f5edfd;
   /* Hover border for interactive chrome: the theme control in both bars, and
      the pagination links in the docs. Was declared only in the docs stack, so
      the landing bar's copy of the same control could not reach it and hovered
-     a different colour. The expression is unchanged -- --sl-color-accent and
-     --sl-color-hairline were aliases of these two values. */
+     a different colour. */
   --ui-hover-border: color-mix(in srgb, var(--ui-accent) 42%, rgba(var(--ui-lift-rgb), 0.08));
 
   /* Text drawn ON the accent, where the accent is a fill rather than ink.
-     A literal near-black in 404.astro until the light theme existed, at
-     which point it became near-black on a dark green button. */
-  --ui-on-accent: #06130f;
+     A purple-black rather than a neutral one, and 5.74:1 on --ui-accent.
+     It was a green-tinted near-black inherited from the template. */
+  --ui-on-accent: #140a1c;
 
   /* ---- Brand gradient -------------------------------------------------
    *
    * The "Desktop app" button fills its label with this and sets
-   * `-webkit-text-fill-color: transparent` -- which is why nothing caught the
-   * two failures below. A contrast checker reads the transparent fill, not
-   * the paint behind it, so axe skipped the element and the token gate never
-   * saw the stops: they were literals inside a component.
+   * `-webkit-text-fill-color: transparent`, which is why no automated check
+   * sees these stops: a contrast checker reads the transparent fill, not the
+   * paint behind it, so axe skips the element.
    *
-   * Both ends were failing, in opposite themes. One ramp served both --
-   * #005a1e -> accent -> #1edcff -- so the dark-green START was 2.23:1 on the
-   * near-black page and the cyan END was 1.59:1 on white. Half the word was
-   * near-invisible either way.
+   * That is also how this file came to claim a 4.5:1 floor it did not hold.
+   * The first stop of nvx's ramp was #9138e4, which measures 3.50:1 on
+   * --ui-bg. Every stop is now measured on its own theme's page:
+   * 4.77 / 5.62 / 5.00 dark, 10.19 / 7.54 / 7.22 light.
    *
-   * Every stop now clears 4.5:1 on its own theme's page: 5.73 / 8.29 / 11.45
-   * dark, 8.18 / 6.40 / 7.02 light. scripts/design-tokens.mjs checks them. */
-  --ui-brand-gradient-from: #9138e4;
+   * The ramp is the logo's own purple-to-magenta, per meta.ts. */
+  --ui-brand-gradient-from: #a855f7;
   --ui-brand-gradient-via: #af6eeb;
-  /* nvx's logo gradient ends in electric magenta (#FF007F). theme.mjs
-     rewrites only two of the three stops, so this one is set by hand;
-     it arrived as netscli's cyan. */
   --ui-brand-gradient-to: #ff007f;
 
   /* ---- Cross-stack role channels -------------------------------------
@@ -139,10 +110,8 @@
    * the two halves of this site drifted apart in the first place.
    *
    * Declared here as the DARK values because that is what an unthemed page
-   * gets; the light block below overrides all three.
-   *
-   * Channels rather than colours because every call site is an rgba() with
-   * its own alpha. */
+   * gets; the light block below overrides all three. Channels rather than
+   * colours because every call site is an rgba() with its own alpha. */
 
   /* Hairlines, dividers, and the neutral washes drawn from them. */
   --ui-hairline-rgb: 140, 149, 166;
@@ -158,10 +127,7 @@
    * nobody chose.
    *
    * The values are the docs' own ramp (--sl-color-white / gray-2 / gray-3),
-   * so the two halves of the site finally describe text the same
-   * way and a re-theme is one edit rather than two. That does move the
-   * landing page's text slightly: collapsing a 40-value ramp onto three
-   * cannot be pixel-preserving, and it was chosen over keeping forty.
+   * so the two halves of the site finally describe text the same way.
    *
    * There is no fourth, dimmer step. One was tried, borrowing Starlight's
    * gray-4, and axe caught it on both themes at 3.04:1 and 3.50:1 against a
@@ -178,11 +144,7 @@
    * bands with nothing between them -- eight values from #0a0a0a to #151515
    * doing the page, six from #141718 to #1b1b1b doing panels, three from
    * #222 to #2a2d32 doing the layer above -- so the bands were real and only
-   * the exact values inside them were arbitrary.
-   *
-   * Values are the docs' --sl-color-bg, gray-6 and the panel surface, so a
-   * card on the landing page and a card in the docs are finally the same
-   * colour. */
+   * the exact values inside them were arbitrary. */
   --ui-bg: #111111;
   --ui-surface: #191d25;
   --ui-surface-raised: #20242b;
@@ -199,15 +161,13 @@
  * the docs bar went 160 -> 140 -> 132 at 72rem, and an override file forced
  * 132 again below 50rem. So at a 1000px window the same logo was 160px on
  * the landing page and 132px in the docs, and clicking "Docs" visibly
- * resized it.
+ * resized it. The docs bar had no need of the early steps: measured at
+ * 901px it uses 476px of the 842px available, even with the search icon and
+ * the full link list.
  *
- * The docs bar had no need of the early steps: measured at 901px it uses
- * 476px of the 842px available, 366px spare, even with the search icon and
- * the full link list. It was shrinking to make room it already had.
- *
- * Declared on :root rather than on each bar's own class so the inset
- * ratio above resolves against it -- see the note there about var() in a
- * custom property resolving where it is declared. */
+ * Declared on :root rather than on each bar's own class so the inset ratio
+ * above resolves against it -- see the note there about var() in a custom
+ * property resolving where it is declared. */
 @media (max-width: 600px) {
   :root {
     --ui-mark-width: 132px;
@@ -222,43 +182,40 @@
 html[data-theme='light'] {
   color-scheme: light;
 
-  /* The wordmark is a dark-theme asset and there is only one of it.
-   * This site's runs green -> cyan and the cyan half is picked for a
-   * near-black bar, so on white the right side barely separates. The numbers
-   * below measure THAT asset; a different wordmark needs its own.
-   * Measured over its 34,754 opaque pixels: mean ink rgb(12,167,132) is
-   * 6.18:1 on #111 against 3.05:1 on white, and the cyan end rgb(27,213,235)
-   * is 1.79:1 on white. brightness(.62) takes the mean to 6.84:1 and the
-   * weakest pixel to 4.43:1.
+  /* The wordmark is a dark-theme asset and there is only one of it: the
+   * lettering is white, so on a light page it disappears entirely. Measured
+   * over its 21,880 opaque pixels, mean ink is rgb(255,255,254) and 1.03:1
+   * on --ui-bg here. brightness(0.35) takes that to rgb(89,89,89) and
+   * 6.77:1, and leaves the hexagon's gradient still reading purple.
    *
    * No gate caught this and none should have -- WCAG exempts logotypes from
    * the contrast rules, so axe and contrast-sweep.mjs are correctly silent.
    *
-   * A uniform multiply shifts the cyan towards teal instead of re-picking the
-   * gradient for a light page. A light-theme PNG would be more faithful and
-   * would also be a second file to keep in step with this one and with
-   * scripts/wordmark-inset.mjs. One declaration, reversible, until the hue
-   * shift bothers someone. */
-  --ui-mark-filter: brightness(0.62);
+   * A light-theme asset would be more faithful and would also be a second
+   * file to keep in step with this one and with scripts/wordmark-inset.mjs.
+   * One declaration, reversible, until it bothers someone. */
+  --ui-mark-filter: brightness(0.35);
 
   /* The accent, as a colour and as channels.
    *
-   * Only the -rgb form was overridden here until now, so every
-   * `color: var(--ui-accent)` call site kept rendering the DARK #22c55e
-   * on a white page -- 2.0:1, and the single largest source of the light
-   * theme's contrast failures. It went unnoticed because the a11y check's
-   * light pass was passing no colour-scheme flag and so tested dark twice on
-   * a dark-mode workstation; see scripts/a11y.mjs.
+   * Only the -rgb form was overridden here until the template was
+   * generalised, so every `color: var(--ui-accent)` call site kept rendering
+   * the DARK accent on a white page -- the single largest source of the
+   * light theme's contrast failures. It went unnoticed because the a11y
+   * check's light pass was passing no colour-scheme flag and so tested dark
+   * twice on a dark-mode workstation; see scripts/a11y.mjs.
    *
    * Depth inverts with the theme here as it does for surfaces: "bright" is a
    * hover state, which means further from the page, so on white it is DARKER
-   * than the base accent rather than lighter. */
+   * than the base accent rather than lighter.
+   *
+   * 7.54 / 9.61 / 11.47 on --ui-bg. */
   --ui-accent: #731bc5;
   --ui-accent-rgb: 115, 27, 197;
   --ui-accent-bright: #5e16a2;
   --ui-accent-high: #4f1287;
-  /* White on the accent fill: 6.62:1 against #146b2e, where the dark theme's
-     near-black would be 1.7:1. */
+  /* White on the accent fill: 7.80:1, where the dark theme's near-black
+     would be 1.6:1. */
   --ui-on-accent: #ffffff;
 
   /* 0.1, not the dark theme's 0.08: --sl-color-hairline carried a different
@@ -277,10 +234,7 @@ html[data-theme='light'] {
 
   /* The light ramp, again matching the docs. Starlight inverts its own
      naming here -- --sl-color-white is #111827 in the light theme -- which is
-     why "strong" is the darkest of these rather than the lightest.
-     --sl-color-gray-3 carries a note about not lightening it; the same
-     applies to --ui-text-muted, which is the same value and is checked
-     against every surface by scripts/design-tokens.mjs. */
+     why "strong" is the darkest of these rather than the lightest. */
   --ui-text-strong: #111827;
   --ui-text: #44516a;
   --ui-text-muted: #596478;
@@ -288,14 +242,14 @@ html[data-theme='light'] {
   /* Light surfaces, again the docs' own: --sl-color-bg, gray-6, and the
      panel. Depth inverts with the theme -- a raised surface is lighter than
      the page in the dark theme and darker than it here -- which is why these
-     are named for depth rather than for a colour. */
-  --ui-bg: #fbfbfb;
-  /* Blue-grey, not neutral grey. The alternating band and the cards standing
+     are named for depth rather than for a colour.
+     Blue-grey, not neutral grey. The alternating band and the cards standing
      on it were #f4f6f8/#f6f8fa, which is the page with the colour taken out
      -- so the "Get started" section read as a slightly dirty white rather
      than as its own surface. A navy cast gives it somewhere to be without
      touching a single piece of text: the ramp measures 15.68 / 7.05 / 5.27
      on the band and 16.23 / 7.30 / 5.46 on a card. */
+  --ui-bg: #fbfbfb;
   --ui-surface: #eef1f7;
   --ui-surface-raised: #f2f5fa;
   --ui-bg-rgb: 251, 251, 251;

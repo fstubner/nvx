@@ -93,7 +93,7 @@ html[data-theme='light'] ::backdrop {
   --sl-color-hairline-shade: rgba(17, 24, 39, 0.04);
   --sl-content-width: 64rem;
 
-  --ui-table-bg: #f7faf9;
+  --ui-table-bg: #f8fafc;
   --ui-table-stripe: #f6f8fa;
   --ui-table-head: #eef2f4;
   --ui-panel-bg: #f6f8fa;

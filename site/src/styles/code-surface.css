@@ -32,7 +32,7 @@
   --ui-code-divider: #232a34;
   /* Inline `code` ink. The dark accent-bright in both themes, because the
      chip behind it is dark in both. */
-  --ui-code-inline-fg: #86efac;
+  --ui-code-inline-fg: #dcbff6;
 
   /* ---- Code sample colours -------------------------------------------
    *
@@ -46,12 +46,12 @@
    * per theme.
    *
    * The blue and green are the original literals. The two neutrals are not:
-   * naming them made them reachable by scripts/design-tokens.mjs, which
+   * naming them made them reachable as tokens rather than literals, which
    * measured the punctuation grey at 4.46:1 on the page and 3.99:1 on a card
    * -- below AA, and wrong since long before the light theme. They are also
    * no longer #888888 beside #7b7b7b, a 3% difference no reader can see. */
   --ui-code-comment: #9a9a9a;
   --ui-code-punct: #8a8a8a;
   --ui-code-key: #7c9fc7;
-  --ui-code-string: #8fbc7f;
+  --ui-code-string: #d8a657;
 }

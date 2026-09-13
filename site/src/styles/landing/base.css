@@ -45,7 +45,7 @@ body{
   left:8px;
   z-index:1000;
   padding:8px 12px;
-  border:1px solid #2dd4bf;
+  border:1px solid var(--ui-accent);
   border-radius:6px;
   background:var(--ui-bg);
   color:var(--ui-text-strong);
@@ -276,7 +276,7 @@ section .lead a:hover{color:var(--ui-accent-bright)}
 .faq-command:hover .copy-btn,.faq-command:focus-within .copy-btn{opacity:1}
 .faq-command .copy-btn{right:10px}
 .copy-btn:hover{background:var(--ui-surface-raised);border-color:rgba(var(--ui-lift-rgb),.18);color:var(--ui-text-strong)}
-.copy-btn.copied{color:#3fb950;border-color:rgba(63,185,80,.4)}
+.copy-btn.copied{color:var(--ui-accent-bright);border-color:rgba(var(--ui-accent-rgb),.4)}
 .surface-visual .codeblock .copy-btn,
 .tryblock .copy-btn{
   top:12px;

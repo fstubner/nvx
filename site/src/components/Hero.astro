@@ -195,7 +195,7 @@ const defaultDownload = heroDownloads[0];
   width:max-content;
   max-width:min(18rem,80vw);
   padding:.42rem .58rem;
-  border:1px solid rgba(106,240,208,.2);
+  border:1px solid rgba(var(--ui-accent-rgb),.2);
   border-radius:6px;
   background:var(--ui-surface);
   color:var(--ui-text);
@@ -215,8 +215,8 @@ const defaultDownload = heroDownloads[0];
   z-index:21;
   width:.45rem;
   height:.45rem;
-  border-right:1px solid rgba(106,240,208,.2);
-  border-bottom:1px solid rgba(106,240,208,.2);
+  border-right:1px solid rgba(var(--ui-accent-rgb),.2);
+  border-bottom:1px solid rgba(var(--ui-accent-rgb),.2);
   background:var(--ui-surface);
   pointer-events:none;
   opacity:0;
@@ -444,7 +444,7 @@ const defaultDownload = heroDownloads[0];
   color:currentColor;font-size:8px;line-height:1;
   font-family:ui-monospace,"SF Mono",Menlo,monospace;
 }
-.hero-desktop-menu a:hover{background:rgba(var(--ui-accent-rgb),.12);color:#1ec88c}
+.hero-desktop-menu a:hover{background:rgba(var(--ui-accent-rgb),.12);color:var(--ui-accent-bright)}
 .hero-command{
   position:relative;display:grid;grid-template-columns:minmax(0,1fr);
   align-items:center;gap:10px;min-height:var(--ui-cta-height);

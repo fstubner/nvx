@@ -37,8 +37,8 @@
   --ui-chip-code-fg: var(--ui-code-inline-fg);
   /* Accent INSIDE a chip. The install band re-points the accent to its
      on-dark values, and a control sitting on a light chip on that band
-     inherited them -- the Download button's hover was #86efac on a light
-     row, 1.62:1. */
+     inherited them -- the Download button's hover took the dark
+     accent-bright onto a light row, 1.50:1. */
   --ui-chip-accent: var(--ui-ondark-accent);
   --ui-chip-accent-rgb: var(--ui-ondark-accent-rgb);
   --ui-chip-accent-bright: var(--ui-ondark-accent-bright);
@@ -112,8 +112,8 @@ html[data-theme='light'] {
   --ui-chip-fg-muted: #596478;
   --ui-chip-raised: #f2f5fa;
   --ui-chip-lift-rgb: 17, 24, 39;
-  /* 8.66:1 on the light chip. The dark theme's #86efac is a light-on-dark
-     green and measures 1.5:1 there, so it cannot simply carry over. */
+  /* 9.10:1 on the light chip. The dark theme's inline-code ink is a
+     light-on-dark purple and measures 1.50:1 here, so it cannot carry over. */
   --ui-chip-code-fg: #5e16a2;
   --ui-chip-accent: #731bc5;
   --ui-chip-accent-rgb: 115, 27, 197;
@@ -187,7 +187,7 @@ html[data-theme='light'] {
   --ui-lift-rgb: var(--ui-chip-lift-rgb);
   /* The accent too, not just the ink. A control sitting on a chip -- the
      install rows' Download button -- otherwise inherits the band's on-dark
-     accent and hovers to #86efac on a light row: measured 1.19:1. */
+     accent and hovers to the dark accent-bright on a light row: 1.50:1. */
   --ui-accent: var(--ui-chip-accent);
   --ui-accent-rgb: var(--ui-chip-accent-rgb);
   --ui-accent-bright: var(--ui-chip-accent-bright);

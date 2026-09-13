@@ -30,7 +30,7 @@
 // and compares. It is deliberately narrow: text colour against composited
 // background, nothing else. axe still runs and still covers everything else.
 //
-// Not a replacement for scripts/design-tokens.mjs either. That compares
+// Not a replacement for a declared-token check either. Such a check compares
 // DECLARED tokens and so catches a bad value before it is used anywhere; this
 // compares what a page actually rendered, and so catches a good token applied
 // to the wrong thing, or no token at all.
@@ -100,7 +100,7 @@ const COLLECT = `
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return;
     // Gradient-filled text paints from background-image, not from \`color\`.
-    // scripts/design-tokens.mjs checks those stops against the page instead.
+    // The gradient stops are checked by hand against the page; see tokens.css.
     if (cs.webkitTextFillColor === 'rgba(0, 0, 0, 0)') return;
 
     // Direct text only. A wrapper inherits its children's text and would be

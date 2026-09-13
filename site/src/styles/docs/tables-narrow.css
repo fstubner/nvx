@@ -61,7 +61,7 @@
   }
 
   html[data-theme='light'] .sl-markdown-content .ui-table-scroll {
-    background: #f7faf9;
+    background: #f8fafc;
   }
 
   .sl-markdown-content .ui-table-scroll table {
@@ -93,7 +93,7 @@
   }
 
   html[data-theme='light'] .sl-markdown-content .ui-table-scroll tr {
-    background: #eef3f2;
+    background: #eef1f7;
   }
 
   .sl-markdown-content .ui-table-scroll th,
