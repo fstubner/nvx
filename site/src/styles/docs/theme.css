@@ -44,9 +44,14 @@ html[data-theme='dark'] ::backdrop {
   /* Table surfaces. Three roles, and the striping is a real distinction --
      odd and even rows differ on purpose, so these must not be collapsed into
      one value however close they look. */
-  --ui-table-bg: #20242b;
-  --ui-table-stripe: #242932;
-  --ui-table-head: #252b36;
+  /* Re-based when the accent became the logo's purple. The old family sat at
+     #20242b/#242932/#252b36, which was tuned for an accent measuring 8.2:1 on
+     the page; at 5.62:1 it left a link in a striped row at 4.35:1 and one in a
+     header at 4.23:1, and axe caught the striped one on /docs/. The accent now
+     measures 5.15 / 4.98 / 4.80 across these three. */
+  --ui-table-bg: #171b21;
+  --ui-table-stripe: #1a1e25;
+  --ui-table-head: #1d2129;
 
   /* The raised panel that content sits on: search results and their tag
      rows, and the frame and body of a code block. */
