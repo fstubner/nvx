@@ -111,8 +111,13 @@ import { reachAllowed, reachCopy, reachNote, reachRows } from '../data/site-cont
 .reach-col li:first-child,
 .reach-keeps li:first-child{border-top:0}
 
+/* start, not stretch. A grid item is blockified, so these inline <code>
+   chips became display:block and filled the whole 418px track while their
+   text was 122px wide -- the chip background then drew as a bar across the
+   row rather than around the path. */
 .reach-col code,
 .reach-keeps code{
+  justify-self:start;
   font-family:ui-monospace,"SF Mono",Menlo,monospace;
   font-size:.8125rem;
   color:var(--ui-text-strong);
