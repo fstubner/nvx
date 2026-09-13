@@ -10,7 +10,7 @@ import type { LandingLayout, LandingSection } from './types';
 // A name that appears twice renders twice; a name whose content is empty
 // renders nothing. Dropping the last section is fine -- the footer is not in
 // this list, and neither is the nav.
-export const sections: LandingSection[] = ['hero', 'surfaces', 'install', 'faq'];
+export const sections: LandingSection[] = ['hero', 'surfaces', 'reach', 'install', 'faq'];
 
 // How the landing page is laid out above the fold, and the rhythm that
 // follows from it.

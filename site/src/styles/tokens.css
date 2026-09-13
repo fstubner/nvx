@@ -85,6 +85,12 @@
      It was a green-tinted near-black inherited from the template. */
   --ui-on-accent: #140a1c;
 
+  /* The warm tone for "this is simply readable" -- not an error, so not red.
+     A pair rather than one literal: no single amber clears 4.5 on both
+     themes, the closest measuring 4.30 dark against 3.32 light. This one is
+     7.05:1 on --ui-surface-raised and 7.65:1 on --ui-surface. */
+  --ui-warn: #d8a657;
+
   /* ---- Brand gradient -------------------------------------------------
    *
    * The "Desktop app" button fills its label with this and sets
@@ -217,6 +223,9 @@ html[data-theme='light'] {
   /* White on the accent fill: 7.80:1, where the dark theme's near-black
      would be 1.6:1. */
   --ui-on-accent: #ffffff;
+  /* 5.71:1 on --ui-surface-raised, 5.51 on --ui-surface, 6.03 on the page.
+     The dark theme's amber is 2.02:1 here, which is why this is a pair. */
+  --ui-warn: #87560c;
 
   /* 0.1, not the dark theme's 0.08: --sl-color-hairline carried a different
      alpha per theme, and this reproduces it rather than rounding the two

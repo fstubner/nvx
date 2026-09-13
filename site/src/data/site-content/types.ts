@@ -227,7 +227,28 @@ export type LandingLayout = 'centered' | 'split';
 
 /** A section the landing page can render. Adding one here means adding a
  *  component for it in src/pages/index.astro's map. */
-export type LandingSection = 'hero' | 'surfaces' | 'install' | 'faq';
+export type LandingSection = 'hero' | 'surfaces' | 'reach' | 'install' | 'faq';
+
+/** One target in the "what an install can reach" comparison. */
+export interface ReachRow {
+  /** The path or destination, rendered as code. */
+  target: string;
+  /** What it is, in plain words. */
+  what: string;
+  /** Its state on an ordinary machine. Empty for rows that only apply contained. */
+  plain: string;
+  /** Its state from inside a contained install. */
+  contained: string;
+}
+
+/** The platform caveat that sits beside the comparison, not under it. */
+export interface ReachNote {
+  heading: string;
+  /** HTML allowed. */
+  bodyHtml: string;
+  /** Where the evidence for the rows comes from. HTML allowed. */
+  measuredHtml: string;
+}
 
 /** One group in the docs sidebar, as Starlight expects it. */
 export interface DocsSection {
