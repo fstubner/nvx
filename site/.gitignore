@@ -1,0 +1,20 @@
+# Astro
+dist/
+.astro/
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+.DS_Store
+*.log
+
+# Local check outputs: screenshot baselines and the captured search DOM
+# (scripts/visual-snapshot.mjs, scripts/css-equivalence.mjs). Exact on one
+# machine, meaningless across two.
+.visual-baseline/
+.visual-current/
+.visual-diff/
+.css-equivalence/

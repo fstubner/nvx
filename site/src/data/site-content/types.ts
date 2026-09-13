@@ -1,0 +1,269 @@
+// Shared type definitions for the site content modules under
+// site/src/data/site-content/. Assembled into the public `SiteData` shape
+// by site/src/data/site.ts — that's the only module other files should
+// import `site` from.
+
+export interface Meta {
+  /** Canonical site URL without trailing slash. */
+  domain: string;
+  /** <title> */
+  title: string;
+  /** <meta name="description"> */
+  description: string;
+  /** Short form used in OG / Twitter cards. Falls back to description. */
+  ogDescription?: string;
+  /** Site name for OG. */
+  siteName: string;
+  author: { name: string; url: string };
+  /** Absolute URL to the OG/Twitter share image. */
+  ogImage: string;
+  /** What the share image shows, for the `twitter:image:alt` tag. Every
+   *  page's card uses the same asset, so one description covers them all. */
+  ogImageAlt: string;
+  /** Favicon + apple-touch-icon. */
+  faviconPath: string;
+  themeColor: string;
+}
+
+export interface Branding {
+  /** Path to the wordmark image served from /. */
+  wordmark: string;
+  /** Shown in nav at 160px desktop / 132px mobile. */
+  wordmarkAlt: string;
+  /** Links + underline accent colour. */
+  accentGradient: string;
+  /** Background fill. */
+  bg: string;
+  /** Default body text colour. */
+  fg: string;
+}
+
+/** The hero's two command rows, per platform. */
+export type HeroCommands = Record<
+  Platform,
+  {
+    /** Package-manager line, for the narrower row. */
+    packageManager: string;
+    /** Install one-liner, for the wide row beside the download button. */
+    script: string;
+  }
+>;
+
+/** One installer in the hero's Desktop app menu.
+ *
+ *  The list is content, not markup: a product with no desktop build leaves
+ *  `heroDownloads` empty and the button, its caption and the menu are not
+ *  rendered at all. */
+export interface HeroDownload {
+  /** Which platform this installer is for. Drives both the platform glyph
+   *  and which entry a visitor on that platform is offered by default. */
+  os: Platform;
+  /** Platform name as shown in the menu ("Windows", "Debian / Ubuntu"). */
+  name: string;
+  /** Architecture or variant line under the name ("Apple silicon"). */
+  meta: string;
+  /** File extension badge on the right of the row ("msi", "AppImage"). */
+  ext: string;
+  href: string;
+  /** Caption inside the main button when this entry is the chosen one.
+   *  Says the platform and the file out loud, e.g. "Windows · .msi
+   *  installer" — a caption naming a different file from the one the
+   *  button fetches is worse than no caption, so the two move together. */
+  cue: string;
+  /** The entry offered to a visitor detected on this `os`. Exactly one
+   *  entry per os that appears in the list should set it; the first entry
+   *  for that os is used if none does. */
+  preferred?: boolean;
+  /** Offered instead of `preferred` when the browser reports an arm64
+   *  machine. macOS only in practice: the Intel build runs everywhere via
+   *  Rosetta, so it stays the default and this is an upgrade. */
+  appleSilicon?: boolean;
+}
+
+export interface Hero {
+  /** Small uppercase strip above the headline. */
+  badge: string;
+  heading: string;
+  subhead: string;
+  /** Shell command shown in the hero's highlighted install block. */
+  /** The prominent hero command. Swapped per-OS at runtime by os-tabs.ts;
+   *  this is what a visitor sees before that runs, and what a crawler sees. */
+  quickInstall: string;
+  /** The smaller command under it — a genuinely different route, never a
+   *  restatement of the one above. */
+  quickInstallAlt: string;
+  /** Jump-to-install link label. */
+  installLinkLabel: string;
+  /** Path to the hero screenshot. */
+  heroImage: string;
+  heroImageAlt: string;
+  /** Intrinsic pixel dimensions so the browser reserves layout space. */
+  heroImageWidth: number;
+  heroImageHeight: number;
+  /** Optional WebP source for <picture>. */
+  heroImageWebp?: string;
+  /** Link to the source repo for the "View source" pill. */
+  sourceUrl: string;
+  /** Label on the desktop-download button. Only rendered when
+   *  `heroDownloads` has entries. */
+  downloadLabel: string;
+  /** Accessible name of the button that opens the installer menu. */
+  downloadMenuLabel: string;
+}
+
+export interface SurfaceCard {
+  title: string;
+  /** HTML allowed — typically short paragraph, may contain <code>. */
+  body: string;
+  /** If set, renders an image panel. */
+  image?: {
+    src: string;
+    webp?: string;
+    alt: string;
+    width: number;
+    height: number;
+  };
+  /** If set instead of image, renders a stylised code block. HTML allowed. */
+  codeHtml?: string;
+  /** If true, flips text and visual sides for alternating rhythm. */
+  flip?: boolean;
+  /** Optional per-platform download buttons rendered below the body.
+   *  Used by the Desktop card to surface .msi / .dmg / .deb / .AppImage
+   *  installers from the latest GitHub release. */
+  downloads?: SurfaceDownload[];
+}
+
+export interface SurfaceDownload {
+  /** Visible button label, e.g. "Windows (.msi)". */
+  label: string;
+  /** Direct download URL. Use the /releases/latest/download/ form so
+   *  the buttons auto-track the latest release without site updates. */
+  url: string;
+  /** Optional secondary line below the label, e.g. "Apple Silicon". */
+  hint?: string;
+}
+
+export type Platform = 'windows' | 'macos' | 'linux';
+
+export interface InstallEntry {
+  label: string;
+  /** Shell command(s) shown monospace with copy button. Omit when this
+   *  entry is a direct download — set `href` instead. */
+  command?: string;
+  /** Direct download URL. Entries with an `href` render as a link rather
+   *  than a copyable command, for the installer artifacts that have no
+   *  package-manager equivalent (.msi / .dmg / .deb / .AppImage). */
+  href?: string;
+  /** Optional small hint, rendered under the label. Used to warn about
+   *  the unsigned installers before someone hits a Gatekeeper or
+   *  SmartScreen dialog with no explanation. */
+  hint?: string;
+}
+
+/** Install routes for one OS, split by which thing you are installing.
+ *
+ *  Both lists follow the same convention as before: position 0 is the
+ *  recommended entry and renders as the hero card; the rest render as
+ *  alternative rows in array order.
+ */
+export interface PlatformInstall {
+  /** Command-line routes: the binary itself, however it is installed. */
+  cli: InstallEntry[];
+  /** Desktop application routes. Leave empty for a product with no
+   *  desktop build; the section renders without that column. */
+  desktop: InstallEntry[];
+}
+
+export interface TryCommand {
+  /** Short comment rendered above the command. */
+  comment: string;
+  /** Shell command copied by the row-level copy button. */
+  command: string;
+}
+
+export interface FaqItem {
+  group: string;
+  q: string;
+  /** Plain text used verbatim in both the visible section and JSON-LD. */
+  a: string;
+  /** Rich HTML variant for the visible section. Falls back to `a`. */
+  aHtml?: string;
+}
+
+export interface BuiltWithEntry {
+  name: string;
+  url: string;
+}
+
+export interface SocialProof {
+  /** GitHub repo in "owner/name" format. Used to fetch stars + download counts. */
+  repo: string;
+}
+
+export interface Analytics {
+  /** Cloudflare Web Analytics beacon token. Omit to disable. */
+  cloudflareToken?: string;
+}
+
+export interface SectionCopy {
+  heading: string;
+  /** HTML allowed — typically short tagline with an anchor link. */
+  leadHtml: string;
+}
+
+export interface Modules {
+  /** Whether the /docs/ Starlight section exists for this product. When
+   *  false, nav/footer/404 stop linking to /docs/ and in-copy "Full docs →"
+   *  references are omitted — but the Starlight integration itself must
+   *  also be removed from astro.config.mjs (see the comment there). */
+  docs: boolean;
+  /** Whether the /changelog/ page exists for this product. When false,
+   *  nav/footer stop linking to /changelog/. */
+  changelog: boolean;
+}
+
+/** How the landing page arranges its hero and the rhythm below it. */
+export type LandingLayout = 'centered' | 'split';
+
+/** A section the landing page can render. Adding one here means adding a
+ *  component for it in src/pages/index.astro's map. */
+export type LandingSection = 'hero' | 'surfaces' | 'install' | 'faq';
+
+/** One group in the docs sidebar, as Starlight expects it. */
+export interface DocsSection {
+  label: string;
+  items: { label: string; link: string }[];
+}
+
+export interface SiteData {
+  meta: Meta;
+  branding: Branding;
+  modules: Modules;
+  hero: Hero;
+  /** Desktop installers offered in the hero. Empty for a product that
+   *  ships no desktop build. */
+  heroDownloads: HeroDownload[];
+  /** Visible headings + leads for each main section. */
+  copy: {
+    surfaces: SectionCopy;
+    install: SectionCopy;
+    faq: SectionCopy;
+  };
+  surfaces: SurfaceCard[];
+  install: {
+    /** Per-OS install routes, each split into CLI and desktop groups. */
+    byPlatform: Record<Platform, PlatformInstall>;
+    tryCommands: TryCommand[];
+    binariesNote: string;
+    /** Build-from-source command, listed in /llms.txt after the quickstart. */
+    fromSource: string;
+    /** Caveats /llms.txt prints under the install list, one line each. */
+    notes: string[];
+  };
+  faq: FaqItem[];
+  builtWith: BuiltWithEntry[];
+  social: SocialProof;
+  analytics: Analytics;
+  /** Version string published on crates.io / used in structured data. */
+  version: string;
+}

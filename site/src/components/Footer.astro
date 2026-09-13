@@ -1,0 +1,40 @@
+---
+import { site } from '../data/site';
+const { meta, hero, builtWith, modules } = site;
+---
+<footer>
+  <div class="footer-inner">
+    <div>© <span id="y"></span> {meta.author.name} · MIT</div>
+    <div class="flinks">
+      <a class="external-link" href={hero.sourceUrl}>GitHub</a>
+      <a class="external-link" href={`${hero.sourceUrl}/releases`}>Releases</a>
+      {modules.docs && <a href="/docs/">Docs</a>}
+      {modules.changelog && <a href="/changelog/">Changelog</a>}
+    </div>
+    {builtWith.length > 0 && (
+      <div class="built-with">
+        Built with
+        {builtWith.map((b, i) => (
+          <>
+            {i === 0 ? ' ' : i === builtWith.length - 1 ? ', and ' : ', '}
+            <a class="external-link" href={b.url}>{b.name}</a>
+          </>
+        ))}.
+      </div>
+    )}
+  </div>
+</footer>
+
+<style is:global>
+footer{
+  border-top:1px solid rgba(var(--ui-lift-rgb),.06);padding:0;
+}
+.footer-inner{
+  max-width:1060px;margin:0 auto;padding:28px 24px;
+  display:flex;justify-content:space-between;align-items:center;
+  flex-wrap:wrap;gap:12px;font-size:.75rem;color:var(--ui-text-muted);
+}
+footer a{color:var(--ui-text-muted);text-decoration:none}
+footer a:hover{color:var(--ui-text)}
+.flinks{display:flex;gap:16px}
+</style>

@@ -1,0 +1,100 @@
+---
+import MobileTableOfContents from 'virtual:starlight/components/MobileTableOfContents';
+import TableOfContents from 'virtual:starlight/components/TableOfContents';
+
+const { toc } = Astro.locals.starlightRoute;
+---
+
+{/*
+  There is no mobile section-nav row here any more.
+
+  It rendered "Docs › <group> › <page>" under the header on narrow screens,
+  and its dropdown listed every docs page. Measured on /docs/cli/ at 390x844,
+  that dropdown and the header's hamburger sidebar opened the IDENTICAL set of
+  11 links -- not overlapping, identical -- so two controls 43px apart did the
+  same job, and the header is `fixed`, meaning the hamburger never scrolls
+  away and was always the shorter route.
+
+  What it cost: the row was 43px of a 145px permanently-pinned stack (header
+  60 + row 43 + contents bar 42) on an 844px viewport, 17.2% of the screen
+  before the phone's own browser chrome. Without it the stack is 102px, 12.1%.
+
+  What it uniquely gave was orientation -- which group the current page sits
+  in. That is the real loss, and it is a deliberate trade: the page title is
+  the next thing on screen, and the hamburger shows the group with the current
+  page marked.
+
+  Its styles are gone from 17, 18, 20, 21, 22, 23 and 28 with it, along with a
+  `--ui-mobile-docs-nav-height` token that only existed to offset the
+  contents bar below it, and a half-built hide-on-scroll-down treatment: 17
+  declared `transform: translateY(0)` with a 140ms transition, 21 forced
+  `transform: none !important` in both scroll states, and nothing ever set the
+  `data-mobile-scroll-direction` attribute those rules keyed off. It had been
+  tried and switched off without being removed.
+*/}
+
+{
+  toc && (
+    <>
+      {/* Wide screens: the contents list in the right-hand rail, which is
+          where Starlight puts it and where a reader looks for it. It was
+          briefly moved under the hero; that came from feedback about the
+          NARROW list not collapsing, and moving the wide one was not the
+          fix for it. */}
+      <div class="right-sidebar-panel sl-hidden lg:sl-block">
+        <div class="sl-container">
+          <TableOfContents />
+        </div>
+      </div>
+      {/* Narrow screens keep the collapsed dropdown. */}
+      <div class="ui-mobile-toc-wrapper lg:sl-hidden">
+        <MobileTableOfContents />
+      </div>
+    </>
+  )
+}
+
+<style>
+  @layer starlight.core {
+    .right-sidebar-panel {
+      padding: 1rem var(--sl-sidebar-pad-x);
+    }
+
+    .sl-container {
+      width: calc(var(--sl-sidebar-width) - 2 * var(--sl-sidebar-pad-x));
+    }
+
+    .right-sidebar-panel :global(h2) {
+      color: var(--sl-color-white);
+      font-size: var(--sl-text-h5);
+      font-weight: 600;
+      line-height: var(--sl-line-height-headings);
+      margin-bottom: 0.5rem;
+    }
+
+    .right-sidebar-panel :global(:where(a)) {
+      display: block;
+      font-size: var(--sl-text-xs);
+      text-decoration: none;
+      color: var(--sl-color-gray-3);
+      overflow-wrap: anywhere;
+    }
+
+    .right-sidebar-panel :global(:where(a):hover) {
+      color: var(--sl-color-white);
+    }
+
+    @media (min-width: 72rem) {
+      .sl-container {
+        max-width: calc(
+          (
+            (
+                100vw - var(--sl-sidebar-width) - 2 * var(--sl-content-pad-x) - 2 *
+                  var(--sl-sidebar-pad-x)
+              ) * 0.25
+          )
+        );
+      }
+    }
+  }
+</style>

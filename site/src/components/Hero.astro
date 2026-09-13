@@ -1,0 +1,653 @@
+---
+import { site } from '../data/site';
+import { sections } from '../data/site-content/sections';
+const { hero, heroDownloads, social } = site;
+// The jump link only exists if there is an install section to jump to.
+// sections.ts can drop one, and a link to a section the page does not render
+// scrolls nowhere.
+const hasInstall = (sections as readonly string[]).includes('install');
+// What the button points at before any script runs, and what a crawler
+// reads. The list's first entry, so the markup can never name a file the
+// content file does not list.
+const defaultDownload = heroDownloads[0];
+---
+<div class="hero-frame">
+<div class="hero">
+  <p class="badge">{hero.badge}</p>
+  <h1>{hero.heading}</h1>
+  <p class="sub">{hero.subhead}</p>
+
+  <div class="social-proof" id="social-proof" aria-live="polite">
+    <a href={`https://github.com/${social.repo}/stargazers`} id="stars" hidden>
+      <span id="stars-count"></span>
+      <span aria-hidden="true">★</span>
+    </a>
+    <span class="sep" aria-hidden="true" id="metrics-sep" hidden>·</span>
+    <a href={`https://github.com/${social.repo}/releases`} id="downloads" hidden></a>
+    <span class="sep" aria-hidden="true" id="version-sep" hidden>·</span>
+    {/* Empty and hidden, like every other metric beside it.
+        It used to ship the version from the GUI package.json, which is the
+        version being developed, not the one released -- the page advertised
+        v0.3.0 while the latest release was v0.2.6. Its siblings were already
+        hidden-until-confirmed for exactly this reason; this one was not, so a
+        rate-limited or failed GitHub call left the wrong number on screen
+        indefinitely rather than showing nothing. Unauthenticated GitHub is 60
+        requests an hour per IP and each load spends two. */}
+    <a href={`https://github.com/${social.repo}/releases/latest`} id="latest-version" hidden></a>
+    <span class="sep" aria-hidden="true" id="source-sep" hidden>·</span>
+    <a class="plain" href={hero.sourceUrl}>
+      <svg class="gh-icon" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+      </svg>
+      View source
+    </a>
+  </div>
+
+  <div class="hero-cta">
+    {/* Two columns when there is a desktop button to put in the first one.
+        A product with no desktop build leaves `heroDownloads` empty, and
+        the wide command was then laid into the 200px column meant for the
+        button -- `iwr -useb https:/…` truncated mid-URL with the rest of
+        the row empty beside it. */}
+    <div class:list={['hero-cta-main', heroDownloads.length === 0 && 'hero-cta-main-solo']}>
+      {heroDownloads.length > 0 && (
+        <div class="hero-primary-wrap">
+          <a class="hero-primary" id="hero-desktop-download" href={defaultDownload.href}>
+            <span class="hero-primary-label">{hero.downloadLabel}</span>
+            {/* What the button will download, said out loud, and inside the
+                button rather than under it.
+                Clicking starts a download immediately and nothing else on the
+                page names the file or the platform first, so the only way to
+                find out what you were getting was to get it. It used to sit
+                below as a sibling, which put it in row 2 column 1 of the CTA
+                grid -- hanging off the left column while the command chip
+                beside it had nothing underneath. Inside the button it is
+                attached to the thing it describes and the row is even again.
+                Server-rendered with the first entry so it matches the href
+                before any script runs; scripts/landing/os-tabs.ts rewrites the
+                text and the href together. */}
+            <span class="hero-primary-cue" id="hero-desktop-cue">{defaultDownload.cue}</span>
+          </a>
+          <button
+            class="hero-primary-menu"
+            id="hero-desktop-menu-button"
+            type="button"
+            aria-label={hero.downloadMenuLabel}
+            aria-expanded="false"
+            aria-controls="hero-desktop-menu"
+          ></button>
+          <div class="hero-desktop-menu" id="hero-desktop-menu" hidden>
+            {heroDownloads.map((download) => (
+              <a href={download.href}>
+                <span class={`platform-mark platform-${download.os}`} aria-hidden="true">
+                  {/* The Windows glyph is four panes; the other two are a
+                      single shape drawn in CSS. */}
+                  {download.os === 'windows' && (
+                    <Fragment><span></span><span></span><span></span><span></span></Fragment>
+                  )}
+                </span>
+                <span class="installer-copy">
+                  <span class="installer-name">{download.name}</span>
+                  <span class="installer-meta">{download.meta}</span>
+                </span>
+                <span class="installer-ext">{download.ext}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+      {/* The SCRIPT one-liner sits here, in the wide slot beside the button,
+          and the package-manager command goes in the narrower row below.
+
+          It used to be the other way round, which put the longest command in
+          the narrowest box: `iwr -useb https://raw.githubus...` was truncated
+          mid-URL, so the row a reader would scan for the command showed a
+          fragment of one. Copy still worked, but nothing about the ellipsis
+          said so. The ids keep their meaning -- `hero-quick-install` is the
+          quick script, `hero-package-install` is the package manager -- and
+          scripts/landing/os-tabs.ts fills both by id, not by position. */}
+      <div
+        class="hero-command hero-command-wide has-copy hero-copy"
+        data-copy={hero.quickInstallAlt}
+        id="hero-quick-install"
+      >
+        <code>{hero.quickInstallAlt}</code>
+      </div>
+    </div>
+    <div class="hero-cta-sub">
+      <div class="hero-command has-copy hero-copy" id="hero-package-install" data-copy={hero.quickInstall}>
+        <code>{hero.quickInstall}</code>
+      </div>
+      {hasInstall && <a class="hero-install-link" href="#install">{hero.installLinkLabel}</a>}
+    </div>
+  </div>
+</div>
+
+<!-- Big hero screenshot -->
+<div class="w hero-shot">
+  <div class="bigshot">
+    <picture>
+      {hero.heroImageWebp && (
+        <source type="image/webp" srcset={hero.heroImageWebp} />
+      )}
+      <img
+        src={hero.heroImage}
+        alt={hero.heroImageAlt}
+        width={hero.heroImageWidth}
+        height={hero.heroImageHeight}
+        fetchpriority="high"
+      />
+    </picture>
+  </div>
+</div>
+</div>
+
+<style is:global>
+/* ─── HERO ─── */
+.hero{padding:72px 24px 0;text-align:center}
+.hero .badge{
+  display:inline-block;font-size:.6875rem;font-weight:600;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--ui-text-muted);margin-bottom:16px;
+}
+.hero h1{
+  font-size:clamp(1.75rem,4vw,2.75rem);font-weight:700;color:var(--ui-text-strong);
+  letter-spacing:-.02em;margin:0 auto;line-height:1.2;
+  /* Sized for the current heading, which is 62 characters. At the old 15ch
+     -- set when the heading was "A modern network scanner" -- it broke into
+     four lines and pushed the install buttons off the first screen. */
+  max-width:34ch;
+}
+.hero .sub{font-size:1.0625rem;color:var(--ui-text-muted);max-width:640px;margin:14px auto 0}
+/* .8125rem and the body ink, not .75rem and the muted step.
+ *
+ * The line was 12px at rgb(89,100,120) -- 5.77:1, so legible, but it read as
+ * a footnote rather than as the star count, the download count and the
+ * version, which are the only third-party evidence above the fold. Size was
+ * the bigger half of that: 12px is the smallest thing on the page and it sat
+ * directly under a 17px subhead.
+ *
+ * 13px and the body step measure 7.71:1 light and 11.45:1 dark. The `·`
+ * separators keep the muted colour below, so the line still reads as one
+ * group rather than four competing items. */
+.hero .social-proof{
+  margin:12px auto 0;font-size:.8125rem;color:var(--ui-text);
+  display:flex;justify-content:center;align-items:center;gap:10px;
+  font-variant-numeric:tabular-nums;min-height:1em;
+}
+.hero .social-proof .plain{
+  display:inline-flex;align-items:center;gap:3px;
+}
+.hero .social-proof a{color:inherit;text-decoration:none}
+.hero .social-proof a:hover{color:var(--ui-text)}
+.hero .social-proof a[data-total-downloads]{
+  position:relative;
+  outline-offset:4px;
+  border-bottom:0;
+  text-decoration:none;
+  text-decoration-line:none;
+}
+.hero .social-proof a[data-total-downloads]::after{
+  content:attr(data-total-downloads);
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + .65rem);
+  z-index:20;
+  width:max-content;
+  max-width:min(18rem,80vw);
+  padding:.42rem .58rem;
+  border:1px solid rgba(106,240,208,.2);
+  border-radius:6px;
+  background:var(--ui-surface);
+  color:var(--ui-text);
+  box-shadow:var(--ui-lift-sm);
+  font-size:.72rem;
+  line-height:1.25;
+  pointer-events:none;
+  opacity:0;
+  transform:translate(-50%,.25rem);
+  transition:opacity 80ms linear,transform 80ms linear;
+}
+.hero .social-proof a[data-total-downloads]::before{
+  content:"";
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + .43rem);
+  z-index:21;
+  width:.45rem;
+  height:.45rem;
+  border-right:1px solid rgba(106,240,208,.2);
+  border-bottom:1px solid rgba(106,240,208,.2);
+  background:var(--ui-surface);
+  pointer-events:none;
+  opacity:0;
+  transform:translate(-50%,.25rem) rotate(45deg);
+  transition:opacity 80ms linear,transform 80ms linear;
+}
+.hero .social-proof a[data-total-downloads]:hover::after,
+.hero .social-proof a[data-total-downloads]:focus-visible::after{
+  opacity:1;
+  transform:translate(-50%,0);
+  transition-delay:2s;
+}
+.hero .social-proof a[data-total-downloads]:hover::before,
+.hero .social-proof a[data-total-downloads]:focus-visible::before{
+  opacity:1;
+  transform:translate(-50%,0) rotate(45deg);
+  transition-delay:2s;
+}
+/* The "·" separators stay dim deliberately. They are decoration, not
+   content, so they carry aria-hidden and WCAG 1.4.3 does not apply —
+   and lifting them to 4.5:1 would give a punctuation mark the same
+   visual weight as the metrics it separates. Marking them hidden also
+   stops a screen reader announcing "middle dot" three times. */
+/* The muted step, not a literal. This was #555 -- a dark-theme grey that the
+   light theme had no say over, and the one thing on this line that did not
+   move when the rest of it did. It is the separator's job to sit behind the
+   items it separates, so it takes the muted token they just left. */
+.hero .social-proof .sep{color:var(--ui-text-muted)}
+.hero-cta{
+  /* 610, not 560, and sized off the viewport rather than a vw fraction.
+     At 560 the wide command slot was 351px against 397px of text, so a
+     47-character install one-liner -- `iwr -useb https://<domain>/install.ps1
+     | iex` -- was still clipped by 46px even after the URL was shortened,
+     measured rather than estimated. The
+     62vw term also made the width non-monotonic: it governed between 900 and
+     984px and put the CTA back under 560 there, so a cap alone would have
+     fixed only the widest screens. Below 820px the CTA switches to a wrapped
+     column and each command gets the full width, so this only governs the
+     grid layout. */
+  width:min(610px,calc(100vw - 72px));
+  margin:28px auto 0;
+  display:grid;gap:12px;
+}
+.hero-cta-main,
+.hero-cta-sub{
+  display:grid;
+  align-items:center;
+  gap:9px;
+}
+.hero-cta-main{grid-template-columns:200px minmax(0,1fr)}
+.hero-cta-main-solo{grid-template-columns:minmax(0,1fr)}
+.hero-cta-sub{
+  grid-template-columns:minmax(0,1fr) auto;
+  width:78%;
+  justify-self:center;
+  gap:28px;
+}
+.hero-primary-wrap{
+  position:relative;
+  display:grid;grid-template-columns:minmax(0,1fr) 34px;
+  width:min(190px,100%);
+  justify-self:start;
+  padding:0;
+  border:1px solid transparent;
+  border-radius:9px;
+  /* Tokens, not literals. The fill was a hard-coded #191b1e, so in the light
+     theme the one primary button on the page stayed dark charcoal on a white
+     surface; the border gradient ended on the dark theme's bright cyan for the
+     same reason. Both follow the theme now. */
+  background:
+    linear-gradient(var(--ui-surface),var(--ui-surface)) padding-box,
+    linear-gradient(90deg,var(--ui-accent) 0%,var(--ui-accent) 62%,var(--ui-brand-gradient-to) 100%) border-box;
+  box-shadow:0 0 12px rgba(var(--ui-accent-rgb),.08);
+  overflow:visible;
+}
+/* One control height for the whole CTA block.
+ *
+ * The button carries two lines and the command chips carry one, so left to
+ * their content they came out 50px against 38px -- three controls in a small
+ * area at two different heights, which reads as a mistake rather than as
+ * hierarchy. 44px fits the button's two lines (13px label + 11px cue plus
+ * padding) without inflating the chips much beyond the 38px they were.
+ *
+ * Set on the wrapper and the chips rather than on the inner anchor, and
+ * box-sizing is border-box globally, so the number is the outer height on
+ * both -- borders included, which is where the button's extra 2px lived. */
+.hero-cta{
+  --ui-cta-height:44px;
+}
+.hero-primary-wrap{
+  min-height:var(--ui-cta-height);
+}
+.hero-primary,
+.hero-primary-menu{
+  min-height:calc(var(--ui-cta-height) - 2px);
+  display:inline-flex;align-items:center;justify-content:center;
+  background:transparent;
+  background-image:none;
+  border:0;
+}
+.hero-primary{
+  /* Two stacked lines now -- the label and the download cue -- so this
+     overrides the row layout it shares with .hero-primary-menu above. */
+  flex-direction:column;
+  justify-content:center;
+  gap:0;
+  min-width:0;padding:6px 10px 7px 13px;border-radius:0;
+  /* The label inherits body's 1.6, which makes a 13px line 21px tall and
+     pushed the two-line button to 50px against the chips' 44. At 1.15 the
+     label is 15px and the button lands on the shared height. */
+  line-height:1.15;
+  text-decoration:none;font-size:.82rem;font-weight:760;
+  letter-spacing:.005em;
+  font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;
+  color:var(--ui-accent);
+}
+.hero-primary-label{
+  transform:translateX(8px);
+  background-image:linear-gradient(90deg,
+    var(--ui-brand-gradient-from),
+    var(--ui-brand-gradient-via),
+    var(--ui-brand-gradient-to));
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;
+}
+.hero-primary-menu{
+  border-radius:0;color:var(--ui-text);
+  cursor:pointer;font:inherit;padding:0;
+}
+.hero-primary-menu::before{
+  content:"";
+  width:6px;height:6px;
+  border-right:1.5px solid currentColor;
+  border-bottom:1.5px solid currentColor;
+  transform:translateY(-1px) rotate(45deg);
+}
+.hero-primary-wrap:hover .hero-primary,
+.hero-primary-wrap:hover .hero-primary-menu{
+  background:transparent;
+}
+.hero-primary:focus-visible,
+.hero-primary-menu:focus-visible{
+  outline:0;
+}
+.hero-primary-wrap:focus-within .hero-primary,
+.hero-primary-wrap:focus-within .hero-primary-menu{
+  background:transparent;
+}
+.hero-primary-wrap:focus-within,
+.hero-primary-wrap:hover{
+  background:
+    linear-gradient(var(--ui-surface-raised),var(--ui-surface-raised)) padding-box,
+    linear-gradient(90deg,var(--ui-accent) 0%,var(--ui-accent) 62%,var(--ui-brand-gradient-to) 100%) border-box;
+  box-shadow:0 0 0 1px rgba(var(--ui-accent-rgb),.16),0 0 12px rgba(var(--ui-accent-rgb),.08);
+}
+.hero-primary-menu:hover{color:var(--ui-text-strong)}
+.hero-desktop-menu{
+  position:absolute;top:calc(100% + 6px);left:0;z-index:20;
+  width:min(260px,calc(100vw - 48px));min-width:0;box-sizing:border-box;
+  /* See the wrapped-layout rule below, which widens this to the trigger. */
+  padding:5px;border-radius:8px;
+  background:var(--ui-surface);border:1px solid rgba(var(--ui-lift-rgb),.12);
+  box-shadow:var(--ui-lift-md);
+}
+.hero-desktop-menu a{
+  display:grid;grid-template-columns:16px minmax(0,1fr) auto;
+  align-items:center;gap:8px;
+  padding:8px 10px;border-radius:6px;text-align:left;
+  color:var(--ui-text);text-decoration:none;font-size:.8rem;font-weight:700;
+}
+.hero-desktop-menu .platform-mark{
+  position:relative;
+  width:16px;height:16px;
+  display:inline-flex;justify-content:center;align-items:center;
+  flex:none;color:var(--ui-text-muted);
+}
+.hero-desktop-menu .installer-copy{
+  display:grid;gap:1px;min-width:0;
+}
+.hero-desktop-menu .installer-name{
+  min-width:0;color:var(--ui-text);font-weight:720;line-height:1.18;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.hero-desktop-menu .installer-meta{
+  min-width:0;color:var(--ui-text-muted);font-size:.67rem;font-weight:560;line-height:1.15;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.hero-desktop-menu .installer-ext{
+  justify-self:end;align-self:center;color:var(--ui-text-muted);font-size:.68rem;font-weight:680;
+}
+.hero-desktop-menu a .platform-mark{font-weight:700}
+.hero-desktop-menu .platform-windows{
+  display:grid;
+  grid-template-columns:repeat(2,5px);
+  grid-template-rows:repeat(2,5px);
+  gap:1.5px;
+  align-content:center;justify-content:center;
+}
+.platform-windows span{
+  display:block;box-sizing:border-box;
+  width:5px;height:5px;
+  border:1px solid currentColor;
+  border-radius:1px;
+}
+.platform-macos::before{
+  content:"";
+  width:13px;height:10px;
+  border:1.4px solid currentColor;
+  border-radius:2px;
+}
+.platform-macos::after{
+  content:"";
+  position:absolute;bottom:1px;left:5px;
+  width:6px;height:1.4px;background:currentColor;border-radius:2px;
+}
+.platform-linux::before{
+  content:"";
+  width:13px;height:10px;
+  border:1.4px solid currentColor;
+  border-radius:2px;
+}
+.platform-linux::after{
+  content:">";
+  position:absolute;left:4px;top:3px;
+  color:currentColor;font-size:8px;line-height:1;
+  font-family:ui-monospace,"SF Mono",Menlo,monospace;
+}
+.hero-desktop-menu a:hover{background:rgba(var(--ui-accent-rgb),.12);color:#1ec88c}
+.hero-command{
+  position:relative;display:grid;grid-template-columns:minmax(0,1fr);
+  align-items:center;gap:10px;min-height:var(--ui-cta-height);
+  padding:8px 58px 8px 14px;border-radius:9px;
+  /* A chip, not a code surface: dark in the dark theme, light in the light
+     one, so it carries the same weight as the Desktop app button beside it.
+     See the chip note in landing/tokens.css. */
+  background:var(--ui-chip-bg);border:1px solid var(--ui-chip-border);
+  box-shadow:0 0 0 1px rgba(var(--ui-accent-rgb),.26),0 0 14px rgba(var(--ui-accent-rgb),.08);
+}
+.hero-command.hero-copy .copy-btn{opacity:1}
+.hero-command code{
+  min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  color:var(--ui-text);font-family:ui-monospace,"SF Mono",Menlo,monospace;
+  font-size:.78rem;background:transparent;border:0;padding:0;
+}
+/* The button's second line. Stacked under the label inside the anchor, so it
+ * moves, wraps and hit-tests with the button rather than beside it.
+ *
+ * translateX matches .hero-primary-label's: that 8px nudge optically centres
+ * the text against the caret column on its right, and both lines have to
+ * carry it or they sit on different centres.
+ *
+ * -webkit-text-fill-color is reset because the label above it paints itself
+ * with a gradient and `transparent` fill; without this the cue inherits the
+ * transparent fill and renders as nothing. */
+.hero-primary-cue{
+  transform:translateX(8px);
+  margin:1px 0 0;
+  font-size:.66rem;
+  font-weight:500;
+  line-height:1.25;
+  color:var(--ui-text-muted);
+  -webkit-text-fill-color:currentColor;
+  text-align:center;
+  white-space:nowrap;
+}
+.hero-install-link{
+  justify-self:end;
+  display:inline-flex;align-items:center;
+  color:var(--ui-text);text-decoration:none;font-size:.76rem;white-space:nowrap;
+  border-bottom:1px dotted rgba(255,255,255,.22);
+  padding-bottom:2px;
+}
+.hero-install-link:hover{color:var(--ui-text-strong);border-bottom-color:rgba(255,255,255,.5)}
+.hero .links{display:flex;gap:16px;justify-content:center;margin-top:14px;flex-wrap:wrap}
+.hero .links a{
+  font-size:.8125rem;color:var(--ui-text-muted);text-decoration:none;
+  border-bottom:1px dotted rgba(255,255,255,.22);padding-bottom:1px;
+  display:inline-flex;align-items:center;gap:4px;
+}
+.hero .links a:hover{color:var(--ui-text);border-bottom-color:rgba(255,255,255,.5)}
+.hero .links a.plain{border-bottom:0}
+.hero .links a.plain:hover{border-bottom:0}
+@media(max-width:820px){
+  .hero-cta{
+    width:min(450px,calc(100vw - 48px));
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:center;
+    align-items:center;
+    gap:10px 22px;
+  }
+  .hero-cta-main,
+  .hero-cta-sub{display:contents}
+  /* Full width once the CTA has wrapped into a column. At 174px the button
+     sat as a short centred pill above two full-width command bars, and the
+     installer menu -- anchored to its left edge -- opened off to one side
+     and past the column. Matching the bars lines all four rows up on the
+     same edges and gives the menu the same width to open into. */
+  /* 400, not 380: the wide command needs 323px of text plus the bar's 72px
+     of padding and copy-button reserve. All three stay equal so the button,
+     its menu and both command bars share one set of edges. */
+  .hero-primary-wrap{
+    order:1;
+    width:min(100%,400px);
+    flex:0 1 min(100%,400px);
+  }
+  /* The cue used to be a sibling here and needed its own flex order; it is
+     inside the button now and moves with it. */
+  .hero-command-wide{
+    order:3;
+    flex:0 1 min(100%,400px);
+    width:min(100%,400px);
+  }
+  .hero-cta-sub .hero-command{
+    order:4;
+    flex:0 1 min(100%,400px);
+    width:min(100%,400px);
+  }
+  /* Exactly the button's outer edges, not its padding box. The trigger has
+     a 1px gradient border, so a plain `width:100%` left the menu inset by a
+     pixel on each side, which reads as a misalignment against the command
+     bars directly below it. */
+  .hero-desktop-menu{
+    left:-1px;
+    width:calc(100% + 2px);
+    max-width:calc(100% + 2px);
+  }
+  .hero-command{padding-right:50px;gap:3px}
+  .hero-install-link{
+    order:2;
+    align-self:center;
+    justify-self:start;
+    min-width:150px;
+    justify-content:center;
+    text-align:center;
+  }
+}
+@media(max-width:440px){
+  .hero-cta{
+    width:min(100%,calc(100vw - 32px));
+    gap:10px 18px;
+  }
+  .hero-primary-wrap{
+    width:min(100%,330px);
+    flex-basis:min(100%,330px);
+  }
+  .hero-install-link{font-size:.72rem}
+  .hero-command-wide,
+  .hero-cta-sub .hero-command{
+    width:min(100%,330px);
+    flex-basis:min(100%,330px);
+  }
+}
+
+/* ─── PRODUCT SHOT ─── */
+.bigshot{
+  margin:48px auto 78px;max-width:980px;
+  border-radius:10px;overflow:hidden;
+  border:1px solid rgba(var(--ui-lift-rgb),.08);
+  box-shadow:var(--ui-lift-lg);
+}
+.bigshot img{width:100%;height:auto;display:block}
+.bigshot img{cursor:zoom-in}
+
+
+@media(max-width:600px){
+  .hero h1{font-size:1.625rem}
+  .hero .sub{font-size:.9375rem}
+  .hero .quick-install{font-size:.75rem;padding:10px 12px}
+  /* Let the curl | bash command wrap instead of being ellipsed — losing
+     the "| bash" at the end made the command unusable on phones. */
+  .hero .quick-install span{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-all}
+}
+
+/* Narrow screens: the hero command stays on one line and ellipsises.
+ *
+ * Deliberate: the `curl … | bash` URL is long enough to wrap to four lines
+ * at 375px, which turns the hero's tightest element into its tallest. The
+ * copy button carries the full string, so nothing is lost — and unlike the
+ * install boxes below, this one never had text hidden under the button,
+ * because `.hero-command` is not a scroller. Its `padding-right:58px` means
+ * the ellipsis lands clear of the button.
+ *
+ * Worth stating the tradeoff, since this is a shell one-liner: a truncated
+ * command means copying something you have not fully read. The copy button
+ * is the intended path and the full command is in the install guide.
+ */
+
+/* ─── SPLIT LAYOUT ───────────────────────────────────────────────────────
+ *
+ * The second arrangement site-content/sections.ts can ask for: copy on the
+ * left, screenshot on the right, and the sections below closer together.
+ * Everything here is additive and scoped to `main.landing-split`, so the
+ * centred page renders exactly as it did before this existed.
+ *
+ * `.hero-frame` wraps the two blocks -- the copy and the screenshot are
+ * separate siblings -- and is `display:contents` by default, so in the
+ * centred layout it is not there at all. The grid goes on the frame rather
+ * than on `main`, because a max-width on `main` would stop the alternating
+ * section bands reaching the edges of the window, which is most of what
+ * makes them read as bands.
+ *
+ * Below 900px none of it applies. A headline and a picture have one sensible
+ * arrangement on a phone, and it is the stacked one both layouts produce. */
+.hero-frame{display:contents}
+
+@media (min-width:900px){
+  .landing-split .hero-frame{
+    display:grid;
+    grid-template-columns:minmax(0,46%) minmax(0,1fr);
+    column-gap:40px;
+    align-items:center;
+    max-width:var(--ui-shell-width);
+    margin:0 auto;
+    padding:0 var(--ui-shell-gutter);
+  }
+  .landing-split .hero{
+    text-align:left;
+    padding:56px 0 40px;
+  }
+  .landing-split .hero-shot{padding:0}
+  /* Left-aligned means undoing every centring margin the centred layout
+     sets, not only the text-align. Each of these answers a rule above. */
+  .landing-split .hero h1{margin-inline:0;max-width:none}
+  .landing-split .hero .sub{margin-inline:0;max-width:46ch}
+  .landing-split .hero .social-proof{justify-content:flex-start}
+  .landing-split .hero-cta{margin-inline:0;width:100%}
+  .landing-split .hero-cta-sub{width:100%;justify-self:start}
+  .landing-split .bigshot{margin:0;max-width:none}
+  /* The sections sit closer together: the hero no longer fills a screen on
+     its own, so the old 64px gap reads as a gap rather than as rhythm. */
+  .landing-split section{padding:48px 0}
+}
+</style>
