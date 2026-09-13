@@ -2,61 +2,60 @@ import type { Platform, PlatformInstall, SectionCopy, TryCommand } from './types
 
 export const installCopy: SectionCopy = {
   heading: 'Install',
-  leadHtml: 'Pick a platform. Position 0 in each list is the recommended route and renders as the card; the rest are alternatives.',
+  leadHtml:
+    'One command on every platform. nvx is not yet on winget, Scoop, Homebrew or npm, so the install script and the release binaries are the two routes that exist.',
 };
 
-const RELEASE = 'https://github.com/your-org/example/releases/latest/download';
+const RELEASE = 'https://github.com/fstubner/nvx/releases/latest/download';
 
 export const installByPlatform: Record<Platform, PlatformInstall> = {
   windows: {
     cli: [
-      { label: 'winget', command: 'winget install example' },
-      { label: 'Scoop', command: 'scoop install example' },
-      { label: 'Install script', command: 'iwr -useb https://example.com/install.ps1 | iex' },
-    ],
-    desktop: [
       {
-        label: 'Windows installer',
-        href: `${RELEASE}/example-windows-x86_64.msi`,
-        hint: 'Unsigned: SmartScreen will ask before it runs.',
+        label: 'PowerShell',
+        command: 'irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex',
       },
+      { label: 'Binary', href: `${RELEASE}/nvx.exe`, hint: 'x64. Unsigned: SmartScreen will ask before it runs.' },
     ],
+    desktop: [],
   },
   macos: {
     cli: [
-      { label: 'Homebrew', command: 'brew install example' },
-      { label: 'Install script', command: 'curl -fsSL https://example.com/install.sh | bash' },
+      {
+        label: 'Shell',
+        command: 'curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh',
+      },
+      { label: 'Apple silicon', href: `${RELEASE}/nvx-darwin-arm64` },
+      { label: 'Intel', href: `${RELEASE}/nvx-darwin-amd64` },
     ],
-    desktop: [
-      { label: 'Apple silicon', href: `${RELEASE}/example-macos-aarch64.dmg` },
-      { label: 'Intel', href: `${RELEASE}/example-macos-x86_64.dmg` },
-    ],
+    desktop: [],
   },
   linux: {
     cli: [
-      { label: 'apt', command: 'apt install example' },
-      { label: 'Install script', command: 'curl -fsSL https://example.com/install.sh | bash' },
-      { label: 'Binary', href: `${RELEASE}/example-linux-x86_64.tar.gz`, hint: 'x86_64' },
+      {
+        label: 'Shell',
+        command: 'curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh',
+      },
+      { label: 'x86_64', href: `${RELEASE}/nvx-linux-amd64` },
+      { label: 'arm64', href: `${RELEASE}/nvx-linux-arm64` },
     ],
-    desktop: [{ label: 'AppImage', href: `${RELEASE}/example-linux-x86_64.AppImage` }],
+    desktop: [],
   },
 };
 
-// The "try it" block: the first few commands someone runs after installing.
 export const tryCommands: TryCommand[] = [
-  { comment: 'Run it once', command: 'example run' },
-  { comment: 'Read the output from a script', command: 'example run --json' },
-  { comment: 'See every flag', command: 'example --help' },
+  { comment: 'Install a runtime and use it in this shell', command: 'nvx install 22 && nvx use 22' },
+  { comment: 'Install packages — contained, with no change to how you type it', command: 'npm install' },
+  { comment: 'Check that nvx is intercepting, and that nothing weakens it', command: 'nvx doctor' },
 ];
 
 export const installBinariesNote =
-  'Prebuilt binaries are attached to every GitHub release for Windows, macOS and Linux.';
+  'Every release attaches prebuilt binaries with SHA-256 sidecars for Windows x64, macOS on Apple silicon and Intel, and Linux on x86_64 and arm64.';
 
-// Two things /llms.txt says that no page does: a build-from-source route and
-// any caveat a reader acting on the install list needs. One line each.
-export const installFromSource = 'cargo install example';
+export const installFromSource = 'go build -o nvx ./cmd/nvx';
 
 export const installNotes = [
-  'Example needs no runtime: the binary is self-contained on all three',
-  'platforms.',
+  'One static binary, no runtime to install alongside it. The install script',
+  'puts nvx on PATH and adds a line to your shell profile; nvx doctor reports',
+  'whether both worked.',
 ];

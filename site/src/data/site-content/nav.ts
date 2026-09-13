@@ -40,7 +40,7 @@ const allLinks: NavLink[] = [
   { label: 'Changelog', href: '/changelog/', mobileGroup: 'project' },
   {
     label: 'GitHub',
-    href: 'https://github.com/your-org/example',
+    href: 'https://github.com/fstubner/nvx',
     external: true,
     mobileGroup: 'project',
   },
