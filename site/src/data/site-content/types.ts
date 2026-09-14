@@ -37,6 +37,20 @@ export interface ChangelogSurface {
   label: string;
 }
 
+/** One column of the competitor comparison. */
+export interface ComparisonColumn {
+  name: string;
+  /** The product this site is for. Gets the tint and the left rule. */
+  highlight?: boolean;
+}
+
+/** One capability row. `cells` is one entry per column, in column order.
+ *  A cell is '✓', '—', or short text where the answer needs a word. */
+export interface ComparisonRow {
+  feature: string;
+  cells: string[];
+}
+
 export interface AppSchema {
   applicationCategory: string;
   /** Free text narrowing the category for this product. */
@@ -260,7 +274,7 @@ export type LandingLayout = 'centered' | 'split';
 
 /** A section the landing page can render. Adding one here means adding a
  *  component for it in src/pages/index.astro's map. */
-export type LandingSection = 'hero' | 'surfaces' | 'reach' | 'install' | 'faq';
+export type LandingSection = 'hero' | 'surfaces' | 'reach' | 'compare' | 'install' | 'faq';
 
 /** One target in the "what an install can reach" comparison. */
 export interface ReachRow {

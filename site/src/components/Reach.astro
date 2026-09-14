@@ -20,8 +20,8 @@ import { reachColumns, reachCopy, reachNote, reachRows } from '../data/site-cont
         <thead>
           <tr>
             <th scope="col">{reachColumns.target}</th>
-            <th scope="col">{reachColumns.others}</th>
-            <th scope="col" class="nvx">{reachColumns.nvx}</th>
+            <th scope="col" class="col">{reachColumns.others}</th>
+            <th scope="col" class="col nvx">{reachColumns.nvx}</th>
           </tr>
         </thead>
         <tbody>
@@ -31,8 +31,8 @@ import { reachColumns, reachCopy, reachNote, reachRows } from '../data/site-cont
                 <code>{r.target}</code>
                 <span class="reach-what">{r.what}</span>
               </th>
-              <td><span class="verdict plain">{r.plain}</span></td>
-              <td class="nvx"><span class="verdict contained">{r.contained}</span></td>
+              <td class="col"><span class="verdict plain">{r.plain}</span></td>
+              <td class="col nvx"><span class="verdict contained">{r.contained}</span></td>
             </tr>
           ))}
         </tbody>
@@ -53,53 +53,44 @@ import { reachColumns, reachCopy, reachNote, reachRows } from '../data/site-cont
 /* One row per target, so a path appears once and the eye travels sideways to
    compare. The previous version was two columns of cards listing the same five
    paths twice, which left the reader pairing them up by hand. */
-.reach-scroll{
-  overflow-x:auto;
-  margin-bottom:24px;
-  border:1px solid rgba(var(--ui-hairline-rgb),.22);
-  border-radius:12px;
-  background:var(--ui-surface-raised);
-}
+/* Built against how Supabase and Linear draw a comparison: hairlines, not
+   boxes. No card around the table, no capsule around a verdict, no rule on all
+   four sides of the compared column -- each of those was placeholder styling,
+   and together they read as a wireframe. Emphasis comes from a tint and a
+   single left rule, the way a pricing table marks a plan. */
+.reach-scroll{overflow-x:auto;margin-bottom:28px}
 .reach-table{width:100%;border-collapse:collapse;font-size:.8125rem}
 
 .reach-table th,
 .reach-table td{
   text-align:left;
-  padding:11px 18px;
-  border-top:1px solid rgba(var(--ui-hairline-rgb),.12);
-  vertical-align:middle;
+  padding:14px 20px 14px 0;
+  border-bottom:1px solid rgba(var(--ui-hairline-rgb),.14);
+  vertical-align:top;
 }
 .reach-table thead th{
-  border-top:0;
-  padding-top:14px;padding-bottom:14px;
+  padding-bottom:10px;
+  border-bottom:1px solid rgba(var(--ui-hairline-rgb),.26);
   font-size:.6875rem;font-weight:700;
-  letter-spacing:.06em;text-transform:uppercase;
+  letter-spacing:.07em;text-transform:uppercase;
   color:var(--ui-text-muted);
   white-space:nowrap;
 }
-.reach-table tbody th{font-weight:400}
+.reach-table tbody tr:last-child th,
+.reach-table tbody tr:last-child td{border-bottom:0}
+.reach-table tbody th{font-weight:400;padding-right:32px}
 
-/* The compared column is a tint with an accent edge along the top, not a box
-   ruled on all four sides. A 2px rectangle floating over the rows read as a
-   selection marquee rather than as emphasis. The tint is 6%, which composites
-   to rgb(41,40,55) in the dark theme -- --ui-accent on that measures 4.30:1
-   and fails, which is why the verdicts in this column use --ui-accent-bright
-   at 8.83:1 dark and 8.23:1 light. */
+/* A vertical hairline opens each comparison column, as on Linear's plans. */
+.reach-table th.col,
+.reach-table td.col{padding-left:20px;border-left:1px solid rgba(var(--ui-hairline-rgb),.14)}
+
+/* The compared column: a tint and nothing else. The tint composites to
+   rgb(41,40,55) in the dark theme, where --ui-accent is 4.30:1 and fails, so
+   its text uses --ui-accent-bright at 8.83:1 dark and 8.23:1 light. */
 .reach-table th.nvx,
-.reach-table td.nvx{background:rgba(var(--ui-accent-rgb),.06)}
-.reach-table thead th.nvx{
-  /* accent-bright, like the verdicts below it: --ui-accent on this tinted cell
-     is the same 4.30:1 pairing the contrast sweep rejected, and fixing only the
-     verdicts left the header failing on its own. The border is not text and is
-     unaffected. */
-  color:var(--ui-accent-bright);
-  border-top:2px solid var(--ui-accent);
-}
+.reach-table td.nvx{background:rgba(var(--ui-accent-rgb),.055)}
+.reach-table thead th.nvx{color:var(--ui-accent-bright)}
 
-/* Plain mono, no chip. The global `code` rule gives every inline code a
-   background and padding; as a table cell's only child at display:block that
-   painted a full-width slab behind every path, which is what made the table
-   read as a wireframe. */
 .reach-table code{
   display:inline-block;
   background:none;padding:0;border-radius:0;
@@ -108,13 +99,14 @@ import { reachColumns, reachCopy, reachNote, reachRows } from '../data/site-cont
   color:var(--ui-text-strong);
 }
 .reach-what{
-  display:block;margin-top:3px;
-  font-size:.75rem;color:var(--ui-text-muted);
+  display:block;margin-top:4px;
+  font-size:.75rem;line-height:1.45;
+  color:var(--ui-text-muted);
 }
 
-/* Words, not pills. An outlined capsule in every cell is placeholder styling;
-   a comparison table wants the answer to read as text. */
-.verdict{font-weight:700;font-size:.75rem;letter-spacing:.01em;white-space:nowrap}
+/* Words, at the same weight as the rest of the row. A bold capsule in every
+   cell is what made this look like a form. */
+.verdict{font-weight:600;font-size:.8125rem;white-space:nowrap}
 .verdict.plain{color:var(--ui-warn)}
 .verdict.contained{color:var(--ui-accent-bright)}
 
