@@ -11,7 +11,7 @@ export const hero: Hero = {
   heroImage: '/assets/hero.png',
   heroImageAlt: 'A terminal showing nvx list and nvx doctor: installed Node.js and Bun versions, and every shim reporting OK',
   heroImageWidth: 1200,
-  heroImageHeight: 720,
+  heroImageHeight: 600,
   sourceUrl: 'https://github.com/fstubner/nvx',
   downloadLabel: 'Desktop app',
   downloadMenuLabel: 'Choose desktop installer',

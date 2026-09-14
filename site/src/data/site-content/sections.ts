@@ -26,4 +26,4 @@ export const sections: LandingSection[] = ['hero', 'surfaces', 'reach', 'install
 // Both use the same content and the same components. Below 900px they are
 // the same page, because there is only one sensible arrangement of a
 // headline and a picture on a phone.
-export const landingLayout: LandingLayout = 'centered';
+export const landingLayout: LandingLayout = 'split';

@@ -10,10 +10,8 @@ import sharp from 'sharp';
 
 const out = process.argv[2];
 
-const W = 1200, H = 720;
-const BG = '#111111';          // --ui-bg
+const W = 1200, H = 600;
 const PANEL = '#10151b';       // --ui-code-bg
-const BORDER = 'rgba(255,255,255,0.10)';
 const FG = '#d7dce5';          // --ui-code-fg
 const DIM = '#8c95a6';         // --ui-text-muted
 const ACCENT = '#af6eeb';      // --ui-accent
@@ -44,8 +42,8 @@ const lines = [
 
 const FONT = "Consolas, 'Cascadia Mono', 'DejaVu Sans Mono', monospace";
 const FS = 21, LH = 29, PAD = 40;
-const panelTop = 90, panelLeft = 60, panelW = W - 120, panelH = H - 160;
-const textTop = panelTop + 70;
+const panelTop = 0, panelLeft = 0, panelW = W;
+const textTop = panelTop + 88;
 
 let body = '';
 lines.forEach((runs, i) => {
@@ -58,19 +56,9 @@ lines.forEach((runs, i) => {
 });
 
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
-  <defs>
-    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#a855f7" stop-opacity="0.30"/>
-      <stop offset="100%" stop-color="#ff007f" stop-opacity="0.18"/>
-    </linearGradient>
-  </defs>
-  <rect width="${W}" height="${H}" fill="${BG}"/>
-  <rect x="${panelLeft - 10}" y="${panelTop - 10}" width="${panelW + 20}" height="${panelH + 20}"
-        rx="18" fill="url(#glow)"/>
-  <rect x="${panelLeft}" y="${panelTop}" width="${panelW}" height="${panelH}"
-        rx="12" fill="${PANEL}" stroke="${BORDER}"/>
+  <rect x="0" y="0" width="${W}" height="${H}" fill="${PANEL}"/>
   <rect x="${panelLeft}" y="${panelTop}" width="${panelW}" height="44"
-        rx="12" fill="rgba(255,255,255,0.04)"/>
+        fill="rgba(255,255,255,0.04)"/>
   <circle cx="${panelLeft + 26}" cy="${panelTop + 22}" r="6" fill="#6b7280"/>
   <circle cx="${panelLeft + 48}" cy="${panelTop + 22}" r="6" fill="#6b7280"/>
   <circle cx="${panelLeft + 70}" cy="${panelTop + 22}" r="6" fill="#6b7280"/>

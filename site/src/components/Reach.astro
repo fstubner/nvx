@@ -88,7 +88,11 @@ import { reachColumns, reachCopy, reachNote, reachRows } from '../data/site-cont
 .reach-table td.nvx{
   border-left:2px solid var(--ui-accent);
   border-right:2px solid var(--ui-accent);
-  background:rgba(var(--ui-accent-rgb),.05);
+  /* No tint behind these cells. At 5% the accent composited the cell
+     background to rgb(39,40,53), where the accent text measures 4.34:1
+     against a 4.5 floor -- the rendered contrast sweep caught all eight
+     cells. The outline alone carries the column, at 4.64:1 dark and
+     7.14:1 light. */
 }
 .reach-table thead th.nvx{
   color:var(--ui-accent);
