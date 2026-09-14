@@ -1,0 +1,38 @@
+{
+  "name": "product-site-template",
+  "description": "Reusable modular landing page + docs + changelog template for launching new products.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "check:changelog": "node ./scripts/changelog-dates.mjs",
+    "check:content": "node ./scripts/check-content.mjs",
+    "theme": "node ./scripts/theme.mjs",
+    "check:css": "node ./scripts/css-shadowing.mjs --max 0",
+    "check:regions": "node ./scripts/css-regions.mjs",
+    "css:equivalence": "node ./scripts/css-equivalence.mjs",
+    "check:wordmark": "node ./scripts/wordmark-inset.mjs",
+    "test:a11y": "npm run build && node ./scripts/a11y.mjs",
+    "check:contrast": "node ./scripts/contrast-sweep.mjs",
+    "visual:record": "node ./scripts/visual-snapshot.mjs record",
+    "visual:check": "node ./scripts/visual-snapshot.mjs check",
+    "prebuild": "node ./scripts/copy-install-scripts.mjs"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.41.9",
+    "astro": "^7.2.9"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@axe-core/cli": "^4.13.0",
+    "linkedom": "^0.18.13",
+    "selenium-webdriver": "^4.48.0",
+    "typescript": "^5.5.0"
+  }
+}

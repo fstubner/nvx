@@ -11,16 +11,18 @@
 
 When a coding agent runs `npm install`, it executes code from strangers with your
 credentials within reach. `nvx` puts that command inside an OS sandbox: a throwaway
-`HOME`, no access to `~/.ssh` or `~/.npmrc`, writes confined to the project, and an
-allowlist for anything it tries to reach over the network.
+`HOME`, writes confined to the project, and an allowlist for anything it tries to
+reach over the network. On Windows and Linux it cannot read `~/.ssh` or `~/.npmrc`
+either; on macOS reads are not contained, which [Known limitations](#known-limitations)
+states plainly.
 
 **You do not change how you run anything.** No wrapper command, no policy file to
 write first, no agent configuration. nvx installs shims on `PATH`, so `npm install`
-is still `npm install` — it is simply contained when it runs code you did not write.
+is still `npm install`, contained when it runs code you did not write.
 That is the part other sandboxes leave to you: they need `theirtool run -- npm
 install`, and an agent will not remember to type it.
 
-It is also a **Node.js and Bun version manager**, because it has to be — the shims
+It is also a **Node.js and Bun version manager**, because it has to be: the shims
 that intercept the toolchain are the same ones that switch runtimes on `cd`. If you
 use nvm, fnm or volta today, nvx replaces them.
 
@@ -205,7 +207,7 @@ Options:
 
 ### Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx` are all intercepted**, and the ones that execute code you did not write — package installs and `npx`-style tool runners — are sandboxed. **Except Bun on Windows, which currently fails inside the sandbox — see [Known limitations](#known-limitations).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level; `isolation.level: strict` extends containment to it. See [Known limitations](#known-limitations). No separate sandbox subcommand — just run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx` are all intercepted**, and the ones that execute code you did not write (package installs and `npx`-style tool runners) are sandboxed. **Bun on Windows is the exception: it currently fails inside the sandbox, see [Known limitations](#known-limitations).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level; `isolation.level: strict` extends containment to it. There is no separate sandbox subcommand. Run commands normally:
 
 ```bash
 npm install
@@ -225,7 +227,7 @@ Security prompts (vulnerability warnings, install script confirmations, typosqua
 
 ### Auto-Swapping
 
-`nvx` automatically detects configuration files (`.nvmrc`, `.node-version`, and `package.json` engines) when you navigate to a directory, prompting to install the required Node.js version if missing, and switching to it seamlessly.
+`nvx` automatically detects configuration files (`.nvmrc`, `.node-version`, and `package.json` engines) when you navigate to a directory, prompting to install the required Node.js version if missing, and switching to it.
 
 ---
 
@@ -421,588 +423,56 @@ measured.
 
 ## Known limitations
 
-Stated here rather than left implicit, because a security tool that overstates its
-reach is worse than one that is narrow and honest. Each of these is measured, not
-assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
+A security tool that overstates its reach is worse than one that is narrow and
+honest, so the limits that change what you should expect are listed here. The
+threat model behind them is in [SECURITY.md](SECURITY.md), and the per-platform
+evidence each claim rests on -- probe output, dates, the machines it was measured
+on -- is in [docs/enforcement-matrix.md](docs/enforcement-matrix.md).
 
+### What containment does not cover
+
+- **Your own code is not contained by default.** `npm run build`, `npm test` and
+  `node` run uncontained at the `standard` level, so a compromised dependency your
+  own code imports is not sandboxed. A contained install can therefore influence a
+  later uncontained command, because `node_modules/.bin` is writable by design.
+  `isolation.level: strict` contains them, at the cost of breaking anything that
+  needs unrestricted filesystem or network access.
 - **A `.env` inside the project is readable by a contained install.** The project
-  directory must be readable for an install to work, and `.env` lives in it.
-  Environment *variables* are scrubbed, but a file is a file. Secrets outside the
-  project — `~/.ssh`, `~/.aws`, `~/.npmrc` — are unreachable **on Windows and
-  Linux**; on macOS the Seatbelt profile allows reads, so they are not.
-- **A stray `package.json` in a parent directory puts every project beneath it in
-  one sandbox scope.** nvx decides which project a sandbox belongs to by walking
-  up from the working directory to the nearest `package.json`. Projects that
-  resolve to the same root share one identity, so a contained install in either
-  can read and write the other. Normally every project has its own manifest and
-  they stay separate — what breaks it is a manifest somewhere above them.
+  directory has to be readable for the install to work, and `.env` lives in it.
+  Environment *variables* are scrubbed; a file is a file.
+- **On macOS, reads are not contained.** Writes and egress are. The Seatbelt
+  profile has to allow filesystem reads because the dynamic linker loads system
+  libraries whose locations move between macOS versions.
+- **On Windows, your home directory is listable.** Contents stay unreadable, so
+  `~/.ssh`, `~/.aws` and `~/.npmrc` cannot be read, but their presence is visible.
+  That is an ACE Windows ships on your profile and nvx cannot revoke.
+- **Detection is best-effort.** Typosquat and vulnerability checks reduce risk
+  without certifying a package. Containment is the backstop, not the checks.
+
+### What surprises people
+
+- **A stray `package.json` above your projects merges them into one sandbox
+  scope.** `nvx doctor` reports it when the manifest sits in your home directory
+  or at a volume root.
+- **`npm install -g` is refused** inside the sandbox, because a global install
+  writes outside the project. `nvx --no-sandbox npm install -g` is an uncontained
+  install, so treat it as one.
+- **A contained command sees almost none of your environment.** A tool reading
+  `CI` or `NODE_ENV` changes behaviour without erroring. nvx names the variables
+  it drops, and `isolation.environment.allow` keeps the ones a project needs.
+- **On Windows, a contained process cannot create a pipe.** Synchronous and
+  streaming capture are brokered by nvx; `child_process.fork` is refused outright
+  and names `--no-sandbox`.
+- **A contained server needs `--expose` to be reachable from your machine**, and a
+  contained tool needs `--connect` to reach a service you are already running.
+- **Bun needs 1.4.x inside the Windows sandbox.** Older versions fail every
+  relative-path operation.
+- **A package published in the last 24 hours is held** pending your approval, so
+  an MCP server launched by an editor fails to start rather than prompting.
+- **The first contained run in a project takes seconds; later ones take a few
+  hundred milliseconds.**
+- **Windows may flag nvx as malware, and releases are not Authenticode-signed.**
 
-  A home directory is the easy way to acquire one, from an `npm install` run in
-  the wrong folder. Measured 2026-09-01: an `npm install` in `C:\Users\Felix`
-  left a `package.json` there, and every project beneath it — including nvx's own
-  test fixtures under `%TEMP%` — collapsed into a single scope. The containment
-  probes caught it as a cross-project read, which is how it was found; deleting
-  the file restored per-project isolation immediately.
-
-  `nvx doctor` reports it when the manifest sits in your home directory or at a
-  volume root — the cases that collapse many unrelated projects at once. A
-  manifest in an ordinary ancestor is a monorepo and is left alone, so if
-  contained commands start behaving as though two projects are one and doctor is
-  quiet, look for a `package.json` above them.
-- **Your own code is not contained by default.** Containment applies to installs and
-  ad-hoc tool runners (`npx`, `bunx`). `npm run build`, `npm test` and `node` run
-  uncontained under the default `standard` level, so a compromised dependency your
-  own code imports is not sandboxed. Set `isolation.level: strict` to extend
-  containment to your own code, at the cost of breaking anything that needs
-  unrestricted filesystem or network access.
-
-  Spelled out, because the two halves are usually stated apart: this means **a
-  contained install can decide what a later uncontained command does.**
-  `node_modules/.bin` is writable by an install by design, project-local CLIs
-  there (`eslint`, `tsc`, `vitest`, `prettier`) get a shim on your `PATH`, and at
-  `standard` those shims run uncontained as you. The shim relocation below stops
-  a *system* command being shadowed; it does not make a project-local tool's
-  contents trustworthy. `strict` contains them.
-- **A contained process can see directory NAMES outside the project, though not
-  their contents.** On Windows it can list **your home directory** — enough to
-  learn that `.ssh`, `.aws` or `.1password` exist. File contents in those places
-  stay unreadable.
-
-  That one is Windows, not nvx: your profile directory carries an ACE for ALL
-  APPLICATION PACKAGES that Windows ships and nvx cannot revoke (deny rules were
-  measured not to override it).
-
-  `C:\` and `C:\Users` are a separate matter, and this entry used to lump them in
-  with the home directory as though the same ACE covered them. It does not — they
-  carry no ALL APPLICATION PACKAGES entry. They are listable only where an
-  elevated `nvx setup` has granted them, which it does so that tools walking up to
-  a drive root can work. Measured 2026-08-30 in a real container:
-
-  ```
-  LIST[C:\]            DENIED:EPERM     (OK where setup's grant applies)
-  LIST[C:\Users]       DENIED:EPERM     (OK where setup's grant applies)
-  LIST[C:\Users\Felix] OK, 203 entries  (always — the shipped ACE)
-  ```
-
-  `nvx setup --undo` removes the grants nvx added; the shipped ACE on your profile
-  stays either way.
-- **`nvx setup` is optional, and nvx no longer asks you to run it.** Contained
-  `npx` does need `C:\Users` and the drive root to answer a stat: npm's own
-  realpath walks every directory above the cache `npx` uses, that cache is under
-  the sandbox's home, and an AppContainer with no drive-root grant gets `EPERM`
-  on both. Measured 2026-09-03: `npm install` in a project on `C:` works, `npx -y
-  cowsay hi` from the same project fails with `EPERM: operation not permitted,
-  lstat 'C:\Users'`. An earlier version of this entry said `npx` needed no grant;
-  every run behind that claim happened while the grant was present.
-
-  nvx now answers that stat itself. A preload in every contained node process
-  replies, for the directories above the sandbox's own working directory and
-  home only, with a directory's stats when the OS refuses the real ones. Those
-  directories exist by construction, and the sandbox may already pass through
-  them; only their attributes were hidden. With it, `npx` runs contained on a
-  machine that has never run `nvx setup` (measured: the same `npx` from the same
-  project, no grant, works). What `nvx setup` still serves is a non-node tool
-  that walks to a drive root; if one fails with `EPERM` there, nvx names setup
-  after the failure, and `nvx doctor` shows the missing roots as a note. The
-  grant is read/execute on the root folder itself, never inherited, for the
-  sandbox's identity only, and its cost is proportional to the volume's size:
-  22 minutes for 5.6 million entries. `nvx setup --undo` takes it back.
-- **A contained command run outside any project may start in the sandbox home.**
-  A directory with no `package.json` above it becomes the command's writable
-  root, and granting the sandbox access to a large one — `%TEMP%`, a home
-  folder, the parent of all your projects — is an ACL write over everything
-  beneath it: minutes, on every launch, before anything ran. nvx now gives that
-  grant 1.5 seconds; if it does not finish, the command starts in the sandbox
-  home instead and prints one line saying so, and the directory is not retried
-  for a month. Files the command writes to its working directory then land in
-  the sandbox home and are removed with it. `npx -y <tool>` never cares; a
-  command that must write the directory it was started from should be run from
-  a project, where the grant is always waited for.
-
-- **A loopback exemption left by a pre-0.5.0 `nvx setup` lets contained code reach
-  every service on 127.0.0.1.** Local databases, daemon ports, another project's
-  dev server — none of them need an `allow_hosts` entry while it is registered.
-  Windows normally refuses an AppContainer's loopback connections, which is what
-  the 0.5.0 egress design depends on; the older setup registered an exemption
-  because the proxy then ran on the host's loopback. 0.5.0 never adds one and
-  removes it during `nvx setup`, but that needs an Administrator terminal and is
-  otherwise no longer required, so on an upgraded machine it persists.
-
-  **Treat the egress allowlist as unenforced while it is registered.** Only
-  *direct* connections to other hosts stay blocked. Any reachable loopback
-  service that forwards traffic — a debugging proxy like mitmproxy or Charles, an
-  `ssh -D` dynamic forward, a dev server's proxy route — turns this into
-  arbitrary egress: measured on 2026-08-19 by completing a TLS exchange with an
-  external host from inside a sandbox, through a CONNECT proxy on 127.0.0.1.
-  nvx warns on every affected launch and `nvx doctor` reports it; removing it is
-  one elevated command, which both of them print.
-- **Projects granted by nvx before 0.5.0 keep a dead permission until nvx runs in
-  them again.** Up to 0.5.0 every sandbox shared one identity and the permissions
-  nvx granted were never revoked, so any project you had used nvx in was readable
-  and writable from any sandbox.
-
-  **That is no longer exploitable.** Sandboxes now run under a per-project
-  AppContainer package, so nothing holds the shared identity those old permissions
-  name. Measured 2026-08-31 by recreating it exactly — the old identity granted
-  modify access on a directory, then a contained process from an unrelated project
-  run against it: `EPERM` on both write and list.
-
-  What remains is litter. nvx removes it the first time it runs in that project,
-  but it keeps no list of where it has been, so a project you do not revisit keeps
-  the entry. To clean one by hand:
-  `icacls <project> /remove:g *S-1-15-2-...` for each such entry `icacls <project>`
-  lists.
-- **A contained command costs a few hundred milliseconds, and the first one after a
-  new runtime is staged can be minutes.** The ~38ms dispatch figure above measures
-  the shim, not the sandbox: a contained launch has to prepare an isolated home and
-  check permissions. The first run in a project is slower than the rest, because
-  that is when the permission grants are made and remembered.
-
-  Measured on Windows 11: ~2.4s for a project's first contained run, ~390ms for
-  every one after. Re-measured 2026-08-29 on a second Windows 11 machine: 2.9s
-  first, 785ms steady (median of 8 runs), with the same Node binary taking 58ms
-  when run directly. Plan against "a few hundred milliseconds to about a second"
-  rather than either figure — the steady state moves by roughly a factor of two
-  between machines, while the first-run cost reproduced closely.
-
-  This used to add "of which ~210ms is Node's own startup". That decomposition is
-  gone rather than re-guessed: it does not reproduce (58ms here), and subtracting
-  it left ~180ms for nvx against the ~370ms this section quoted for nvx's own
-  setup, so the two figures could not both be right. That second figure has been
-  replaced with a measurement too.
-
-  Before 0.5.6 the steady state was ~650ms here, and has been measured at ~1s and
-  ~2.2s on other machines —
-  nvx re-read every access-control entry on every launch, seventeen `icacls`
-  processes a command, and now remembers the ones it has already verified.
-
-  The first run after nvx stages a runtime copies the whole distribution and has
-  been measured at 45s to 3 minutes. Uncontained commands are unaffected.
-- **The first contained run after an install is slow, once, in proportion to the
-  dependency tree.** Measured 2026-08-20: loading a freshly installed 2,552-file
-  package inside the sandbox took 5.8s the first time and 461ms every time after.
-  The same load uncontained is ~500ms, so **steady-state containment costs
-  essentially nothing here** — the one-off is the filesystem and antivirus caches
-  filling while a sandboxed process reads thousands of files for the first time,
-  not work nvx is doing. That is the marginal cost of a large file tree, not the
-  cost of containing a command at all: on the machine re-measured above, an empty
-  contained run took 785ms against 92ms for the same command uncontained.
-
-  It matters only where something is waiting with a timeout. If you are wiring a
-  contained command into a tool that gives up after a few seconds, run it once by
-  hand after installing to absorb the cost.
-- **Windows may flag nvx as malware, and the released binaries are not
-  Authenticode-signed.** Observed on 2026-09-04: Windows Defender quarantined
-  freshly built nvx binaries as `Trojan:Win32/Bearfoos.A!ml`, three times in one
-  minute, and `go build` could not produce an executable at all until a build
-  directory exclusion was added.
-
-  The `!ml` suffix marks a machine-learning verdict rather than a signature
-  match, and nvx is a plausible thing for such a classifier to dislike: it
-  creates named pipes with custom security descriptors, manipulates AppContainer
-  tokens, and rewrites filesystem ACLs. Those are the mechanisms containment is
-  built from, and they are also what malware does.
-
-  Releases carry SHA-256 checksums and a SLSA build-provenance attestation, which
-  let you verify a download came from this repository's CI. Neither is an
-  Authenticode signature, and **Defender and SmartScreen do not read them** — so
-  they do nothing to prevent this. Code signing is the actual fix and is not in
-  place; until it is, expect SmartScreen warnings on first run and the
-  possibility of a Defender quarantine.
-
-  If it happens to you, a false positive can be reported to Microsoft at
-  <https://www.microsoft.com/en-us/wdsi/filesubmission>. Reporting is worth more
-  than an exclusion: an exclusion stops your machine scanning that path, which is
-  a real reduction in your own protection, and it does nothing for anyone else.
-
-- **Bun in the sandbox, per platform.** Measured 2026-09-08 with Bun 1.4.2:
-  contained on **macOS** it runs scripts and installs packages correctly, and
-  on **Linux** it does too, but only since the sandbox began mounting a
-  procfs of its own — Bun reads `/proc/self` to size its stack, and before
-  that a contained `bun install` failed with "JSON document is too deeply
-  nested" against a valid file. Windows has its own version floor, below.
-
-- **Bun needs 1.4.x to work inside the Windows sandbox.** Measured 2026-09-06:
-  Bun **1.4.2** runs contained correctly — `bun install`, `bunx`, relative-path
-  reads and writes all work. Bun **1.3.1** fails every relative-path operation
-  with `EBADFD`, and without `nvx setup` cannot start a script at all
-  (`CouldntReadCurrentDirectory`).
-
-  If a contained Bun misbehaves, check `bun --version` first. Bun added
-  AppContainer support in [oven-sh/bun#33119](https://github.com/oven-sh/bun/pull/33119),
-  merged 2026-07-20 and shipped from 1.4.0; the related sandbox report is
-  [oven-sh/bun#28220](https://github.com/oven-sh/bun/issues/28220), now closed.
-  Older Bun keeps a working-directory descriptor captured at startup that an
-  AppContainer will not honour, so absolute paths work and relative ones do not —
-  Node is unaffected because it holds no such descriptor.
-
-  `nvx install bun@1.4.2` (or later) is the fix. `nvx --no-sandbox` remains the
-  escape hatch for an older Bun, which means running it **without** containment,
-  so treat what it installs accordingly.
-
-- **A contained process can list the names in your home directory, though not
-  read anything in it.** Measured 2026-09-05: a contained process enumerated 208
-  entries in `%USERPROFILE%`, while `~/.npmrc`, `~/.ssh` and `~/.aws/credentials`
-  were all refused with EPERM.
-
-  So credentials stay unreadable — that part of the claim above holds — but which
-  tools you use is visible: the presence of `.ssh`, `.aws`, `.1password` and the
-  rest. That is reconnaissance value, not access.
-
-  nvx grants ancestors traverse-only precisely to avoid this, and that is not
-  enough: Windows puts `ALL APPLICATION PACKAGES:(RX)` on the profile directory by
-  default, and every AppContainer inherits it regardless of what nvx does. Fixing
-  it would mean an explicit deny ACE on a directory nvx does not own, which is not
-  obviously the right trade and has not been made.
-
-- **A contained command sees almost none of your environment.** Containment keeps
-  11 environment variables on Windows (7 elsewhere) and drops the rest, so that a
-  package's install script cannot read the secrets sitting in the shell that
-  launched it. Measured on Windows: 107 variables outside a contained run, 48
-  inside.
-
-  Most of what goes is operating-system furniture nothing reads. Some of it is
-  not: a tool that checks `CI` to suppress interactive prompts starts prompting,
-  and a build reading `NODE_ENV=production` quietly emits a development bundle.
-  Nothing errors, which is what makes it confusing. nvx now says so when a
-  variable of that kind is removed. The set it names is deliberately short, so
-  most contained runs stay silent; `NVX_DEBUG=1` records the complete list.
-
-  Name the ones a project genuinely needs:
-
-  ```json
-  { "isolation": { "environment": { "allow": ["CI", "NODE_ENV"] } } }
-  ```
-
-  Exact names, matched without regard to case; no patterns. A name matching a
-  sensitive prefix (`AWS_`, `GITHUB_`, `SECRET_`, and the rest) is refused and
-  reported rather than honoured — a policy file lives in the repository, and a
-  single line in one must not be able to hand a cloud credential to whatever an
-  install script runs. Adding an entry widens what contained code can see, so a
-  project file that does it needs the same approval as an egress allowlist entry.
-- **A contained tool cannot reach a program kept outside the project.** The
-  sandbox grants your project, a throwaway home, and nvx's own runtimes — nothing
-  else. A tool that keeps its executables somewhere else cannot run them.
-
-  Playwright is the case that surfaced it: its browsers live in
-  `%LOCALAPPDATA%\ms-playwright` (`~/.cache/ms-playwright` elsewhere), and a
-  contained process could not even list that directory. Name it and it works:
-
-  ```json
-  { "isolation": { "filesystem": {
-      "allow_read_exec": ["%LOCALAPPDATA%/ms-playwright"] } } }
-  ```
-
-  Read and execute only — never write, whatever else the policy says. Paths take
-  `~`, `$VAR` and `%VAR%` so one policy file works across machines, and a path
-  that does not exist here is skipped with a warning rather than failing the run.
-  Adding one widens what contained code may execute, so a project file that does
-  it needs the same approval as an egress allowlist entry. On Windows the grant is
-  scoped to that project's sandbox identity, not shared with every sandbox on the
-  machine.
-
-  **On Windows the grant is a real filesystem permission, and nvx takes it back
-  when the policy stops asking.** It has to persist between runs — re-applying it
-  every launch would put a permissions call on the startup path for every root —
-  so it is recorded, and reconciled against the policy each time you run something
-  contained in that project. Remove the `allow_read_exec` entry, or the policy
-  file, and the next contained run withdraws the permission. `nvx grants list`
-  shows what is currently granted and `nvx grants reset` withdraws it immediately.
-
-  Three cases are not automatic. `nvx grants reset --all` — which sweeps every
-  project — clears the first; the other two it can only report, because in both
-  it no longer knows which permission it would be removing.
-
-  The identity is derived from the project root, so *moving* that root leaves the
-  permission granted under the old identity unreconciled. The root is the nearest
-  ancestor holding a `package.json`, so this needs a `package.json` to appear or
-  disappear closer to your working directory than the current one; adding one
-  further up changes nothing. The stale permission cannot be *used* while stale —
-  a run at the old root reconciles it before the contained process starts — but it
-  stays on disk until such a run happens or you reset.
-
-  The second is a grant record nvx cannot read. It keeps the file, renamed to
-  `.unreadable`, and says so, but it can no longer tell what that record listed, so
-  those permissions are removed with `icacls` by hand. Records are written
-  atomically, so this should take deliberate corruption to reach.
-
-  The third is a granted directory that is **renamed**. The permission is attached
-  to the directory, so it travels with it, while nvx's record still names the old
-  path. nvx cannot follow it and does not pretend to: it reports that the
-  directory is gone and that the permission moved with it if it was renamed rather
-  than deleted, and leaves you to remove it at the new location with `icacls`.
-  Moving a granted directory is worth avoiding for that reason.
-
-  A fourth case needs nothing cleaned up but is worth knowing about: if a
-  directory nvx granted read/execute is later used as a working directory by the
-  same project, nvx's own writable-root grant replaces that permission with a
-  wider one. Dropping the policy entry then leaves the wider permission in place —
-  nvx says so rather than removing it, because taking it away would remove access
-  granted for a different reason. The sandbox keeps that access until the project
-  stops using the directory.
-
-  Nothing else needs cleaning up by hand. Earlier builds of this feature left the
-  permission behind entirely, with no way back but working out the capability SID
-  and running `icacls` yourself.
-
-  On Linux this grants reading, listing and executing. An earlier note here said
-  listing was refused and called it a Landlock limitation; it was a wrong constant
-  in nvx, since fixed.
-
-- **nvx stops a command once the program that started it has exited, and reports
-  exit 129.** It checks every 15 seconds and needs two consecutive observations,
-  so this lands 15–30 seconds after the parent goes away. It only applies when
-  nvx's input is a pipe — the shape a long-lived stdio server is launched with.
-
-  This exists because sandboxed MCP servers outlived their clients and
-  accumulated until a machine froze: 18 nvx processes, 43 Node processes and
-  3.9 GB, measured 2026-08-27. An ordinary shell pipeline is unaffected, because
-  there the shell that built it is still running.
-
-  **What this can catch by surprise:** a command deliberately detached with a
-  pipe still attached to its input — for example Node's
-  `spawn(cmd, {detached: true, stdio: 'pipe'})` where the launcher then exits.
-  Detaching via `start /b` is unaffected, because that leaves the input a console
-  and the check never arms. If you need a long-running job to outlive its
-  launcher, give it a console or a file for stdin rather than a pipe.
-
-- **`npm install -g` is refused inside the sandbox**, because a global install
-  writes outside the project. nvx points you at `nvx --no-sandbox npm install -g`,
-  which is an uncontained install — treat it as one.
-- **`nvx audit` shows what nvx recorded, which anything running as you can add to.**
-  A contained process cannot write `~/.nvx/audit.log`, but uncontained code can —
-  and at the default `standard` level your own code is uncontained, so
-  `npm run build` could append a fabricated "sandboxed" entry that `nvx audit`
-  then displays as real. The file has to be writable by nvx running as you, so it
-  is writable by anything else running as you. Useful for reviewing your own
-  usage; not proof against someone who already runs code as you.
-- **On Windows, a contained process cannot pipe a child's output.** An AppContainer
-  is not allowed to create a named pipe, and that is how Windows builds piped child
-  stdio — so a contained program that captures a subprocess's output (`execSync`
-  with default options, `spawn(..., {stdio: 'pipe'})`) hangs rather than failing.
-  Inherited and discarded stdio both work normally.
-
-  **Synchronous capture is handled.** The restriction is on creating a pipe, not on
-  file descriptors, so a preload in every contained node process routes
-  `spawnSync`, `execSync` and `execFileSync` through temp files in the guest home.
-  Their contract is "run it, give me the output at the end", which a file satisfies
-  exactly. **`esbuild`** is the package this was measured against — its postinstall
-  calls `execFileSync(..., {stdio: "pipe"})` and `npm install esbuild` used to hang
-  forever; it now completes in seconds.
-
-  **Streaming capture works too, with one gap.** Async `spawn(..., {stdio: 'pipe'})`
-  is a real stream that a file cannot stand in for, and it used to block forever —
-  an `npx vitest` or `npx playwright` run left a process wedged until it was killed
-  by hand. nvx now creates the pipes outside the container and the preload only
-  opens them, which Windows permits; the container never creates one. stdout and
-  stderr stream as they are produced, stay separate, and exit codes propagate.
-
-  **Writing to a contained child's stdin works through the same broker, in
-  reverse.** nvx creates the pipe outside the container, the preload opens it,
-  and what the contained process writes is pumped into the child's stdin.
-
-  It did not until 2026-09-04: slot 0 was an empty file, so `child.stdin` was
-  `null` and this section said "a tool that feeds its child input needs
-  `nvx --no-sandbox`". That read like a corner case and was not one. esbuild's
-  service is a child driven over stdin, Vite runs on esbuild, and Vitest runs on
-  Vite, so a contained `npx vitest run` hung with nothing printed to explain it.
-
-  **A child given an IPC channel — `child_process.fork` — is refused.** That is a
-  second named pipe, created by libuv *inside* the contained process, and unlike
-  the other three it cannot be handed over ready-made: node's `'ipc'` slot is not
-  an ordinary descriptor and node builds the parent half of the channel itself.
-
-  It used to hang — inside `fork()`, before the child existed and before anything
-  was printed. It now throws immediately, naming `--no-sandbox`. The limitation is
-  the same either way; the difference is a second instead of forever, and a reason
-  instead of silence. Vitest's default worker pool forks, so
-  `nvx --no-sandbox npx vitest run` is the way to run it today.
-
-  The sandbox streams 8 piped children at once, counted across every node process
-  in the session: a nested process draws from the same pool as its parent, and a
-  channel returns to the pool when the child using it closes, so children run one
-  after another never run out. Beyond 8 at the same time, output is collected and
-  delivered **when the stream ends** rather than as it is produced. Nothing hangs,
-  and no bytes are dropped — but read it from `stdout` events or the `close`
-  event, **not from an `exit` handler**. A caller that accumulates via `data` and
-  inspects the accumulator in `exit` sees it full for the first 8 children and
-  empty for the rest, in the same process. nvx prints a warning the first time a
-  process crosses that line, because otherwise it reads as a flaky test.
-
-  The two-minute diagnostic hint deliberately covers installs only. An install
-  that has not finished in two minutes is anomalous; an `npx`-launched dev server
-  running for hours is doing its job, and a hint firing on it would be noise. So
-  for tool runners the hang is documented rather than detected.
-- **On Windows, a server started inside the sandbox needs `--expose` to be
-  reachable from the host.** Windows refuses connections into an AppContainer, so
-  a contained `npx vite` binds its port, prints that it is listening, and serves
-  nobody. `--expose` publishes it:
-
-  ```
-  nvx --expose 5173:8080 npx vite
-  ```
-
-  The two numbers cannot be the same, and that is not a style choice: an
-  AppContainer shares the host's network stack rather than getting its own, so one
-  port number cannot hold both the contained server and the host listener —
-  measured, with the contained server losing the race and dying on `EADDRINUSE`.
-  Give the port your server uses inside, then the port you want to visit. With the
-  second omitted (`--expose 5173`) nvx picks a free one and prints the URL.
-
-  Nothing is relaxed to make this work: the contained side dials *outward* over a
-  UNIX socket and the parent splices inbound requests onto it, so no network
-  capability is granted and egress stays exactly as restricted. That is asserted
-  on every run of the probe, not merely intended.
-
-  Your own `npm run dev` is uncontained at the default `standard` level and needs
-  none of this. Until 0.5.5 there was no way to reach a contained server at all;
-  the FAQ had claimed loopback worked for dev servers, which was measured false on
-  2026-08-20.
-- **A freshly published package stops an MCP server starting, for up to 24 hours.**
-  nvx holds a cooling-off window on new npm releases: a version published in the
-  last day is flagged before it installs, because supply-chain compromises are
-  usually caught inside that window. The flag is a prompt — and a server your
-  editor spawns has no one to answer it, so it is denied and the launch aborts.
-
-  Your client reports `-32000: Connection closed`, which is what it reports for
-  any server that dies before answering. nvx now replies to the client's first
-  request with the real reason instead of leaving the pipe silent, so the message
-  you see names the cooling-off window and the package rather than nothing.
-
-  This affects any MCP server installed from npm on a floating version
-  (`npx -y <pkg>` fetches the latest), and it is self-inflicted if you publish the
-  package yourself: publish in the morning and the server is unavailable until the
-  next day. Three ways out, narrowest first:
-
-  ```jsonc
-  // 1. approve nvx's warnings for this one server
-  { "command": "npx", "args": ["-y", "your-pkg"], "env": { "NVX_YES": "true" } }
-  // 2. pin to a version you have already used
-  { "command": "npx", "args": ["-y", "your-pkg@1.2.3"] }
-  ```
-
-  ```jsonc
-  // 3. exempt just this package, in ~/.nvx/policy.json
-  { "release_age": { "trusted_packages": ["your-pkg", "@your-scope/*"] } }
-  ```
-
-  The third keeps the cooling-off window for everything else, which
-  `release_age.min_age_hours` does not — that widens the window for every package
-  you install.
-
-  Until 0.6.0 the only exemption list was `typosquatting.trusted_packages`, which
-  waived typosquat detection at the same time. It no longer waives the
-  release-age window; a file still using it that way is told to move the entry.
-
-- **On Windows and macOS, a contained tool needs `--connect` to reach a service
-  running on your machine.** The other direction, and the same reason: the
-  sandbox has no route to your loopback, and the egress proxy refuses host
-  loopback destinations on purpose. A contained tool that has to talk to something you are already
-  running — a browser with remote debugging on, a local database, a device
-  emulator — gets there one named port at a time:
-
-  ```
-  nvx --connect 9222:19222 npx @playwright/mcp --cdp-endpoint http://127.0.0.1:19222
-  ```
-
-  The in-sandbox port cannot also be 9222, for the network-stack reason above, so
-  pick a second number — as above — whenever the command line has to name it.
-  Your shell expands the command line before nvx runs, so a variable is no use
-  there.
-
-  With the second number omitted (`--connect 9222`) nvx chooses a free port,
-  prints it, and sets `NVX_CONNECT_9222` in the sandbox. That form is for tools
-  that read their endpoint from the environment or a config file at startup, not
-  from argv.
-
-  Nothing general is opened. nvx runs the listener inside, dials `127.0.0.1:9222`
-  itself from outside, and closes both when the command exits — the sandbox never
-  gets to choose a destination. This is deliberately not the machine-wide loopback
-  exemption that 0.5.0 removed, which opened every local service to every sandbox
-  on the machine, permanently, and could not be revoked without elevation.
-
-  **The grant is confined to the sandbox that asked for it**, and that takes an
-  explicit check rather than coming for free. Windows permits loopback *within* an
-  AppContainer package, and every nvx sandbox shares one package identity — so the
-  in-sandbox listener is, by default, reachable from every other nvx sandbox
-  running at that moment. Measured on 2026-08-28 before this was addressed: a
-  sandbox in an unrelated project, with no grant of its own, read the service.
-  nvx now identifies the process behind each tunnel connection and refuses any
-  that is not part of this run, so a concurrent sandbox is turned away and the
-  refusal is logged. It fails closed: a peer nvx cannot place inside this run does
-  not get through.
-
-  **macOS reaches the same place by a different route.** What stops a contained
-  tool there is the Seatbelt profile, which in the default `proxy` mode permits
-  outbound connections to the egress proxy's own ports and nothing else. So the
-  profile could simply name your service's port and be done. nvx runs the relay
-  anyway, and the profile opens only the relay's port: the command, the two-number
-  rule and `NVX_CONNECT_<port>` then mean the same thing on both platforms, and
-  the sandbox reaches a pipe whose far end nvx chose rather than an address it
-  could have guessed.
-
-  The peer check above is Windows-only, and is not missing on macOS. There, a
-  process outside any sandbox can already open your service directly, so the relay
-  hands it nothing; another sandbox cannot reach the relay's port, because its own
-  profile permits only its own proxy ports.
-
-  **Linux tunnels it across the namespace.** Its sandbox has a network namespace
-  of its own, so 127.0.0.1 in there is a different 127.0.0.1 from yours. The
-  supervisor listens on the in-sandbox port and forwards over a UNIX socket in the
-  guest home, which crosses because it is a filesystem object; nvx dials your
-  service from outside, as everywhere else.
-
-  Two network modes cannot carry it: `offline` and `loopback` deny the contained
-  process every IP socket, including the one it would use to reach the tunnel.
-  nvx says so and names the modes that work, so the flag is never accepted in
-  silence. The default, `proxy`, carries it.
-
-  In a policy file it is `isolation.network.connect_ports`, and adding one counts
-  as loosening, so a project cannot grant itself a host port without approval.
-- **On macOS, reads are not contained** — see the note near the top of this file.
-  Write containment and egress denial are confirmed on macOS hardware in CI; the
-  read weakness is confirmed there too, and is a property of the profile rather
-  than a bug awaiting a fix.
-
-  This entry has been revised twice as the evidence changed. Until 2026-08-23 it
-  said *nothing* on macOS had been verified at runtime; until 2026-08-24 it listed
-  an allowlisted host through the proxy, UDP, and failing closed without
-  `sandbox-exec` as untested. All three now run and pass on a hosted macOS runner.
-  What is still untested there: which layer refuses the outbound connection the
-  probe does observe being refused — DNS or connect — which on macOS is a real
-  distinction rather than a pedantic one.
-- **`network.mode: loopback` reaches services on 127.0.0.1 — by three different
-  routes, and Windows does not cover the same traffic as the other two.** On macOS
-  the Seatbelt profile grants loopback directly. On Linux every loopback TCP
-  connection is redirected to a relay inside the namespace, which asks the kernel
-  what the connection was for and carries it out, so a raw connection to a local
-  database arrives at the same address it named. On Windows the reach comes from
-  nvx's proxy permitting loopback destinations, which covers what a proxy-aware
-  client sends — HTTP and HTTPS — and leaves a raw socket with nowhere to go.
-
-  A Linux host whose kernel will not take the redirect rules falls back to the
-  Windows behaviour and says so, rather than failing the run: what is lost is
-  reach, not containment.
-
-  The default `proxy` mode reaches loopback only where `allow_hosts` names it, and
-  `offline` reaches nothing. Until 2026-09-08 the mode did nothing at all on
-  Windows, Linux and Docker: each treated it as `offline`, so a mode whose name
-  says "reach these services" reached none of them.
-
-  A server the **sandbox itself** runs stays reachable from inside it. The relay
-  tries the sandbox's own namespace before the host, so a contained `npm run dev`
-  on 127.0.0.1:3000 and a contained test client still find each other.
-
-  Until 2026-08-20 that was not true: every restricted mode granted all of
-  loopback, so a contained install could reach your database or another project's
-  dev server with no `allow_hosts` entry, and `offline` was not offline. If any
-  reachable loopback service forwards traffic, the allowlist is bypassable
-  entirely, which is what made it serious. Fixed, and pinned by a test. The fix is
-  to the *generated profile*; what a macOS runner now confirms is that egress is
-  denied with an empty allowlist, which does not by itself prove the per-mode
-  loopback scoping (see the entry above).
-- **Detection is best-effort.** Typosquat and vulnerability checks reduce risk; they
-  do not certify a package. Containment is the backstop, not the checks.
 
 ## Design DX & Architecture FAQ
 
@@ -1022,10 +492,10 @@ Web development requires running local dev servers (e.g. listening on port `3000
 * **Docker Sandbox**: The image is chosen from the active runtime (`node:<v>` or `oven/bun:<v>`). For a multi-language stack, supply your own image via a Dockerfile or `docker-compose`.
 
 ### Does nvx handle TypeScript and bundler commands?
-Yes! Since `nvx` hooks into the active runtime context, any globally or locally installed tools—including `tsc`, `ts-node`, `vite`, or `webpack`—execute within the selected Node.js environment automatically.
+Yes! Since `nvx` hooks into the active runtime context, any globally or locally installed tool (`tsc`, `ts-node`, `vite`, `webpack`) executes within the selected Node.js environment automatically.
 
 ### How does automatic command wrapping protect me when using AI coding agents?
-When AI coding agents (like Gemini, Claude, or Copilot) interact with your workspace, they typically run standard commands such as `npm install <package>` or `npx <command>`. Because `nvx` automatically wraps these typical binaries inside the shell session, those commands are transparently intercepted. The packages are checked against typosquatting and vulnerability (OSV) registries, and executors run inside the native sandbox — with no special configuration or wrapper commands required from the agent. This is defense-in-depth that raises the bar against common supply-chain patterns (typosquats, known-vulnerable versions, install-script execution); it reduces risk substantially but is not a guarantee against a determined or novel attacker. See [SECURITY.md](SECURITY.md) for the threat model and its limits.
+When AI coding agents (like Gemini, Claude, or Copilot) interact with your workspace, they typically run standard commands such as `npm install <package>` or `npx <command>`. Because `nvx` automatically wraps these typical binaries inside the shell session, those commands are transparently intercepted. The packages are checked against typosquatting and vulnerability (OSV) registries, and executors run inside the native sandbox, with no special configuration or wrapper commands required from the agent. This is defense-in-depth that raises the bar against common supply-chain patterns (typosquats, known-vulnerable versions, install-script execution); it reduces risk substantially but is not a guarantee against a determined or novel attacker. See [SECURITY.md](SECURITY.md) for the threat model and its limits.
 
 ---
 

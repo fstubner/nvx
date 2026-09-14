@@ -1,0 +1,148 @@
+---
+import { reachColumns, reachCopy, reachNote, reachRows } from '../data/site-content/reach';
+
+// Imports its content directly rather than through `site`, because this
+// section is nvx's own rather than one of the template's four. Everything
+// else on the page reads `site`; if this section is ever generalised, it
+// should move there with the rest.
+---
+
+<section id="reach">
+  <div class="w">
+    <h2>{reachCopy.heading}</h2>
+    <p class="lead" set:html={reachCopy.leadHtml} />
+
+    <!-- Scrollable, and focusable because it scrolls: axe's
+         scrollable-region-focusable wants a scrollable region reachable by
+         keyboard, and a table of text has no focusable descendant of its own. -->
+    <div class="reach-scroll" tabindex="0">
+      <table class="reach-table">
+        <thead>
+          <tr>
+            <th scope="col">{reachColumns.target}</th>
+            <th scope="col" class="col">{reachColumns.others}</th>
+            <th scope="col" class="col nvx">{reachColumns.nvx}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {reachRows.map((r) => (
+            <tr>
+              <th scope="row">
+                <code>{r.target}</code>
+                <span class="reach-what">{r.what}</span>
+              </th>
+              <td class="col"><span class="verdict plain">{r.plain}</span></td>
+              <td class="col nvx"><span class="verdict contained">{r.contained}</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    <aside class="reach-note">
+      <p class="reach-note-head">{reachNote.heading}</p>
+      <p set:html={reachNote.bodyHtml} />
+      <p set:html={reachNote.measuredHtml} />
+    </aside>
+  </div>
+</section>
+
+<style is:global>
+/* ─── WHAT AN INSTALL CAN REACH ─── */
+
+/* One row per target, so a path appears once and the eye travels sideways to
+   compare. The previous version was two columns of cards listing the same five
+   paths twice, which left the reader pairing them up by hand. */
+/* Built against how Supabase and Linear draw a comparison: hairlines, not
+   boxes. No card around the table, no capsule around a verdict, no rule on all
+   four sides of the compared column -- each of those was placeholder styling,
+   and together they read as a wireframe. Emphasis comes from a tint and a
+   single left rule, the way a pricing table marks a plan. */
+.reach-scroll{overflow-x:auto;margin-bottom:28px}
+.reach-table{width:100%;border-collapse:collapse;font-size:.8125rem}
+
+.reach-table th,
+.reach-table td{
+  text-align:left;
+  padding:14px 20px 14px 0;
+  border-bottom:1px solid rgba(var(--ui-hairline-rgb),.14);
+  vertical-align:top;
+}
+.reach-table thead th{
+  padding-bottom:10px;
+  border-bottom:1px solid rgba(var(--ui-hairline-rgb),.26);
+  font-size:.6875rem;font-weight:700;
+  letter-spacing:.07em;text-transform:uppercase;
+  color:var(--ui-text-muted);
+  white-space:nowrap;
+}
+.reach-table tbody tr:last-child th,
+.reach-table tbody tr:last-child td{border-bottom:0}
+.reach-table tbody th{font-weight:400;padding-right:32px}
+
+/* A vertical hairline opens each comparison column, as on Linear's plans. */
+.reach-table th.col,
+.reach-table td.col{padding-left:20px;border-left:1px solid rgba(var(--ui-hairline-rgb),.14)}
+
+/* The compared column: a tint and nothing else. The tint composites to
+   rgb(41,40,55) in the dark theme, where --ui-accent is 4.30:1 and fails, so
+   its text uses --ui-accent-bright at 8.83:1 dark and 8.23:1 light. */
+.reach-table th.nvx,
+.reach-table td.nvx{background:rgba(var(--ui-accent-rgb),.055)}
+.reach-table thead th.nvx{color:var(--ui-accent-bright)}
+
+.reach-table code{
+  display:inline-block;
+  background:none;padding:0;border-radius:0;
+  font-family:ui-monospace,"SF Mono",Menlo,monospace;
+  font-size:.8125rem;
+  color:var(--ui-text-strong);
+}
+.reach-what{
+  display:block;margin-top:4px;
+  font-size:.75rem;line-height:1.45;
+  color:var(--ui-text-muted);
+}
+
+/* Words, at the same weight as the rest of the row. A bold capsule in every
+   cell is what made this look like a form. */
+.verdict{font-weight:600;font-size:.8125rem;white-space:nowrap}
+.verdict.plain{color:var(--ui-warn)}
+.verdict.contained{color:var(--ui-accent-bright)}
+
+/* The caveat is a peer of the table, not a footnote under it. Someone reading
+   this on a Mac is looking at a narrower product than someone on Windows. */
+.reach-note{
+  border:1px solid rgba(var(--ui-hairline-rgb),.22);
+  border-left:3px solid var(--ui-warn);
+  border-radius:10px;
+  padding:18px 20px;
+  background:var(--ui-surface);
+}
+.reach-note-head{
+  font-size:.8125rem;font-weight:700;
+  color:var(--ui-text-strong);
+  margin:0 0 8px;
+}
+/* No opacity dimming on these. At .88 the measured-evidence paragraph
+   composited to 4.11:1 in the light theme against a 4.5 floor, and an in-page
+   contrast sweep does not catch it: opacity applies to the element, not to the
+   colour a checker reads. */
+.reach-note p{
+  font-size:.8125rem;line-height:1.65;
+  color:var(--ui-text-muted);
+  margin:0 0 8px;
+}
+.reach-note p:last-child{margin-bottom:0}
+.reach-note code{
+  font-family:ui-monospace,"SF Mono",Menlo,monospace;
+  font-size:.75rem;
+  color:var(--ui-text);
+}
+
+@media(max-width:720px){
+  .reach-table th,
+  .reach-table td{padding:10px 12px}
+  .reach-table thead th{font-size:.6875rem}
+}
+</style>

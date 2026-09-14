@@ -1,0 +1,306 @@
+---
+import config from 'virtual:starlight/user-config';
+import Search from 'virtual:starlight/components/Search';
+import ThemeSelect from 'virtual:starlight/components/ThemeSelect';
+
+const shouldRenderSearch =
+  config.pagefind || config.components.Search !== '@astrojs/starlight/components/Search.astro';
+
+import { hrefFor, isCurrent, navGroupBreak, navLinks } from '../../data/site-content/nav';
+import { branding, meta } from '../../data/site-content/meta';
+
+const pathname = Astro.url.pathname;
+
+/* See the note in components/Nav.astro. */
+function linkClass(link: (typeof navLinks)[number], index: number): string | undefined {
+  const parts: string[] = [];
+  if (link.external) parts.push('external-link');
+  if (index === navGroupBreak) parts.push('nav-group-start');
+  return parts.length ? parts.join(' ') : undefined;
+}
+---
+
+<div class="docs-topbar">
+  <a class={`docs-mark${branding.wordmarkLight ? ' has-light' : ''}`} href="/" aria-label={`${meta.siteName} home`}>
+    <img class="mark-dark" src={branding.wordmark} alt={branding.wordmarkAlt} width="160" height="32" />
+    {branding.wordmarkLight && (
+      <img class="mark-light" src={branding.wordmarkLight} alt={branding.wordmarkAlt} width="160" height="32" />
+    )}
+  </a>
+
+  <div class="docs-header-search print:hidden">
+    {shouldRenderSearch && <Search />}
+  </div>
+
+  <nav class="docs-nav-links" aria-label="Site navigation">
+    {
+      navLinks.map((link, i) => (
+        <a
+          href={hrefFor(link, pathname)}
+          class={linkClass(link, i)}
+          aria-current={isCurrent(link, pathname)}
+          {...(link.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+        >
+          {link.label}
+        </a>
+      ))
+    }
+  </nav>
+
+  <div class="docs-header-theme sl-hidden md:sl-flex print:hidden">
+    <ThemeSelect />
+  </div>
+
+</div>
+
+<script>
+  import { initDocsHeader } from '../../scripts/docs-header';
+  import { initDocsSearchKeys, initDocsSearchResilience } from '../../scripts/docs-search-keys';
+  initDocsHeader();
+  initDocsSearchKeys();
+  initDocsSearchResilience();
+</script>
+
+<style>
+  @layer starlight.core {
+    .docs-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 1rem;
+      height: var(--sl-nav-height);
+      min-height: var(--sl-nav-height);
+      width: min(
+        calc(100vw - (var(--ui-docs-shell-gutter, 1.5rem) * 2)),
+        var(--ui-docs-frame-width, 1120px)
+      );
+      max-width: calc(100vw - 2rem);
+      margin-inline: auto;
+      padding-inline: 1.5rem;
+      min-width: 0;
+    }
+
+    .docs-mark {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 0;
+      text-decoration: none;
+      min-width: 0;
+      height: var(--sl-nav-height);
+      margin: 0 auto 0 0;
+      /* Cancels the wordmark asset's own transparent left margin. This was a
+         flat -18px against a 12.4px margin, so the docs logo hung 5.5px
+         further left than the identical logo on the landing bar. See
+         tokens.css. */
+      transform: translateX(calc(var(--ui-mark-width) * var(--ui-mark-inset-ratio) * -1));
+    }
+
+    /* See the note in Nav.astro: two assets when the content names a light
+       one, gated so a product shipping a single asset is unaffected. */
+    /* img in the selector: `.docs-mark img` below is (0,1,1) and beats a bare
+       class at (0,1,0), which rendered both wordmarks at once. */
+    .docs-mark img.mark-light { display: none; }
+    html[data-theme='light'] .docs-mark.has-light img.mark-dark { display: none; }
+    html[data-theme='light'] .docs-mark.has-light img.mark-light { display: block; }
+
+    .docs-mark img {
+      display: block;
+      width: var(--ui-mark-width);
+      height: auto;
+        /* Bound by the bar as well as by the width token. A wordmark whose
+           aspect is taller than the template's sample drives the bar's height
+           instead of fitting inside it, and the active link's underline then
+           stops meeting the bar's bottom border -- measured 6.9px adrift with
+           a 2.20 aspect asset. object-fit keeps the glyph undistorted; when
+           the clamp bites, the inset above over-compensates by a fraction of
+           a pixel, far below the wordmark guard's 0.5px tolerance. */
+        max-height: calc(var(--ui-nav-height) - 1.25rem);
+        object-fit: contain;
+        object-position: left center;
+      /* Same token as the landing bar's `.mark`, so both bars darken the
+         wordmark by the same amount on a light page. See tokens.css. */
+      filter: var(--ui-mark-filter);
+    }
+
+    .docs-nav-links {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1.15rem;
+      min-width: 0;
+      font-size: 0.8125rem;
+      height: var(--sl-nav-height);
+      line-height: 1;
+    }
+
+    .docs-nav-links a {
+      display: inline-flex;
+      align-items: center;
+      height: var(--sl-nav-height);
+      color: var(--sl-color-gray-2);
+      text-decoration: none;
+      white-space: nowrap;
+      line-height: 1;
+      border-bottom: 2px solid transparent;
+      padding: 0;
+    }
+
+    .docs-nav-links a:hover,
+    .docs-nav-links a[aria-current] {
+      color: var(--sl-color-white);
+    }
+
+    /* Same separator as the landing bar -- see Nav.astro, including why it is
+       a short centred pseudo-element rather than a border: these links are the
+       full nav height, so a border ran floor to ceiling and split the bar. */
+    .docs-nav-links a.nav-group-start {
+      position: relative;
+      margin-inline-start: 0.35rem;
+      padding-inline-start: 0.95rem;
+    }
+
+    .docs-nav-links a.nav-group-start::before {
+      content: "";
+      position: absolute;
+      inset-inline-start: 0;
+      top: 50%;
+      width: 1px;
+      height: 18px;
+      margin-block-start: -9px;
+      background: rgba(var(--ui-hairline-rgb), 0.28);
+    }
+
+    .docs-nav-links a[aria-current] {
+      border-bottom-color: var(--ui-accent);
+    }
+
+    .docs-header-search {
+      flex: 0 1 10.5rem;
+      width: 10.5rem;
+      max-width: 10.5rem;
+      min-width: 8.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: var(--sl-nav-height);
+    }
+
+    .docs-header-search :global(site-search),
+    .docs-header-search :global(site-search button) {
+      display: flex;
+      align-items: center;
+      height: 2.25rem;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .docs-header-theme {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: var(--sl-nav-height);
+      margin: 0;
+    }
+
+    .docs-header-theme :global(starlight-theme-select) {
+      display: inline-flex;
+      align-items: center;
+      height: 100%;
+    }
+
+    /* The label is the visible control -- bordered, rounded, tinted -- so it
+       must size to its content, not to the header. `height: 100%` stretched
+       it to the full 60px nav height, next to a 37.6px search button, which
+       is what made the bordered box look oversized and misaligned. The
+       wrapper above keeps 100% so the control stays vertically centred. */
+    .docs-header-theme :global(starlight-theme-select label) {
+      display: inline-flex;
+      align-items: center;
+      height: auto;
+    }
+
+    @media (max-width: 72rem) {
+      .docs-topbar {
+        gap: 0.85rem;
+        width: min(100%, calc(100vw - 2rem));
+        max-width: calc(100vw - 2rem);
+        padding-inline: 1rem;
+      }
+
+      .docs-nav-links {
+        gap: 0.75rem;
+        font-size: 0.78rem;
+      }
+
+      .docs-header-search {
+        flex-basis: 8.75rem;
+        width: 8.75rem;
+        max-width: 8.75rem;
+        min-width: 7.75rem;
+      }
+
+    }
+
+    /* Same width the landing bar collapses at -- see the note on
+       .docs-nav-links below. The theme control moves into the mobile menu's
+       footer at this point (MobileMenuFooter.astro), so it is relocated
+       rather than lost. */
+    @media (max-width: 900px) {
+      .docs-header-theme {
+        display: none !important;
+      }
+    }
+
+    @media (max-width: 72rem) {
+      .docs-topbar {
+        gap: 0.75rem;
+        width: min(100%, calc(100vw - 5.25rem));
+        max-width: calc(100vw - 5.25rem);
+        justify-content: flex-start;
+        margin-inline: 0 auto;
+        padding-inline-start: 1.5rem;
+      }
+
+      .docs-mark {
+        margin-right: 0;
+      }
+
+      .docs-nav-links {
+        margin-left: auto;
+        gap: 0.7rem;
+        font-size: 0.76rem;
+      }
+
+      .docs-header-search {
+        flex: 0 0 auto;
+        width: 2.5rem;
+        max-width: 2.5rem;
+        min-width: 2.5rem;
+        display: flex;
+      }
+
+    }
+
+    /* 900px, matching the landing bar's own collapse in Nav.astro.
+     *
+     * This was 72rem (1152px), so between 901 and 1152 the docs bar showed a
+     * hamburger while the landing bar showed the same six links -- the two
+     * halves of one site with visibly different navigation, and the shape of
+     * the bar changing under the cursor when you clicked "Docs".
+     *
+     * Nothing forced the early collapse: measured at 901px the bar's contents
+     * come to 476px against 842px of room, with the wordmark at its full size
+     * and search already reduced to its icon. If you change this, change
+     * Nav.astro's `@media(max-width:900px)` with it; a media query cannot read
+     * a custom property, so the number genuinely has to be written twice. */
+    @media (max-width: 900px) {
+      .docs-nav-links {
+        display: none;
+      }
+    }
+  }
+</style>

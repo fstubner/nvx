@@ -1,0 +1,262 @@
+/* The brand palette and the base ramp: values the landing page and the
+ * docs shell both need to agree on. Re-theme a project here first.
+ *
+ * The two stacks are otherwise separate: the landing page loads landing/*
+ * (its character), the docs load docs/* (their shell), and neither sees the
+ * other. Every value duplicated across that boundary is one that can drift
+ * silently -- the nav height already had, leaving the landing bar 57px
+ * against the docs' 60px, visible the moment you click "Docs".
+ * Registered first in astro.config.mjs's customCss and imported first in
+ * layouts/Page.astro, so both stacks read the same declaration.
+ *
+ * Contrast numbers in this file are measured, and the ones that are not
+ * covered by a gate are measured by hand -- scripts/contrast-sweep.mjs reads
+ * rendered pages, so it sees a token only where a page actually paints it.
+ */
+:root {
+  /* Total height of the top bar including its bottom border, on both the
+     landing page and the docs. Starlight's own --sl-nav-height is set from
+     this in starlight/01-tokens-and-header.css. */
+  --ui-nav-height: 3.75rem;
+  --ui-shell-width: 72rem;
+
+  /* ---- Wordmark ------------------------------------------------------
+   *
+   * The asset carries transparent columns down its left edge, so a bar that
+   * renders it flush against the gutter shows the logo indented while the
+   * links beside it are not. Both bars cancel that with a negative translate
+   * sized from the asset's own margin, and scripts/wordmark-inset.mjs
+   * re-measures whichever file meta.ts names.
+   *
+   * Five rules did that with five different hand-tuned pixel values --
+   * -10px on the landing bar, -18px on the docs bar, -8px below 72rem,
+   * -24px !important below 50rem, and nothing at all on the landing page's
+   * narrow breakpoint -- so no two bars agreed.
+   *
+   * A ratio rather than a length because the transparent margin scales with
+   * the rendered width, so the compensation has to as well: a breakpoint
+   * that narrows the wordmark sets --ui-mark-width and the inset follows.
+   * Do not pre-compose the two into a single length token -- a var() inside
+   * a custom property resolves where it is DECLARED, so the composed value
+   * would freeze at whatever :root said and quietly ignore every
+   * breakpoint. */
+  --ui-mark-width: 160px;
+
+  /* Both bars filter the wordmark through this. Dark leaves it alone; the
+     light theme darkens it -- see the override below for why. A token rather
+     than a rule on `.mark`, because the landing bar and the docs bar are
+     different components with their own scoped styles, and this is one
+     decision, not two. */
+  --ui-mark-filter: none;
+  /* Zero: the wordmark is cropped tight, so it carries no transparent margin
+     to cancel. Kept as a token rather than deleted -- the compensation is real
+     for any asset exported with padding, and scripts/wordmark-inset.mjs
+     re-measures whichever file meta.ts names. */
+  --ui-mark-inset-ratio: 0;
+
+  /* Tells the browser which way to draw the controls it renders itself: the
+   * <select> popup in the theme control, native focus rings, and form
+   * widgets. Starlight declares this for the docs in its own reset, which is
+   * why the docs popup was already dark and the landing page's -- which
+   * never loads that reset -- was drawn white over a near-black bar. */
+  color-scheme: dark;
+
+  /* Brand accent, taken from nvx's own logo rather than from the template,
+   * which arrived carrying netscli's green.
+   *
+   * The -rgb form is the same colour as a bare triple, for the rgba() call
+   * sites that need an alpha. Changing the accent should be one edit here;
+   * there were 108 hard-coded copies of the old value across 20 files
+   * before these tokens existed. The light theme's darker accent is below.
+   *
+   * 5.62:1 on --ui-bg. */
+  --ui-accent: #af6eeb;
+  --ui-accent-rgb: 175, 110, 235;
+  /* Hover and other lifted states: a visible step up from the accent, at
+     11.53:1. A pair that is too close reads as nothing happening. */
+  --ui-accent-bright: #dcbff6;
+  /* Pale tint for active text on dark surfaces. 16.56:1. */
+  --ui-accent-high: #f5edfd;
+  /* Hover border for interactive chrome: the theme control in both bars, and
+     the pagination links in the docs. Was declared only in the docs stack, so
+     the landing bar's copy of the same control could not reach it and hovered
+     a different colour. */
+  --ui-hover-border: color-mix(in srgb, var(--ui-accent) 42%, rgba(var(--ui-lift-rgb), 0.08));
+
+  /* Text drawn ON the accent, where the accent is a fill rather than ink.
+     A purple-black rather than a neutral one, and 5.74:1 on --ui-accent.
+     It was a green-tinted near-black inherited from the template. */
+  --ui-on-accent: #140a1c;
+
+  /* The warm tone for "this is simply readable" -- not an error, so not red.
+     A pair rather than one literal: no single amber clears 4.5 on both
+     themes, the closest measuring 4.30 dark against 3.32 light. This one is
+     7.05:1 on --ui-surface-raised and 7.65:1 on --ui-surface. */
+  --ui-warn: #d8a657;
+
+  /* ---- Brand gradient -------------------------------------------------
+   *
+   * The "Desktop app" button fills its label with this and sets
+   * `-webkit-text-fill-color: transparent`, which is why no automated check
+   * sees these stops: a contrast checker reads the transparent fill, not the
+   * paint behind it, so axe skips the element.
+   *
+   * That is also how this file came to claim a 4.5:1 floor it did not hold.
+   * The first stop of nvx's ramp was #9138e4, which measures 3.50:1 on
+   * --ui-bg. Every stop is now measured on its own theme's page:
+   * 4.77 / 5.62 / 5.00 dark, 10.19 / 7.54 / 7.22 light.
+   *
+   * The ramp is the logo's own purple-to-magenta, per meta.ts. */
+  --ui-brand-gradient-from: #a855f7;
+  --ui-brand-gradient-via: #af6eeb;
+  --ui-brand-gradient-to: #ff007f;
+
+  /* ---- Cross-stack role channels -------------------------------------
+   *
+   * These moved up from starlight/00-theme-tokens.css, which only the docs
+   * load. The landing page and the changelog need these roles to be
+   * themeable at all, and a second copy of them under different names is how
+   * the two halves of this site drifted apart in the first place.
+   *
+   * Declared here as the DARK values because that is what an unthemed page
+   * gets; the light block below overrides all three. Channels rather than
+   * colours because every call site is an rgba() with its own alpha. */
+
+  /* Hairlines, dividers, and the neutral washes drawn from them. */
+  --ui-hairline-rgb: 140, 149, 166;
+  /* The direction "raised" points: white on a dark surface. */
+  --ui-lift-rgb: 255, 255, 255;
+
+  /* ---- Text ramp ------------------------------------------------------
+   *
+   * Three steps, because the landing stack had FORTY distinct `color:` values
+   * across 91 declarations and no way to theme any of them. Most of that was
+   * drift rather than intent -- #e5e5e5 beside #e6e6e6 and #e0e0e0, #ccc
+   * beside #cfcfcf, #888 beside #8a8a8a -- differences no reader can see and
+   * nobody chose.
+   *
+   * The values are the docs' own ramp (--sl-color-white / gray-2 / gray-3),
+   * so the two halves of the site finally describe text the same way.
+   *
+   * There is no fourth, dimmer step. One was tried, borrowing Starlight's
+   * gray-4, and axe caught it on both themes at 3.04:1 and 3.50:1 against a
+   * 4.5 floor -- gray-4 is a BORDER colour there, and using it for text was
+   * the mistake. The dimmest text this site draws is --ui-text-muted. */
+  --ui-text-strong: #f4f4f4;
+  --ui-text: #c2cad8;
+  --ui-text-muted: #8c95a6;
+
+  /* ---- Surfaces -------------------------------------------------------
+   *
+   * Three depths, from the same 21 opaque backgrounds the landing stack had
+   * spread across 32 declarations. They fell into three tight luminance
+   * bands with nothing between them -- eight values from #0a0a0a to #151515
+   * doing the page, six from #141718 to #1b1b1b doing panels, three from
+   * #222 to #2a2d32 doing the layer above -- so the bands were real and only
+   * the exact values inside them were arbitrary. */
+  --ui-bg: #111111;
+  --ui-surface: #191d25;
+  --ui-surface-raised: #20242b;
+  /* The page background as channels, for the translucent bars drawn over
+     content: the sticky nav, the mobile menu, the lightbox scrim. Those were
+     four slightly different near-black rgba() values -- 17/17/17, 22/24/26,
+     25/25/25, 8/8/8 -- none of which could follow a theme. */
+  --ui-bg-rgb: 17, 17, 17;
+}
+
+/* The wordmark's one size step, for both bars.
+ *
+ * It was three different ladders: the landing bar went 160 -> 132 at 600px,
+ * the docs bar went 160 -> 140 -> 132 at 72rem, and an override file forced
+ * 132 again below 50rem. So at a 1000px window the same logo was 160px on
+ * the landing page and 132px in the docs, and clicking "Docs" visibly
+ * resized it. The docs bar had no need of the early steps: measured at
+ * 901px it uses 476px of the 842px available, even with the search icon and
+ * the full link list.
+ *
+ * Declared on :root rather than on each bar's own class so the inset ratio
+ * above resolves against it -- see the note there about var() in a custom
+ * property resolving where it is declared. */
+@media (max-width: 600px) {
+  :root {
+    --ui-mark-width: 132px;
+  }
+}
+
+/* The light theme's overrides of everything above.
+ *
+ * Set here rather than in the docs' own token file so the landing page and
+ * changelog resolve them too. Values match the docs light theme exactly, so
+ * the two stacks cannot disagree about what "light" means. */
+html[data-theme='light'] {
+  color-scheme: light;
+
+  /* No filter. The wordmark is drawn to work on both themes: the lettering is
+     the brand purple rather than white, so it needs no darkening here, and
+     filtering it would only wash the mark out. The token stays because the
+     template's bars read it and a product shipping a dark-only wordmark still
+     needs it -- `brightness(0.35)` was what this site used while its wordmark
+     was white-on-transparent. */
+  --ui-mark-filter: none;
+
+  /* The accent, as a colour and as channels.
+   *
+   * Only the -rgb form was overridden here until the template was
+   * generalised, so every `color: var(--ui-accent)` call site kept rendering
+   * the DARK accent on a white page -- the single largest source of the
+   * light theme's contrast failures. It went unnoticed because the a11y
+   * check's light pass was passing no colour-scheme flag and so tested dark
+   * twice on a dark-mode workstation; see scripts/a11y.mjs.
+   *
+   * Depth inverts with the theme here as it does for surfaces: "bright" is a
+   * hover state, which means further from the page, so on white it is DARKER
+   * than the base accent rather than lighter.
+   *
+   * 7.54 / 9.61 / 11.47 on --ui-bg. */
+  --ui-accent: #731bc5;
+  --ui-accent-rgb: 115, 27, 197;
+  --ui-accent-bright: #5e16a2;
+  --ui-accent-high: #4f1287;
+  /* White on the accent fill: 7.80:1, where the dark theme's near-black
+     would be 1.6:1. */
+  --ui-on-accent: #ffffff;
+  /* 5.71:1 on --ui-surface-raised, 5.51 on --ui-surface, 6.03 on the page.
+     The dark theme's amber is 2.02:1 here, which is why this is a pair. */
+  --ui-warn: #87560c;
+
+  /* 0.1, not the dark theme's 0.08: --sl-color-hairline carried a different
+     alpha per theme, and this reproduces it rather than rounding the two
+     together. */
+  --ui-hover-border: color-mix(in srgb, var(--ui-accent) 42%, rgba(var(--ui-lift-rgb), 0.1));
+  /* The same arc, walked in the direction that stays legible on white. */
+  --ui-brand-gradient-from: #591599;
+  --ui-brand-gradient-via: #731bc5;
+  --ui-brand-gradient-to: #a8005a;
+
+  --ui-hairline-rgb: 17, 24, 39;
+  /* On a light surface, raised is DARKER. See the note in the docs' token
+     file for the 27 rules that had this backwards. */
+  --ui-lift-rgb: 17, 24, 39;
+
+  /* The light ramp, again matching the docs. Starlight inverts its own
+     naming here -- --sl-color-white is #111827 in the light theme -- which is
+     why "strong" is the darkest of these rather than the lightest. */
+  --ui-text-strong: #111827;
+  --ui-text: #44516a;
+  --ui-text-muted: #596478;
+
+  /* Light surfaces, again the docs' own: --sl-color-bg, gray-6, and the
+     panel. Depth inverts with the theme -- a raised surface is lighter than
+     the page in the dark theme and darker than it here -- which is why these
+     are named for depth rather than for a colour.
+     Blue-grey, not neutral grey. The alternating band and the cards standing
+     on it were #f4f6f8/#f6f8fa, which is the page with the colour taken out
+     -- so the "Get started" section read as a slightly dirty white rather
+     than as its own surface. A navy cast gives it somewhere to be without
+     touching a single piece of text: the ramp measures 15.68 / 7.05 / 5.27
+     on the band and 16.23 / 7.30 / 5.46 on a card. */
+  --ui-bg: #fbfbfb;
+  --ui-surface: #eef1f7;
+  --ui-surface-raised: #f2f5fa;
+  --ui-bg-rgb: 251, 251, 251;
+}

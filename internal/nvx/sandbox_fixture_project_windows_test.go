@@ -12,7 +12,7 @@ package nvx
 // The probes build their projects with tempDir, under %TEMP%. A bare temporary
 // directory holds no package.json, so the walk keeps going -- past %TEMP%, past
 // AppData -- and whatever it finds above becomes the scope. On 2026-09-01 an
-// `npm install` was run in C:\Users\Felix, leaving a package.json in the home
+// `npm install` was run in C:\Users\you, leaving a package.json in the home
 // directory at 18:40. From that moment every temporary directory on the machine
 // resolved to the SAME project root, so "project A" and "project B" derived the
 // SAME capability, and a session scoped to B held exactly the identity that opens

@@ -1,0 +1,103 @@
+# The site's own gate, from product-site-template. Adapted in three ways, all
+# forced by the template living in a subdirectory of a public Go project rather
+# than being its own repo:
+#
+#   ubuntu-latest, not the template's self-hosted Windows runner. nvx is public,
+#   and the template ships a step that deliberately FAILS on a public repo
+#   because a fork's pull request would otherwise run its own code on a personal
+#   machine. Its own header names ubuntu-latest as the fix, and public repos get
+#   hosted minutes free, so there is nothing to weigh.
+#
+#   working-directory: site, so every step runs where the site is. The relative
+#   script paths inside the steps then work unchanged.
+#
+#   A paths filter. nvx's CI already runs several minutes on Windows, and a Go
+#   change has no business running browser sweeps. CHANGELOG.md is listed
+#   because the changelog page reads it.
+name: Site CI
+
+on:
+  push:
+    branches: [main]
+    paths: &site_paths
+      - 'site/**'
+      - 'CHANGELOG.md'
+      - '.github/workflows/site-ci.yml'
+  pull_request:
+    paths: *site_paths
+
+concurrency:
+  group: site-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  site:
+    name: Checks
+    runs-on: ubuntu-latest
+    # The browser sweeps are the slow part, at a couple of minutes each. This
+    # is a ceiling on a hang -- a wedged run on a self-hosted runner blocks
+    # every later run, because there is only the one.
+    timeout-minutes: 30
+    defaults:
+      run:
+        # Git Bash, so these are the same commands that work locally rather
+        # than their PowerShell equivalents.
+        shell: bash
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # check:changelog compares dated headings against tags; with the
+          # default depth there are none and a dated-but-untagged version
+          # cannot be caught.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: site/.nvmrc
+          # No `cache: npm` here, deliberately. That option uploads the npm
+          # cache to GitHub's cache service after every run and downloads it
+          # before the next one -- which is a win on a fresh hosted VM and a
+          # loss on this runner, where ~/.npm is already sitting on the disk
+          # between runs. Measured on the first run of this workflow: the
+          # checks took under four minutes and the cache upload was still
+          # going ten minutes later.
+      - run: npm ci
+
+      # --- Static guards: no build needed ---------------------------------
+      # 300 lines per file, with named transition exceptions.
+      - name: File size guard
+        run: node scripts/check-file-size.mjs
+      # A declaration a later file always overrides is dead; budget 0.
+      - name: Dead CSS budget
+        run: npm run check:css
+      # One region file per part of the docs shell, all registered, no
+      # !important outside the named exceptions.
+      - name: CSS region guard
+        run: npm run check:regions
+      # The wordmark's transparent margin still matches the token that
+      # cancels it.
+      - name: Wordmark inset
+        run: npm run check:wordmark
+
+      # --- The build, and the checks that read dist/ ----------------------
+      - name: Build
+        run: npm run build
+      - name: Types
+        run: npm run check
+      - name: Changelog dates
+        run: npm run check:changelog
+      - name: Accessibility check
+        run: npm run test:a11y
+      - name: Rendered contrast sweep
+        run: npm run check:contrast
+
+      # A sweep that is cancelled mid-run leaves an `astro preview` holding
+      # its port, and the next run then fails on a port conflict rather than
+      # on anything real. Cheap to prevent; `|| true` because "nothing was
+      # running" is the normal case.
+      - name: Stop any leftover preview server
+        if: always()
+        run: npx astro preview stop || true

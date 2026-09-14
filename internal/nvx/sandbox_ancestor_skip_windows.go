@@ -139,7 +139,7 @@ func normalizeAncestorKey(path string) string {
 //
 // Measured 2026-09-01: `nvx npx cowsay hi` failed with
 //
-//	EPERM lstat C:\Users\Felix\.nvx\sandbox_home
+//	EPERM lstat C:\Users\you\.nvx\sandbox_home
 //
 // because npm walks up from the guest home, and that directory had been recorded
 // as a failed grant on 2026-08-29 and was therefore not being attempted. One

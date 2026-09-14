@@ -31,7 +31,7 @@ Paste or attach this file and say something like:
 - Competing with mise/asdf on "manage every language"
 - Landing-page / marketing copy rewrite (deferred)
 
-**Preserved elsewhere:** full polyglot implementation on branch `feature/polyglot-runtimes` @ `e7d9043`.
+**Preserved elsewhere:** full polyglot implementation on branch `feature/polyglot-runtimes` @ `591a470`.
 
 ---
 
@@ -55,9 +55,9 @@ Paste or attach this file and say something like:
 
 | Branch | Commit | Role |
 |--------|--------|------|
-| `main` | `11772dc` | Production line @ **v0.2.0-beta** (Isolation v1) |
-| `audit-remediation` | `8047f6e` | **Active work** — v0.3.0 candidate, Node+Bun focus, CI green |
-| `feature/polyglot-runtimes` | `e7d9043` | **Archive** — Deno, Go, Python, uv/pyx before trim |
+| `main` | `f353f74` | Production line @ **v0.2.0-beta** (Isolation v1) |
+| `audit-remediation` | `7d98364` | **Active work** — v0.3.0 candidate, Node+Bun focus, CI green |
+| `feature/polyglot-runtimes` | `591a470` | **Archive** — Deno, Go, Python, uv/pyx before trim |
 
 ### Tags
 
@@ -68,7 +68,7 @@ Paste or attach this file and say something like:
 
 - **PR #2** (OPEN): https://github.com/fstubner/nvx/pull/2  
   Title may still say "five runtimes" — body should be updated to Node+Bun before merge.  
-  CI green on latest push (`8047f6e`).
+  CI green on latest push (`7d98364`).
 
 ### Working tree
 
@@ -99,7 +99,7 @@ Clean on `audit-remediation`, synced with `origin/audit-remediation`.
 - Tag-triggered `release.yml` workflow (draft releases + attestation)
 - README comparison table vs nvm/fnm/volta/asdf/uv
 
-### Removed in trim commit `8047f6e`
+### Removed in trim commit `7d98364`
 
 - `provider_deno.go`, `provider_go.go`, `provider_python.go`
 - uv/uvx/pyx wrapping
@@ -181,7 +181,7 @@ Triggered from `env.go` for: `npm`, `yarn`, `pnpm`, `npx`, `bun`, `bunx`.
 3. **Architecture Q&A** — updates, secrets, `nvx env`, extensibility; release-age policy implemented.
 4. **Runtime expansion** — five runtimes on `audit-remediation`; product shape tension identified.
 5. **JSR / audit depth** — explained npm-only audit; JSR not "unsecurable" but needs separate verifier.
-6. **Focus decision** — JS ecosystem; Node+Bun; polyglot on preservation branch; trim @ `8047f6e`.
+6. **Focus decision** — JS ecosystem; Node+Bun; polyglot on preservation branch; trim @ `7d98364`.
 7. **What's next** — ship v0.3.0, then upgrade command.
 
 ---

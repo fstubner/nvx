@@ -722,3 +722,115 @@ here would equally be what a sandbox with an accidental route out looks like. Wi
 (`TestWindowsLoopbackModeRelaysAndHoldsNoCapability`) and no end-to-end run, which
 is the same standing as every other Windows row here: hosted runners refuse to
 create AppContainer children.
+
+## Measured costs and platform floors
+
+Moved here from README. These are measurements rather than guarantees, and
+they date quickly; each carries the date and machine it was taken on.
+
+- **`nvx setup` is optional, and nvx no longer asks you to run it.** Contained
+  `npx` does need `C:\Users` and the drive root to answer a stat: npm's own
+  realpath walks every directory above the cache `npx` uses, that cache is under
+  the sandbox's home, and an AppContainer with no drive-root grant gets `EPERM`
+  on both. Measured 2026-09-03: `npm install` in a project on `C:` works, `npx -y
+  cowsay hi` from the same project fails with `EPERM: operation not permitted,
+  lstat 'C:\Users'`. An earlier version of this entry said `npx` needed no grant;
+  every run behind that claim happened while the grant was present.
+
+  nvx now answers that stat itself. A preload in every contained node process
+  replies, for the directories above the sandbox's own working directory and
+  home only, with a directory's stats when the OS refuses the real ones. Those
+  directories exist by construction, and the sandbox may already pass through
+  them; only their attributes were hidden. With it, `npx` runs contained on a
+  machine that has never run `nvx setup` (measured: the same `npx` from the same
+  project, no grant, works). What `nvx setup` still serves is a non-node tool
+  that walks to a drive root; if one fails with `EPERM` there, nvx names setup
+  after the failure, and `nvx doctor` shows the missing roots as a note. The
+  grant is read/execute on the root folder itself, never inherited, for the
+  sandbox's identity only, and its cost is proportional to the volume's size:
+  22 minutes for 5.6 million entries. `nvx setup --undo` takes it back.
+- **A contained command costs a few hundred milliseconds, and the first one after a
+  new runtime is staged can be minutes.** The ~38ms dispatch figure above measures
+  the shim, not the sandbox: a contained launch has to prepare an isolated home and
+  check permissions. The first run in a project is slower than the rest, because
+  that is when the permission grants are made and remembered.
+
+  Measured on Windows 11: ~2.4s for a project's first contained run, ~390ms for
+  every one after. Re-measured 2026-08-29 on a second Windows 11 machine: 2.9s
+  first, 785ms steady (median of 8 runs), with the same Node binary taking 58ms
+  when run directly. Plan against "a few hundred milliseconds to about a second"
+  rather than either figure — the steady state moves by roughly a factor of two
+  between machines, while the first-run cost reproduced closely.
+
+  This used to add "of which ~210ms is Node's own startup". That decomposition is
+  gone rather than re-guessed: it does not reproduce (58ms here), and subtracting
+  it left ~180ms for nvx against the ~370ms this section quoted for nvx's own
+  setup, so the two figures could not both be right. That second figure has been
+  replaced with a measurement too.
+
+  Before 0.5.6 the steady state was ~650ms here, and has been measured at ~1s and
+  ~2.2s on other machines —
+  nvx re-read every access-control entry on every launch, seventeen `icacls`
+  processes a command, and now remembers the ones it has already verified.
+
+  The first run after nvx stages a runtime copies the whole distribution and has
+  been measured at 45s to 3 minutes. Uncontained commands are unaffected.
+- **The first contained run after an install is slow, once, in proportion to the
+  dependency tree.** Measured 2026-08-20: loading a freshly installed 2,552-file
+  package inside the sandbox took 5.8s the first time and 461ms every time after.
+  The same load uncontained is ~500ms, so **steady-state containment costs
+  essentially nothing here** — the one-off is the filesystem and antivirus caches
+  filling while a sandboxed process reads thousands of files for the first time,
+  not work nvx is doing. That is the marginal cost of a large file tree, not the
+  cost of containing a command at all: on the machine re-measured above, an empty
+  contained run took 785ms against 92ms for the same command uncontained.
+
+  It matters only where something is waiting with a timeout. If you are wiring a
+  contained command into a tool that gives up after a few seconds, run it once by
+  hand after installing to absorb the cost.
+- **Windows may flag nvx as malware, and the released binaries are not
+  Authenticode-signed.** Observed on 2026-09-04: Windows Defender quarantined
+  freshly built nvx binaries as `Trojan:Win32/Bearfoos.A!ml`, three times in one
+  minute, and `go build` could not produce an executable at all until a build
+  directory exclusion was added.
+
+  The `!ml` suffix marks a machine-learning verdict rather than a signature
+  match, and nvx is a plausible thing for such a classifier to dislike: it
+  creates named pipes with custom security descriptors, manipulates AppContainer
+  tokens, and rewrites filesystem ACLs. Those are the mechanisms containment is
+  built from, and they are also what malware does.
+
+  Releases carry SHA-256 checksums and a SLSA build-provenance attestation, which
+  let you verify a download came from this repository's CI. Neither is an
+  Authenticode signature, and **Defender and SmartScreen do not read them** — so
+  they do nothing to prevent this. Code signing is the actual fix and is not in
+  place; until it is, expect SmartScreen warnings on first run and the
+  possibility of a Defender quarantine.
+
+  If it happens to you, a false positive can be reported to Microsoft at
+  <https://www.microsoft.com/en-us/wdsi/filesubmission>. Reporting is worth more
+  than an exclusion: an exclusion stops your machine scanning that path, which is
+  a real reduction in your own protection, and it does nothing for anyone else.
+- **Bun in the sandbox, per platform.** Measured 2026-09-08 with Bun 1.4.2:
+  contained on **macOS** it runs scripts and installs packages correctly, and
+  on **Linux** it does too, but only since the sandbox began mounting a
+  procfs of its own — Bun reads `/proc/self` to size its stack, and before
+  that a contained `bun install` failed with "JSON document is too deeply
+  nested" against a valid file. Windows has its own version floor, below.
+- **Bun needs 1.4.x to work inside the Windows sandbox.** Measured 2026-09-06:
+  Bun **1.4.2** runs contained correctly — `bun install`, `bunx`, relative-path
+  reads and writes all work. Bun **1.3.1** fails every relative-path operation
+  with `EBADFD`, and without `nvx setup` cannot start a script at all
+  (`CouldntReadCurrentDirectory`).
+
+  If a contained Bun misbehaves, check `bun --version` first. Bun added
+  AppContainer support in [oven-sh/bun#33119](https://github.com/oven-sh/bun/pull/33119),
+  merged 2026-07-20 and shipped from 1.4.0; the related sandbox report is
+  [oven-sh/bun#28220](https://github.com/oven-sh/bun/issues/28220), now closed.
+  Older Bun keeps a working-directory descriptor captured at startup that an
+  AppContainer will not honour, so absolute paths work and relative ones do not —
+  Node is unaffected because it holds no such descriptor.
+
+  `nvx install bun@1.4.2` (or later) is the fix. `nvx --no-sandbox` remains the
+  escape hatch for an older Bun, which means running it **without** containment,
+  so treat what it installs accordingly.

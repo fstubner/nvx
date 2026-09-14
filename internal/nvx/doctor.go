@@ -89,7 +89,7 @@ func dirsEqual(a, b string) bool {
 // nvx decides which project a sandbox belongs to by walking up to the nearest
 // package.json, so a stray one above a set of projects silently merges them --
 // a contained install in either can then read and write the other. Measured
-// 2026-09-01: an `npm install` run in C:\Users\Felix left a package.json there,
+// 2026-09-01: an `npm install` run in C:\Users\you left a package.json there,
 // and every project beneath it, including nvx's own test fixtures under %TEMP%,
 // collapsed into one scope. Deleting the file restored isolation immediately.
 // README.md has carried it under Known limitations since, and said until now

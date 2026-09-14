@@ -1,0 +1,441 @@
+---
+import { site } from '../data/site';
+import { hrefFor, isCurrent, navGroupBreak, navLinks } from '../data/site-content/nav';
+const { branding, meta } = site;
+const pathname = Astro.url.pathname;
+const onHome = pathname === '/';
+
+/* Built in the frontmatter, not inline in the template. The inline form mixed
+   `?:` with `||` and the Astro compiler rejects that outright -- and `astro
+   check` passed it, so only `astro build` caught it. */
+function linkClass(link: (typeof navLinks)[number], index: number): string | undefined {
+  const parts: string[] = [];
+  if (link.external) parts.push('external-link');
+  if (index === navGroupBreak) parts.push('nav-group-start');
+  return parts.length ? parts.join(' ') : undefined;
+}
+---
+<nav data-site-nav data-open="false">
+  <div class="nav-inner">
+    <a class={`mark${branding.wordmarkLight ? ' has-light' : ''}`} href="/" aria-label={`${meta.siteName} home`}>
+      <img class="mark-dark" src={branding.wordmark} alt="" width="160" height="32" />
+      {branding.wordmarkLight && (
+        <img class="mark-light" src={branding.wordmarkLight} alt="" width="160" height="32" />
+      )}
+    </a>
+    <button
+      class="nav-menu-toggle"
+      type="button"
+      data-site-nav-toggle
+      aria-label="Open navigation"
+      aria-expanded="false"
+      aria-controls="site-nav-links"
+    >
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+    <div class="nlinks" id="site-nav-links" data-site-nav-links>
+      {navLinks.map((link, i) => (
+        <a
+          href={hrefFor(link, pathname)}
+          class={linkClass(link, i)}
+          data-section={link.section}
+          data-site-nav-link
+          aria-current={isCurrent(link, pathname)}
+          {...(link.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+        >
+          {link.label}
+        </a>
+      ))}
+      {/*
+        Deliberately the same shape as Starlight's ThemeSelect -- label
+        wrapping a leading icon, a bare <select>, and a caret -- because
+        src/styles/theme-control.css styles both from one rule set and the
+        docs bar renders the upstream component, which this cannot reuse:
+        it lives inside Starlight and the landing page does not load it.
+
+        The two icons are Starlight's own `laptop` and `down-caret` paths,
+        copied rather than imported for the same reason. Option order and
+        labels match upstream too, so the list reads identically in both
+        bars.
+      */}
+      <div class="ui-theme-select">
+        <label>
+          <span class="sr-only">Select theme</span>
+          {/* All three icons, one shown at a time.
+              The docs bar swaps its icon through Starlight's ThemeProvider,
+              which clones from a `<template id="theme-icons">` and only
+              queries `starlight-theme-select`. Neither exists on the landing
+              page, so this control was stuck on the laptop glyph whatever you
+              picked. Rendering all three and hiding two is simpler than
+              importing that machinery, and it needs no JavaScript to be
+              correct on first paint -- the pre-paint script in Page.astro
+              already sets data-theme-choice before this is visible.
+              Starlight's own sun, moon and laptop paths, so the two bars show
+              the same glyphs. */}
+          <svg aria-hidden="true" class="icon label-icon" data-icon="light" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z" />
+          </svg>
+          <svg aria-hidden="true" class="icon label-icon" data-icon="dark" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z" />
+          </svg>
+          <svg aria-hidden="true" class="icon label-icon" data-icon="auto" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z" />
+          </svg>
+          <select autocomplete="off" data-theme-select>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+            <option value="auto" selected>Auto</option>
+          </select>
+          <svg aria-hidden="true" class="icon caret" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z" />
+          </svg>
+        </label>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<script>
+  import { initThemeSelect } from '../scripts/theme-select';
+  initThemeSelect();
+</script>
+
+{
+  onHome && (
+    <script>
+      import { initActiveNav } from '../scripts/site-nav';
+      initActiveNav();
+    </script>
+  )
+}
+
+<script>
+  import { initMobileNav } from '../scripts/site-nav';
+  initMobileNav();
+</script>
+
+<style is:global>
+/* nav
+ *
+ * Every rule here is scoped to `nav[data-site-nav]`, the one element this
+ * component renders. They used to select the bare `nav` element, and these
+ * styles are `is:global` -- so the whole top-bar treatment landed on any
+ * other <nav> on the page. The changelog's release timeline is a <nav>, and
+ * it was picking up `position:sticky; top:0`, the translucent bar
+ * background, the green bottom border, a 12px backdrop blur and the
+ * scrolled drop shadow, which is what made a sticky sidebar look like a
+ * floating toolbar.
+ */
+nav[data-site-nav]{
+  position:sticky;top:0;z-index:10;
+  /* Border-box, so this is the whole bar including its border -- the docs
+     header sets the same value the same way. Sizing it from the inner box
+     plus a border instead left the landing bar 0.2px shorter, because a 1px
+     border renders as 0.8 at this device pixel ratio. */
+  min-height:var(--ui-nav-height);
+  background:rgba(var(--ui-bg-rgb), .85);backdrop-filter:blur(12px);
+  border-bottom:1px solid rgba(var(--ui-lift-rgb),.06);
+  box-shadow:none;
+  transition:box-shadow 160ms ease,border-color 160ms ease;
+}
+
+body:not(.nav-scrolled) nav[data-site-nav]{
+  box-shadow:none !important;
+}
+
+body:not(.nav-scrolled) nav[data-site-nav]::after{
+  opacity:0 !important;
+}
+
+nav[data-site-nav]::after{
+  content:"";
+  position:absolute;
+  left:0;right:0;bottom:-22px;
+  height:22px;
+  pointer-events:none;
+  opacity:0;
+  background:linear-gradient(180deg,rgba(0,0,0,.42),rgba(0,0,0,0));
+  transition:opacity 160ms ease;
+}
+body.nav-scrolled nav[data-site-nav]{
+  border-bottom-color:rgba(var(--ui-accent-rgb),.12);
+  box-shadow:
+    0 12px 28px rgba(0,0,0,.28),
+    0 1px 0 rgba(var(--ui-accent-rgb),.08) !important;
+}
+body.nav-scrolled nav[data-site-nav]::after{
+  opacity:1;
+}
+/* The scrolled shadow, softened for a light page.
+ *
+ * Both the drop shadow and the gradient beneath the bar were pure black --
+ * .28 and .42 -- which reads as depth on a near-black page and as a smudge on
+ * a white one. The DOCS header already had exactly this override; the landing
+ * bar never got one, which is why the seam only showed on the landing page and
+ * the changelog. Same values the docs use, so the two bars cast the same
+ * shadow. */
+html[data-theme='light'] body.nav-scrolled nav[data-site-nav]{
+  box-shadow:
+    0 12px 26px rgba(var(--ui-hairline-rgb),.11),
+    0 1px 0 rgba(var(--ui-accent-rgb),.12) !important;
+}
+/* No second layer on a light page.
+ *
+ * The bar casts a 26px blurred box-shadow AND this 22px hard gradient, and
+ * they stack. Softening only the box-shadow -- which is what the previous
+ * pass did -- left the heavier of the two untouched: measured on
+ * rgb(251,251,251), the shadow alone composites to rgb(225,226,228) and this
+ * gradient then takes it to rgb(200,202,205), a 1.59:1 step in a 22px band
+ * directly under the bar. That reads as a grey smear, not depth.
+ *
+ * The gradient exists for the dark theme, where it is rgba(0,0,0,.42) against
+ * a near-black page and does real work selling the bar as floating. On white
+ * the blurred shadow is enough on its own, so this drops to nothing rather
+ * than to a smaller number -- one soft layer is the whole effect. */
+html[data-theme='light'] nav[data-site-nav]::after{
+  opacity:0;
+}
+.nav-inner{
+  /* Matches the docs top bar. Padding alone gave 12+32+12 plus the 1px
+     border on <nav> = 57px against the docs' 60px, so the bar jumped every
+     time you crossed between the landing page and the docs. The border is
+     on the parent, hence the -1px. Still a min, so the mobile wrapped state
+     grows past it as before. */
+  min-height:calc(var(--ui-nav-height) - 1px);
+  /* No block padding: the links are the full bar height so their underline
+     reaches the bottom border, and padding here would push them past it.
+     min-height holds the bar open instead. The narrow-screen rule below
+     restores padding, where the links go back to auto height. */
+  max-width:var(--ui-shell-width);margin:0 auto;padding:0 var(--ui-shell-gutter);
+  display:flex;align-items:center;justify-content:space-between;gap:18px;
+  flex-wrap:wrap;
+  position:relative;
+}
+.mark{
+  display:inline-block;line-height:0;text-decoration:none;
+  /* No transition and no hover rule. Both used to be here and both were
+     no-ops: the base and the hover state were each `brightness(1)`, so the
+     200ms transition had nothing to animate between. Left as they were, the
+     hover rule would now undo the light theme's darkening the moment the
+     pointer touched the logo. */
+  filter:var(--ui-mark-filter);
+  /* Cancels the wordmark asset's own transparent left margin, so the glyph
+     starts on the gutter the nav links start on. See tokens.css. */
+  transform:translateX(calc(var(--ui-mark-width) * var(--ui-mark-inset-ratio) * -1));
+}
+/* Two files, swapped by theme, when the content provides a light one. A
+   wordmark containing type cannot be one asset: the lettering has to be light
+   on the dark bar and dark on the light one. `has-light` gates the swap so a
+   product shipping a single asset is unaffected and keeps --ui-mark-filter. */
+/* img in the selector on purpose: `.mark img{display:block}` below is (0,1,1)
+   and beat a bare `.mark-light` at (0,1,0), so both wordmarks rendered at once
+   and the bar showed the logo twice. */
+.mark img.mark-light{display:none}
+html[data-theme='light'] .mark.has-light img.mark-dark{display:none}
+html[data-theme='light'] .mark.has-light img.mark-light{display:block}
+.mark img{
+  display:block;width:var(--ui-mark-width);height:auto;image-rendering:auto;
+  /* See the note in starlight/Header.astro: bound the mark by the bar's
+     height too, or a tall wordmark sets the bar height itself. */
+  max-height:calc(var(--ui-nav-height) - 1.25rem);
+  object-fit:contain;object-position:left center;
+}
+
+.nav-menu-toggle{
+  display:none;
+  width:2.45rem;
+  height:2.45rem;
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+  gap:4px;
+  border:1px solid rgba(var(--ui-lift-rgb),.1);
+  border-radius:7px;
+  color:var(--ui-text);
+  background:rgba(var(--ui-lift-rgb),.035);
+  cursor:pointer;
+}
+.nav-menu-toggle span{
+  width:15px;
+  height:1.5px;
+  border-radius:999px;
+  background:currentColor;
+}
+.nav-menu-toggle:hover,
+.nav-menu-toggle:focus-visible{
+  color:var(--ui-text-strong);
+  border-color:rgba(var(--ui-accent-rgb),.35);
+  outline:none;
+}
+.nlinks{display:flex;gap:20px;font-size:.8125rem;flex-wrap:wrap;justify-content:flex-end}
+.nlinks a{
+  color:var(--ui-text-muted);text-decoration:none;
+  display:inline-flex;align-items:center;
+  border-bottom:2px solid transparent;
+  /* Full bar height, so the underline lands on the bar's bottom edge the way
+     the docs one does. This was height:calc(100% + 24px) with a -12px block
+     margin, which never worked: .nlinks has no definite height, so the
+     percentage had nothing to resolve against and the link collapsed to its
+     32px content box. The underline then floated 14px above the bar's
+     border. Minus 1px for the border on <nav>. */
+  height:calc(var(--ui-nav-height) - 1px);
+}
+.nlinks a:hover{color:var(--ui-text)}
+/* Separates the links that scroll from the links that navigate.
+   A rule, not a gap alone: at this size a gap on its own reads as an
+   accident. Purely decorative, so it is drawn rather than announced --
+   nothing here for a screen reader to find between two links.
+
+   A short centred rule, not a border. These links are the full height of the
+   bar so the underline for the current page can sit on the bar's bottom edge,
+   which meant `border-inline-start` drew a 59px line floor to ceiling -- a
+   divider that split the bar in two rather than grouping the links. The
+   pseudo-element is 18px, centred on the text it sits between. */
+.nlinks a.nav-group-start{
+  position:relative;
+  margin-inline-start:12px;
+  padding-inline-start:20px;
+}
+.nlinks a.nav-group-start::before{
+  content:"";
+  position:absolute;
+  inset-inline-start:0;
+  top:50%;
+  width:1px;
+  height:18px;
+  margin-block-start:-9px;
+  background:rgba(var(--ui-hairline-rgb),.28);
+}
+
+/* Theme control.
+ *
+ * A native <select> rather than a custom listbox: it is keyboard and screen
+ * reader correct for free, and the docs' control is the same element, so the
+ * two bars behave identically.
+ *
+ * Its appearance is NOT here. It lives in src/styles/theme-control.css, which
+ * both stacks load, because the docs bar draws Starlight's version of this
+ * control and the two were visibly different objects while each bar styled
+ * its own. The only rule left here is the one thing that is genuinely local:
+ * standing the control to the bar's full height.
+ *
+ * The option list is drawn by the operating system, so it cannot be styled
+ * the way the rest of the bar is. What it CAN follow is `color-scheme`, which
+ * tokens.css sets per theme -- Starlight declares that for the docs in its
+ * own reset, and this page never loads that reset, so the docs popup was
+ * already dark while this one was drawn white over a near-black bar. That is
+ * as far as it is worth going: a bespoke listbox for three options would have
+ * to re-implement the keyboard and screen reader behaviour this gets free. */
+.ui-theme-select{display:inline-flex;align-items:center;height:calc(var(--ui-nav-height) - 1px)}
+
+/* Visually hidden, still announced. The control needs a name and the bar has
+   no room for a visible one. */
+.sr-only{
+  position:absolute;width:1px;height:1px;
+  padding:0;margin:-1px;overflow:hidden;
+  clip-path:inset(50%);white-space:nowrap;border:0;
+}
+/* Both values, because two different things set this attribute here.
+   Nav.astro marks a genuine current page with "page"; the scroll spy in
+   scripts/site-nav.ts marks the section you are looking at with "location",
+   which is the correct ARIA value for a position within a page. Only "page"
+   was styled, so on the landing page -- where every nav link is an anchor
+   and the spy is the only thing that fires -- the underline never appeared
+   at all. The docs bar was unaffected, which is why the two looked
+   inconsistent. */
+/* Any aria-current value. `page` is the exact page, `true` a section that
+   contains it, `location` the scroll-spy section on the landing page --
+   all three should look current. */
+.nlinks a[aria-current]{
+  color:var(--ui-text);
+  border-bottom-color:var(--ui-accent);
+}
+.external-link{
+  display:inline-flex;
+  align-items:center;
+  gap:.3em;
+  text-decoration:none;
+}
+.external-link-label{min-width:0}
+.external-link::after{
+  content:"↗";
+  flex:0 0 auto;
+  color:var(--ui-accent);
+  font-size:.92em;
+  font-weight:700;
+  line-height:1;
+  opacity:.9;
+  text-decoration:none;
+}
+.external-link:hover::after{
+  color:var(--ui-accent-bright);
+  opacity:1;
+}
+@media(max-width:600px){
+  .nav-inner{padding:10px 18px;gap:10px 16px}
+  .nlinks{font-size:.8rem}
+}
+/* The bar collapses here. The docs bar collapses at the same width, in
+   starlight/Header.astro -- see the note there for why the number is written
+   in both files rather than shared. */
+@media(max-width:900px){
+  .nav-inner{flex-wrap:nowrap}
+  .nav-menu-toggle{display:inline-flex}
+  .nlinks{
+    display:none;
+    position:absolute;
+    top:calc(100% + 8px);
+    left:18px;
+    right:18px;
+    z-index:30;
+    flex-direction:column;
+    align-items:stretch;
+    justify-content:flex-start;
+    gap:2px;
+    padding:8px;
+    background:rgba(var(--ui-bg-rgb), .98);
+    border:1px solid rgba(var(--ui-lift-rgb),.1);
+    border-radius:8px;
+    box-shadow:0 14px 34px rgba(0,0,0,.36);
+    backdrop-filter:blur(12px);
+  }
+  nav[data-open='true'] .nlinks{display:flex}
+  .nlinks a{
+    min-height:40px;
+    justify-content:flex-start;
+    padding:0 10px;
+    border-bottom:0;
+    border-left:2px solid transparent;
+    /* Undo the desktop full-bar height. Horizontally it puts the underline on
+       the bar's bottom edge; in this column it would make every menu item as
+       tall as the whole bar. An earlier version did the same job with a
+       negative block margin, which pulled each link 12px into its neighbour
+       -- 40px links sitting 18px apart, so the lower half of every item
+       activated the one below it. Hence the explicit margin reset. */
+    height:auto;
+    margin-block:0;
+  }
+  .nlinks a.nav-group-start{
+    margin-inline-start:0;
+    padding-inline-start:10px;
+    border-inline-start:2px solid transparent;
+    margin-block-start:6px;
+    padding-block-start:6px;
+    border-block-start:1px solid rgba(var(--ui-hairline-rgb),.28);
+  }
+  /* The stacked menu divides the two groups with the horizontal rule above,
+     so the vertical one has nothing to do here. */
+  .nlinks a.nav-group-start::before{
+    content:none;
+  }
+  .nlinks a:hover,
+  .nlinks a[aria-current]{
+    border-left-color:var(--ui-accent);
+    border-bottom-color:transparent;
+    background:rgba(var(--ui-accent-rgb),.1);
+  }
+}
+
+</style>
