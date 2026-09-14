@@ -48,8 +48,11 @@
      different components with their own scoped styles, and this is one
      decision, not two. */
   --ui-mark-filter: none;
-  /* 15 transparent columns of 720, per scripts/wordmark-inset.mjs. */
-  --ui-mark-inset-ratio: 0.0208;
+  /* Zero: the wordmark is cropped tight, so it carries no transparent margin
+     to cancel. Kept as a token rather than deleted -- the compensation is real
+     for any asset exported with padding, and scripts/wordmark-inset.mjs
+     re-measures whichever file meta.ts names. */
+  --ui-mark-inset-ratio: 0;
 
   /* Tells the browser which way to draw the controls it renders itself: the
    * <select> popup in the theme control, native focus rings, and form
@@ -188,19 +191,13 @@
 html[data-theme='light'] {
   color-scheme: light;
 
-  /* The wordmark is a dark-theme asset and there is only one of it: the
-   * lettering is white, so on a light page it disappears entirely. Measured
-   * over its 21,880 opaque pixels, mean ink is rgb(255,255,254) and 1.03:1
-   * on --ui-bg here. brightness(0.35) takes that to rgb(89,89,89) and
-   * 6.77:1, and leaves the hexagon's gradient still reading purple.
-   *
-   * No gate caught this and none should have -- WCAG exempts logotypes from
-   * the contrast rules, so axe and contrast-sweep.mjs are correctly silent.
-   *
-   * A light-theme asset would be more faithful and would also be a second
-   * file to keep in step with this one and with scripts/wordmark-inset.mjs.
-   * One declaration, reversible, until it bothers someone. */
-  --ui-mark-filter: brightness(0.35);
+  /* No filter. The wordmark is drawn to work on both themes: the lettering is
+     the brand purple rather than white, so it needs no darkening here, and
+     filtering it would only wash the mark out. The token stays because the
+     template's bars read it and a product shipping a dark-only wordmark still
+     needs it -- `brightness(0.35)` was what this site used while its wordmark
+     was white-on-transparent. */
+  --ui-mark-filter: none;
 
   /* The accent, as a colour and as channels.
    *
