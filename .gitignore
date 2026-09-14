@@ -52,3 +52,9 @@ docs/product-review-*.md
 # run from, which during development is this one. One reached a commit on
 # 2026-09-06 via `git add -A`, the same way the review scratch above did.
 nvx-report-*.txt
+
+# Copied from the repository root at build time by
+# site/scripts/copy-install-scripts.mjs. Committing them would let the served
+# copy drift from the real one, which is the thing the copy step prevents.
+/site/public/install.ps1
+/site/public/install.sh
