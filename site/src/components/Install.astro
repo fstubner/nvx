@@ -55,7 +55,7 @@ const groups = [
                   <div class="reco">
                     <div class="reco-meta">{recommended.label}</div>
                     {recommended.command ? (
-                      <div class="cmd big has-copy always-show"><span class="cmd-text">{recommended.command}</span></div>
+                      <div class="cmd big has-copy always-show"><span class="cmd-text" tabindex="0">{recommended.command}</span></div>
                     ) : (
                       <a class="cmd big install-download" href={recommended.href} download>
                         Download {recommended.label}
@@ -221,6 +221,12 @@ html[data-theme='light'] #install .reco{
    makes `padding-right` on the chip reserve real space, which it could not
    do while overflowing inline content painted across it. */
 .cmd-text{
+  /* Focusable because it scrolls. axe's scrollable-region-focusable
+     wants a scrollable element reachable by keyboard, and this one lost
+     its focusable descendant when the copy button became a sibling
+     rather than a child. A command you can scroll with a mouse should
+     be scrollable without one. */
+  outline-offset:2px;
   display:block;overflow-x:auto;white-space:pre;
   scrollbar-width:thin;scrollbar-color:rgba(var(--ui-lift-rgb),.15) transparent;
 }
