@@ -106,49 +106,69 @@ function alphaChannel(file) {
   return { width, height, alpha };
 }
 
-const { width, height, alpha } = alphaChannel(asset);
-
-// 8/255, not 0: a soft antialiased edge fades to a handful of alpha units
-// well before it reaches nothing, and counting those as ink would report a
-// margin a couple of columns short of where the glyph visibly starts.
-const OPAQUE = 8;
-let left = 0;
-while (left < width) {
-  let ink = false;
-  for (let y = 0; y < height && !ink; y += 1) ink = alpha[y * width + left] > OPAQUE;
-  if (ink) break;
-  left += 1;
+// Every asset a bar can show has to agree with the one token. A light-theme
+// wordmark is the same crop recoloured, so its margin matches by construction --
+// but only while someone keeps re-cutting them together. Measuring just the file
+// meta.ts names first would leave the other free to drift silently.
+const assets = [asset];
+const lightMatch = metaSource.match(/wordmarkLight:\s*'([^']+)'/);
+if (lightMatch) {
+  const lightAsset = path.join(siteRoot, 'public', lightMatch[1].replace(/^\//, ''));
+  if (!fs.existsSync(lightAsset)) {
+    console.error(
+      `meta.ts names ${lightMatch[1]} as the light wordmark, and public${lightMatch[1]} does not exist.`
+    );
+    process.exit(1);
+  }
+  assets.push(lightAsset);
 }
-
-const measured = left / width;
 
 const css = fs.readFileSync(tokens, 'utf8');
 const declared = css.match(/--ui-mark-inset-ratio:\s*([\d.]+)\s*;/);
 if (!declared) {
   console.error(
-    `No --ui-mark-inset-ratio declaration in ${path.relative(siteRoot, tokens)}.\n` +
-      `The wordmark's own left margin is ${measured.toFixed(4)} of its width ` +
-      `(${left} of ${width} columns); declare that.`
+    `No --ui-mark-inset-ratio declaration in ${path.relative(siteRoot, tokens)}.
+` +
+      "Measure the wordmark's own left margin as a fraction of its width and declare that."
   );
   process.exit(1);
 }
-
 const ratio = Number(declared[1]);
-const drift = Math.abs(ratio - measured);
 
-if (drift > TOLERANCE) {
-  console.error(
-    'Wordmark inset has drifted from the asset.\n' +
-      `  declared  --ui-mark-inset-ratio: ${ratio}\n` +
-      `  measured  ${measured.toFixed(4)} (${left} transparent columns of ${width})\n` +
-      `  drift     ${(drift * 160).toFixed(2)}px at a 160px wordmark, tolerance 0.50px\n` +
-      `Set the token to ${measured.toFixed(4)} in ${path.relative(siteRoot, tokens)}, ` +
-      'or re-export the asset with its original padding.'
+// 8/255, not 0: a soft antialiased edge fades to a handful of alpha units well
+// before it reaches nothing, and counting those as ink would report a margin a
+// couple of columns short of where the glyph visibly starts.
+const OPAQUE = 8;
+
+for (const file of assets) {
+  const { width, height, alpha } = alphaChannel(file);
+  let left = 0;
+  while (left < width) {
+    let ink = false;
+    for (let y = 0; y < height && !ink; y += 1) ink = alpha[y * width + left] > OPAQUE;
+    if (ink) break;
+    left += 1;
+  }
+  const measured = left / width;
+  const drift = Math.abs(ratio - measured);
+  const name = path.basename(file);
+  if (drift > TOLERANCE) {
+    console.error(
+      `Wordmark inset has drifted from ${name}.
+` +
+        `  declared  --ui-mark-inset-ratio: ${ratio}
+` +
+        `  measured  ${measured.toFixed(4)} (${left} transparent columns of ${width})
+` +
+        `  drift     ${(drift * 160).toFixed(2)}px at a 160px wordmark, tolerance 0.50px
+` +
+        `Set the token to ${measured.toFixed(4)} in ${path.relative(siteRoot, tokens)}, ` +
+        'or re-export the asset with its original padding.'
+    );
+    process.exit(1);
+  }
+  console.log(
+    `Wordmark inset OK: ${name} declared ${ratio}, measured ${measured.toFixed(4)} ` +
+      `(${left} of ${width} columns), off by ${(drift * 160).toFixed(2)}px at 160px.`
   );
-  process.exit(1);
 }
-
-console.log(
-  `Wordmark inset OK: declared ${ratio}, measured ${measured.toFixed(4)} ` +
-    `(${left} of ${width} columns), off by ${(drift * 160).toFixed(2)}px at 160px.`
-);

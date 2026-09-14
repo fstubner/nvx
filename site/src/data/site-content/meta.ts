@@ -38,6 +38,7 @@ export const appSchema: AppSchema = {
 
 export const branding: Branding = {
   wordmark: '/assets/wordmark.png',
+  wordmarkLight: '/assets/wordmark-light.png',
   wordmarkAlt: 'nvx',
   accentGradient: 'linear-gradient(90deg,#8A2BE2,#B1329F 50%,#FF007F)',
   bg: '#16161a',

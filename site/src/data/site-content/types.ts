@@ -52,8 +52,15 @@ export interface AppSchema {
 }
 
 export interface Branding {
-  /** Path to the wordmark image served from /. */
+  /** Path to the wordmark image served from /. Used on the dark theme, and on
+   *  both when `wordmarkLight` is absent. */
   wordmark: string;
+  /** Optional light-theme wordmark. A single asset cannot carry lettering that
+   *  reads on both grounds -- it has to be light on one and dark on the other --
+   *  so a product whose mark contains type ships two files and the bars swap
+   *  them. Omit it and `--ui-mark-filter` handles the light theme instead,
+   *  which suits a mark with no lettering to invert. */
+  wordmarkLight?: string;
   /** Shown in nav at 160px desktop / 132px mobile. */
   wordmarkAlt: string;
   /** Links + underline accent colour. */

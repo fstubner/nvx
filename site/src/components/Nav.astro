@@ -17,8 +17,11 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
 ---
 <nav data-site-nav data-open="false">
   <div class="nav-inner">
-    <a class="mark" href="/" aria-label={`${meta.siteName} home`}>
-      <img src={branding.wordmark} alt="" width="160" height="32" />
+    <a class={`mark${branding.wordmarkLight ? ' has-light' : ''}`} href="/" aria-label={`${meta.siteName} home`}>
+      <img class="mark-dark" src={branding.wordmark} alt="" width="160" height="32" />
+      {branding.wordmarkLight && (
+        <img class="mark-light" src={branding.wordmarkLight} alt="" width="160" height="32" />
+      )}
     </a>
     <button
       class="nav-menu-toggle"
@@ -222,6 +225,13 @@ html[data-theme='light'] nav[data-site-nav]::after{
      starts on the gutter the nav links start on. See tokens.css. */
   transform:translateX(calc(var(--ui-mark-width) * var(--ui-mark-inset-ratio) * -1));
 }
+/* Two files, swapped by theme, when the content provides a light one. A
+   wordmark containing type cannot be one asset: the lettering has to be light
+   on the dark bar and dark on the light one. `has-light` gates the swap so a
+   product shipping a single asset is unaffected and keeps --ui-mark-filter. */
+.mark-light{display:none}
+html[data-theme='light'] .mark.has-light .mark-dark{display:none}
+html[data-theme='light'] .mark.has-light .mark-light{display:block}
 .mark img{
   display:block;width:var(--ui-mark-width);height:auto;image-rendering:auto;
   /* See the note in starlight/Header.astro: bound the mark by the bar's

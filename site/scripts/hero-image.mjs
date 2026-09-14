@@ -10,7 +10,7 @@ import sharp from 'sharp';
 
 const out = process.argv[2];
 
-const W = 1200, H = 600;
+const W = 1200, H = 430;
 const PANEL = '#10151b';       // --ui-code-bg
 const FG = '#d7dce5';          // --ui-code-fg
 const DIM = '#8c95a6';         // --ui-text-muted
@@ -28,16 +28,10 @@ const lines = [
   [['Installed Bun versions:', FG]],
   [['  v1.4.2', FG]],
   null,
-  [['$ ', ACCENT], ['nvx doctor', '#ffffff']],
-  [['nvx doctor \u2014 shim interception', FG]],
-  [['  shim dir: C:\\Users\\you\\.nvx\\bin', DIM]],
-  [['  [OK]   shim dir is on PATH at position 63, with no raw-runtime dir ahead of it', FG]],
-  [['  commands:', DIM]],
-  [['    [OK]  node -> C:\\Users\\you\\.nvx\\bin\\node.exe', FG]],
-  [['    [OK]  npm -> C:\\Users\\you\\.nvx\\bin\\npm.exe', FG]],
-  [['    [OK]  npx -> C:\\Users\\you\\.nvx\\bin\\npx.exe', FG]],
-  [['    [OK]  bun -> C:\\Users\\you\\.nvx\\bin\\bun.exe', FG]],
-  [['    [OK]  bunx -> C:\\Users\\you\\.nvx\\bin\\bunx.exe', FG]],
+  [['$ ', ACCENT], ['npm install left-pad', '#ffffff']],
+  [['ℹ Running in native sandbox: npm install left-pad', ACCENT_HI]],
+  [['added 1 package, and audited 2 packages in 2s', FG]],
+  [['found 0 vulnerabilities', FG]],
 ];
 
 const FONT = "Consolas, 'Cascadia Mono', 'DejaVu Sans Mono', monospace";

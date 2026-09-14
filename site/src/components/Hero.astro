@@ -468,7 +468,11 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
      one, so it carries the same weight as the Desktop app button beside it.
      See the chip note in landing/tokens.css. */
   background:var(--ui-chip-bg);border:1px solid var(--ui-chip-border);
-  box-shadow:0 0 0 1px rgba(var(--ui-accent-rgb),.26),0 0 14px rgba(var(--ui-accent-rgb),.08);
+  /* The ring is the only thing marking this as the thing to copy, so it is
+     drawn to be seen: a .26 alpha hairline with an .08 glow was invisible
+     against the chip at any normal brightness. */
+  border-color:rgba(var(--ui-accent-rgb),.5);
+  box-shadow:0 0 0 1px rgba(var(--ui-accent-rgb),.55),0 0 22px rgba(var(--ui-accent-rgb),.20);
 }
 .hero-command.hero-copy .copy-btn{opacity:1}
 .hero-command code{
