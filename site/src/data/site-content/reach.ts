@@ -13,7 +13,7 @@ import type { ReachNote, ReachRow, SectionCopy } from './types';
 export const reachCopy: SectionCopy = {
   heading: 'What an install can actually reach',
   leadHtml:
-    'A package install runs code you did not write, as you, with whatever you can open. The difference nvx makes is a list, not an adjective — and the <a href="https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md">enforcement matrix</a> says which rows are measured and which are read off a profile.',
+    'A package install runs code you did not write, as you, with whatever you can open. nvx answers that with a list of what it can still open. The <a href="https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md">enforcement matrix</a> says which rows are measured and which are read off a profile.',
 };
 
 // Left column is what any postinstall script can open on a normal machine;
@@ -68,7 +68,7 @@ export const reachAllowed: ReachRow[] = [
 // narrower product than a visitor on Windows, and finding that out later is
 // the outcome this section exists to prevent.
 export const reachNote: ReachNote = {
-  heading: 'macOS contains writes and egress, not reads',
+  heading: 'On macOS, reads are not contained',
   bodyHtml:
     'The Seatbelt profile has to allow filesystem reads: the dynamic linker loads system libraries whose locations move between macOS versions, and a strict read allowlist stops a process launching at all. So on macOS the four rows above can still be read by absolute path. Write containment, egress control and environment scrubbing are enforced there.',
   measuredHtml:

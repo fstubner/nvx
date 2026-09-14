@@ -196,7 +196,7 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
                          contained        uncontained
   LIST[C:\]              DENIED:EPERM     OK, 40 entries
   LIST[C:\Users]         DENIED:EPERM     OK, 14 entries
-  LIST[C:\Users\Felix]   OK, 203 entries  OK, 203 entries
+  LIST[C:\Users\you]   OK, 203 entries  OK, 203 entries
   ```
 
   This entry used to name all three as always-visible, crediting the shipped ACE

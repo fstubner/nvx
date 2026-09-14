@@ -438,7 +438,7 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   they stay separate — what breaks it is a manifest somewhere above them.
 
   A home directory is the easy way to acquire one, from an `npm install` run in
-  the wrong folder. Measured 2026-09-01: an `npm install` in `C:\Users\Felix`
+  the wrong folder. Measured 2026-09-01: an `npm install` in `C:\Users\you`
   left a `package.json` there, and every project beneath it — including nvx's own
   test fixtures under `%TEMP%` — collapsed into a single scope. The containment
   probes caught it as a cross-project read, which is how it was found; deleting
@@ -481,7 +481,7 @@ assumed; see `docs/enforcement-matrix.md` for the per-OS detail.
   ```
   LIST[C:\]            DENIED:EPERM     (OK where setup's grant applies)
   LIST[C:\Users]       DENIED:EPERM     (OK where setup's grant applies)
-  LIST[C:\Users\Felix] OK, 203 entries  (always — the shipped ACE)
+  LIST[C:\Users\you] OK, 203 entries  (always — the shipped ACE)
   ```
 
   `nvx setup --undo` removes the grants nvx added; the shipped ACE on your profile

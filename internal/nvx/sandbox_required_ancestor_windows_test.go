@@ -16,7 +16,7 @@ package nvx
 // stats every directory on the way, so with ~/.nvx/sandbox_home in the skip cache
 // every `nvx npx` ended in:
 //
-//	EPERM lstat C:\Users\Felix\.nvx\sandbox_home
+//	EPERM lstat C:\Users\you\.nvx\sandbox_home
 //
 // Measured 2026-09-01. The entry had been written on 2026-08-29 by a single
 // overrun, and the only trace at runtime was "Skipped 2 of 2 ancestor permission

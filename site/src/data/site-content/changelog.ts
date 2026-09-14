@@ -1,4 +1,4 @@
-import type { SectionCopy } from './types';
+import type { ChangelogSurface, SectionCopy } from './types';
 import { meta } from './meta';
 
 // The changelog page's own copy, and one plain-language summary per release.
@@ -21,6 +21,21 @@ export const changelogOgDescription = `Versioned ${meta.siteName} release notes 
 //
 // 0.5.5 and 0.5.7 are deliberately absent: CHANGELOG.md records both as "cut,
 // never published", so there is no release for a summary to sit above.
+// The surfaces this product actually has, for the auto-summary.
+//
+// The template shipped the map inline in scripts/changelog/summarize.ts, and
+// it described the product the template was generalised from: a desktop app,
+// a terminal UI, an MCP server and a "Rust core". A Go CLI's releases were
+// therefore summarised as spanning surfaces it does not have. The generic
+// half of that summariser -- feat/fix/refactor/docs/ci/deps -- stays in code,
+// because those apply to any project.
+export const changelogSurfaces: ChangelogSurface[] = [
+  { pattern: /cli|command|subcommand/, label: 'the CLI' },
+  { pattern: /sandbox|contain|isolat/, label: 'the sandbox' },
+  { pattern: /core|runtime|version manager/, label: 'the Go core' },
+  { pattern: /docs?|site|changelog/, label: 'the docs site' },
+];
+
 export const releaseSummaries: Record<string, string> = {
   'v0.6.0':
     'Per-project sandbox identity, and the first ways for a contained tool to reach named things outside its box: --connect for one service, loopback mode, read-and-execute grants, and named environment variables. The wsl, wslc and systemd-nspawn providers were removed.',

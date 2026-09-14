@@ -38,7 +38,7 @@ These are empirical, not assumed — each was tested live and reverted:
 1. **The known hang is specific to the profile root, not to subdirectories.**
    An ACL grant on a subdirectory one level under the real profile
    (`~/.nvx-icacls-test`) completed near-instantly. A grant on the profile
-   root itself (`C:\Users\Felix`, this-folder-only, non-recursive) reproduced
+   root itself (`C:\Users\you`, this-folder-only, non-recursive) reproduced
    the hang, timing out at 20s with no partial state left behind (confirmed:
    the pre-existing `ALL APPLICATION PACKAGES` ACE stayed at `(RX)`, no `(M)`
    landed).

@@ -1,4 +1,4 @@
-import type { Branding, Meta } from './types';
+import type { AppSchema, Branding, Meta } from './types';
 
 export const meta: Meta = {
   domain: 'https://nvx.run',
@@ -6,7 +6,7 @@ export const meta: Meta = {
   // version manager is the main thing and containment the second.
   title: 'nvx — a Node.js and Bun version manager with a sandbox',
   description:
-    'Install, switch and pin Node.js and Bun on Windows, macOS and Linux. One static binary, no dependencies — and every install runs inside an OS sandbox that cannot read your SSH keys or reach hosts you did not allow.',
+    'Install, switch and pin Node.js and Bun on Windows, macOS and Linux. One static binary, no dependencies. Every install runs inside an OS sandbox that confines writes to the project and refuses hosts you did not allow; on Windows and Linux it cannot read your SSH keys either.',
   ogDescription:
     'A Node.js and Bun version manager for Windows, macOS and Linux that contains what it installs.',
   siteName: 'nvx',
@@ -23,6 +23,19 @@ export const meta: Meta = {
 // green-to-cyan (#16a34a -> #22c55e -> #1edcff) on #111, which is the site
 // this shell was generalised from -- leaving it would have made nvx's landing
 // page netscli's in a different typeface.
+// Facts about the product for the JSON-LD. Go, not Rust: these were
+// literals in the layout until 2026-09-14, and the language was the
+// template's rather than this product's.
+export const appSchema: AppSchema = {
+  applicationCategory: 'DeveloperApplication',
+  applicationSubCategory: 'Runtime version manager',
+  operatingSystem: 'Windows, macOS, Linux',
+  license: 'https://opensource.org/licenses/MIT',
+  programmingLanguage: 'Go',
+  price: '0',
+  priceCurrency: 'USD',
+};
+
 export const branding: Branding = {
   wordmark: '/assets/wordmark.png',
   wordmarkAlt: 'nvx',
