@@ -4,7 +4,7 @@ export const hero: Hero = {
   badge: 'Windows · macOS · Linux',
   heading: 'Node.js and Bun versions, with a sandbox around every install',
   subhead:
-    'Install, switch and pin runtimes per project, and auto-switch on cd. One static binary with no dependencies. Every npm install runs inside an OS sandbox, with a throwaway HOME, writes confined to the project, and an allowlist for anything it tries to contact. On Windows and Linux it cannot read your SSH keys or npm token either.',
+    'Install, switch and pin runtimes per project, and auto-switch on cd. Every npm install runs inside an OS sandbox: a throwaway HOME, writes confined to the project, and an allowlist for anything it contacts.',
   quickInstall: 'irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex',
   quickInstallAlt: 'curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh',
   installLinkLabel: 'More install options ↓',

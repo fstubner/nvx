@@ -1,6 +1,7 @@
 ---
 import { site } from '../data/site';
 import { sections } from '../data/site-content/sections';
+import { heroCommands } from '../data/site-content/hero';
 const { hero, heroDownloads, social } = site;
 // The jump link only exists if there is an install section to jump to.
 // sections.ts can drop one, and a link to a section the page does not render
@@ -10,6 +11,18 @@ const hasInstall = (sections as readonly string[]).includes('install');
 // reads. The list's first entry, so the markup can never name a file the
 // content file does not list.
 const defaultDownload = heroDownloads[0];
+// Two command rows only make sense when there are two commands. A product
+// with no package-manager channel sets `packageManager` to the install script
+// on every platform, and the hero then prints the same one-liner twice -- once
+// wide, once narrow, with the reader left looking for the difference. When no
+// platform has a distinct route, the wide row is dropped and the narrow one
+// carries the command beside the "more install options" link.
+// scripts/landing/os-tabs.ts fills rows by id and skips a missing one, so the
+// runtime side needs no matching change.
+const hasPackageManagerRoute = Object.values(heroCommands).some(
+  (c) => c.packageManager !== c.script,
+);
+
 ---
 <div class="hero-frame">
 <div class="hero">
@@ -106,13 +119,15 @@ const defaultDownload = heroDownloads[0];
           said so. The ids keep their meaning -- `hero-quick-install` is the
           quick script, `hero-package-install` is the package manager -- and
           scripts/landing/os-tabs.ts fills both by id, not by position. */}
-      <div
-        class="hero-command hero-command-wide has-copy hero-copy"
-        data-copy={hero.quickInstallAlt}
-        id="hero-quick-install"
-      >
-        <code>{hero.quickInstallAlt}</code>
-      </div>
+      {hasPackageManagerRoute && (
+        <div
+          class="hero-command hero-command-wide has-copy hero-copy"
+          data-copy={hero.quickInstallAlt}
+          id="hero-quick-install"
+        >
+          <code>{hero.quickInstallAlt}</code>
+        </div>
+      )}
     </div>
     <div class="hero-cta-sub">
       <div class="hero-command has-copy hero-copy" id="hero-package-install" data-copy={hero.quickInstall}>

@@ -21,7 +21,8 @@
     "test:a11y": "npm run build && node ./scripts/a11y.mjs",
     "check:contrast": "node ./scripts/contrast-sweep.mjs",
     "visual:record": "node ./scripts/visual-snapshot.mjs record",
-    "visual:check": "node ./scripts/visual-snapshot.mjs check"
+    "visual:check": "node ./scripts/visual-snapshot.mjs check",
+    "prebuild": "node ./scripts/copy-install-scripts.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.41.9",
