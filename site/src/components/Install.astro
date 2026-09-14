@@ -230,7 +230,12 @@ html[data-theme='light'] #install .reco{
   display:block;overflow-x:auto;white-space:pre;
   scrollbar-width:thin;scrollbar-color:rgba(var(--ui-lift-rgb),.15) transparent;
 }
-.cmd.big{font-size:1.05rem;padding-right:74px}
+/* No right padding reservation. The copy button floats over the command's
+   right edge with an opaque background, so the text runs full width and
+   scrolls underneath it. Reserving 74px instead pushed the button out of the
+   text and shrank the box, which is not what the button looked like before the
+   scroll container was split out. */
+.cmd.big{font-size:1.05rem}
 /* The container is the divider: the rows sit on it with a 1px gap, so its
    background shows through as the hairline between them. Chip tokens, so the
    rule between two light rows is a light hairline rather than a near-black

@@ -99,9 +99,11 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
 
     /* See the note in Nav.astro: two assets when the content names a light
        one, gated so a product shipping a single asset is unaffected. */
-    .mark-light { display: none; }
-    html[data-theme='light'] .docs-mark.has-light .mark-dark { display: none; }
-    html[data-theme='light'] .docs-mark.has-light .mark-light { display: block; }
+    /* img in the selector: `.docs-mark img` below is (0,1,1) and beats a bare
+       class at (0,1,0), which rendered both wordmarks at once. */
+    .docs-mark img.mark-light { display: none; }
+    html[data-theme='light'] .docs-mark.has-light img.mark-dark { display: none; }
+    html[data-theme='light'] .docs-mark.has-light img.mark-light { display: block; }
 
     .docs-mark img {
       display: block;

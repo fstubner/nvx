@@ -229,9 +229,12 @@ html[data-theme='light'] nav[data-site-nav]::after{
    wordmark containing type cannot be one asset: the lettering has to be light
    on the dark bar and dark on the light one. `has-light` gates the swap so a
    product shipping a single asset is unaffected and keeps --ui-mark-filter. */
-.mark-light{display:none}
-html[data-theme='light'] .mark.has-light .mark-dark{display:none}
-html[data-theme='light'] .mark.has-light .mark-light{display:block}
+/* img in the selector on purpose: `.mark img{display:block}` below is (0,1,1)
+   and beat a bare `.mark-light` at (0,1,0), so both wordmarks rendered at once
+   and the bar showed the logo twice. */
+.mark img.mark-light{display:none}
+html[data-theme='light'] .mark.has-light img.mark-dark{display:none}
+html[data-theme='light'] .mark.has-light img.mark-light{display:block}
 .mark img{
   display:block;width:var(--ui-mark-width);height:auto;image-rendering:auto;
   /* See the note in starlight/Header.astro: bound the mark by the bar's
