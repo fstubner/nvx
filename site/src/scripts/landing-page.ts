@@ -59,7 +59,9 @@ export function initLandingPage(repo: string): void {
           const stars = document.getElementById("stars");
           const count = document.getElementById("stars-count");
           if (count) count.textContent = fmt(d.stargazers_count);
-          if (stars) stars.hidden = false;
+          // Only reveal a count that says something. A fresh repo has 0 stars,
+        // and "0" reads worse than an absent chip.
+        if (stars) stars.hidden = d.stargazers_count < 1;
           refreshMetricSeparators();
         })
         .catch(() => {});
@@ -80,7 +82,8 @@ export function initLandingPage(repo: string): void {
             el.textContent = `${fmtDownloads(total)} ${total === 1 ? "download" : "downloads"}`;
             el.dataset.totalDownloads = `Downloads: ${fmt(total)} total`;
             el.setAttribute("aria-label", el.dataset.totalDownloads);
-            el.hidden = false;
+            // Same reason as the star chip: 0 downloads is worse than no chip.
+            el.hidden = total < 1;
           }
           refreshMetricSeparators();
           const latest = releases.find((release) => !release.draft && !release.prerelease)

@@ -1,3 +1,4 @@
+import { changelogSurfaces } from '../../data/site-content/changelog';
 import type { ChangelogRelease } from './types';
 
 export function normalizeMarkdown(markdown: string | undefined): string {
@@ -108,18 +109,9 @@ export function summarizeRelease(
   )
     .filter(([pattern]) => pattern.test(bodyText))
     .map(([, label]) => label);
-  const surfaces = (
-    [
-      [/gui|desktop|tauri|react/, 'desktop app'],
-      [/\bcli\b|command|subcommand/, 'CLI'],
-      [/\btui\b|terminal/, 'terminal UI'],
-      [/\bmcp\b|agent/, 'MCP server'],
-      [/core|library|crate|rust/, 'Rust core'],
-      [/docs?|site|changelog/, 'docs site'],
-    ] as const
-  )
-    .filter(([pattern]) => pattern.test(bodyText))
-    .map(([, label]) => label);
+  const surfaces = changelogSurfaces
+    .filter(({ pattern }) => pattern.test(bodyText))
+    .map(({ label }) => label);
 
   const focus = sections.length
     ? formatList([...new Set(sections)].slice(0, 3))

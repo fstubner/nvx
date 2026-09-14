@@ -6,6 +6,13 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const maxLines = 300;
 const transitionExceptions = new Map([
   [
+    'src/data/site-content/types.ts',
+    {
+      maxLines: 340,
+      reason: 'content type surface; split per-section types (hero/install/faq/changelog) next',
+    },
+  ],
+  [
     'src/scripts/docs-header.ts',
     {
       maxLines: 360,

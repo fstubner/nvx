@@ -25,6 +25,32 @@ export interface Meta {
   themeColor: string;
 }
 
+/** schema.org SoftwareApplication facts that differ per product.
+ *
+ * Required on purpose: these were literals in the JSON-LD where nothing made
+ * a new site revisit them. The rationale is in meta.ts, next to the values. */
+/** One product surface the changelog summariser can name. */
+export interface ChangelogSurface {
+  /** Matched against the release body. */
+  pattern: RegExp;
+  /** How the summary names it. */
+  label: string;
+}
+
+export interface AppSchema {
+  applicationCategory: string;
+  /** Free text narrowing the category for this product. */
+  applicationSubCategory: string;
+  /** Platforms, as a human list: 'Windows, macOS, Linux'. */
+  operatingSystem: string;
+  license: string;
+  /** The language the PRODUCT is written in, not the site. */
+  programmingLanguage: string;
+  /** Price as a string. '0' for free. */
+  price: string;
+  priceCurrency: string;
+}
+
 export interface Branding {
   /** Path to the wordmark image served from /. */
   wordmark: string;

@@ -224,6 +224,10 @@ html[data-theme='light'] nav[data-site-nav]::after{
 }
 .mark img{
   display:block;width:var(--ui-mark-width);height:auto;image-rendering:auto;
+  /* See the note in starlight/Header.astro: bound the mark by the bar's
+     height too, or a tall wordmark sets the bar height itself. */
+  max-height:calc(var(--ui-nav-height) - 1.25rem);
+  object-fit:contain;object-position:left center;
 }
 
 .nav-menu-toggle{

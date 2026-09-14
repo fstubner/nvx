@@ -38,6 +38,7 @@ const SAMPLE_STRINGS = [
   'some-tool',
   'The first release: one binary',
   'First cut of the site from product-site-template',
+  'REPLACE_ME',
 ];
 
 /** Files whose sample text has to go, and what each one holds. */
@@ -166,6 +167,48 @@ if (exists('CHANGELOG.md')) {
       'CHANGELOG.md',
       'is still the stub',
       'The changelog page reads GitHub Releases at runtime and falls back to this file.'
+    );
+  }
+}
+
+// ---- 7. Sample text anywhere else in the source ---------------------------
+//
+// Sections 1 and 2 scan a hand-listed set of files. That list is the reason
+// `programmingLanguage: 'Rust'` shipped on a site for a program written in Go:
+// the value lived in src/layouts/Page.astro, which no list named, so no gate
+// ever looked at it. A product fact can live anywhere in the source, so the
+// scan goes everywhere in the source.
+const SCAN_ROOTS = ['src', 'astro.config.mjs'];
+// Code only, and comments stripped before matching. The first run of this
+// scan flagged three files and all three were wrong: `example.com` in a
+// policy sample (the reserved documentation domain, correct there), and
+// `REPLACE_ME` and `some-tool` inside comments explaining those very
+// strings. The bug this exists to catch -- `programmingLanguage: 'Rust'`
+// -- was a VALUE. Prose that mentions a sample string is not the same as
+// code that still uses one, and a gate that cries wolf gets switched off.
+const SCAN_EXTS = ['.ts', '.tsx', '.astro', '.mjs', '.js'];
+const stripComments = (text) =>
+  text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*/g, '$1 ');
+const SKIP_DIRS = new Set(['node_modules', 'dist', '.astro']);
+
+const walk = (rel) => {
+  const abs = path.join(root, rel);
+  if (!fs.existsSync(abs)) return [];
+  if (fs.statSync(abs).isFile()) return [rel];
+  return fs.readdirSync(abs).flatMap((entry) =>
+    SKIP_DIRS.has(entry) ? [] : walk(path.join(rel, entry))
+  );
+};
+
+for (const file of SCAN_ROOTS.flatMap(walk)) {
+  if (!SCAN_EXTS.includes(path.extname(file))) continue;
+  const body = stripComments(read(file));
+  for (const sample of SAMPLE_STRINGS) {
+    if (!body.includes(sample)) continue;
+    note(
+      file,
+      `still contains the template's ${JSON.stringify(sample)}`,
+      'A value that differs per product belongs in src/data/site-content/ behind a required type, so a new site cannot inherit it silently.'
     );
   }
 }
