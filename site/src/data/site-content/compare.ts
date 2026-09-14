@@ -6,7 +6,10 @@ import type { ComparisonColumn, ComparisonRow, SectionCopy } from './types';
 // before editing it: the rows describe out-of-the-box defaults at the time of
 // writing, and the supply-chain row was checked against volta, fnm and asdf
 // directly -- none of them intercepts an install or queries OSV. uv was not
-// verified independently, so its cell reflects README rather than a check.
+// verified independently. Checked 2026-09-14: uv ships `uv audit`, which asks
+// OSV for vulnerability and malware advisories, with malware blocking behind
+// UV_MALWARE_CHECK=1. It has no typosquat heuristic, so the row is split in
+// its cell rather than reduced to a dash.
 export const compareCopy: SectionCopy = {
   heading: 'How nvx compares',
   leadHtml:
@@ -30,7 +33,7 @@ export const compareRows: ComparisonRow[] = [
   { feature: 'Session-scoped switching', cells: ['✓', '✓', '✓', 'shims', 'shims', '—'] },
   { feature: 'Checksum-verified downloads', cells: ['✓', '✓', '✓', '✓', 'varies', '✓'] },
   { feature: 'Package resolution / lockfiles', cells: ['—', '—', '—', '—', '—', '✓'] },
-  { feature: 'Typosquat / OSV / release-age checks', cells: ['✓', '—', '—', '—', '—', '—'] },
+  { feature: 'Typosquat / OSV / release-age checks', cells: ['✓', '—', '—', '—', '—', 'OSV audit, opt-in malware'] },
   { feature: 'OS sandbox for install and run', cells: ['✓', '—', '—', '—', '—', '—'] },
   { feature: 'Egress allowlist for install scripts', cells: ['✓', '—', '—', '—', '—', '—'] },
   { feature: 'Environment secrets scrubbed', cells: ['✓', '—', '—', '—', '—', '—'] },

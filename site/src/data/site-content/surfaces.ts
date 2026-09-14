@@ -24,10 +24,12 @@ export const surfaces: SurfaceCard[] = [
     title: 'Installs, contained',
     body: 'You type the same command. nvx runs it inside the platform sandbox — AppContainer, Landlock, or Seatbelt — with a throwaway <code>HOME</code>, writes confined to the project, and an egress allowlist the contained process cannot talk its way past.',
     flip: true,
-    codeHtml: `<span style="color:var(--ui-code-comment)">$</span> npm install some-package
-<span style="color:var(--ui-code-comment)">ℹ</span> Running in native sandbox: npm install
-<span style="color:var(--ui-code-comment)">⚠</span> Blocked egress: telemetry.example.net:443
-<span style="color:var(--ui-code-comment)">ℹ</span> Allow it in .nvx-policy.json if you meant to.
-<span style="color:var(--ui-code-comment)">✔</span> added 42 packages`,
+    // Captured from a real contained install on 2026-09-14 rather than composed.
+    // What this replaced showed a blocked egress against an invented host, and
+    // was the only output on the page nvx had not actually printed.
+    codeHtml: `<span style="color:var(--ui-code-comment)">$</span> npm install left-pad
+<span style="color:var(--ui-code-comment)">ℹ</span> Running in native sandbox: npm install left-pad
+added 1 package, and audited 2 packages in 2s
+found 0 vulnerabilities`,
   },
 ];
