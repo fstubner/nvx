@@ -261,7 +261,7 @@ export interface ReachRow {
   target: string;
   /** What it is, in plain words. */
   what: string;
-  /** Its state on an ordinary machine. Empty for rows that only apply contained. */
+  /** Its state under any other version manager, which is npm's own answer. */
   plain: string;
   /** Its state from inside a contained install. */
   contained: string;

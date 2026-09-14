@@ -1,5 +1,5 @@
 ---
-import { reachAllowed, reachCopy, reachNote, reachRows } from '../data/site-content/reach';
+import { reachColumns, reachCopy, reachNote, reachRows } from '../data/site-content/reach';
 
 // Imports its content directly rather than through `site`, because this
 // section is nvx's own rather than one of the template's four. Everything
@@ -12,51 +12,37 @@ import { reachAllowed, reachCopy, reachNote, reachRows } from '../data/site-cont
     <h2>{reachCopy.heading}</h2>
     <p class="lead" set:html={reachCopy.leadHtml} />
 
-    <div class="reach-grid">
-      <div class="reach-col reach-plain">
-        <p class="reach-col-head">npm install, as it runs today</p>
-        <ul>
+    <!-- Scrollable, and focusable because it scrolls: axe's
+         scrollable-region-focusable wants a scrollable region reachable by
+         keyboard, and a table of text has no focusable descendant of its own. -->
+    <div class="reach-scroll" tabindex="0">
+      <table class="reach-table">
+        <thead>
+          <tr>
+            <th scope="col">{reachColumns.target}</th>
+            <th scope="col">{reachColumns.others}</th>
+            <th scope="col" class="nvx">{reachColumns.nvx}</th>
+          </tr>
+        </thead>
+        <tbody>
           {reachRows.map((r) => (
-            <li>
-              <code>{r.target}</code>
-              <span class="reach-what">{r.what}</span>
-              <span class="reach-verdict plain">{r.plain}</span>
-            </li>
+            <tr>
+              <th scope="row">
+                <code>{r.target}</code>
+                <span class="reach-what">{r.what}</span>
+              </th>
+              <td><span class="verdict plain">{r.plain}</span></td>
+              <td class="nvx"><span class="verdict contained">{r.contained}</span></td>
+            </tr>
           ))}
-        </ul>
-      </div>
-
-      <div class="reach-col reach-contained">
-        <p class="reach-col-head">the same install, contained</p>
-        <ul>
-          {reachRows.map((r) => (
-            <li>
-              <code>{r.target}</code>
-              <span class="reach-what">{r.what}</span>
-              <span class="reach-verdict contained">{r.contained}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-
-    <div class="reach-keeps">
-      <p class="reach-col-head">what it still has</p>
-      <ul>
-        {reachAllowed.map((r) => (
-          <li>
-            <code>{r.target}</code>
-            <span class="reach-what">{r.what}</span>
-            <span class="reach-verdict contained">{r.contained}</span>
-          </li>
-        ))}
-      </ul>
+        </tbody>
+      </table>
     </div>
 
     <aside class="reach-note">
       <p class="reach-note-head">{reachNote.heading}</p>
       <p set:html={reachNote.bodyHtml} />
-      <p class="reach-measured" set:html={reachNote.measuredHtml} />
+      <p set:html={reachNote.measuredHtml} />
     </aside>
   </div>
 </section>
@@ -64,75 +50,69 @@ import { reachAllowed, reachCopy, reachNote, reachRows } from '../data/site-cont
 <style is:global>
 /* ─── WHAT AN INSTALL CAN REACH ─── */
 
-/* Two columns of the same five targets, so the eye compares rows rather than
-   reading two independent lists. Below 720px they stack, and the column
-   headings are what keeps them apart -- which is why the heading is inside
-   each column rather than being a table header row. */
-.reach-grid{
-  display:grid;grid-template-columns:1fr 1fr;gap:28px;
-  margin-bottom:28px;
-}
-.reach-grid>*{min-width:0}
-
-.reach-col,
-.reach-keeps{
+/* One row per target, so a path appears once and the eye travels sideways to
+   compare. The previous version was two columns of cards listing the same five
+   paths twice, which left the reader pairing them up by hand. */
+.reach-scroll{
+  overflow-x:auto;
+  margin-bottom:24px;
   border:1px solid rgba(var(--ui-hairline-rgb),.22);
   border-radius:10px;
-  padding:18px 20px 8px;
   background:var(--ui-surface-raised);
 }
-
-/* The uncontained column carries no border accent and the contained one does.
-   The difference has to survive a greyscale screenshot, so it is a left rule
-   plus the verdict wording, not colour alone. */
-.reach-contained{
-  border-left:3px solid var(--ui-accent);
+.reach-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:.8125rem;
 }
-
-.reach-col-head{
-  font-size:.75rem;font-weight:700;letter-spacing:.02em;
-  text-transform:lowercase;
-  color:var(--ui-text-muted);
-  margin:0 0 14px;
-}
-
-.reach-col ul,
-.reach-keeps ul{list-style:none;margin:0;padding:0}
-
-.reach-col li,
-.reach-keeps li{
-  display:grid;
-  grid-template-columns:minmax(0,1fr) auto;
-  align-items:baseline;
-  gap:2px 12px;
-  padding:10px 0;
+.reach-table th,
+.reach-table td{
+  text-align:left;
+  padding:12px 18px;
   border-top:1px solid rgba(var(--ui-hairline-rgb),.14);
+  vertical-align:middle;
 }
-.reach-col li:first-child,
-.reach-keeps li:first-child{border-top:0}
+.reach-table thead th{
+  border-top:0;
+  font-size:.75rem;
+  font-weight:700;
+  letter-spacing:.02em;
+  color:var(--ui-text-muted);
+  white-space:nowrap;
+}
+.reach-table tbody th{font-weight:400}
 
-/* start, not stretch. A grid item is blockified, so these inline <code>
-   chips became display:block and filled the whole 418px track while their
-   text was 122px wide -- the chip background then drew as a bar across the
-   row rather than around the path. */
-.reach-col code,
-.reach-keeps code{
-  justify-self:start;
+/* The nvx column is outlined down its whole height, header included, so it
+   reads as one column rather than as a set of highlighted cells. */
+.reach-table th.nvx,
+.reach-table td.nvx{
+  border-left:2px solid var(--ui-accent);
+  border-right:2px solid var(--ui-accent);
+  background:rgba(var(--ui-accent-rgb),.05);
+}
+.reach-table thead th.nvx{
+  color:var(--ui-accent);
+  border-top:2px solid var(--ui-accent);
+}
+.reach-table tbody tr:last-child td.nvx{
+  border-bottom:2px solid var(--ui-accent);
+}
+
+.reach-table code{
+  display:block;
   font-family:ui-monospace,"SF Mono",Menlo,monospace;
   font-size:.8125rem;
   color:var(--ui-text-strong);
-  word-break:break-all;
 }
-
 .reach-what{
-  grid-column:1;
+  display:block;
+  margin-top:2px;
   font-size:.75rem;
   color:var(--ui-text-muted);
 }
 
-.reach-verdict{
-  grid-column:2;grid-row:1 / span 2;
-  align-self:center;
+.verdict{
+  display:inline-block;
   font-size:.6875rem;
   font-weight:700;
   letter-spacing:.02em;
@@ -140,27 +120,20 @@ import { reachAllowed, reachCopy, reachNote, reachRows } from '../data/site-cont
   padding:3px 9px;
   border-radius:999px;
 }
-
-/* Amber, not red: "readable" is the ordinary state of a machine, not an
-   error. --ui-warn is a themed pair; on this surface it measures 7.05:1 in
-   the dark theme and 5.71:1 in the light one. */
-.reach-verdict.plain{
+/* Amber, not red: "readable" is the ordinary state of a machine rather than an
+   error. --ui-warn is a themed pair; on this surface it measures 7.05:1 in the
+   dark theme and 5.71:1 in the light one. */
+.verdict.plain{
   color:var(--ui-warn);
   border:1px solid rgba(var(--ui-hairline-rgb),.3);
 }
-.reach-verdict.contained{
+.verdict.contained{
   color:var(--ui-accent);
   border:1px solid rgba(var(--ui-accent-rgb),.42);
 }
 
-.reach-keeps{margin-bottom:28px}
-.reach-keeps ul{
-  display:grid;grid-template-columns:1fr 1fr;gap:0 28px;
-}
-.reach-keeps li:nth-child(2){border-top:0}
-
-/* The caveat is a peer of the grid, not a footnote under it. A visitor on a
-   Mac is reading a narrower product than one on Windows. */
+/* The caveat is a peer of the table, not a footnote under it. Someone reading
+   this on a Mac is looking at a narrower product than someone on Windows. */
 .reach-note{
   border:1px solid rgba(var(--ui-hairline-rgb),.22);
   border-left:3px solid var(--ui-warn);
@@ -173,6 +146,10 @@ import { reachAllowed, reachCopy, reachNote, reachRows } from '../data/site-cont
   color:var(--ui-text-strong);
   margin:0 0 8px;
 }
+/* No opacity dimming on these. At .88 the measured-evidence paragraph
+   composited to 4.11:1 in the light theme against a 4.5 floor, and an in-page
+   contrast sweep does not catch it: opacity applies to the element, not to the
+   colour a checker reads. */
 .reach-note p{
   font-size:.8125rem;line-height:1.65;
   color:var(--ui-text-muted);
@@ -184,14 +161,10 @@ import { reachAllowed, reachCopy, reachNote, reachRows } from '../data/site-cont
   font-size:.75rem;
   color:var(--ui-text);
 }
-/* No opacity dimming here. At .88 this paragraph composited to 4.11:1 in
-   the light theme against a 4.5 floor, and an in-page contrast sweep does
-   not see it: opacity is applied to the element, not to the colour a
-   checker reads. Left at full strength it is 5.27:1 light, 5.60:1 dark. */
 
 @media(max-width:720px){
-  .reach-grid{grid-template-columns:1fr;gap:18px}
-  .reach-keeps ul{grid-template-columns:1fr}
-  .reach-keeps li:nth-child(2){border-top:1px solid rgba(var(--ui-hairline-rgb),.14)}
+  .reach-table th,
+  .reach-table td{padding:10px 12px}
+  .reach-table thead th{font-size:.6875rem}
 }
 </style>
