@@ -4,9 +4,11 @@ export const meta: Meta = {
   domain: 'https://nvx.run',
   // Leads with the job, not the security layer: PRODUCT.md settles that the
   // version manager is the main thing and containment the second.
-  title: 'nvx — a Node.js and Bun version manager with a sandbox',
+  title: 'nvx · a Node.js and Bun version manager with a sandbox',
+  // Kept under 160 characters so Google shows it whole. The longer version
+  // this replaced ran to 271 and was truncated mid-clause in the SERP.
   description:
-    'Install, switch and pin Node.js and Bun on Windows, macOS and Linux. One static binary, no dependencies. Every install runs inside an OS sandbox that confines writes to the project and refuses hosts you did not allow; on Windows and Linux it cannot read your SSH keys either.',
+    'Install, switch and pin Node.js and Bun on Windows, macOS and Linux. One static binary, and every install runs inside an OS sandbox.',
   ogDescription:
     'A Node.js and Bun version manager for Windows, macOS and Linux that contains what it installs.',
   siteName: 'nvx',

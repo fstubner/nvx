@@ -10,7 +10,12 @@ import sharp from 'sharp';
 
 const out = process.argv[2];
 
-const W = 1200, H = 430;
+// The panel is only ever shown at ~555px wide in the split hero, so the
+// canvas is a 2x asset for that box and the type has to be sized against the
+// displayed width, not the canvas. At the old FS=21 on this 1200px canvas the
+// terminal rendered at 21 * (555/1200) = 9.7px on screen, which is what made
+// it look shrunken. FS=28 lands at 12.9px, matching the body copy beside it.
+const W = 1200, H = 573;
 const PANEL = '#10151b';       // --ui-code-bg
 const FG = '#d7dce5';          // --ui-code-fg
 const DIM = '#8c95a6';         // --ui-text-muted
@@ -35,9 +40,10 @@ const lines = [
 ];
 
 const FONT = "Consolas, 'Cascadia Mono', 'DejaVu Sans Mono', monospace";
-const FS = 21, LH = 29, PAD = 40;
+const FS = 28, LH = 39, PAD = 53;
+const BAR = 59;                // title bar height, scaled with the type
 const panelTop = 0, panelLeft = 0, panelW = W;
-const textTop = panelTop + 88;
+const textTop = panelTop + 117;
 
 let body = '';
 lines.forEach((runs, i) => {
@@ -51,13 +57,13 @@ lines.forEach((runs, i) => {
 
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
   <rect x="0" y="0" width="${W}" height="${H}" fill="${PANEL}"/>
-  <rect x="${panelLeft}" y="${panelTop}" width="${panelW}" height="44"
+  <rect x="${panelLeft}" y="${panelTop}" width="${panelW}" height="${BAR}"
         fill="rgba(255,255,255,0.04)"/>
-  <circle cx="${panelLeft + 26}" cy="${panelTop + 22}" r="6" fill="#6b7280"/>
-  <circle cx="${panelLeft + 48}" cy="${panelTop + 22}" r="6" fill="#6b7280"/>
-  <circle cx="${panelLeft + 70}" cy="${panelTop + 22}" r="6" fill="#6b7280"/>
-  <text x="${panelLeft + panelW / 2}" y="${panelTop + 28}" text-anchor="middle"
-        font-family="${FONT}" font-size="15" fill="${DIM}">nvx</text>
+  <circle cx="${panelLeft + 35}" cy="${panelTop + 29}" r="8" fill="#6b7280"/>
+  <circle cx="${panelLeft + 64}" cy="${panelTop + 29}" r="8" fill="#6b7280"/>
+  <circle cx="${panelLeft + 93}" cy="${panelTop + 29}" r="8" fill="#6b7280"/>
+  <text x="${panelLeft + panelW / 2}" y="${panelTop + 37}" text-anchor="middle"
+        font-family="${FONT}" font-size="20" fill="${DIM}">nvx</text>
 ${body}</svg>`;
 
 await sharp(Buffer.from(svg)).png().toFile(out);

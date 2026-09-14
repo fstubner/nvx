@@ -26,9 +26,11 @@ export const compareColumns: ComparisonColumn[] = [
 ];
 
 export const compareRows: ComparisonRow[] = [
-  { feature: 'Windows / macOS / Linux', cells: ['all three', 'macOS, Linux', 'all three', 'all three', 'mise only', 'all three'] },
-  { feature: 'Single static binary', cells: ['✓ Go', 'shell script', '✓ Rust', '✓ Rust', '✓ mise', '✓ Rust'] },
-  { feature: 'Runtimes managed', cells: ['Node.js, Bun', 'Node', 'Node', 'Node', 'many, via plugins', 'Python'] },
+  { feature: 'Windows / macOS / Linux', cells: ['✓', 'macOS, Linux', '✓', '✓', 'mise only', '✓'] },
+  // asdf and mise share a column but differ here, so the cell answers for
+  // both. asdf is a bash script; mise is the Rust binary that replaced it.
+  { feature: 'Single static binary', cells: ['✓ Go', 'shell script', '✓ Rust', '✓ Rust', '✓ Rust (mise)', '✓ Rust'] },
+  { feature: 'Runtimes managed', cells: ['Node.js, Bun', 'Node.js', 'Node.js', 'Node.js', 'many, via plugins', 'Python'] },
   { feature: 'Auto-switch on cd', cells: ['✓', 'shell hook', '✓', '✓', '✓', 'project pin'] },
   { feature: 'Session-scoped switching', cells: ['✓', '✓', '✓', 'shims', 'shims', '—'] },
   { feature: 'Checksum-verified downloads', cells: ['✓', '✓', '✓', '✓', 'varies', '✓'] },
@@ -39,6 +41,6 @@ export const compareRows: ComparisonRow[] = [
   { feature: 'Environment secrets scrubbed', cells: ['✓', '—', '—', '—', '—', '—'] },
 ];
 
-/** Shown under the table. asdf is Unix-only; mise is what adds Windows. */
+/** Shown under the table. asdf is Unix-only, and mise is what adds Windows. */
 export const compareNoteHtml =
-  'asdf is Unix-only, and mise is what adds Windows support. nvx is not a package manager: it does not resolve dependencies or write lockfiles.';
+  'asdf is Unix-only, and mise is what adds Windows support. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.';

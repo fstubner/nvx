@@ -12,7 +12,7 @@ export const surfacesCopy: SectionCopy = {
 export const surfaces: SurfaceCard[] = [
   {
     title: 'Versions, per project',
-    body: 'Install and pin Node.js or Bun, and switch on <code>cd</code> from a <code>.nvmrc</code>, <code>.node-version</code> or <code>package.json</code>. Session-scoped: a new terminal is unaffected until it reads the same pin.',
+    body: 'Install and pin Node.js or Bun, and switch on <code>cd</code> from a <code>.nvmrc</code>, <code>.node-version</code> or <code>package.json</code>. Session-scoped, so a new terminal is unaffected until it reads the same pin.',
     codeHtml: `<span style="color:var(--ui-code-comment)">$</span> nvx install 22
 <span style="color:var(--ui-code-comment)">✔</span> Node.js v22.23.2 installed
 <span style="color:var(--ui-code-comment)">$</span> nvx use 22
@@ -22,7 +22,7 @@ export const surfaces: SurfaceCard[] = [
   },
   {
     title: 'Installs, contained',
-    body: 'You type the same command. nvx runs it inside the platform sandbox — AppContainer, Landlock, or Seatbelt — with a throwaway <code>HOME</code>, writes confined to the project, and an egress allowlist the contained process cannot talk its way past.',
+    body: 'You type the same command. nvx runs it inside the platform sandbox (AppContainer, Landlock, or Seatbelt) with a throwaway <code>HOME</code>, writes confined to the project, and an egress allowlist the contained process cannot talk its way past.',
     flip: true,
     // Captured from a real contained install on 2026-09-14 rather than composed.
     // What this replaced showed a blocked egress against an invented host, and

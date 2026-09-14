@@ -40,7 +40,7 @@ export const reachRows: ReachRow[] = [
 export const reachNote: ReachNote = {
   heading: 'On macOS, reads are not contained',
   bodyHtml:
-    'The Seatbelt profile has to allow filesystem reads: the dynamic linker loads system libraries whose locations move between macOS versions, and a strict read allowlist stops a process launching at all. So on macOS the first four rows can still be read by absolute path. Write containment, egress control and environment scrubbing are enforced there.',
+    'The Seatbelt profile has to allow filesystem reads, because the dynamic linker loads system libraries whose locations move between macOS versions, and a strict read allowlist stops a process launching at all. So on macOS the first four rows can still be read by absolute path. Write containment, egress control and environment scrubbing are enforced there.',
   measuredHtml:
-    'Linux is measured on real hardware: a contained process reports <code>READ_OUTSIDE=DENIED</code> and <code>EGRESS=DENIED</code>, with <code>WRITE_INSIDE=ALLOWED</code> as the positive control that tells enforcement from a sandbox that failed to start. Windows is asserted by probe tests run before a release.',
+    'Linux is measured on real hardware, where a contained process reports <code>READ_OUTSIDE=DENIED</code> and <code>EGRESS=DENIED</code>, with <code>WRITE_INSIDE=ALLOWED</code> as the positive control that tells enforcement from a sandbox that failed to start. Windows is asserted by probe tests run before a release.',
 };

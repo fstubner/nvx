@@ -21,9 +21,9 @@ export const faq: FaqItem[] = [
   {
     group: 'Basics',
     q: 'Does it replace nvm, fnm or volta?',
-    a: 'Yes. nvx does the same job — install, switch, pin, auto-switch on cd — and works the same way on Windows, which nvm does not support. What it adds is containment for what your projects install.',
+    a: 'Yes. nvx installs, switches, pins and auto-switches on cd just as they do, and works the same way on Windows, which nvm does not support. What it adds is containment for what your projects install.',
     aHtml:
-      '<p>Yes. nvx does the same job — install, switch, pin, auto-switch on <code>cd</code> — and works the same way on Windows, which nvm does not support. What it adds is containment for what your projects install.</p>',
+      '<p>Yes. nvx installs, switches, pins and auto-switches on <code>cd</code> just as they do, and works the same way on Windows, which nvm does not support. What it adds is containment for what your projects install.</p>',
   },
   {
     group: 'Basics',
@@ -49,16 +49,16 @@ export const faq: FaqItem[] = [
   {
     group: 'Containment',
     q: 'Is my own code sandboxed too?',
-    a: 'Not by default. Containment covers installs and ad-hoc tool runners such as npx and bunx. npm run build, npm test and node run uncontained at the standard isolation level; set isolation.level to strict to extend containment to your own code.',
+    a: 'Not by default. Containment covers installs and ad-hoc tool runners such as npx and bunx. npm run build, npm test and node run uncontained at the standard isolation level. Set isolation.level to strict to extend containment to your own code.',
     aHtml:
-      '<p>Not by default. Containment covers installs and ad-hoc tool runners such as <code>npx</code> and <code>bunx</code>. <code>npm run build</code>, <code>npm test</code> and <code>node</code> run uncontained at the <code>standard</code> isolation level; set <code>isolation.level</code> to <code>strict</code> to extend containment to your own code.</p>',
+      '<p>Not by default. Containment covers installs and ad-hoc tool runners such as <code>npx</code> and <code>bunx</code>. <code>npm run build</code>, <code>npm test</code> and <code>node</code> run uncontained at the <code>standard</code> isolation level. Set <code>isolation.level</code> to <code>strict</code> to extend containment to your own code.</p>',
   },
   {
     group: 'Containment',
     q: 'What happens when an install tries to reach a host I have not allowed?',
-    a: 'nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it — -y and NVX_YES deliberately do not count, because an agent will answer yes to anything.',
+    a: 'nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing -y or setting NVX_YES deliberately does not count, because an agent will answer yes to anything.',
     aHtml:
-      '<p>nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it — <code>-y</code> and <code>NVX_YES</code> deliberately do not count, because an agent will answer yes to anything.</p>',
+      '<p>nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing <code>-y</code> or setting <code>NVX_YES</code> deliberately does not count, because an agent will answer yes to anything.</p>',
   },
   {
     group: 'Using it',

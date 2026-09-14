@@ -15,7 +15,7 @@ export const installByPlatform: Record<Platform, PlatformInstall> = {
         label: 'PowerShell',
         command: 'irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex',
       },
-      { label: 'Binary', href: `${RELEASE}/nvx.exe`, hint: 'x64. Unsigned: SmartScreen will ask before it runs.' },
+      { label: 'Binary', href: `${RELEASE}/nvx.exe`, hint: 'x64, unsigned, so SmartScreen will ask before it runs.' },
     ],
     desktop: [],
   },
@@ -45,7 +45,7 @@ export const installByPlatform: Record<Platform, PlatformInstall> = {
 
 export const tryCommands: TryCommand[] = [
   { comment: 'Install a runtime and use it in this shell', command: 'nvx install 22 && nvx use 22' },
-  { comment: 'Install packages — contained, with no change to how you type it', command: 'npm install' },
+  { comment: 'Install packages, contained, with no change to how you type it', command: 'npm install' },
   { comment: 'Check that nvx is intercepting, and that nothing weakens it', command: 'nvx doctor' },
 ];
 
@@ -56,6 +56,6 @@ export const installFromSource = 'go build -o nvx ./cmd/nvx';
 
 export const installNotes = [
   'One static binary, no runtime to install alongside it. The install script',
-  'puts nvx on PATH and adds a line to your shell profile; nvx doctor reports',
+  'puts nvx on PATH and adds a line to your shell profile. nvx doctor reports',
   'whether both worked.',
 ];
