@@ -88,7 +88,11 @@ import { reachColumns, reachCopy, reachNote, reachRows } from '../data/site-cont
 .reach-table th.nvx,
 .reach-table td.nvx{background:rgba(var(--ui-accent-rgb),.06)}
 .reach-table thead th.nvx{
-  color:var(--ui-accent);
+  /* accent-bright, like the verdicts below it: --ui-accent on this tinted cell
+     is the same 4.30:1 pairing the contrast sweep rejected, and fixing only the
+     verdicts left the header failing on its own. The border is not text and is
+     unaffected. */
+  color:var(--ui-accent-bright);
   border-top:2px solid var(--ui-accent);
 }
 
