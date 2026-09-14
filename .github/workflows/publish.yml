@@ -1,0 +1,257 @@
+name: Publish to package managers
+
+# Fans out from a single GitHub release to the OS package managers:
+# Homebrew tap, Scoop bucket, Winget (microsoft/winget-pkgs). Each job is
+# independent, so one failure doesn't block the others, and each is
+# re-runnable from the Actions tab.
+#
+# npm is NOT here. release.yml publishes @fstubner/nvx and its five
+# per-platform packages as part of the build, because the npm wrapper ships
+# the same binaries release.yml has just produced. Adding a second npm
+# publisher here would give two workflows write access to the same registry
+# version.
+#
+# Triggers:
+#   - On `release: published`. release.yml builds on the tag push and leaves
+#     a DRAFT, so publishing that draft by hand is the normal path in and
+#     the assets already exist by then.
+#   - On `workflow_dispatch` with a tag input, which is how you re-run a
+#     specific registry after a transient failure.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.6.0). Must already exist as a published release with assets attached.'
+        required: true
+        type: string
+
+# Keyed on the tag, not the ref, because `workflow_dispatch` and
+# `release: published` reach the same tag by different refs and would
+# otherwise not see each other.
+#
+# `cancel-in-progress: false` deliberately. The jobs below push to
+# registries the moment they succeed, so cancelling halfway leaves some
+# registries on the new version and some on the old, with no record of
+# which. Queueing costs a few idle minutes. The duplicate run is a no-op,
+# since every publish script is idempotent for a tag it has already pushed.
+concurrency:
+  group: publish-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+# These jobs hold three publishing PATs between them (the tap, the bucket,
+# winget) and none of them needs GITHUB_TOKEN to write to this repo. Read is
+# what the checkouts need and nothing here wants more.
+permissions:
+  contents: read
+
+# Resolve the tag once at the workflow level so every job sees the same
+# version regardless of trigger.
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  # Every job below sets `timeout-minutes`; GitHub's default is 360.
+  #
+  # A publish job can legitimately spend most of its life waiting for the
+  # asset it needs. That happens on the `workflow_dispatch` path, where the
+  # tag's release.yml run may still be waiting on CI before it builds
+  # anything. `wait_for_asset` in scripts/release/lib.sh bounds the wait
+  # itself at 30 polls of 30s, so 15 minutes, and then fails with a message
+  # naming the URL that never appeared.
+  #
+  # That graceful failure is worth protecting. A job timeout below ~15
+  # minutes would pre-empt it and replace a clear explanation with an opaque
+  # cancellation, so 30 leaves the designed wait intact plus room to
+  # download, re-hash and push, while still bounding a true hang.
+  #
+  # A timeout mid-publish is recoverable but not free. Each registry job is
+  # independent and re-runnable, and the summary job reports which
+  # registries actually landed. Publishing is not transactional across
+  # registries either way. That is a property of the design, not something a
+  # timeout introduces.
+
+  # --- Homebrew tap -----------------------------------------------------
+  # Writes Formula/nvx.rb in fstubner/homebrew-tap, which also holds
+  # netscli's formula. One formula covers macOS arm64 and x86_64 plus Linux
+  # amd64 and arm64, so this job verifies four assets.
+  homebrew:
+    name: Homebrew tap
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - name: Update fstubner/homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: bash scripts/release/publish-homebrew.sh "$TAG"
+
+  # --- Scoop bucket -----------------------------------------------------
+  # Writes bucket/nvx.json in fstubner/scoop-bucket, which also holds
+  # netscli's two manifests.
+  scoop:
+    name: Scoop bucket
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - name: Update fstubner/scoop-bucket
+        env:
+          GH_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+        run: bash scripts/release/publish-scoop.sh "$TAG"
+
+  # --- Winget (microsoft/winget-pkgs) -----------------------------------
+  # Forks microsoft/winget-pkgs under the token owner's account, generates a
+  # manifest folder from the release, opens a PR. Moderator approval lands
+  # it on the public catalog.
+  winget:
+    name: Winget
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      # The `winget-releaser` action fetches the release's asset list via
+      # the GitHub API and bails fast if the matching .exe is not present
+      # yet. On the `workflow_dispatch` path that can easily be true, so
+      # poll the .sha256 sidecar before invoking it. The sidecar is a few
+      # hundred bytes and cheap to HEAD, and release.yml uploads it in the
+      # same step as the binary.
+      - name: Wait for the Windows release asset
+        shell: bash
+        env:
+          TAG: ${{ env.TAG }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/fstubner/nvx/releases/download/${TAG}/nvx.exe.sha256"
+          echo "-> ${url}"
+          for i in {1..30}; do
+            if curl -fsSL --head "$url" >/dev/null 2>&1; then
+              echo "asset present"
+              exit 0
+            fi
+            echo "  not yet; retry in 30s ($i/30)"
+            sleep 30
+          done
+          echo "asset never appeared after 15 minutes" >&2
+          exit 1
+
+      # `version` is the PackageVersion that lands in the catalog, and it
+      # must not carry the tag's `v`. The action strips it only when the
+      # input is empty. Its own source reads
+      #
+      #   If ('' -eq '${{ inputs.version }}') { tag_name -replace '^v' }
+      #   Else                                { inputs.version }
+      #
+      # so passing `${{ env.TAG }}` opts out of the stripping and would
+      # submit `v0.6.1` beside an existing `0.6.0`. Winget sorts versions
+      # naturally, so the two do not compare as an upgrade.
+      - name: Resolve PackageVersion (tag without the leading v)
+        id: pkg
+        shell: bash
+        env:
+          TAG: ${{ env.TAG }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          # Assert, do not just strip.
+          #
+          # netscli published five CLI versions carrying a leading `v` in
+          # PackageVersion before this expression existed, because the tag
+          # went through untouched and nothing downstream objected.
+          # winget-pkgs accepted every one of them and a merged manifest is
+          # permanent. Microsoft's validation does not enforce this, so it
+          # has to be enforced here or not at all.
+          #
+          # Nothing else in this release is shaped like this, so a tag that
+          # fails the check means the tag itself is wrong, not just this job.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::PackageVersion '${version}' (from tag '${TAG}') is not MAJOR.MINOR.PATCH." >&2
+            echo "winget-pkgs will accept it anyway and it is permanent once merged." >&2
+            exit 1
+          fi
+          echo "-> PackageVersion ${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Submit nvx to microsoft/winget-pkgs
+        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
+        with:
+          identifier: fstubner.nvx
+          version: ${{ steps.pkg.outputs.version }}
+          # `release-tag` defaults to
+          # `github.event.release.tag_name || github.ref_name`, and on a
+          # `workflow_dispatch` the first is null and the second is the
+          # branch the run was dispatched from. The action would then ask
+          # the API for a release tagged `main` and fail, on precisely the
+          # re-run path this workflow's header offers for recovery.
+          release-tag: ${{ env.TAG }}
+          # Anchored so it matches nvx.exe and not nvx.exe.sha256.
+          installers-regex: '^nvx\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}
+
+  # --- Fan-out summary --------------------------------------------------
+  #
+  # The three jobs above are deliberately independent. Homebrew landing
+  # while Winget fails is a normal, recoverable state, and each job re-runs
+  # on its own. The cost of that independence is that "did this release
+  # actually reach every registry?" can only be answered by opening three
+  # job pages, and a single failure among two greens is easy to miss.
+  #
+  # This job REPORTS, it does not gate, and that is on purpose. Failing the
+  # run on a partial publish would contradict the independence above and
+  # make a red X mean "one registry needs a rerun", which is
+  # indistinguishable at a glance from "the release is broken". The table
+  # goes to the run summary and any incomplete registry gets a ::warning::.
+  #
+  # `needs` result values: success | failure | cancelled | skipped. The
+  # check is an allowlist of the two good ones rather than a denylist of the
+  # two bad ones, because a runner that never starts can report a state
+  # matching neither.
+  summary:
+    name: Publish summary
+    if: always()
+    needs:
+      - homebrew
+      - scoop
+      - winget
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Report each registry's result
+        shell: bash
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          TAG: ${{ env.TAG }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS" | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
+
+          {
+            echo "### Publish fan-out for ${TAG}"
+            echo ""
+            echo "| Registry | Result |"
+            echo "| --- | --- |"
+            echo "$NEEDS" | jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          incomplete=$(echo "$NEEDS" | jq -r '
+            to_entries
+            | map(select(.value.result != "success" and .value.result != "skipped"))
+            | map("\(.key)=\(.value.result)")
+            | join(", ")
+          ')
+
+          if [[ -n "$incomplete" ]]; then
+            echo "::warning::Publish incomplete for ${TAG}. These registries did not update: ${incomplete}"
+            {
+              echo ""
+              echo "**${TAG} did not reach every registry.** Re-run the failed jobs from the"
+              echo "Actions tab, or \`workflow_dispatch\` this workflow with tag \`${TAG}\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "All registries published for ${TAG}."
+          fi

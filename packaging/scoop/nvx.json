@@ -1,0 +1,26 @@
+{
+  "version": "0.6.0",
+  "description": "A Node.js and Bun version manager that runs every install inside an OS sandbox.",
+  "homepage": "https://nvx.run",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/fstubner/nvx/releases/download/v0.6.0/nvx.exe",
+      "hash": "@@SHA256_WINDOWS_AMD64@@"
+    }
+  },
+  "bin": "nvx.exe",
+  "checkver": {
+    "github": "https://github.com/fstubner/nvx"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/fstubner/nvx/releases/download/v$version/nvx.exe"
+      }
+    },
+    "hash": {
+      "url": "$url.sha256"
+    }
+  }
+}
