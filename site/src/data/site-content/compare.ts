@@ -38,9 +38,16 @@ export const compareColumns: ComparisonColumn[] = [
 
 export const compareRows: ComparisonRow[] = [
   { feature: 'Windows / macOS / Linux', cells: ['✓', 'macOS, Linux', '✓', '✓', 'macOS, Linux', '✓'] },
-  // volta ships volta, volta-shim and volta-migrate, plus a symlink per
-  // managed tool, so "single binary" was never true of it.
-  { feature: 'Single static binary', cells: ['✓ Go', 'shell script', '✓ Rust', 'Rust, 3 binaries', '✓ Go', '✓ Rust'] },
+  // Split from the language on 2026-09-16. One row asking "is it a single
+  // binary" whose cells answered "yes, in Rust" was doing two jobs, and
+  // volta's answer, "Rust, 3 binaries", read as neither a yes nor a no. It
+  // ships volta, volta-shim and volta-migrate plus a symlink per managed
+  // tool, so the honest answer to this row is no.
+  { feature: 'Single static binary', cells: ['✓', '—', '✓', '—', '✓', '✓'] },
+  // Weakly decision-relevant on its own. It earns a row because it is what
+  // separates a compiled binary from a script sourced into every shell,
+  // which is the difference behind nvm's startup cost.
+  { feature: 'Written in', cells: ['Go', 'Bash', 'Rust', 'Rust', 'Go', 'Rust'] },
   { feature: 'Runtimes managed', cells: ['Node.js, Bun', 'Node.js', 'Node.js', 'Node.js', 'many, via plugins', 'many, via backends'] },
   // volta and asdf resolve the version inside a shim when the command runs,
   // rather than hooking cd. Same result, and it is why a debugger or an IDE
