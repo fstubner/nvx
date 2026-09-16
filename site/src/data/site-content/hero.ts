@@ -8,19 +8,19 @@ export const hero: Hero = {
   quickInstall: 'irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex',
   quickInstallAlt: 'curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh',
   installLinkLabel: 'More install options ↓',
-  // Real output from one machine on 2026-09-16, shown as one session. Every
-  // line is something nvx printed. NVX_VERBOSE=1 for the install, so the
-  // checks it runs are visible rather than silent.
+  // Every line is what the command line actually prints, at DEFAULT
+  // verbosity, captured on one machine on 2026-09-16.
   //
-  // Edits are subtractive only. Dropped: the download progress bar, the
-  // install path, the OSV scan's progress line, the sandbox session id, the
-  // advisory ancestor-permission notices, and npm's upgrade notice. Nothing is
-  // reworded, re-coloured or invented.
+  // An earlier version showed "Vulnerability scan clean. No active CVEs found."
+  // and "Windows AppContainer isolation active". Both are real, and both appear
+  // only under NVX_VERBOSE=1, so the page was advertising output a reader
+  // following along would not get. The sandbox line below is the one a default
+  // run prints, and the checksum pair is the security beat that needs no flag.
   //
-  // The arc is the product in nine lines. Arriving in a project pinned to a
-  // runtime that is not installed is the moment a version manager earns its
-  // place, and it is also where nvx's checksum verification shows up, which
-  // fnm and volta both lack. The install that follows is the second job.
+  // Edits are subtractive only. Dropped from the install: the "Installing" and
+  // "URL" lines, the download progress bar, the extract timing, and the
+  // trailing install path. Dropped from npm: a deprecation warning for the
+  // package and npm's own upgrade notice. Nothing is reworded or invented.
   heroTerminalHtml: `<span class="t-dim">$</span> cd new-project
 <span class="t-warn">&#9888;</span> [nvx] Node.js in .nvmrc: no installed version matches query '22'
 
@@ -29,12 +29,15 @@ export const hero: Hero = {
 <span class="t-ok">&#10004;</span> <span class="t-hi">Checksum verified successfully.</span>
 <span class="t-ok">&#10004;</span> Node.js v22.23.2 installed successfully
 
+<span class="t-dim">$</span> nvx use 22
+<span class="t-ok">&#10004;</span> Now using Node.js v22.23.2 in this terminal.
+
 <span class="t-dim">$</span> npm install left-pad
-<span class="t-info">&#8505;</span> <span class="t-hi">Vulnerability scan clean. No active CVEs found.</span>
-<span class="t-info">&#8505;</span> <span class="t-hi">Windows AppContainer isolation active</span>
+<span class="t-info">&#8505;</span> <span class="t-hi">Running in native sandbox: npm install left-pad</span>
+added 1 package, and audited 2 packages in 977ms
 found 0 vulnerabilities`,
   heroTerminalLabel:
-    'A terminal entering a project pinned to a Node.js version that is not installed, installing it with its checksum verified, then installing a package with no advisories against it inside a Windows AppContainer',
+    'A terminal entering a project pinned to a Node.js version that is not installed, installing it with its checksum verified, switching to it, then installing a package inside the native sandbox',
   heroImage: '/assets/hero.png',
   heroImageAlt: 'A terminal showing nvx list, then npm install running inside the native sandbox and finishing with no vulnerabilities',
   heroImageWidth: 1200,
