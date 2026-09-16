@@ -70,7 +70,13 @@ export const compareRows: ComparisonRow[] = [
   { feature: 'Environment secrets scrubbed', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
 ];
 
-/** Shown under the table. The volta line is the first thing a reader weighing
- *  it needs to know, so it leads. */
+/** Shown under the table. The volta line leads because it changes a reader's
+ *  decision more than any feature row does.
+ *
+ *  Stated flatly and left there. An earlier version added that volta's own
+ *  maintainers recommend mise, which pointed readers at the one tool here
+ *  that is ahead of nvx on integrity, and explained that volta was listed
+ *  because people still run it, which nobody asked. Writing a competitor's
+ *  obituary at length reads as score-settling however true it is. */
 export const compareNoteHtml =
-  'volta announced in November 2025 that it is unmaintained and recommends mise. It is here because people still run it. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.';
+  "volta's maintainers announced in November 2025 that it is unmaintained. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.";
