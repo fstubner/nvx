@@ -141,18 +141,45 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
 <!-- Big hero screenshot -->
 <div class="w hero-shot">
   <div class="bigshot">
-    <picture>
-      {hero.heroImageWebp && (
-        <source type="image/webp" srcset={hero.heroImageWebp} />
-      )}
-      <img
-        src={hero.heroImage}
-        alt={hero.heroImageAlt}
-        width={hero.heroImageWidth}
-        height={hero.heroImageHeight}
-        fetchpriority="high"
-      />
-    </picture>
+    {/* Text, not a picture of text. A crawler and a language model both read
+        this, and neither can read a PNG. It also scales with the reader's font
+        size and can be copied. Focusable because it scrolls on a narrow
+        screen, which axe requires of a scrollable region.
+
+        A JSX-style comment, not an HTML one. An HTML comment inside this
+        expression is a compiler error, which is how this arrived. */}
+    {hero.heroTerminalHtml ? (
+      <div class="hero-term-frame">
+        {/* The same title bar the screenshot carried. Without it the panel
+            reads as an unstyled box rather than a terminal. Decorative, so it
+            is hidden from assistive technology and the region below carries
+            the label. */}
+        <div class="hero-term-bar" aria-hidden="true">
+          <span></span><span></span><span></span>
+          <em>nvx</em>
+        </div>
+        <div
+          class="hero-term"
+          tabindex="0"
+          role="region"
+          aria-label={hero.heroTerminalLabel ?? hero.heroImageAlt}
+          set:html={hero.heroTerminalHtml}
+        />
+      </div>
+    ) : (
+      <picture>
+        {hero.heroImageWebp && (
+          <source type="image/webp" srcset={hero.heroImageWebp} />
+        )}
+        <img
+          src={hero.heroImage}
+          alt={hero.heroImageAlt}
+          width={hero.heroImageWidth}
+          height={hero.heroImageHeight}
+          fetchpriority="high"
+        />
+      </picture>
+    )}
   </div>
 </div>
 </div>
@@ -600,6 +627,55 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
 .bigshot img{width:100%;height:auto;display:block}
 .bigshot img{cursor:zoom-in}
 
+/* ─── HERO TERMINAL ───
+   Text rather than a screenshot, so it is indexable, selectable and scales
+   with the reader's font size. Dark in both themes, like every other code
+   surface here: a terminal that turns white on a light page stops reading as
+   a terminal. See the code-surface note in tokens.css. */
+.hero-term-frame{background:var(--ui-code-bg)}
+.hero-term-bar{
+  display:flex;align-items:center;gap:7px;
+  padding:0 14px;height:34px;
+  background:rgba(255,255,255,.04);
+  position:relative;
+}
+.hero-term-bar span{
+  width:9px;height:9px;border-radius:50%;
+  background:#6b7280;flex:none;
+}
+.hero-term-bar em{
+  position:absolute;left:0;right:0;text-align:center;
+  font-style:normal;font-size:.6875rem;
+  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  color:var(--ui-text-muted);
+}
+.hero-term{
+  margin:0;
+  color:var(--ui-code-fg);
+  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  font-size:.8125rem;
+  line-height:1.9;
+  padding:16px 18px 18px;
+  /* pre, not pre-wrap. Every line is short enough to fit, and wrapping one
+     mid-sentence is what made the first version of this read as a paragraph
+     in a box rather than as terminal output. If a line ever outgrows the
+     panel it scrolls, which is what a terminal does. */
+  white-space:pre;
+  overflow-x:auto;
+}
+.hero-term .t-dim{color:var(--ui-text-muted)}
+.hero-term .t-info{color:var(--ui-accent-bright)}
+.hero-term .t-warn{color:var(--ui-warn)}
+/* The quoted prompt and the flag names, which are what a reader scans for. */
+.hero-term .t-hi{color:var(--ui-text-strong)}
+/* The one line that is the product. Weight rather than a background, so it
+   carries without turning the panel into a highlight reel. */
+.hero-term .t-block{color:var(--ui-warn);font-weight:700}
+
+@media(max-width:600px){
+  .hero-term{font-size:.75rem;padding:14px 14px;line-height:1.55}
+}
+
 
 @media(max-width:600px){
   .hero h1{font-size:1.625rem}
@@ -665,6 +741,13 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
   .landing-split .hero-cta{margin-inline:0;width:100%}
   .landing-split .hero-cta-sub{width:100%;justify-self:start}
   .landing-split .bigshot{margin:0;max-width:none}
+  /* `.hero-shot` also carries `.w`, whose `margin:0 auto` makes it a grid item
+     with auto inline margins. That overrides the default stretch and sizes it
+     to its content instead. While the panel was an <img> this went unnoticed,
+     because shrink-to-fit resolved to the image's 1200px intrinsic width and
+     then hit the column cap. Four short lines of terminal text resolve to
+     392px in a 556px column, leaving the panel short of the copy beside it. */
+  .landing-split .hero-shot{width:100%}
   /* The sections sit closer together: the hero no longer fills a screen on
      its own, so the old 64px gap reads as a gap rather than as rhythm. */
   .landing-split section{padding:48px 0}

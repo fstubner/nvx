@@ -141,6 +141,16 @@ export interface Hero {
   quickInstallAlt: string;
   /** Jump-to-install link label. */
   installLinkLabel: string;
+  /** Terminal output rendered as HTML instead of the screenshot below.
+   *
+   *  Preferred when present. A screenshot of a terminal is invisible to search
+   *  engines and to anything retrieving the page as text, it cannot be
+   *  selected or copied, and it carries its own typography at one fixed size.
+   *  The image fields stay required because `meta.ogImage` still needs a real
+   *  image for social cards, which cannot be HTML. */
+  heroTerminalHtml?: string;
+  /** Accessible label for the terminal region when `heroTerminalHtml` is set. */
+  heroTerminalLabel?: string;
   /** Path to the hero screenshot. */
   heroImage: string;
   heroImageAlt: string;
