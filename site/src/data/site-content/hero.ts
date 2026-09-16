@@ -22,12 +22,12 @@ export const hero: Hero = {
   // place, and it is also where nvx's checksum verification shows up, which
   // fnm and volta both lack. The install that follows is the second job.
   heroTerminalHtml: `<span class="t-dim">$</span> cd new-project
-<span class="t-warn">&#9888;</span> [nvx] Node.js in .nvmrc: no installed version matches query '18.20.4'
+<span class="t-warn">&#9888;</span> [nvx] Node.js in .nvmrc: no installed version matches query '22'
 
-<span class="t-dim">$</span> nvx install 18.20.4
-<span class="t-info">&#8505;</span> Verifying checksum for node-v18.20.4-win-x64.zip...
+<span class="t-dim">$</span> nvx install 22
+<span class="t-info">&#8505;</span> Verifying checksum for node-v22.23.2-win-x64.zip...
 <span class="t-ok">&#10004;</span> <span class="t-hi">Checksum verified successfully.</span>
-<span class="t-ok">&#10004;</span> Node.js v18.20.4 installed successfully
+<span class="t-ok">&#10004;</span> Node.js v22.23.2 installed successfully
 
 <span class="t-dim">$</span> npm install left-pad
 <span class="t-info">&#8505;</span> <span class="t-hi">Vulnerability scan clean. No active CVEs found.</span>
