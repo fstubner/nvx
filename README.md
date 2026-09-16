@@ -137,6 +137,11 @@ Commands:
   init-shims               Generate PATH shims in ~/.nvx/bin (and project bin
                            shims when run inside a project)
   policy init              Create default policy files (--global, --project, --force)
+  policy check             Check this project against the policy in force, with a
+                           distinct exit code per failure class, for CI
+                           (--format=json, --online)
+  policy explain           Show each setting's effective value and where it came
+                           from
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH.
                            Diagnosis is read-only; --fix repairs a shadowed
                            persistent PATH
@@ -146,6 +151,8 @@ Commands:
   audit [--summary]        Review the local record of security decisions, and of
                            past runs when NVX_TRACE=1 (--runs, --failures,
                            --limit=N, --all)
+  audit export             Export that record as json, jsonl or csv, filtered by
+                           time and event (--since, --event, --format, --out)
   report [--out=FILE]      Collect version, interception, policy and log tails
                            into one file to read and send on. Nothing is uploaded
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;

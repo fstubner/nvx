@@ -6,12 +6,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
 
 // Policy defines corporate rules for package manager operations and sandboxing.
 type Policy struct {
+	// Enforced marks a GLOBAL policy as an organisation baseline: a project file
+	// may tighten it and may not loosen it. See MergeUnderBaseline.
+	//
+	// Read from ~/.nvx/policy.json only. A project file setting it would be
+	// granting itself the authority the setting exists to take away, so it is
+	// refused there and said out loud rather than dropped (warnEnforcedInProjectFile).
+	//
+	// Absent, which is the default, nothing changes: a loosening project file is
+	// gated by the existing approve-once trust prompt exactly as before.
+	Enforced             bool                `json:"enforced,omitempty"`
 	BlockedPackages      []string            `json:"blocked_packages"`
 	EnforceIgnoreScripts bool                `json:"enforce_ignore_scripts"`
 	Typosquatting        TyposquattingPolicy `json:"typosquatting"`
@@ -807,7 +818,13 @@ func LoadPolicy(nvxHome string) (Policy, error) {
 			if err != nil {
 				return policy, err
 			}
-			candidate := MergePolicies(policy, localPolicy)
+			// An enforced baseline refuses a loosening file outright, and the
+			// refusal is returned rather than logged: nvx does not run a command
+			// under a policy it could not assemble.
+			candidate, err := MergeUnderBaseline(policy, localPolicy, localPath)
+			if err != nil {
+				return policy, err
+			}
 			if policyLoosens(policy, candidate) {
 				if grants.PolicyPins[filepath.Clean(localPath)] != hash {
 					warnIgnoredPolicyOnce(localPath)
@@ -862,7 +879,13 @@ func ensureProjectPolicyTrust(nvxHome string) error {
 		if err != nil {
 			return err
 		}
-		candidate := MergePolicies(baseline, localPolicy)
+		// Refused here too, and before the prompt: under an enforced baseline the
+		// question "do you trust this file" is not the developer's to answer, so
+		// asking it would be offering a choice that does not exist.
+		candidate, err := MergeUnderBaseline(baseline, localPolicy, localPath)
+		if err != nil {
+			return err
+		}
 		if policyLoosens(baseline, candidate) {
 			cleanPath := filepath.Clean(localPath)
 			if grants.PolicyPins[cleanPath] != hash {
@@ -929,16 +952,39 @@ func isolationLevelRank(level string) int {
 }
 
 func hostsAdded(before, after []string) bool {
+	return len(entriesAdded(before, after)) > 0
+}
+
+// entriesAdded returns the entries in after that before did not already carry,
+// compared case-insensitively and ignoring surrounding space.
+//
+// hostsAdded answers the yes/no question the trust gate needs; an enforced
+// baseline has to NAME what a project file tried to add, so both come from here
+// and cannot disagree about what counts as an addition.
+func entriesAdded(before, after []string) []string {
 	seen := map[string]bool{}
 	for _, h := range before {
 		seen[strings.ToLower(strings.TrimSpace(h))] = true
 	}
+	var added []string
 	for _, h := range after {
 		if !seen[strings.ToLower(strings.TrimSpace(h))] {
-			return true
+			added = append(added, strings.TrimSpace(h))
 		}
 	}
-	return false
+	return added
+}
+
+// policyLoosening is one way in which a policy became more permissive: which
+// setting, what it was, and what it became.
+//
+// The strings are for a person to read in a refusal message, so they are
+// rendered here rather than at the printing site: "(not listed)" for an entry a
+// list did not carry says more than an empty string does.
+type policyLoosening struct {
+	Field  string
+	Before string
+	After  string
 }
 
 // policyLoosens reports whether the after policy is more permissive than before.
@@ -956,101 +1002,102 @@ func hostsAdded(before, after []string) bool {
 // Both were checked against MergePolicies rather than assumed. If either ever
 // starts replacing instead of unioning, they belong here.
 func policyLoosens(before, after Policy) bool {
+	return len(policyLoosenings(before, after)) > 0
+}
+
+// policyLoosenings returns every way in which after is more permissive than
+// before, in the order the fields are checked.
+//
+// policyLoosens used to be this function with `return true` at each site, and an
+// enforced baseline needs the same rules with the field names attached. Two
+// copies of "what counts as loosening" is the drift this codebase keeps paying
+// for, so there is one list and the boolean is derived from it.
+func policyLoosenings(before, after Policy) []policyLoosening {
+	var out []policyLoosening
+	add := func(field, beforeValue, afterValue string) {
+		out = append(out, policyLoosening{Field: field, Before: beforeValue, After: afterValue})
+	}
+	addEntries := func(field string, beforeList, afterList []string) {
+		for _, entry := range entriesAdded(beforeList, afterList) {
+			add(field, "(not listed)", entry)
+		}
+	}
+
 	if before.Isolation.Enabled && !after.Isolation.Enabled {
-		return true
+		add("isolation.enabled", "true", "false")
 	}
 	if networkModeRank(after.Isolation.Network.Mode) > networkModeRank(before.Isolation.Network.Mode) {
-		return true
+		add("isolation.network.mode", before.Isolation.Network.Mode, after.Isolation.Network.Mode)
 	}
 	if before.Typosquatting.Enabled && !after.Typosquatting.Enabled {
-		return true
+		add("typosquatting.enabled", "true", "false")
 	}
 	if before.ReleaseAgeEnabled() && !after.ReleaseAgeEnabled() {
-		return true
+		add("release_age.enabled", "true", "false")
 	}
 	if !before.Isolation.Network.PromptUnknown && after.Isolation.Network.PromptUnknown {
-		return true
+		add("isolation.network.prompt_unknown", "false", "true")
 	}
 	// Compared as a set, not by length.
 	//
 	// Length is correct today only because MergePolicies unions these lists and
 	// never removes, so after is always a superset of before. That makes the
 	// length test right by accident of a rule stated somewhere else, and silently
-	// wrong the day merging changes. hostsAdded is what every other list on this
-	// function uses and costs nothing.
-	if hostsAdded(before.Typosquatting.TrustedPackages, after.Typosquatting.TrustedPackages) {
-		return true
-	}
+	// wrong the day merging changes. entriesAdded is what every list here uses and
+	// costs nothing.
+	addEntries("typosquatting.trusted_packages", before.Typosquatting.TrustedPackages, after.Typosquatting.TrustedPackages)
 	// Same for the release-age list, and for the same reason: a project file that
 	// names a package here is asking to skip the cooling-off window for it, which
 	// is the window's whole point on the day a compromise lands.
-	if hostsAdded(before.ReleaseAge.TrustedPackages, after.ReleaseAge.TrustedPackages) {
-		return true
-	}
+	addEntries("release_age.trusted_packages", before.ReleaseAge.TrustedPackages, after.ReleaseAge.TrustedPackages)
 	// Letting a package's install scripts run unasked is the largest of these
 	// exemptions: it is arbitrary code at install time, and the prompt it skips is
 	// the last thing standing between a compromised postinstall and a machine.
-	if hostsAdded(before.InstallScripts.TrustedPackages, after.InstallScripts.TrustedPackages) {
-		return true
-	}
+	addEntries("install_scripts.trusted_packages", before.InstallScripts.TrustedPackages, after.InstallScripts.TrustedPackages)
 	// Accepting an advisory is a judgement about a known vulnerability. A project
 	// file making it for the developer is exactly what this gate is for.
-	if hostsAdded(before.Vulnerabilities.AllowedAdvisories, after.Vulnerabilities.AllowedAdvisories) {
-		return true
-	}
+	addEntries("vulnerabilities.allowed_advisories", before.Vulnerabilities.AllowedAdvisories, after.Vulnerabilities.AllowedAdvisories)
 	// Raising the floor lets more advisories through. No floor is the strictest
 	// state, so severityUnknown sorting to 0 gives the comparison the right shape
 	// on its own: anything to nothing is a widening, nothing to anything is not.
 	if beforeFloor, afterFloor := severityRank(before.Vulnerabilities.MinSeverity), severityRank(after.Vulnerabilities.MinSeverity); afterFloor > beforeFloor {
-		return true
+		add("vulnerabilities.min_severity", severityFloorLabel(before.Vulnerabilities.MinSeverity), severityFloorLabel(after.Vulnerabilities.MinSeverity))
 	}
 	// Lowering the typosquat edit distance finds fewer typosquats. The default is
 	// 2; a project file setting 1 halves what the check catches, and MergePolicies
 	// takes any positive local value, so it applies. Nothing here noticed.
 	if after.Typosquatting.MaxDistance > 0 && before.Typosquatting.MaxDistance > 0 &&
 		after.Typosquatting.MaxDistance < before.Typosquatting.MaxDistance {
-		return true
+		add("typosquatting.max_distance", strconv.Itoa(before.Typosquatting.MaxDistance), strconv.Itoa(after.Typosquatting.MaxDistance))
 	}
 	// Same shape for the release-age cooling-off window. The default is 24 hours
 	// and the whole point of it is that a compromise is usually caught inside it,
 	// so a project file quietly setting min_age_hours to 1 is asking to install
 	// things published minutes ago.
 	if after.ReleaseAgeMinHours() < before.ReleaseAgeMinHours() {
-		return true
+		add("release_age.min_age_hours", strconv.Itoa(before.ReleaseAgeMinHours()), strconv.Itoa(after.ReleaseAgeMinHours()))
 	}
-	if hostsAdded(before.Isolation.Network.DefaultAllow, after.Isolation.Network.DefaultAllow) {
-		return true
-	}
-	if hostsAdded(before.Isolation.Network.AllowHosts, after.Isolation.Network.AllowHosts) {
-		return true
-	}
+	addEntries("isolation.network.default_allow", before.Isolation.Network.DefaultAllow, after.Isolation.Network.DefaultAllow)
+	addEntries("isolation.network.allow_hosts", before.Isolation.Network.AllowHosts, after.Isolation.Network.AllowHosts)
 	// Publishing a port is a widening, even though it grants the sandbox no new
 	// access. It puts something the contained process serves onto the host's
 	// loopback, where a browser will treat it with the trust localhost carries --
 	// so a project file that adds one is asking for something a developer should
 	// approve, exactly like an allowlist entry.
-	if hostsAdded(before.Isolation.Network.ExposePorts, after.Isolation.Network.ExposePorts) {
-		return true
-	}
+	addEntries("isolation.network.expose_ports", before.Isolation.Network.ExposePorts, after.Isolation.Network.ExposePorts)
 	// Reaching a service on the host is the largest widening in this file: it is
 	// a deliberate hole in the containment boundary, of exactly the kind the
 	// loopback exemption was removed for being. Narrow and named is what makes it
 	// defensible, and approval is part of that.
-	if hostsAdded(before.Isolation.Network.ConnectPorts, after.Isolation.Network.ConnectPorts) {
-		return true
-	}
+	addEntries("isolation.network.connect_ports", before.Isolation.Network.ConnectPorts, after.Isolation.Network.ConnectPorts)
 	// Extra read/execute roots widen what contained code can run. A project file
 	// that adds one is asking to execute something from outside everything nvx
 	// grants, which is a decision for whoever owns the machine.
-	if hostsAdded(before.Isolation.Filesystem.AllowReadExec, after.Isolation.Filesystem.AllowReadExec) {
-		return true
-	}
+	addEntries("isolation.filesystem.allow_read_exec", before.Isolation.Filesystem.AllowReadExec, after.Isolation.Filesystem.AllowReadExec)
 	// A passed-through variable carries whatever the shell holds into code the
 	// project did not write. Naming one is a deliberate hole in the scrub, so it
 	// gets the same approval an egress host does.
-	if hostsAdded(before.Isolation.Environment.Allow, after.Isolation.Environment.Allow) {
-		return true
-	}
+	addEntries("isolation.environment.allow", before.Isolation.Environment.Allow, after.Isolation.Environment.Allow)
 	// isolated_tools moves the npm global prefix to <project>/.nvx/npm_global,
 	// and the shell integration puts that prefix on PATH ahead of the runtime
 	// and the system on every cd. That is a directory the repository controls,
@@ -1059,18 +1106,27 @@ func policyLoosens(before, after Policy) bool {
 	// -- the one project-file setting that puts repository content on PATH was
 	// the one that never needed approval.
 	if !before.Environment.IsolatedTools && after.Environment.IsolatedTools {
-		return true
+		add("environment.isolated_tools", "false", "true")
 	}
 	if !strings.EqualFold(before.Isolation.Filesystem.Provider, after.Isolation.Filesystem.Provider) {
-		return true
+		add("isolation.filesystem.provider", before.Isolation.Filesystem.Provider, after.Isolation.Filesystem.Provider)
 	}
 	if before.EnforceIgnoreScripts && !after.EnforceIgnoreScripts {
-		return true
+		add("enforce_ignore_scripts", "true", "false")
 	}
 	if isolationLevelRank(after.Isolation.Level) < isolationLevelRank(before.Isolation.Level) {
-		return true
+		add("isolation.level", before.Isolation.Level, after.Isolation.Level)
 	}
-	return false
+	return out
+}
+
+// severityFloorLabel renders vulnerabilities.min_severity for a person. Empty
+// means no floor, which is the strictest setting and reads as nothing at all.
+func severityFloorLabel(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "(no floor, every advisory blocks)"
+	}
+	return value
 }
 
 // unionLists merges a project file's entries into the global ones, keeping the
