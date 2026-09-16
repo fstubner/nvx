@@ -838,7 +838,7 @@ func resolveLocalVersion(provider RuntimeProvider, query string, nvxHome string)
 		return "", err
 	}
 
-	return "", fmt.Errorf("no installed version matches query '%s'", query)
+	return "", noMatchingVersion{msg: fmt.Sprintf("no installed version matches query '%s'", query)}
 }
 
 func getActiveShellVersion(nvxHome string) string {
