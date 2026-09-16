@@ -665,6 +665,10 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
 }
 .hero-term .t-dim{color:var(--ui-text-muted)}
 .hero-term .t-info{color:var(--ui-accent-bright)}
+/* The success tick reuses --ui-text-strong. There is no success token in this
+   palette and inventing one for a single glyph would put an unmeasured colour
+   on the page. */
+.hero-term .t-ok{color:var(--ui-text-strong)}
 .hero-term .t-warn{color:var(--ui-warn)}
 /* The quoted prompt and the flag names, which are what a reader scans for. */
 .hero-term .t-hi{color:var(--ui-text-strong)}
