@@ -8,30 +8,33 @@ export const hero: Hero = {
   quickInstall: 'irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex',
   quickInstallAlt: 'curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh',
   installLinkLabel: 'More install options ↓',
-  // Two real runs on 2026-09-16, shown as one session. Every line is output
-  // nvx printed, with NVX_VERBOSE=1 for the install so the checks it runs are
-  // visible rather than silent.
+  // Real output from one machine on 2026-09-16, shown as one session. Every
+  // line is something nvx printed. NVX_VERBOSE=1 for the install, so the
+  // checks it runs are visible rather than silent.
   //
-  // Edits are subtractive only. Dropped: the OSV scan's own progress line, the
-  // sandbox session id, the advisory ancestor-permission notices, and npm's
-  // upgrade notice. Nothing is reworded, re-coloured or invented.
+  // Edits are subtractive only. Dropped: the download progress bar, the
+  // install path, the OSV scan's progress line, the sandbox session id, the
+  // advisory ancestor-permission notices, and npm's upgrade notice. Nothing is
+  // reworded, re-coloured or invented.
   //
-  // An earlier version showed nvx blocking googlechromelabs.github.io during
-  // an npm ci. That was real output and still the wrong thing to lead with.
-  // The host is Chrome's own CDN and the install was legitimate, so the hero
-  // advertised nvx breaking an ordinary build. This shows both jobs instead,
-  // switching a runtime and installing a package with the checks passing.
-  heroTerminalHtml: `<span class="t-dim">$</span> nvx use 20
-<span class="t-ok">&#10004;</span> Now using Node.js v20.11.0 in this terminal.
+  // The arc is the product in nine lines. Arriving in a project pinned to a
+  // runtime that is not installed is the moment a version manager earns its
+  // place, and it is also where nvx's checksum verification shows up, which
+  // fnm and volta both lack. The install that follows is the second job.
+  heroTerminalHtml: `<span class="t-dim">$</span> cd new-project
+<span class="t-warn">&#9888;</span> [nvx] Node.js in .nvmrc: no installed version matches query '18.20.4'
+
+<span class="t-dim">$</span> nvx install 18.20.4
+<span class="t-info">&#8505;</span> Verifying checksum for node-v18.20.4-win-x64.zip...
+<span class="t-ok">&#10004;</span> <span class="t-hi">Checksum verified successfully.</span>
+<span class="t-ok">&#10004;</span> Node.js v18.20.4 installed successfully
 
 <span class="t-dim">$</span> npm install left-pad
-<span class="t-info">&#8505;</span> Verifying package "left-pad"...
 <span class="t-info">&#8505;</span> <span class="t-hi">Vulnerability scan clean. No active CVEs found.</span>
 <span class="t-info">&#8505;</span> <span class="t-hi">Windows AppContainer isolation active</span>
-added 1 package, and audited 2 packages in 907ms
 found 0 vulnerabilities`,
   heroTerminalLabel:
-    'A terminal switching to Node.js 20, then installing a package while nvx verifies it, scans for known vulnerabilities and runs the install inside a Windows AppContainer',
+    'A terminal entering a project pinned to a Node.js version that is not installed, installing it with its checksum verified, then installing a package with no advisories against it inside a Windows AppContainer',
   heroImage: '/assets/hero.png',
   heroImageAlt: 'A terminal showing nvx list, then npm install running inside the native sandbox and finishing with no vulnerabilities',
   heroImageWidth: 1200,

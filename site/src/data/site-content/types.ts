@@ -284,7 +284,7 @@ export type LandingLayout = 'centered' | 'split';
 
 /** A section the landing page can render. Adding one here means adding a
  *  component for it in src/pages/index.astro's map. */
-export type LandingSection = 'hero' | 'surfaces' | 'reach' | 'compare' | 'install' | 'faq';
+export type LandingSection = 'hero' | 'surfaces' | 'reach' | 'compare' | 'policy' | 'install' | 'faq';
 
 /** One target in the "what an install can reach" comparison. */
 export interface ReachRow {
@@ -305,6 +305,12 @@ export interface ReachNote {
   bodyHtml: string;
   /** Where the evidence for the rows comes from. HTML allowed. */
   measuredHtml: string;
+}
+
+/** One control in the policy section. HTML allowed in `body`. */
+export interface PolicyPoint {
+  title: string;
+  body: string;
 }
 
 /** One group in the docs sidebar, as Starlight expects it. */

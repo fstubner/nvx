@@ -1,0 +1,83 @@
+---
+import { policyCopy, policyNoteHtml, policyPoints } from '../data/site-content/policy';
+---
+
+<section id="policy">
+  <div class="w">
+    <h2>{policyCopy.heading}</h2>
+    <p class="lead" set:html={policyCopy.leadHtml} />
+
+    <div class="policy-grid">
+      {policyPoints.map((p) => (
+        <div class="policy-point">
+          <h3>{p.title}</h3>
+          <p set:html={p.body} />
+        </div>
+      ))}
+    </div>
+
+    <p class="policy-note" set:html={policyNoteHtml} />
+  </div>
+</section>
+
+<style is:global>
+/* ─── POLICY ─── */
+
+/* Four points, no cards. The comparison table above already carries the
+   page's only boxed surface, and a second one here reads as a pricing grid,
+   which is the wrong association for a security control. A hairline between
+   rows does the same separating work. */
+.policy-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:0 48px;
+  margin-bottom:18px;
+}
+.policy-point{
+  padding:22px 0;
+  border-top:1px solid rgba(var(--ui-hairline-rgb),.14);
+}
+/* The first row's rule would sit directly under the lead paragraph and read
+   as an underline on it. */
+.policy-grid > .policy-point:nth-child(-n+2){border-top:0;padding-top:4px}
+
+.policy-point h3{
+  font-size:.9375rem;
+  font-weight:650;
+  color:var(--ui-text-strong);
+  margin:0 0 8px;
+  line-height:1.35;
+}
+.policy-point p{
+  font-size:.8125rem;
+  line-height:1.7;
+  color:var(--ui-text-muted);
+  margin:0;
+  max-width:46ch;
+}
+.policy-point code{
+  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  font-size:.75rem;
+  color:var(--ui-text);
+}
+
+.policy-note{
+  font-size:.75rem;
+  line-height:1.8;
+  color:var(--ui-text-muted);
+  margin:0;
+  padding-top:18px;
+  border-top:1px solid rgba(var(--ui-hairline-rgb),.14);
+}
+.policy-note code{
+  font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  color:var(--ui-text);
+}
+
+@media(max-width:760px){
+  .policy-grid{grid-template-columns:minmax(0,1fr);gap:0}
+  /* Single column, so only the very first point skips its rule. */
+  .policy-grid > .policy-point:nth-child(2){border-top:1px solid rgba(var(--ui-hairline-rgb),.14);padding-top:22px}
+  .policy-point p{max-width:none}
+}
+</style>
