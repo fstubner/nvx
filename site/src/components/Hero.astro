@@ -656,11 +656,13 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
   font-size:.8125rem;
   line-height:1.9;
   padding:16px 18px 18px;
-  /* pre, not pre-wrap. Every line is short enough to fit, and wrapping one
-     mid-sentence is what made the first version of this read as a paragraph
-     in a box rather than as terminal output. If a line ever outgrows the
-     panel it scrolls, which is what a terminal does. */
-  white-space:pre;
+  /* pre-wrap, because a terminal wraps a long line rather than hiding its
+     tail behind a scrollbar, and the tail of the install prompt is the
+     `[y/N]: y` the panel exists to show. It was `pre` for a while, after a
+     six-line refusal message wrapped into something that read as a paragraph
+     in a box. One long line is the case wrapping is for; that one was not. */
+  white-space:pre-wrap;
+  overflow-wrap:normal;
   overflow-x:auto;
 }
 /* The on-dark ramp, not the theme-aware one. This panel is dark in BOTH
