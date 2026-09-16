@@ -43,11 +43,12 @@ export const compareRows: ComparisonRow[] = [
   // volta's answer, "Rust, 3 binaries", read as neither a yes nor a no. It
   // ships volta, volta-shim and volta-migrate plus a symlink per managed
   // tool, so the honest answer to this row is no.
+  // The implementation language had its own row for part of 2026-09-16 and
+  // was dropped the same day. The argument for it was that it explains nvm's
+  // shell startup cost, but the row above already answers that: nvm is the
+  // one entry that is not a binary. Naming the language added almost nothing
+  // on top, and no reader chooses a version manager by it.
   { feature: 'Single static binary', cells: ['✓', '—', '✓', '—', '✓', '✓'] },
-  // Weakly decision-relevant on its own. It earns a row because it is what
-  // separates a compiled binary from a script sourced into every shell,
-  // which is the difference behind nvm's startup cost.
-  { feature: 'Written in', cells: ['Go', 'Bash', 'Rust', 'Rust', 'Go', 'Rust'] },
   { feature: 'Runtimes managed', cells: ['Node.js, Bun', 'Node.js', 'Node.js', 'Node.js', 'many, via plugins', 'many, via backends'] },
   // volta and asdf resolve the version inside a shim when the command runs,
   // rather than hooking cd. Same result, and it is why a debugger or an IDE
