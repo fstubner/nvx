@@ -67,9 +67,9 @@ export const faq: FaqItem[] = [
   {
     group: 'Containment',
     q: 'What happens when an install tries to reach a host I have not allowed?',
-    a: 'nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing -y or setting NVX_YES deliberately does not count, because an agent will answer yes to anything.',
+    a: 'nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing -y or --agent-mode, or setting NVX_YES, deliberately does not count, because an agent will answer yes to anything.',
     aHtml:
-      '<p>nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing <code>-y</code> or setting <code>NVX_YES</code> deliberately does not count, because an agent will answer yes to anything.</p>',
+      '<p>nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing <code>-y</code> or <code>--agent-mode</code>, or setting <code>NVX_YES</code>, deliberately does not count, because an agent will answer yes to anything.</p>',
   },
   {
     group: 'Using it',

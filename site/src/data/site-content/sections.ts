@@ -14,7 +14,7 @@ import type { LandingLayout, LandingSection } from './types';
 // the same argument from different angles, and the matrix is the one a
 // reader expects. The reach content and component are kept, so putting it
 // back is one word.
-export const sections: LandingSection[] = ['hero', 'surfaces', 'compare', 'policy', 'install', 'faq'];
+export const sections: LandingSection[] = ['hero', 'surfaces', 'compare', 'install', 'faq'];
 
 // How the landing page is laid out above the fold, and the rhythm that
 // follows from it.

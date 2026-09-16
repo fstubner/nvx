@@ -8,7 +8,7 @@ import type { SectionCopy, SurfaceCard } from './types';
 export const surfacesCopy: SectionCopy = {
   heading: 'Three jobs, one binary',
   leadHtml:
-    'Switching runtimes is the job you notice. Checking what you are about to install, and containing it once it runs, are the two you do not.',
+    'Switching runtimes is the job you notice. Checking what you are about to install, and containing it once it runs, are the two you do not. One file in the repo governs all three.',
 };
 
 // Code panels rather than screenshots, deliberately: a picture of a terminal
@@ -50,5 +50,29 @@ export const surfaces: SurfaceCard[] = [
 <span style="color:var(--ui-code-comment)">ℹ</span> Running in native sandbox: npm install left-pad
 added 1 package, and audited 2 packages in 2s
 found 0 vulnerabilities`,
+  },
+  {
+    title: 'Governed by a file in your repo',
+    body: 'The rules live in <code>.nvx-policy.json</code>, next to the code they cover, reviewed in a pull request and enforced on the machine. An org can set <code>"enforced": true</code> globally and a project may then only tighten it. <code>-y</code>, <code>--agent-mode</code> and <code>NVX_YES</code> cannot widen the sandbox, <code>nvx policy check</code> gives CI a distinct exit code per failure, and <code>nvx audit export</code> turns every block into evidence.',
+    flip: true,
+    // This was a section of its own with four paragraphs and nothing shown,
+    // which made it the one part of the page that asserted instead of
+    // demonstrating. The file below is what `nvx policy init` wrote on
+    // 2026-09-17, trimmed to the keys that carry a decision. Empty objects and
+    // the runtime block are dropped; nothing is reworded or invented.
+    codeHtml: `<span style="color:var(--ui-code-comment)">$</span> nvx policy init
+<span style="color:var(--ui-code-comment)">✔</span> Wrote project policy to .nvx-policy.json
+{
+  "typosquatting": { "enabled": true, "max_distance": 2 },
+  "release_age":   { "enabled": true, "min_age_hours": 24 },
+  "isolation": {
+    "enabled": true,
+    "network": {
+      "mode": "proxy",
+      "default_allow": ["registry.npmjs.org:443", "api.osv.dev:443"],
+      "prompt_unknown": true
+    }
+  }
+}`,
   },
 ];
