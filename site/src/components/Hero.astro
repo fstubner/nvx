@@ -663,18 +663,18 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
   white-space:pre;
   overflow-x:auto;
 }
-.hero-term .t-dim{color:var(--ui-text-muted)}
-.hero-term .t-info{color:var(--ui-accent-bright)}
-/* The success tick reuses --ui-text-strong. There is no success token in this
-   palette and inventing one for a single glyph would put an unmeasured colour
-   on the page. */
-.hero-term .t-ok{color:var(--ui-text-strong)}
-.hero-term .t-warn{color:var(--ui-warn)}
-/* The quoted prompt and the flag names, which are what a reader scans for. */
-.hero-term .t-hi{color:var(--ui-text-strong)}
-/* The one line that is the product. Weight rather than a background, so it
-   carries without turning the panel into a highlight reel. */
-.hero-term .t-block{color:var(--ui-warn);font-weight:700}
+/* The on-dark ramp, not the theme-aware one. This panel is dark in BOTH
+   themes, so a token that flips with the theme flips to the wrong side of it.
+   In light mode --ui-text-strong is #111827 and --ui-accent-bright is #1b5288,
+   which put the tick and the highlighted text at 1.03:1 and 2.28:1 on the
+   panel: the ticks were invisible. Same trap --ui-code-inline-fg documents.
+   Measured on --ui-code-bg: 7.31, 11.20, 16.67, 8.31. */
+.hero-term .t-dim{color:var(--ui-ondark-text-muted)}
+.hero-term .t-info{color:var(--ui-ondark-accent-bright)}
+.hero-term .t-ok{color:var(--ui-ondark-text-strong)}
+.hero-term .t-warn{color:var(--ui-ondark-warn)}
+/* What a reader scans for: the result, not the glyph beside it. */
+.hero-term .t-hi{color:var(--ui-ondark-text-strong)}
 
 @media(max-width:600px){
   .hero-term{font-size:.75rem;padding:14px 14px;line-height:1.55}

@@ -53,6 +53,10 @@
   --ui-ondark-text: #d7dce5;
   --ui-ondark-text-strong: #f4f4f4;
   --ui-ondark-text-muted: #9aa4b8;
+  /* Amber for a warning on a dark surface. --ui-warn is a theme pair and
+     its light value is #87560c, which measures 2.94:1 on the code surface
+     a dark panel keeps in both themes. 8.31:1 here. */
+  --ui-ondark-warn: #d8a657;
   --ui-ondark-accent: #af6eeb;
   --ui-ondark-accent-rgb: 175, 110, 235;
   --ui-ondark-accent-bright: #dcbff6;
