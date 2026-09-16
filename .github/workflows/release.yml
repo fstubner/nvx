@@ -114,6 +114,42 @@ jobs:
             dist/nvx-darwin-arm64
             dist/nvx.exe
 
+      # An SBOM because procurement asks for one, and because for this project
+      # the answer is the interesting part: go.mod declares no third-party
+      # requirements and go.sum is empty, so the document lists the Go standard
+      # library and nothing else. A reviewer can check that claim rather than
+      # take the README's word for it.
+      #
+      # Generated from the built binaries rather than from the source tree, so
+      # it describes what actually shipped. syft reads the module graph Go
+      # embeds in the binary, which a source scan cannot confirm was the graph
+      # used.
+      #
+      # These two are pinned by commit SHA rather than by tag, unlike the older
+      # steps around them. A tag can be moved; these actions handle release
+      # artifacts, and a security tool should not let a third party silently
+      # change what runs over its own binaries. The existing steps are left
+      # alone rather than converted here, which is a separate change.
+      - name: Generate SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          path: dist/
+          format: spdx-json
+          output-file: dist/nvx.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest the SBOM against the binaries
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: |
+            dist/nvx-linux-amd64
+            dist/nvx-linux-arm64
+            dist/nvx-darwin-amd64
+            dist/nvx-darwin-arm64
+            dist/nvx.exe
+          sbom-path: dist/nvx.spdx.json
+
       # npm is where the users are: they already run `npm install`, which is the
       # command this tool exists to contain. Binaries on a releases page are a
       # channel nobody is standing in -- v0.5.4 and v0.5.6 assets were downloaded
@@ -182,3 +218,4 @@ jobs:
             dist/nvx.exe
             dist/nvx.exe.sha256
             dist/SHASUMS256.txt
+            dist/nvx.spdx.json
