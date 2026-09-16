@@ -434,8 +434,11 @@ func lockedDependencies(cwd string) []projectDependency {
 	for path, pkg := range lock.Packages {
 		addDep(packageNameFromLockPath(path), pkg.Version)
 	}
-	var walk func(deps map[string]packageLockPackage)
-	walk = func(deps map[string]packageLockPackage) {
+	// packageLockDep, not the old shared type. See the note on packageLockFile
+	// in env.go: only the lockfileVersion 1 tree nests, and typing `packages`
+	// the same way made every v2 and v3 lockfile fail to decode.
+	var walk func(deps map[string]packageLockDep)
+	walk = func(deps map[string]packageLockDep) {
 		for name, dep := range deps {
 			addDep(name, dep.Version)
 			walk(dep.Dependencies)

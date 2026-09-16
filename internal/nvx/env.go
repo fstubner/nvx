@@ -612,14 +612,38 @@ func flagTakesValue(arg string) bool {
 	return false
 }
 
+// The two halves of a lockfile have the same key name and different shapes,
+// and sharing one Go type between them broke every modern lockfile.
+//
+// `packages` is lockfileVersion 2 and 3. Its entries carry a resolved version,
+// and their own `dependencies` is a name to semver-range map of strings, for
+// example "@astrojs/starlight": "^0.41.9".
+//
+// `dependencies` at the top level is the lockfileVersion 1 tree, where each
+// value is an object that nests further.
+//
+// Both were typed as map[string]packageLockPackage, so decoding any v2 or v3
+// lockfile failed with "cannot unmarshal string into Go struct field
+// packageLockPackage.packages.dependencies". The whole file was then discarded
+// and the caller fell back to package.json, which names direct dependencies
+// only and carries ranges rather than resolved versions. Verification kept
+// running against a fraction of the tree, which is why nothing looked broken.
 type packageLockFile struct {
-	Packages     map[string]packageLockPackage `json:"packages"`
-	Dependencies map[string]packageLockPackage `json:"dependencies"`
+	Packages     map[string]packageLockEntry `json:"packages"`
+	Dependencies map[string]packageLockDep   `json:"dependencies"`
 }
 
-type packageLockPackage struct {
-	Version      string                        `json:"version"`
-	Dependencies map[string]packageLockPackage `json:"dependencies"`
+// A `packages` entry. Its own `dependencies` is deliberately not decoded: the
+// resolved version of every one of them already appears as its own entry in
+// `packages`, keyed by path.
+type packageLockEntry struct {
+	Version string `json:"version"`
+}
+
+// A node in the lockfileVersion 1 `dependencies` tree, which nests.
+type packageLockDep struct {
+	Version      string                    `json:"version"`
+	Dependencies map[string]packageLockDep `json:"dependencies"`
 }
 
 func packagesFromPackageLock() []string {
@@ -650,7 +674,7 @@ func packagesFromPackageLock() []string {
 	return pkgs
 }
 
-func addLockDependencies(deps map[string]packageLockPackage, seen map[string]bool, out *[]string) {
+func addLockDependencies(deps map[string]packageLockDep, seen map[string]bool, out *[]string) {
 	for name, dep := range deps {
 		if dep.Version != "" {
 			query := name + "@" + dep.Version
