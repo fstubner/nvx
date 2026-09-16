@@ -70,18 +70,13 @@
    * before these tokens existed. The light theme's darker accent is below.
    *
    * 5.62:1 on --ui-bg. */
-  /* Taken from the favicon's own ramp, whose blue end is #5b9bd5. The mark in
-     the tab and the accent on the page disagreed, and a tab icon that does not
-     match the site reads as a different product. Measured on --ui-bg: 6.10:1,
-     up from the purple's 5.37. */
-  --ui-accent: #5b9bd5;
-  --ui-accent-rgb: 91, 155, 213;
+  --ui-accent: #af6eeb;
+  --ui-accent-rgb: 175, 110, 235;
   /* Hover and other lifted states: a visible step up from the accent, at
      11.53:1. A pair that is too close reads as nothing happening. */
-  --ui-accent-bright: #7db0de;
-  /* Pale tint for active text on dark surfaces. Blue now, not the purple it
-     was left as when the accent moved to the favicon's ramp. 14.62:1. */
-  --ui-accent-high: #e3eff9;
+  --ui-accent-bright: #dcbff6;
+  /* Pale tint for active text on dark surfaces. 16.56:1. */
+  --ui-accent-high: #f5edfd;
   /* Hover border for interactive chrome: the theme control in both bars, and
      the pagination links in the docs. Was declared only in the docs stack, so
      the landing bar's copy of the same control could not reach it and hovered
@@ -218,14 +213,10 @@ html[data-theme='light'] {
    * than the base accent rather than lighter.
    *
    * 7.54 / 9.61 / 11.47 on --ui-bg. */
-  /* The same blue, walked down rather than up, because depth inverts with the
-     theme: on white, "bright" is a hover state and so DARKER. The favicon's
-     own #5b9bd5 measures 2.96:1 here and cannot be used directly.
-     6.89 / 8.05 / 8.43 on --ui-bg. */
-  --ui-accent: #1f5c99;
-  --ui-accent-rgb: 31, 92, 153;
-  --ui-accent-bright: #1b5288;
-  --ui-accent-high: #155080;
+  --ui-accent: #731bc5;
+  --ui-accent-rgb: 115, 27, 197;
+  --ui-accent-bright: #5e16a2;
+  --ui-accent-high: #4f1287;
   /* White on the accent fill: 7.80:1, where the dark theme's near-black
      would be 1.6:1. */
   --ui-on-accent: #ffffff;
