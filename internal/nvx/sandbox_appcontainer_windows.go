@@ -497,19 +497,17 @@ func (k grantKind) mask() uint32 {
 
 // appContainerHasGrantFor asks the question appContainerHasGrant should always
 // have asked: does sidStr already hold AT LEAST the access `want` on path?
+//
+// The answer is read from the ACL every time. It used to be remembered for
+// seven days in ~/.nvx/grant-cache.json, from when each check spawned an icacls
+// process. A directory deleted and recreated inside that window -- a fresh clone,
+// a CI workspace, a new worktree -- had no entry while the record said it did, so
+// the grant was skipped and the contained process could not enter its own
+// working directory. Measured 2026-09-17, and the same defect had already been
+// fixed once for read/execute by not remembering those. A DACL read is a
+// syscall now, measured under a millisecond per path, so the record bought
+// nothing it did not also break.
 func appContainerHasGrantFor(sidStr, path string, want grantKind) bool {
-	// Read/execute is asked afresh every time; only the modify answer is cached.
-	//
-	// The cache exists for the many ancestor and working-directory checks on the
-	// startup path. Read/execute roots are a handful of paths a policy names
-	// explicitly, and caching that answer was actively harmful: an entry removed
-	// behind nvx's back left the cache reporting it as granted for seven days, so
-	// the grant was skipped, the log said it had been made, and the sandbox got
-	// EPERM. Reading an ACL is a syscall now rather than a process spawn, so the
-	// cache buys much less than it did.
-	if want != grantReadExec && grantCacheHas(grantIdentityFor(sidStr, want), path) {
-		return true
-	}
 	entries, err := readDACL(path)
 	if err != nil {
 		return false
@@ -522,28 +520,11 @@ func appContainerHasGrantFor(sidStr, path string, want grantKind) bool {
 		if e.Deny {
 			return false
 		}
-		if !e.grantsAtLeast(want.mask()) {
-			continue
+		if e.grantsAtLeast(want.mask()) {
+			return true
 		}
-		if want != grantReadExec {
-			grantCacheRecord(grantIdentityFor(sidStr, want), path)
-		}
-		return true
 	}
 	return false
-}
-
-// grantIdentityFor keeps the two rights in separate cache namespaces, by folding
-// the right into the identity the cache is keyed on.
-func grantIdentityFor(sidStr string, k grantKind) string {
-	switch k {
-	case grantReadExec:
-		return sidStr + "|rx"
-	case grantTraverse:
-		return sidStr + "|x"
-	default:
-		return sidStr + "|m"
-	}
 }
 
 // grantAppContainerPath gives the AppContainer modify access to path and its

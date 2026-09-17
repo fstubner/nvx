@@ -88,6 +88,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A project directory deleted and recreated no longer fails to launch on
+  Windows.** nvx remembered for seven days which directories already carried
+  its sandbox permission, in `~/.nvx/grant-cache.json`, and trusted that record
+  without looking at the directory. A fresh clone into the same path, a CI
+  workspace, or a new worktree has no such permission, so the grant was skipped,
+  nothing was logged, and the contained process could not enter its own working
+  directory: `AppContainer launch failed ... The parameter is incorrect`. Every
+  package manager failed this way, npm included. Reproduced with the previous
+  binary on 2026-09-17 by deleting and recreating a project directory between
+  two runs.
+
+  The record is gone. Every check reads the directory's real permissions, which
+  was measured at under a millisecond a path; warm launch times before and
+  after the change were within run-to-run noise of each other. The old cache
+  file is no longer read and can be deleted.
+
 * **The test suite no longer writes nvx's shell integration into your real
   PowerShell profile.** `nvx doctor --fix` repairs two things a throwaway
   `NVX_HOME` does not contain: the persistent PATH, and the shell profile. The

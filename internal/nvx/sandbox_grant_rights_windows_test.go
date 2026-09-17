@@ -11,16 +11,6 @@ import (
 	"unsafe"
 )
 
-// The two rights must not share a cache slot, or removing one ACE by hand leaves
-// the cache still claiming the other is in place -- which is how a hand-repaired
-// directory ended up with no grant at all and could not even be entered.
-func TestTheGrantCacheKeepsTheTwoRightsApart(t *testing.T) {
-	const sid = "S-1-15-3-1024-2222"
-	if grantIdentityFor(sid, grantModify) == grantIdentityFor(sid, grantReadExec) {
-		t.Fatal("modify and read/execute share a cache key; one would mask the other")
-	}
-}
-
 // The --connect peer check is decided against this run's job object. If the
 // launch never publishes it, every legitimate connection is refused and the
 // feature is dead -- silently, because it fails closed. Deleting that one line
