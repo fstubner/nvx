@@ -2,6 +2,7 @@ package nvx
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -138,8 +139,16 @@ func ResolveVersion(query string, releases []Release) (Release, error) {
 		return Release{}, err
 	}
 
-	return Release{}, fmt.Errorf("no release found matching query: %s", query)
+	return Release{}, fmt.Errorf("%w matching query: %s", errNoReleaseFound, query)
 }
+
+// errNoReleaseFound marks "the remote index has nothing for this query", which
+// is the one install failure with an obvious next move. main.go offers the
+// list-remote hint on it, and used to decide that by searching the message for
+// "no release found". That is the same classification-by-sentence that broke
+// isUnsupportedRange three times, so it is a sentinel here before it becomes a
+// fourth. Audit 2026-09-17, L1.
+var errNoReleaseFound = errors.New("no release found")
 
 // RuntimeProvider defines version management and execution hooks for a runtime.
 type RuntimeProvider interface {

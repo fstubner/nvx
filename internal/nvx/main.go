@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -254,14 +255,19 @@ func Main() {
 
 	case "policy":
 		if len(os.Args) < 3 {
-			LogError("Usage: nvx policy init [--global] [--project] [--force]")
+			LogError("Usage: nvx policy init | nvx policy check | nvx policy explain")
 			os.Exit(1)
 		}
 		switch os.Args[2] {
 		case "init":
 			os.Exit(runPolicyInit(os.Args[3:], nvxHome))
+		case "check":
+			os.Exit(runPolicyCheck(os.Args[3:], nvxHome))
+		case "explain":
+			os.Exit(runPolicyExplain(os.Args[3:], nvxHome))
 		default:
 			LogError("Unknown policy subcommand: %s", os.Args[2])
+			LogInfo("Valid subcommands: init, check, explain.")
 			os.Exit(1)
 		}
 
@@ -398,7 +404,27 @@ func commandHelpText(command string) string {
 	case "verify-install":
 		return "nvx verify-install <package> [package...]\n\nInternal security verifier used by shims. Checks policy blocklists, typosquatting, install scripts, release age, and OSV vulnerabilities.\n"
 	case "policy":
-		return "nvx policy init [--global] [--project] [--force]\n\nCreate a global or project .nvx policy file. Includes isolation.level\n(\"standard\" or \"strict\") — standard contains installs and ad-hoc tool runs;\nstrict also contains your own code. Override per-invocation with\nnvx --strict/--standard.\n"
+		return `nvx policy init [--global] [--project] [--force]
+nvx policy check [--format=json] [--online]
+nvx policy explain
+
+init creates a global or project .nvx policy file. It includes isolation.level
+("standard" or "strict") -- standard contains installs and ad-hoc tool runs;
+strict also contains your own code. Override per-invocation with
+nvx --strict/--standard.
+
+check is the CI gate: it evaluates this project against the policy in force and
+exits with a distinct code per failure class, documented in docs/exit-codes.md.
+It never prompts, and it makes no network request unless --online is passed,
+which adds the OSV vulnerability scan and the release-age window.
+
+explain prints each setting's effective value and where it came from, which is
+how to find out why a setting in your own .nvx-policy.json is not applying.
+
+A global policy can set "enforced": true, which makes it an organisation
+baseline: a project file may then make a setting stricter, and one that loosens
+a setting is refused rather than prompted for.
+`
 	case "init-shims":
 		return "nvx init-shims\n\nGenerate PATH shims in ~/.nvx/bin and project-bin shims for node_modules/.bin when run in a Node project.\n"
 	case "shim":
@@ -447,6 +473,18 @@ on for a session with NVX_TRACE=1.
 
 --summary   Counts instead of lines: how often runs were contained, why not
             when they were not, and which warnings keep firing.
+
+nvx audit export [--since <when>] [--event <name>] [--format json|jsonl|csv]
+                 [--out <path>]
+
+Export the same records for something other than a terminal to read: a
+compliance review, a log pipeline, a spreadsheet. --since takes an RFC3339
+timestamp or a duration back from now (7d, 2w, 12h); --event repeats to select
+several event types; the default format is jsonl and the default destination is
+stdout. The field set is documented as a contract in docs/audit-log.md.
+
+A line that cannot be parsed is reported and the command exits non-zero, having
+exported and counted everything that could be read.
 `
 	case "grants":
 		return "nvx grants list\nnvx grants reset [--all]\n\nInspect or forget the approve-once grants recorded for the current project\n(or every project, with --all): egress hosts, trusted tools, and trusted\nproject policy files. Grants live under ~/.nvx/grants, never in the project.\n"
@@ -575,6 +613,9 @@ Commands:
   verify-install <pkgs>    Verify package safety before installing (called by wrappers)
   init-shims               Generate PATH shims in ~/.nvx/bin (and project bin shims in a project)
   policy init              Scaffold ~/.nvx/policy.json and/or .nvx-policy.json
+  policy check             Check this project against the policy in force, with a
+                           distinct exit code per failure class, for CI
+  policy explain           Show each setting's effective value and where it came from
   shim <cmd> [args]        Internal shim router for package managers
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;
                            every run reclaims some automatically)
@@ -591,6 +632,8 @@ Commands:
   grants list              Show this project's approved egress hosts, trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)
   audit [--summary]        Review the local record of past runs and security decisions
+  audit export             Export that record as json, jsonl or csv, filtered by
+                           time and event, for a compliance pipeline
   report [--out=FILE]      Collect version, interception, policy and logs into one file
   import [nvm|fnm|volta]   Import Node.js versions already installed via nvm, fnm, or volta
                            (defaults to scanning all three)
@@ -796,7 +839,7 @@ func resolveLocalVersion(provider RuntimeProvider, query string, nvxHome string)
 		return "", err
 	}
 
-	return "", fmt.Errorf("no installed version matches query '%s'", query)
+	return "", noMatchingVersion{msg: fmt.Sprintf("no installed version matches query '%s'", query)}
 }
 
 func getActiveShellVersion(nvxHome string) string {
@@ -869,7 +912,7 @@ func runInstall(query string, nvxHome string) {
 		// A version that does not exist is the one install failure with an obvious
 		// next move, and nvx did not name it: "no release found matching query: 99"
 		// leaves someone guessing at what is valid.
-		if strings.Contains(err.Error(), "no release found") {
+		if errors.Is(err, errNoReleaseFound) {
 			LogInfo("Run 'nvx list-remote' to see what %s versions exist, or install a major line like 22, or 'lts'.",
 				runtimeDisplayName(provider.Name()))
 		}

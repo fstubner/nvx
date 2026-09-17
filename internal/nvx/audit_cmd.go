@@ -23,6 +23,13 @@ import (
 // tool the user pipes the raw lines into.
 
 func runAuditCommand(args []string, nvxHome string) int {
+	// The export is a subcommand rather than a --format on this one. They answer
+	// to different readers: everything below is shaped for a terminal and drops
+	// what will not fit, which is the opposite of what an evidence file needs.
+	if len(args) > 0 && args[0] == "export" {
+		return runAuditExport(args[1:], nvxHome)
+	}
+
 	limit := 25
 	limitGiven := false
 	showAll := false
@@ -133,33 +140,47 @@ func runAuditCommand(args []string, nvxHome string) int {
 // map[string]string keeps the filtering and formatting below free of type
 // switches.
 func readAuditEntries(nvxHome string) ([]map[string]string, error) {
-	if nvxHome == "" {
-		return nil, fmt.Errorf("no nvx home")
-	}
-	path := filepath.Join(nvxHome, "audit.log")
-	var entries []map[string]string
-	// Oldest first, so the rotated generation precedes the live file.
-	for _, p := range []string{path + ".1", path} {
-		batch, err := readAuditFile(p)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, err
-		}
-		entries = append(entries, batch...)
-	}
-	return entries, nil
+	entries, _, _, err := readAuditEntriesCounted(nvxHome)
+	return entries, err
 }
 
-func readAuditFile(path string) ([]map[string]string, error) {
+// readAuditEntriesCounted is readAuditEntries with the tally the exporter needs:
+// how many records were read, and how many lines could not be.
+//
+// The reader has always skipped a line it could not parse, which is right for a
+// terminal -- a torn line from a crashed write is not a reason to lose the
+// history after it. An export is evidence, and evidence that quietly omits
+// records is worse than none, so the count travels with the data and the
+// exporter decides what to do about it.
+func readAuditEntriesCounted(nvxHome string) (entries []map[string]string, readable, malformed int, err error) {
+	if nvxHome == "" {
+		return nil, 0, 0, fmt.Errorf("no nvx home")
+	}
+	path := filepath.Join(nvxHome, "audit.log")
+	// Oldest first, so the rotated generation precedes the live file.
+	for _, p := range []string{path + ".1", path} {
+		batch, bad, rerr := readAuditFile(p)
+		if rerr != nil {
+			if os.IsNotExist(rerr) {
+				continue
+			}
+			return nil, 0, 0, rerr
+		}
+		entries = append(entries, batch...)
+		malformed += bad
+	}
+	return entries, len(entries), malformed, nil
+}
+
+func readAuditFile(path string) ([]map[string]string, int, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer f.Close()
 
 	var entries []map[string]string
+	malformed := 0
 	// bufio.Reader rather than bufio.Scanner: a Scanner fails permanently on a
 	// line longer than its buffer, so one oversized or corrupted line would make
 	// the rest of the log unreadable. Records are appended by concurrent
@@ -176,6 +197,18 @@ func readAuditFile(path string) ([]map[string]string, error) {
 			// A torn line from a crashed write is not a reason to fail. `null`
 			// parses cleanly into a nil map, which would otherwise become an
 			// empty record printing as a blank row.
+			//
+			// Counted rather than only skipped. A blank line is the ordinary
+			// trailing newline and is not damage; anything else is a record that
+			// was written and cannot be read, which an export has to declare.
+			//
+			// An empty string here is NOT a blank line: readBoundedLine returns one
+			// for a line it discarded as over-long, and the loop above has already
+			// broken out on the end of the file, so the only way to arrive with "" is
+			// a record too large to be a record.
+			if line == "" || strings.TrimSpace(line) != "" {
+				malformed++
+			}
 			if err != nil {
 				break
 			}
@@ -197,7 +230,7 @@ func readAuditFile(path string) ([]map[string]string, error) {
 			break // last line, unterminated
 		}
 	}
-	return entries, nil
+	return entries, malformed, nil
 }
 
 // maxRecordBytes bounds one record. A real one is a few hundred bytes; anything

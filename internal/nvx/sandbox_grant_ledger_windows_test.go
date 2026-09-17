@@ -39,7 +39,6 @@ func TestAnEntryFromAnEarlierRunIsStillRecognisedAsOurs(t *testing.T) {
 
 	// Exactly the state a lost record leaves behind: the entry is on disk, and
 	// nothing records it. A second run must claim it.
-	invalidateGrantCache()
 	again, err := grantSandboxReadExec(sid, dir)
 	if err != nil {
 		t.Fatalf("second grantSandboxReadExec: %v", err)
@@ -63,7 +62,6 @@ func TestABroaderEntryIsNotClaimedAsOurs(t *testing.T) {
 	if err := grantSandboxModify(sid, dir); err != nil {
 		t.Skipf("cannot write an ACL in the test environment: %v", err)
 	}
-	invalidateGrantCache()
 
 	ours, err := grantSandboxReadExec(sid, dir)
 	if err != nil {
@@ -71,57 +69,6 @@ func TestABroaderEntryIsNotClaimedAsOurs(t *testing.T) {
 	}
 	if ours {
 		t.Fatal("a modify entry was claimed as this feature's own; withdrawing it would remove the write access it exists for")
-	}
-}
-
-// Withdrawing must clear the cached answers for everything under the path, not
-// just the path itself.
-//
-// The entries nvx writes are inheritable, so removing one on a parent takes away
-// the access its children had through it; a child still cached as granted would
-// have its grant skipped on the next launch and the sandbox would get EPERM on a
-// directory the policy still named.
-//
-// This drives revokeSandboxReadExec. Two earlier versions did not: the first
-// asked about read/execute, which is no longer cached at all, and the second
-// called grantCacheForgetUnder itself two lines before asserting on it -- so both
-// passed with the production path's forget deleted.
-func TestWithdrawingAGrantForgetsTheWholeSubtree(t *testing.T) {
-	parent := t.TempDir()
-	child := filepath.Join(parent, "inner")
-	if err := os.MkdirAll(child, 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	sid, err := scopeCapabilitySID(parent)
-	if err != nil {
-		t.Skipf("cannot derive a capability SID here: %v", err)
-	}
-	t.Cleanup(func() { _ = revokeACL(parent, sid) })
-
-	// A genuine nvx read/execute entry, so the withdrawal below proceeds.
-	if wrote, gerr := grantSandboxReadExec(sid, parent); gerr != nil || !wrote {
-		t.Skipf("cannot write an ACL in the test environment: wrote=%v err=%v", wrote, gerr)
-	}
-
-	// Seed the cached answers a launch would have left behind, for the path and
-	// for a child beneath it. Seeded rather than provoked because the modify cache
-	// is the one consulted, and a read/execute entry never populates it.
-	for _, p := range []string{parent, child} {
-		grantCacheRecord(grantIdentityFor(sid, grantModify), p)
-	}
-	if !grantCacheHas(grantIdentityFor(sid, grantModify), child) {
-		t.Skip("the cache did not retain the seeded answer in this environment")
-	}
-
-	if err := revokeSandboxReadExec(sid, parent); err != nil {
-		t.Fatalf("revoke: %v", err)
-	}
-
-	if grantCacheHas(grantIdentityFor(sid, grantModify), child) {
-		t.Fatal("the child is still cached as granted after the parent's entry was withdrawn; its grant would be skipped and the sandbox would get EPERM")
-	}
-	if grantCacheHas(grantIdentityFor(sid, grantModify), parent) {
-		t.Fatal("the path itself is still cached as granted after its entry was withdrawn")
 	}
 }
 

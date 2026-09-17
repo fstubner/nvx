@@ -47,6 +47,17 @@ export const faq: FaqItem[] = [
       '<p><strong>No.</strong> On Windows and Linux a contained install cannot read your home directory, so SSH keys, cloud credentials and your npm token are out of reach. On macOS the Seatbelt profile allows filesystem reads, so those files <em>can</em> be read by absolute path. macOS still enforces write containment and egress control.</p>',
   },
   {
+    // npm v12 shipped on 2026-07-08 with lifecycle scripts blocked by default.
+    // Anyone who knows that will check this claim, so the site answers it
+    // rather than waiting to be corrected. The honest answer is also the
+    // stronger one, and every limb of it is checkable.
+    group: 'Containment',
+    q: 'npm 12 blocks install scripts by default. Is this still needed?',
+    a: 'It closes the biggest hole, and nvx is about what is left. Packages that genuinely need a build step get approved, and that approval is permanent, so a later compromise of an approved package inherits it. Your bundler, test runner and dev server evaluate package code, which no script setting touches. A git dependency can override the git binary through .npmrc and run despite ignore-scripts. Older npm and yarn classic have no per-package mechanism at all. Containment is also a different thing from detection: the packages in the August 2026 ChainDrop compromise carried valid GitHub Actions provenance.',
+    aHtml:
+      '<p>It closes the biggest hole, and nvx is about what is left.</p><p>Packages that genuinely need a build step get approved, and that approval is permanent, so a later compromise of an approved package inherits it. Your bundler, test runner and dev server evaluate package code, which no script setting touches. A git dependency can override the <code>git</code> binary through <code>.npmrc</code> and run despite <code>--ignore-scripts</code>. Older npm and yarn classic have no per-package mechanism at all.</p><p>Containment is also a different thing from detection. The packages in the August 2026 ChainDrop compromise carried <em>valid</em> GitHub Actions provenance.</p>',
+  },
+  {
     group: 'Containment',
     q: 'Is my own code sandboxed too?',
     a: 'Not by default. Containment covers installs and ad-hoc tool runners such as npx and bunx. npm run build, npm test and node run uncontained at the standard isolation level. Set isolation.level to strict to extend containment to your own code.',
@@ -56,9 +67,9 @@ export const faq: FaqItem[] = [
   {
     group: 'Containment',
     q: 'What happens when an install tries to reach a host I have not allowed?',
-    a: 'nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing -y or setting NVX_YES deliberately does not count, because an agent will answer yes to anything.',
+    a: 'nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing -y or --agent-mode, or setting NVX_YES, deliberately does not count, because an agent will answer yes to anything.',
     aHtml:
-      '<p>nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing <code>-y</code> or setting <code>NVX_YES</code> deliberately does not count, because an agent will answer yes to anything.</p>',
+      '<p>nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing <code>-y</code> or <code>--agent-mode</code>, or setting <code>NVX_YES</code>, deliberately does not count, because an agent will answer yes to anything.</p>',
   },
   {
     group: 'Using it',

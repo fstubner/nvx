@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **A global policy can now be a baseline a project cannot weaken.** Setting
+  `"enforced": true` in `~/.nvx/policy.json` means a project's own
+  `.nvx-policy.json` may make a setting stricter and may not make one looser. A
+  file that tries is refused, by name: which setting, what the baseline says, and
+  what the file asked for. Nothing runs under a policy nvx could not assemble.
+
+  Until now a project file could switch typosquat detection off, cut the
+  release-age window from a day to an hour, raise the severity floor so more
+  advisories pass, turn the sandbox off, or add to any of the trusted-package and
+  host allowlists. A prompt stood in front of all of it, which is the right
+  answer on your own machine and the wrong one when the baseline was set by
+  somebody else: the person being asked is the person it exists to constrain.
+
+  Opt-in and read from the global file only, so every policy already written
+  behaves exactly as it did. A project file that sets the key is told it was
+  ignored rather than left to assume otherwise.
+
+* **`nvx policy explain`** prints each setting's effective value and where it
+  came from: a built-in default, the global policy, one of the project files, or
+  an approval recorded for this project. It also names a project file that is not
+  in force, and says which of the two reasons applies, because "I set this and it
+  is not applying" has more than one cause and they look identical from outside.
+
+* **`nvx policy check`**, a CI gate with a distinct exit code per failure class
+  rather than the blanket 1 every command used before. A pipeline can now tell a
+  blocked package from a vulnerability from a policy file it could not read. The
+  codes are documented in `docs/exit-codes.md` and pinned to the code by a test.
+  It never prompts, and it makes no network request unless `--online` is passed,
+  so it cannot hang a job or fail one because a third party is down. `--format
+  json` prints the same verdict as data, including what was checked and what was
+  skipped.
+
+* **`nvx audit export`** writes the local record as jsonl, json or csv, filtered
+  by `--since` (a timestamp, or `7d`/`2w`/`12h`) and by `--event`. A line that
+  cannot be parsed is reported and the command exits non-zero, having exported
+  and counted everything that could be read: `nvx audit` skips a torn line
+  silently because it is printing to a screen, and an export that quietly omits
+  records is worse than none. `docs/audit-log.md` documents every event, its
+  fields, and which parts of that are a contract and which may change.
+
 * **`nvx doctor` now tells you when a stray `package.json` has merged your
   projects into one sandbox.** nvx works out which project a sandbox belongs to
   by looking upward for the nearest manifest, so one sitting above a set of
@@ -47,6 +87,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no panic, no hang, no unauthorized acceptance, and no crasher written.
 
 ### Fixed
+
+* **A project directory deleted and recreated no longer fails to launch on
+  Windows.** nvx remembered for seven days which directories already carried
+  its sandbox permission, in `~/.nvx/grant-cache.json`, and trusted that record
+  without looking at the directory. A fresh clone into the same path, a CI
+  workspace, or a new worktree has no such permission, so the grant was skipped,
+  nothing was logged, and the contained process could not enter its own working
+  directory: `AppContainer launch failed ... The parameter is incorrect`. Every
+  package manager failed this way, npm included. Reproduced with the previous
+  binary on 2026-09-17 by deleting and recreating a project directory between
+  two runs.
+
+  The record is gone. Every check reads the directory's real permissions, which
+  was measured at under a millisecond a path; warm launch times before and
+  after the change were within run-to-run noise of each other. The old cache
+  file is no longer read and can be deleted.
 
 * **The test suite no longer writes nvx's shell integration into your real
   PowerShell profile.** `nvx doctor --fix` repairs two things a throwaway
