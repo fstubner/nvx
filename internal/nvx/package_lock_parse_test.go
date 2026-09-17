@@ -108,3 +108,32 @@ func TestPackagesFromLockfileV1StillNests(t *testing.T) {
 		}
 	}
 }
+
+// npm walks up from the working directory to the nearest package.json and
+// installs from there, so `cd src/deep && npm ci` is an ordinary invocation.
+// The verification readers read `./package-lock.json` and `./package.json`
+// literally, found nothing in the subdirectory, and handed the checks an
+// empty list. The blocklist, typosquat, OSV and release-age gates then passed
+// by having nothing to look at, with no warning. The sandbox still ran, so the
+// install looked normal. Reproduced with the real binary on 2026-09-17.
+func TestVerificationFindsTheLockfileFromASubdirectory(t *testing.T) {
+	inDirWithLock(t, lockV3)
+	if err := os.WriteFile("package.json", []byte(`{"name":"example","dependencies":{"left-pad":"^1.3.0"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("src", "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(filepath.Join("src", "deep")); err != nil {
+		t.Fatal(err)
+	}
+
+	got := detectShimPackagesForVerification("npm", []string{"ci"})
+	if len(got) == 0 {
+		t.Fatal("npm ci from a subdirectory resolved no packages, so every pre-install check is skipped")
+	}
+	want := []string{"left-pad@1.3.0", "right-pad@2.0.0"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}

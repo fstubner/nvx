@@ -646,8 +646,27 @@ type packageLockDep struct {
 	Dependencies map[string]packageLockDep `json:"dependencies"`
 }
 
+// projectManifestDir is where the package manager will read its manifest
+// from, which is the nearest ancestor holding a package.json, not the working
+// directory. npm, pnpm, yarn and bun all walk up. The verification readers
+// below used a bare relative path, so `cd src/deep && npm ci` resolved no
+// packages at all and every pre-install check passed on an empty list, with
+// the sandbox still running so nothing looked wrong. Falls back to the working
+// directory when no package.json exists above it, which keeps a lockfile-only
+// directory readable.
+func projectManifestDir() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	if root := findProjectRoot(cwd); root != "" {
+		return root
+	}
+	return cwd
+}
+
 func packagesFromPackageLock() []string {
-	data, err := os.ReadFile("package-lock.json")
+	data, err := os.ReadFile(filepath.Join(projectManifestDir(), "package-lock.json"))
 	if err != nil {
 		return nil
 	}
@@ -697,7 +716,7 @@ func packageNameFromLockPath(path string) string {
 }
 
 func packagesFromPackageJSON() []string {
-	data, err := os.ReadFile("package.json")
+	data, err := os.ReadFile(filepath.Join(projectManifestDir(), "package.json"))
 	if err != nil {
 		return nil
 	}
