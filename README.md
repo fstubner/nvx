@@ -214,7 +214,7 @@ Options:
 
 ### Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx` are all intercepted**, and the ones that execute code you did not write (package installs and `npx`-style tool runners) are sandboxed. **On Windows only `npm` and `npx` currently run successfully inside the sandbox. `pnpm`, `yarn` and `bun` are intercepted and then fail, see [Known limitations](#known-limitations).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level; `isolation.level: strict` extends containment to it. There is no separate sandbox subcommand. Run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx` are all intercepted**, and the ones that execute code you did not write (package installs and `npx`-style tool runners) are sandboxed. **On Windows, `npm`, `npx` and `yarn` run inside the sandbox. `pnpm` runs for a first install only, and `bun` does not run, see [Known limitations](#known-limitations).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level; `isolation.level: strict` extends containment to it. There is no separate sandbox subcommand. Run commands normally:
 
 ```bash
 npm install
@@ -274,7 +274,7 @@ Corporate policies can be defined globally in `~/.nvx/policy.json` and customize
     },
     "network": {
       "mode": "proxy",
-      "default_allow": ["registry.npmjs.org:443", "api.osv.dev:443"],
+      "default_allow": ["registry.npmjs.org:443", "registry.yarnpkg.com:443", "api.osv.dev:443"],
       "allow_hosts": ["localhost:5432"],
       "prompt_unknown": true
     }
@@ -472,18 +472,24 @@ on -- is in [docs/enforcement-matrix.md](docs/enforcement-matrix.md).
   and names `--no-sandbox`.
 - **A contained server needs `--expose` to be reachable from your machine**, and a
   contained tool needs `--connect` to reach a service you are already running.
-- **On Windows, only `npm` and `npx` run successfully inside the sandbox.**
-  `pnpm`, `yarn` and `bun` are intercepted and then exit 1. Measured 2026-09-17
-  on one machine, a bare install of one dependency, with pnpm 8.7.5, yarn 1.22.19
-  and bun 1.3.1: `npm install` exits 0 and the other three exit 1. Each fails
-  differently. pnpm cannot `lstat` `~/.nvx` while resolving its temp directory,
-  yarn cannot open `~/.yarnrc`, and bun reports a bare `ENOENT`. The contained
-  process is meant to be able to read attributes up the chain above its guest
-  home through the profile root, and a measurement recorded in
-  `sandbox_appcontainer_windows.go` on 2026-09-02 found that it could. It cannot
-  now, which is the likely common cause of at least the pnpm failure.
-- **Bun needs 1.4.x inside the Windows sandbox.** Older versions fail every
-  relative-path operation.
+- **On Windows, `pnpm` runs inside the sandbox for a first install only, and
+  `bun` does not run.** pnpm asks the OS to turn a file handle back into a
+  drive-letter path, which an AppContainer is refused: `GetFinalPathNameByHandle`
+  and `QueryDosDevice` answer "Access is denied" from inside the container,
+  while the NT form of the same path comes back fine. The drive letters live in
+  an object directory the system owns, and no file permission reaches it.
+  Measured 2026-09-17 with pnpm 8.7.5: a first `pnpm install` in a fresh
+  project exits 0, and a second one fails with `EPERM realpath
+  'node_modules'`. `bun install` fails on every run, with `ENOENT` on 1.3.1
+  and `EBADF` on 1.4.2, and `bun -e` cannot read its own working directory;
+  bun's call has not been traced, but the shape is the same. npm and yarn
+  resolve paths in JavaScript and never ask. Use `--no-sandbox` for those two,
+  or npm or yarn instead.
+- **On Windows, `yarn` classic fails in a project under your user profile if you
+  have a `~/.yarnrc`.** yarn reads every `.yarnrc` on the way up from the
+  project to the drive root, and the sandbox refuses the one in your real home;
+  yarn treats that refusal as fatal. Projects outside the profile are fine.
+  Measured 2026-09-17 with yarn 1.22.19.
 - **A package published in the last 24 hours is held** pending your approval, so
   an MCP server launched by an editor fails to start rather than prompting.
 - **The first contained run in a project takes seconds; later ones take a few
