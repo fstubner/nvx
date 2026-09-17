@@ -365,6 +365,10 @@ func DefaultPolicy() Policy {
 				Mode: "proxy",
 				DefaultAllow: []string{
 					"registry.npmjs.org:443",
+					// yarn classic's default registry. It is a front for the npm
+					// registry, so allowing it widens nothing; without it every
+					// contained `yarn install` was refused on its first fetch.
+					"registry.yarnpkg.com:443",
 					"api.osv.dev:443",
 				},
 				PromptUnknown: true,
