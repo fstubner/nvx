@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -911,7 +912,7 @@ func runInstall(query string, nvxHome string) {
 		// A version that does not exist is the one install failure with an obvious
 		// next move, and nvx did not name it: "no release found matching query: 99"
 		// leaves someone guessing at what is valid.
-		if strings.Contains(err.Error(), "no release found") {
+		if errors.Is(err, errNoReleaseFound) {
 			LogInfo("Run 'nvx list-remote' to see what %s versions exist, or install a major line like 22, or 'lts'.",
 				runtimeDisplayName(provider.Name()))
 		}

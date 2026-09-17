@@ -65,6 +65,29 @@ var sensitiveEnvPrefixes = []string{
 	"OPENAI_",
 	"ANTHROPIC_",
 	"HF_TOKEN",
+	// npm's own config namespace. Every npm setting has an environment form, so
+	// NPM_CONFIG__AUTH and npm_config_//registry.npmjs.org/:_authToken are
+	// registry credentials wearing a different name, and NPM_CONFIG_USERCONFIG
+	// repoints npm at an .npmrc of the caller's choosing. Matched case
+	// insensitively below, which covers npm's lowercase spelling.
+	"NPM_CONFIG",
+	"NPM_CONFIG_",
+	// Deployment provider tokens, the same class as the cloud entries above.
+	"CLOUDFLARE_",
+	"VERCEL_",
+	"NETLIFY_",
+	"FLY_API",
+	"HEROKU_",
+	"DIGITALOCEAN_",
+	// Not credentials. These change how a contained node behaves, and a project
+	// file naming them in isolation.environment.allow could preload a module
+	// into every contained process or add a CA that makes the egress proxy's
+	// TLS interception invisible to it.
+	"NODE_OPTIONS",
+	"NODE_EXTRA_CA_CERTS",
+	// Connection strings carry a password in the userinfo more often than not.
+	"DATABASE_URL",
+	"DATABASE_URI",
 }
 
 // windowsAllowedEnvKeys are the only environment variables allowed through on Windows
