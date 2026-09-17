@@ -135,7 +135,7 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	// ~/.nvx/sandbox_home recorded as a failed grant and therefore not retried,
 	// every `nvx npx` ended in EPERM on that path -- while nvx reported only that
 	// it had skipped some checks to keep startup fast.
-	if failed := grantGuestHomeParent(guestHome); len(failed) > 0 {
+	if failed := grantGuestHomeAncestors(guestHome); len(failed) > 0 {
 		LogWarn("Could not grant the sandbox stat access on %s.", strings.Join(failed, ", "))
 		LogInfo("Tools that walk up from the sandbox's home -- npx does -- will fail there with EPERM. " +
 			"This is inside nvx's own directory and needs no elevation; a later run retries it.")
@@ -334,19 +334,21 @@ func grantWorkdirAncestors(nvxHome, workDir string) (attempted, eligible int) {
 }
 
 // guestHomeRequiredGrants lists the directories above the guest home that a
-// contained command cannot do without: its parent, and nothing further up.
+// contained command cannot do without: its parent and its grandparent, which
+// are ~/.nvx/sandbox_home and ~/.nvx.
 //
-// npm walks up from the guest home and lstat's each directory. Reading a
-// directory's attributes needs either an entry on the directory or list access
-// on its parent, and the sandbox has neither on ~/.nvx/sandbox_home: its parent
-// ~/.nvx grants traverse only. So the parent is granted. ~/.nvx itself is not:
-// its attributes are readable through the profile root above it, which Windows
-// grants to every application package, and lstat of every directory up to the
-// drive root succeeded from a sandbox holding no entry on ~/.nvx at all
-// (measured 2026-09-02, strict isolation, fresh project). Writing that entry
-// costs a propagation over everything under ~/.nvx -- 51,218 entries on the
-// development machine -- and timed out on every launch for as long as it was
-// attempted.
+// Tools walk up from their temp directory and from their home, and both sit
+// under the guest home, so every directory on the way up to ~/.nvx gets a stat.
+// Above ~/.nvx the profile root answers for itself: Windows grants it to every
+// application package.
+//
+// ~/.nvx was left out until 2026-09-17, on the reasoning that its attributes
+// were readable through the profile root above it. They are, for a runtime
+// that lists the parent when it cannot open the directory, which libuv has
+// done since 1.44. pnpm's standalone binary bundles Node 18.5 and libuv 1.43,
+// opens the directory, and got EPERM. Writing the entry used to cost a
+// propagation over everything beneath ~/.nvx -- 51,218 entries here, never
+// inside the timebox -- which is why writeThisFolderEntry exists.
 func guestHomeRequiredGrants(guestHome string) []string {
 	if guestHome == "" {
 		return nil
@@ -355,11 +357,15 @@ func guestHomeRequiredGrants(guestHome string) []string {
 	if parent == guestHome {
 		return nil
 	}
-	return []string{parent}
+	grand := filepath.Dir(parent)
+	if grand == parent {
+		return []string{parent}
+	}
+	return []string{parent, grand}
 }
 
-// grantGuestHomeParent grants traverse+stat on the guest home's parent and
-// returns the paths that could not be granted.
+// grantGuestHomeAncestors grants traverse+stat on the guest home's parent and
+// grandparent and returns the paths that could not be granted.
 //
 // Separate from grantWorkdirAncestors because the two are not the same kind of
 // thing. The project chain is advisory -- a contained command runs without it --
@@ -367,10 +373,13 @@ func guestHomeRequiredGrants(guestHome string) []string {
 // when it starts in the sandbox's own home, and without it `npx` fails outright.
 // See grantRequiredAncestors for the measurement.
 //
-// A direct-grant timeout rather than the ancestor walk's: this runs once per
-// machine, not once per project, and the parent is nvx's own sandbox_home, whose
-// size is the number of sessions left in it.
-func grantGuestHomeParent(guestHome string) []string {
+// The parent, nvx's own sandbox_home, goes through the ordinary propagating
+// write: its size is the number of sessions left in it, and the first write
+// under the new identity drops the one-entry-per-project debris (thirty-nine
+// here) in the same propagation. The grandparent, ~/.nvx, has every runtime
+// and package cache beneath it, and a propagating write there took 22 s;
+// the this-folder write takes a millisecond and is all the entry needs.
+func grantGuestHomeAncestors(guestHome string) []string {
 	paths := guestHomeRequiredGrants(guestHome)
 	if len(paths) == 0 {
 		return nil
@@ -379,13 +388,18 @@ func grantGuestHomeParent(guestHome string) []string {
 	if err != nil {
 		return paths
 	}
+	parent := paths[0]
 	return grantRequiredAncestors(paths, func(p string) error {
 		if appContainerHasGrantFor(sidStr, p, grantTraverse) {
 			return nil
 		}
-		// nvx's own sandbox_home: the first write under the new identity drops the
-		// one-entry-per-project debris (thirty-nine here) in the same propagation.
-		// See grantRuntimeReadExecTree.
+		if p != parent {
+			if err := writeThisFolderEntry(p, sidStr, aclMaskTraverse); err != nil {
+				return fmt.Errorf("traverse grant for the sandbox: %w", err)
+			}
+			return nil
+		}
+		// See grantRuntimeReadExecTree for the debris drop.
 		if err := grantACLWithin(p, sidStr, aclMaskTraverse, 0, directGrantTimeout, isPackageSID); err != nil {
 			return fmt.Errorf("traverse grant for the sandbox: %w", err)
 		}

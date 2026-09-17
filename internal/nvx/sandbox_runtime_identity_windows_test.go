@@ -76,15 +76,19 @@ func TestEveryLaunchCarriesTheRuntimeIdentity(t *testing.T) {
 		"be unable to read node.exe", want)
 }
 
-// Only the guest home's parent is required. The chain above it was granted too,
-// and ~/.nvx -- 51,218 entries beneath it here -- never finished inside the
-// timebox; lstat of it from inside the sandbox works without the entry, through
-// the profile root's own permissions.
-func TestOnlyTheGuestHomeParentIsARequiredGrant(t *testing.T) {
+// The guest home's parent and grandparent are required: ~/.nvx/sandbox_home
+// and ~/.nvx. Nothing above ~/.nvx is, because the profile root grants every
+// application package on its own.
+//
+// ~/.nvx joined the list on 2026-09-17. pnpm's standalone binary, on Node 18's
+// libuv, opens each directory it stats and got EPERM on ~/.nvx; newer runtimes
+// list the parent instead and never needed the entry.
+func TestTheGuestHomeParentAndGrandparentAreRequiredGrants(t *testing.T) {
 	guest := filepath.Join(`C:\Users\someone\.nvx\sandbox_home`, "0123456789abcdef")
 	got := guestHomeRequiredGrants(guest)
-	if len(got) != 1 || got[0] != `C:\Users\someone\.nvx\sandbox_home` {
-		t.Fatalf("required grants for %s = %v, want only its parent", guest, got)
+	want := []string{`C:\Users\someone\.nvx\sandbox_home`, `C:\Users\someone\.nvx`}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("required grants for %s = %v, want %v", guest, got, want)
 	}
 	if guestHomeRequiredGrants("") != nil {
 		t.Fatal("an empty guest home has no required grants")
