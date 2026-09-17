@@ -998,6 +998,17 @@ type policyLoosening struct {
 //     loosening to detect.
 //   - Runtime pins which runtime version is used. It grants no access and
 //     restricts none; a project asking for Node 20 is not asking for permission.
+//     This holds under an ENFORCED baseline too, and the consequence is worth
+//     saying out loud: an organisation that sets "enforced": true cannot hold a
+//     runtime floor with it, and a project can pin an end-of-life runtime.
+//     Measured 2026-09-17, audit M1: a baseline pinning 22 accepts a project
+//     pinning 16.0.0. Left as is deliberately. Deciding that one version query
+//     is a downgrade of another needs range comparison across "22", "22.1.0",
+//     "lts" and "lts/jod", which is real machinery, and the thing it would
+//     protect is not a containment boundary. An old runtime is still contained,
+//     its installs are still checked, and its egress is still on the allowlist.
+//     A runtime floor belongs in the same place the rest of a fleet's version
+//     policy lives, not in the sandbox's trust model.
 //
 // Both were checked against MergePolicies rather than assumed. If either ever
 // starts replacing instead of unioning, they belong here.
