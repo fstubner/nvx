@@ -57,6 +57,11 @@ var (
 	procGetAce                 = modAdvapi32.NewProc("GetAce")
 	procGetLengthSid           = modAdvapi32.NewProc("GetLengthSid")
 	procEqualSid               = modAdvapi32.NewProc("EqualSid")
+
+	procSetFileSecurityW             = modAdvapi32.NewProc("SetFileSecurityW")
+	procInitializeSecurityDescriptor = modAdvapi32.NewProc("InitializeSecurityDescriptor")
+	procSetSecurityDescriptorDacl    = modAdvapi32.NewProc("SetSecurityDescriptorDacl")
+	procSetSecurityDescriptorControl = modAdvapi32.NewProc("SetSecurityDescriptorControl")
 )
 
 const (
@@ -97,9 +102,18 @@ const (
 	aclMaskReadExec = fileGenericRead | fileGenericExecute
 	// aclMaskModify is icacls (M).
 	aclMaskModify = deleteAccess | fileGenericRead | fileGenericWrite | fileGenericExecute
-	// aclMaskTraverse is icacls (X,RA): enough to walk through a directory, not to
-	// list it.
-	aclMaskTraverse = fileExecute | fileReadAttributes
+	// aclMaskTraverse is icacls (S,X,RA): enough to walk through a directory and
+	// read its attributes, not to list it.
+	//
+	// SYNCHRONIZE is there because CreateFile asks for it on every open, whatever
+	// the caller requested, and an AppContainer's capability entry has to grant
+	// every bit the open asks for. Without it, a stat that opens the directory
+	// (libuv up to 1.43, which is Node 18) failed with EPERM on ~/.nvx and on
+	// sandbox_home even though both carried (X,RA); newer libuv falls back to a
+	// listing of the parent and never noticed. The standalone pnpm binary bundles
+	// Node 18.5, and every `pnpm install` inside the sandbox died on that stat.
+	// Measured 2026-09-17: adding S to the two entries made the same stat succeed.
+	aclMaskTraverse = fileExecute | fileReadAttributes | synchronizeAccess
 )
 
 // aclEntry is one access-control entry, as data rather than as a line of text.
@@ -348,6 +362,136 @@ func writeDACLEntryDropping(path, sidStr string, mask uint32, flags uint8, drop 
 		0, 0, uintptr(newACL), 0)
 	if rc != 0 {
 		return fmt.Errorf("set permissions on %s: %w", path, syscall.Errno(rc))
+	}
+	return nil
+}
+
+// writeThisFolderEntry gives sidStr exactly mask on path itself, with no
+// inheritance, and writes it without the propagation walk.
+//
+// SetNamedSecurityInfoW re-evaluates inheritance over every descendant on every
+// DACL write, even when the change is one non-inheritable entry that no
+// descendant can see. On ~/.nvx that walk is what a write costs: 22.3 s here,
+// against 1.07 ms for SetFileSecurityW writing the identical list, measured
+// back to back on 2026-09-17. SetFileSecurityW writes the descriptor as given
+// and touches nothing beneath, which is exactly right for an entry that
+// applies to this folder only.
+//
+// Because nothing is re-derived, the list is written complete: every existing
+// entry is carried over as it is, inherited ones included, and the descriptor
+// is marked auto-inherited so the entries keep their meaning and later
+// propagation from above still applies. Explicit entries stay ahead of
+// inherited ones, and denies ahead of allows, which is the order Windows
+// expects and the order an access check reads.
+//
+// Not for inheritable entries, and not for removals: either would leave
+// descendants carrying an inherited copy of something the parent no longer
+// says. Callers that need those go through writeDACLEntry.
+func writeThisFolderEntry(path, sidStr string, mask uint32) error {
+	sid, err := sidFromString(sidStr)
+	if err != nil {
+		return err
+	}
+	defer syscall.LocalFree(syscall.Handle(unsafe.Pointer(sid)))
+
+	p, perr := syscall.UTF16PtrFromString(path)
+	if perr != nil {
+		return perr
+	}
+	var dacl *win32ACL
+	var sd *byte
+	rc, _, _ := procGetNamedSecurityInfoW.Call(
+		uintptr(unsafe.Pointer(p)), seFileObject, daclSecurityInformation,
+		0, 0, uintptr(unsafe.Pointer(&dacl)), 0, uintptr(unsafe.Pointer(&sd)))
+	if rc != 0 {
+		return fmt.Errorf("read permissions of %s: %w", path, syscall.Errno(rc))
+	}
+	defer syscall.LocalFree(syscall.Handle(unsafe.Pointer(sd)))
+
+	type rawACE struct {
+		ptr  unsafe.Pointer
+		size uint16
+	}
+	var explicitDeny, explicitAllow, inherited []rawACE
+	if dacl != nil {
+		for i := uint16(0); i < dacl.AceCount; i++ {
+			var ace *accessAllowedACE
+			if ret, _, _ := procGetAce.Call(uintptr(unsafe.Pointer(dacl)), uintptr(i), uintptr(unsafe.Pointer(&ace))); ret == 0 {
+				continue
+			}
+			raw := rawACE{ptr: unsafe.Pointer(ace), size: ace.Header.AceSize}
+			switch {
+			case ace.Header.AceFlags&inheritedACE != 0:
+				inherited = append(inherited, raw)
+			case ace.Header.AceType == accessAllowedAceType || ace.Header.AceType == accessDeniedAceType:
+				if eq, _, _ := procEqualSid.Call(uintptr(unsafe.Pointer(aceSID(ace))), uintptr(unsafe.Pointer(sid))); eq != 0 {
+					continue // ours; replaced below
+				}
+				if ace.Header.AceType == accessDeniedAceType {
+					explicitDeny = append(explicitDeny, raw)
+				} else {
+					explicitAllow = append(explicitAllow, raw)
+				}
+			default:
+				explicitAllow = append(explicitAllow, raw)
+			}
+		}
+	}
+
+	sidLen, _, _ := procGetLengthSid.Call(uintptr(unsafe.Pointer(sid)))
+	size := int(unsafe.Sizeof(win32ACL{})) + int(unsafe.Sizeof(accessAllowedACE{})) + int(sidLen)
+	for _, group := range [][]rawACE{explicitDeny, explicitAllow, inherited} {
+		for _, k := range group {
+			size += int(k.size)
+		}
+	}
+	buf := make([]byte, size)
+	newACL := unsafe.Pointer(&buf[0])
+	if ret, _, e := procInitializeAcl.Call(uintptr(newACL), uintptr(size), aclRevision); ret == 0 {
+		return fmt.Errorf("build a permission list for %s: %v", path, e)
+	}
+	const maxDWORD = ^uint32(0)
+	carry := func(group []rawACE) error {
+		for _, k := range group {
+			if ret, _, e := procAddAce.Call(uintptr(newACL), aclRevision, uintptr(maxDWORD),
+				uintptr(k.ptr), uintptr(k.size)); ret == 0 {
+				return fmt.Errorf("carry over an existing permission on %s: %v", path, e)
+			}
+		}
+		return nil
+	}
+	if err := carry(explicitDeny); err != nil {
+		return err
+	}
+	if err := carry(explicitAllow); err != nil {
+		return err
+	}
+	if ret, _, e := procAddAccessAllowedAceEx.Call(
+		uintptr(newACL), aclRevision, 0, uintptr(mask),
+		uintptr(unsafe.Pointer(sid))); ret == 0 {
+		return fmt.Errorf("add a permission on %s: %v", path, e)
+	}
+	if err := carry(inherited); err != nil {
+		return err
+	}
+
+	const (
+		securityDescriptorRevision = 1
+		securityDescriptorMinLen   = 40 // SECURITY_DESCRIPTOR_MIN_LENGTH on 64-bit
+		seDaclAutoInherited        = 0x0400
+	)
+	desc := make([]byte, securityDescriptorMinLen)
+	if ret, _, e := procInitializeSecurityDescriptor.Call(uintptr(unsafe.Pointer(&desc[0])), securityDescriptorRevision); ret == 0 {
+		return fmt.Errorf("build a security descriptor for %s: %v", path, e)
+	}
+	if ret, _, e := procSetSecurityDescriptorDacl.Call(uintptr(unsafe.Pointer(&desc[0])), 1, uintptr(newACL), 0); ret == 0 {
+		return fmt.Errorf("attach the permission list for %s: %v", path, e)
+	}
+	if ret, _, e := procSetSecurityDescriptorControl.Call(uintptr(unsafe.Pointer(&desc[0])), seDaclAutoInherited, seDaclAutoInherited); ret == 0 {
+		return fmt.Errorf("mark the permission list on %s as inherited: %v", path, e)
+	}
+	if ret, _, e := procSetFileSecurityW.Call(uintptr(unsafe.Pointer(p)), daclSecurityInformation, uintptr(unsafe.Pointer(&desc[0]))); ret == 0 {
+		return fmt.Errorf("set permissions on %s: %v", path, e)
 	}
 	return nil
 }
