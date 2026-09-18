@@ -477,8 +477,11 @@ on -- is in [docs/enforcement-matrix.md](docs/enforcement-matrix.md).
   drive-letter path, which an AppContainer is refused: `GetFinalPathNameByHandle`
   and `QueryDosDevice` answer "Access is denied" from inside the container,
   while the NT form of the same path comes back fine. The drive letters live in
-  an object directory the system owns, and no file permission reaches it.
-  Measured 2026-09-17 with pnpm 8.7.5: a first `pnpm install` in a fresh
+  an object directory the system owns, and no file permission reaches it. A
+  session-local drive letter pointing at the same volume, unelevated, is
+  reachable and openable from inside the container once granted, but the
+  refused call does not fall back to it: `sandbox_local_drive_probe_windows_test.go`
+  has the measurement. Measured 2026-09-17 with pnpm 8.7.5: a first `pnpm install` in a fresh
   project exits 0, and a second one fails with `EPERM realpath
   'node_modules'`. `bun install` fails on every run, with `ENOENT` on 1.3.1
   and `EBADF` on 1.4.2, and `bun -e` cannot read its own working directory;
