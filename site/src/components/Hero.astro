@@ -672,10 +672,15 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
    panel: the ticks were invisible. Same trap --ui-code-inline-fg documents.
    Measured on --ui-code-bg: 7.31, 11.20, 16.67, 8.31. */
 .hero-term .t-dim{color:var(--ui-ondark-text-muted)}
-.hero-term .t-info{color:var(--ui-ondark-accent-bright)}
-.hero-term .t-ok{color:var(--ui-ondark-text-strong)}
+.hero-term .t-info{color:var(--ui-ondark-info)}
+/* The checkmark and cross carry the real npm/nvx status colors -- see
+   LogInfo/LogWarn/LogError in main.go, which print exactly these glyphs in
+   exactly these ANSI colors (32/33/31). The terminal panel matches what the
+   command line actually shows rather than inventing its own palette. */
+.hero-term .t-ok{color:var(--ui-ondark-ok)}
 .hero-term .t-warn{color:var(--ui-ondark-warn)}
-/* What a reader scans for: the result, not the glyph beside it. */
+.hero-term .t-err{color:var(--ui-ondark-err)}
+/* What a reader scans for beyond the glyph: the outcome text itself. */
 .hero-term .t-hi{color:var(--ui-ondark-text-strong)}
 
 @media(max-width:600px){
