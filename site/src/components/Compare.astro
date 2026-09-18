@@ -57,10 +57,7 @@ const highlightIndex = compareColumns.findIndex((c) => c.highlight);
   width:100%;
   border-collapse:collapse;
   font-size:.8125rem;
-  /* One more column since the nvm split on 2026-09-18 (7 tool columns, not
-     6): 44rem let each column crowd against "NVM for Windows", the longest
-     header. Widened proportionally rather than left to shrink. */
-  min-width:50rem;
+  min-width:44rem;
 }
 
 .compare-table th,
