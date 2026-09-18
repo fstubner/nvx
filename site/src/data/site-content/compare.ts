@@ -90,4 +90,4 @@ export const compareRows: ComparisonRow[] = [
  *  because people still run it, which nobody asked. Writing a competitor's
  *  obituary at length reads as score-settling however true it is. */
 export const compareNoteHtml =
-  "NVM for Windows is a separate, Windows-only project with no shared code. Its v2 release in September 2026 added the same per-directory auto-switching and auto-install shown above, and it does not sandbox installs. volta's maintainers announced in November 2025 that it is unmaintained. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.";
+  "NVM for Windows is a separate, Windows-only project with no shared code, and it does not sandbox installs. volta's maintainers announced in November 2025 that it is unmaintained. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.";
