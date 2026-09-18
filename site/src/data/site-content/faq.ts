@@ -25,9 +25,9 @@ export const faq: FaqItem[] = [
     // v2 (2026-09-02) added the same per-directory auto-switching and
     // auto-install this answer used to claim as a Windows gap, so the
     // comparison here is now about containment, not about switching.
-    a: 'Yes. nvx installs, switches, pins and auto-switches on cd just as they do. On Windows, NVM for Windows added the same automatic switching and auto-install in its September 2026 release. What nvx adds beyond any of them is containment. Every install runs inside an OS sandbox with a scrubbed environment and an egress allowlist, on all three platforms.',
+    a: 'Yes. nvx installs, switches, pins and auto-switches on cd just as they do. On Windows, that includes NVM for Windows, a separate project despite the name. What nvx adds beyond any of them is containment. Every install runs inside an OS sandbox with a scrubbed environment and an egress allowlist, on all three platforms.',
     aHtml:
-      '<p>Yes. nvx installs, switches, pins and auto-switches on <code>cd</code> just as they do. On Windows, NVM for Windows added the same automatic switching and auto-install in its September 2026 release. What nvx adds beyond any of them is containment. Every install runs inside an OS sandbox with a scrubbed environment and an egress allowlist, on all three platforms.</p>',
+      '<p>Yes. nvx installs, switches, pins and auto-switches on <code>cd</code> just as they do. On Windows, that includes NVM for Windows, a separate project despite the name. What nvx adds beyond any of them is containment. Every install runs inside an OS sandbox with a scrubbed environment and an egress allowlist, on all three platforms.</p>',
   },
   {
     group: 'Basics',
@@ -64,9 +64,9 @@ export const faq: FaqItem[] = [
   {
     group: 'Containment',
     q: 'Is my own code sandboxed too?',
-    a: 'Not by default. Containment covers installs and ad-hoc tool runners such as npx and bunx. npm run build, npm test and node run uncontained at the standard isolation level. Set isolation.level to strict to extend containment to your own code.',
+    a: 'Not by default. Containment covers installs and updates, such as npm install and npm update, and ad-hoc tool runners such as npx and bunx. npm run build, npm test and node run uncontained at the standard isolation level. Set isolation.level to strict to extend containment to your own code.',
     aHtml:
-      '<p>Not by default. Containment covers installs and ad-hoc tool runners such as <code>npx</code> and <code>bunx</code>. <code>npm run build</code>, <code>npm test</code> and <code>node</code> run uncontained at the <code>standard</code> isolation level. Set <code>isolation.level</code> to <code>strict</code> to extend containment to your own code.</p>',
+      '<p>Not by default. Containment covers installs and updates, such as <code>npm install</code> and <code>npm update</code>, and ad-hoc tool runners such as <code>npx</code> and <code>bunx</code>. <code>npm run build</code>, <code>npm test</code> and <code>node</code> run uncontained at the <code>standard</code> isolation level. Set <code>isolation.level</code> to <code>strict</code> to extend containment to your own code.</p>',
   },
   {
     group: 'Containment',
