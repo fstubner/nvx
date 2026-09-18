@@ -21,9 +21,13 @@ export const faq: FaqItem[] = [
   {
     group: 'Basics',
     q: 'Does it replace nvm, fnm or volta?',
-    a: 'Yes. nvx installs, switches, pins and auto-switches on cd just as they do, and works the same way on Windows, which nvm does not support. What it adds is containment for what your projects install.',
+    // nvm and NVM for Windows are unrelated projects. NVM for Windows'
+    // v2 (2026-09-02) added the same per-directory auto-switching and
+    // auto-install this answer used to claim as a Windows gap, so the
+    // comparison here is now about containment, not about switching.
+    a: 'Yes. nvx installs, switches, pins and auto-switches on cd just as they do. On Windows, NVM for Windows added the same automatic switching and auto-install in its September 2026 release. What nvx adds beyond any of them is containment. Every install runs inside an OS sandbox with a scrubbed environment and an egress allowlist, on all three platforms.',
     aHtml:
-      '<p>Yes. nvx installs, switches, pins and auto-switches on <code>cd</code> just as they do, and works the same way on Windows, which nvm does not support. What it adds is containment for what your projects install.</p>',
+      '<p>Yes. nvx installs, switches, pins and auto-switches on <code>cd</code> just as they do. On Windows, NVM for Windows added the same automatic switching and auto-install in its September 2026 release. What nvx adds beyond any of them is containment. Every install runs inside an OS sandbox with a scrubbed environment and an egress allowlist, on all three platforms.</p>',
   },
   {
     group: 'Basics',
