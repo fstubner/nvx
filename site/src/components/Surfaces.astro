@@ -137,6 +137,16 @@ const surfacesLeadHtml = modules.docs
   box-shadow:var(--ui-lift-md);
   position:relative;
 }
+/* Same glyph classes and same reasoning as .hero-term's in Hero.astro:
+   real npm/nvx status colors (LogInfo/LogWarn/LogError in main.go), not an
+   invented palette. Duplicated rather than shared because each component
+   keeps to its own markup -- see the zoom-in comment above. */
+.codeblock .t-dim{color:var(--ui-ondark-text-muted)}
+.codeblock .t-info{color:var(--ui-ondark-accent-bright)}
+.codeblock .t-ok{color:var(--ui-ondark-ok)}
+.codeblock .t-warn{color:var(--ui-ondark-warn)}
+.codeblock .t-err{color:var(--ui-ondark-err)}
+.codeblock .t-hi{color:var(--ui-ondark-text-strong)}
 @media(max-width:720px){
   .surface{grid-template-columns:1fr}
   .surface.flip{direction:ltr}

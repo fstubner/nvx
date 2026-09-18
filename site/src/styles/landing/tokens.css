@@ -57,6 +57,11 @@
      its light value is #87560c, which measures 2.94:1 on the code surface
      a dark panel keeps in both themes. 8.31:1 here. */
   --ui-ondark-warn: #d8a657;
+  /* Green and red for the terminal panels' own status glyphs (checkmark,
+     cross), not used anywhere else. Both measured on --ui-code-bg the same
+     way as --ui-ondark-warn: green 7.39:1, red 6.72:1. */
+  --ui-ondark-ok: #5cb85c;
+  --ui-ondark-err: #f0787e;
   --ui-ondark-accent: #af6eeb;
   --ui-ondark-accent-rgb: 175, 110, 235;
   --ui-ondark-accent-bright: #dcbff6;
