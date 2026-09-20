@@ -92,7 +92,10 @@ func sandboxLaunchWorks(nvxHome string) (bool, string) {
 		launchDir, sid, 0, scopeCaps,
 	)
 	if launchErr != nil {
-		return false, fmt.Sprintf("the sandbox could not start: %v", launchErr)
+		// Bare, because reportSandboxLaunch already says "the sandbox cannot
+		// start:" ahead of it. Both halves said it and the line read "the sandbox
+		// cannot start: the sandbox could not start: CreateProcess...".
+		return false, fmt.Sprintf("%v", launchErr)
 	}
 	if exitCode != 0 {
 		return false, fmt.Sprintf("the sandbox started but its supervisor exited %d", exitCode)
