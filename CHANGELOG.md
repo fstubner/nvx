@@ -46,6 +46,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before consulting the allowlist. Measured 2026-09-11: 25 seconds per target,
   no panic, no hang, no unauthorized acceptance, and no crasher written.
 
+### Changed
+
+* **nvx exits 77 when it refuses to run a command, instead of 1.** A global
+  install it will not contain, a package that failed pre-install verification,
+  a sandbox it could not establish — all of these returned 1, which is also what
+  npm returns when an install fails on its own terms. A script or an agent loop
+  saw "exit 1" either way and could not tell nvx saying no (fix: `--no-sandbox`
+  or `npx`) from a registry timeout (fix: retry) without parsing English off
+  stderr. The audit log already made this distinction (`mode=refused`, with a
+  reason); this is the same distinction at the one layer a program reads. 77 is
+  `EX_NOPERM` in sysexits.h. The command's own exit codes are passed through
+  unchanged.
+
+* **The global-install refusal now says what to do if you are an agent.** It
+  leads with "nvx refused", states the consequence plainly — anything installed
+  globally runs uncontained on every future invocation — and names `npx` and a
+  project-local install as the contained alternatives, and tells an agent not
+  to pass `--no-sandbox` on its own but to inform the person it works for that
+  the install would run uncontained, and let them decide. The old message
+  offered only the escape hatch, which nudged an automated caller toward the
+  least-contained option and left the person out of the loop.
+
 ### Fixed
 
 * **A command the sandbox refused to run is no longer logged as having run

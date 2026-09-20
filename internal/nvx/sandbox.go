@@ -464,7 +464,7 @@ func runSandbox(config SandboxConfig) int {
 	policy, err := LoadPolicy(config.NvxHome)
 	if err != nil {
 		LogError("Failed to load policy: %v", err)
-		return sandboxDidNotStart(config, "the policy could not be loaded", 1)
+		return sandboxDidNotStart(config, "the policy could not be loaded", exitRefused)
 	}
 
 	providerName := policy.FilesystemProvider()
@@ -474,17 +474,17 @@ func runSandbox(config SandboxConfig) int {
 	fsProvider, ok := lookupFilesystemProvider(providerName)
 	if !ok {
 		LogError("Unknown filesystem provider %q. Supported: %s.", providerName, supportedProviderNames())
-		return sandboxDidNotStart(config, "the filesystem provider is not one nvx knows", 1)
+		return sandboxDidNotStart(config, "the filesystem provider is not one nvx knows", exitRefused)
 	}
 	canonical := fsProvider.Name()
 
 	if err := fsProvider.Available(); err != nil {
 		LogError("Filesystem provider %q is not available: %v", canonical, err)
-		return sandboxDidNotStart(config, "the filesystem provider is not available on this machine", 1)
+		return sandboxDidNotStart(config, "the filesystem provider is not available on this machine", exitRefused)
 	}
 	if !fsProvider.SupportsNetworkMode(policy.Isolation.Network.Mode) {
 		LogError("Filesystem provider %q does not enforce network.mode=%q. Use network.mode=open or the native provider.", canonical, policy.Isolation.Network.Mode)
-		return sandboxDidNotStart(config, "the filesystem provider does not enforce the requested network mode", 1)
+		return sandboxDidNotStart(config, "the filesystem provider does not enforce the requested network mode", exitRefused)
 	}
 
 	rt := runtimeForShim(config.Command)
@@ -503,7 +503,7 @@ func runSandbox(config SandboxConfig) int {
 		egress, err = startEgressProxy(ctx, policy, rt, config.NvxHome)
 		if err != nil {
 			LogError("Egress proxy failed: %v", err)
-			return sandboxDidNotStart(config, "the egress proxy could not be started", 1)
+			return sandboxDidNotStart(config, "the egress proxy could not be started", exitRefused)
 		}
 		if egress != nil {
 			defer egress.Close()
