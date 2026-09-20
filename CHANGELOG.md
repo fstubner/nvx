@@ -73,6 +73,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Contained commands work again from inside AI agent shells on Windows.**
+  Every contained launch asked Windows for `CREATE_BREAKAWAY_FROM_JOB`, and a
+  process inside a job object that forbids breakaway — which is how Claude
+  Code, Codex CLI and similar harnesses run every command — is refused with a
+  bare `Access is denied` before anything is created. From an ordinary terminal
+  the same command worked, which is why it read as a machine problem for weeks:
+  memory, disk, ACLs and a security product were each ruled out on the way to
+  measuring it directly (2026-09-20: plain `cmd.exe` from such a shell — fine
+  without the flag, denied with it). nvx now asks to break away only where the
+  calling process's job permits it. A child that stays in that job is still
+  reaped through nvx's own nested job.
+
 * **A command the sandbox refused to run is no longer logged as having run
   inside it.** The run record's mode is decided before the sandbox is asked to
   start, and nothing corrected it when the start failed, so `nvx audit` showed
