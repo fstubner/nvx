@@ -48,6 +48,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A command the sandbox refused to run is no longer logged as having run
+  inside it.** The run record's mode is decided before the sandbox is asked to
+  start, and nothing corrected it when the start failed, so `nvx audit` showed
+  `sandboxed  npm install  exit=1` for a command that never began — the same
+  line a fully contained install failing on its own terms produces. Measured on
+  2026-09-20 against a host that could not launch an AppContainer at all. Those
+  runs now read `refused`, and carry the reason.
+
+  `runSandbox`'s own refusals — an unknown filesystem provider, a provider that
+  cannot enforce the requested network mode, an egress proxy that would not
+  start — wrote nothing to the audit log at all. They now record a reason like
+  every other refusal does.
+
 * **The test suite no longer writes nvx's shell integration into your real
   PowerShell profile.** `nvx doctor --fix` repairs two things a throwaway
   `NVX_HOME` does not contain: the persistent PATH, and the shell profile. The
