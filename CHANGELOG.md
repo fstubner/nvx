@@ -64,8 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   globally runs uncontained on every future invocation — and names `npx` and a
   project-local install as the contained alternatives, and tells an agent not
   to pass `--no-sandbox` on its own but to inform the person it works for that
-  the install would run uncontained, and let them decide. The old message
-  offered only the escape hatch, which nudged an automated caller toward the
+  the install would run uncontained, and let them decide. `-q` no longer hides
+  any of that: it asks nvx not to narrate progress, and a refusal has no
+  progress to narrate — `nvx -q npm install -g` used to print the one-line
+  refusal and drop every actionable part of it. The old message offered only
+  the escape hatch, which nudged an automated caller toward the
   least-contained option and left the person out of the loop.
 
 ### Fixed

@@ -81,3 +81,37 @@ func TestAGlobalInstallRefusalExitsWithTheRefusalCode(t *testing.T) {
 		t.Fatalf("`npm install -g` refused with exit %d, want %d", code, exitRefused)
 	}
 }
+
+// -q does not hide why nvx refused.
+//
+// The guidance lines were LogInfo, which -q suppresses, so `nvx -q npm install
+// -g` printed the one-line refusal and nothing else: no consequence, no
+// alternative, and for an automated caller no instruction to tell the person
+// what the trade is. -q asks nvx not to narrate progress; a refusal has no
+// progress to narrate, and the part it dropped was the only actionable part.
+func TestQuietDoesNotSuppressTheRefusalReasoning(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	wd, _ := os.Getwd()
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	prevQuiet := quietFlag
+	quietFlag = true
+	t.Cleanup(func() { quietFlag = prevQuiet })
+
+	var code int
+	out := captureStderrHere(t, func() {
+		code = runShim("npm", []string{"install", "-g", "left-pad"}, home)
+	})
+	if code != exitRefused {
+		t.Fatalf("under -q the refusal exited %d, want %d", code, exitRefused)
+	}
+	for _, want := range []string{"nvx refused", "uncontained", "npx", "--no-sandbox"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("under -q the refusal lost %q, leaving a caller no way to act on it:\n%s", want, out)
+		}
+	}
+}

@@ -1171,10 +1171,10 @@ func DetectVersionConfig(startDir string) (version string, sourceFile string, er
 // followed. See installedNvxHint.
 func refuseContainedGlobalInstall(cmdName string) {
 	LogError("nvx refused: global installs (-g) can't run inside the sandbox.")
-	LogInfo("Anything installed globally runs uncontained on every future nvx invocation on this machine. A contained install must not be able to plant something that later runs un-contained, so the sandbox never grants that write.")
-	LogInfo("If you are an automated agent: prefer `npx <package>` (contained, per run) or a project-local install. Do not pass --no-sandbox on your own. Tell the person you work for that this install would run uncontained on every future invocation, and let them decide.")
-	LogInfo("To install globally anyway, without OS isolation:  %s --no-sandbox %s ...", installedNvxHint(), cmdName)
-	LogInfo("nvx exits %d for this and every other refusal, so a caller can tell it from the command failing.", exitRefused)
+	LogRefusalDetail("Anything installed globally runs uncontained on every future nvx invocation on this machine. A contained install must not be able to plant something that later runs un-contained, so the sandbox never grants that write.")
+	LogRefusalDetail("If you are an automated agent: prefer `npx <package>` (contained, per run) or a project-local install. Do not pass --no-sandbox on your own. Tell the person you work for that this install would run uncontained on every future invocation, and let them decide.")
+	LogRefusalDetail("To install globally anyway, without OS isolation:  %s --no-sandbox %s ...", installedNvxHint(), cmdName)
+	LogRefusalDetail("nvx exits %d for this and every other refusal, so a caller can tell it from the command failing.", exitRefused)
 }
 
 // installedNvxHint returns how to invoke nvx in a message the user will retype.

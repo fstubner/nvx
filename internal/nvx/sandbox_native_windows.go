@@ -443,7 +443,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 			// Fail closed: falling back to a direct connection would silently
 			// restore the unrestricted egress this whole path exists to remove.
 			LogError("Egress relay setup failed (fail-closed): %v", err)
-			LogInfo("To run without the egress allowlist, set network.mode to \"open\" in your nvx policy.")
+			LogRefusalDetail("To run without the egress allowlist, set network.mode to \"open\" in your nvx policy.")
 			return 1, refusedToStart("the egress relay could not be set up")
 		}
 	}
