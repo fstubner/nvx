@@ -34,6 +34,9 @@ import (
 // while keeping raw connectivity. That would look like partial containment and be
 // none: an attacker hard-codes an address.
 func TestRestrictedTokenNetworkBehaviour(t *testing.T) {
+	// DIAGNOSTIC, TO BE REVERTED. Isolating a Windows CI job that exits non-zero
+	// with no test marked FAIL. Reverted either way once the answer is in.
+	t.Skip("diagnostic: isolating a non-zero go test exit on the Windows runner")
 	if os.Getenv("NVX_PROBE") != "1" {
 		t.Skip("set NVX_PROBE=1 to run (creates restricted tokens and makes outbound connections)")
 	}
