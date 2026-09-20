@@ -277,6 +277,13 @@ func shimPathPrependSnippet(shell, shimDir string) string {
 // A flag rather than a prompt, deliberately. `PromptYesNo` honours NVX_YES, which
 // agents and CI set as a matter of course, so a prompt here would auto-approve a
 // persistent system change for exactly the callers least able to notice it.
+// reportSandboxLaunchFn is the seam the sandbox-launch check is called through,
+// so the health verdict can be tested against both answers without a host that
+// really cannot start an AppContainer. The check itself needs a real launch and
+// a real host; what this covers is the wiring -- that a sandbox which cannot
+// start makes doctor unhealthy rather than being printed and ignored.
+var reportSandboxLaunchFn = reportSandboxLaunch
+
 func runDoctor(nvxHome string, fix bool) int {
 	// Diagnose BEFORE writing anything.
 	//
@@ -308,6 +315,12 @@ func runDoctor(nvxHome string, fix bool) int {
 	// all, which is the loudest state doctor can be asked about.
 	policyBroken := reportUnreadablePolicy(nvxHome)
 
+	// Whether the sandbox can start at all. Everything above this line is about
+	// whether nvx is INVOKED; this is the first check about whether the thing it
+	// invokes can run. Measured 2026-09-20: a machine out of commit charge
+	// refused every AppContainer launch while doctor reported good health and exit 0.
+	sandboxBroken := !reportSandboxLaunchFn(nvxHome)
+
 	// One definition, read twice: once before any repair and once after, since a
 	// --fix pass can change the answer. It was written out twice instead, and the
 	// second copy was missed when policyBroken was added -- doctor named the
@@ -315,7 +328,7 @@ func runDoctor(nvxHome string, fix bool) int {
 	// anyway. Closing over rep is deliberate: --fix reassigns it.
 	healthyNow := func() bool {
 		return rep.shimDirOnPath && len(rep.shadowedBy) == 0 &&
-			len(rep.missingExeShims) == 0 && !weakened && !policyBroken
+			len(rep.missingExeShims) == 0 && !weakened && !policyBroken && !sandboxBroken
 	}
 
 	// Runs whichever way the interception verdict goes: a machine whose PATH is

@@ -344,6 +344,14 @@ func Main() {
 		}
 		os.Exit(runLandlockExecChild(a))
 
+	// The control child for `nvx doctor`'s sandbox-launch check: start, and
+	// exit. It runs INSIDE the AppContainer, so it must not touch anything the
+	// sandbox denies -- no home, no network, no output. Exiting 0 is the whole
+	// signal; the question being asked is only whether CreateProcess could
+	// start a process in an AppContainer at all.
+	case "__appcontainer-control":
+		os.Exit(0)
+
 	case "__appcontainer-exec":
 		a, ok := parseSupervisorExecArgs(os.Args[2:])
 		if !ok {
