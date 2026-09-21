@@ -17,6 +17,31 @@ const title = changelogCopy.heading;
 const description = changelogCopy.leadHtml;
 
 
+/**
+ * Drop the "Changed (internal)" section from a release body.
+ *
+ * CHANGELOG.md keeps it -- refactors, CI plumbing and test-harness work are
+ * worth having in the repo's history -- but nobody reading this page can act
+ * on "internals reduced from monolithic files into facades", and in 0.3.1 that
+ * section ran to fifty-odd lines above the fixes people came for.
+ *
+ * Done here rather than in the renderer, deliberately. The renderer only
+ * shapes the DOM; the raw body is also serialised into the page for the
+ * client to re-render from, so filtering downstream left the full text in the
+ * page source for anything reading it -- which is most of what this section
+ * was hidden from. Cutting it at the parse keeps one copy of the decision and
+ * removes the text from both.
+ *
+ * Matched before any normalisation: "Changed (internal)" with the
+ * parenthetical stripped is just "changed", which is also why
+ * summarize.ts's `changed internal` branch never fires.
+ *
+ * The section ends at the next heading of the same depth or shallower, so the
+ * list underneath leaves with it and the section after it is untouched.
+ */
+const stripInternalSection = (body: string): string =>
+  body.replace(/^###\s*Changed\s*\(\s*internal\s*\)\s*$[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, '').trim();
+
 const parseLocalChangelog = (text: string) => {
   const headings = [...text.matchAll(/^## \[([^\]]+)\](?:\s+(?:—|-)\s+(\d{4}-\d{2}-\d{2}))?/gm)];
   return headings
@@ -27,7 +52,7 @@ const parseLocalChangelog = (text: string) => {
       const tag = version.startsWith('v') ? version : `v${version}`;
       const start = (heading.index ?? 0) + heading[0].length;
       const end = headings[index + 1]?.index ?? text.length;
-      const body = text.slice(start, end).trim();
+      const body = stripInternalSection(text.slice(start, end).trim());
       const date = heading[2] ? `${heading[2]}T00:00:00.000Z` : '';
       return {
         name: tag,
@@ -283,7 +308,23 @@ html[data-js] .release-collapsible:not(.release-expanded) .release-body::after{
   content:"";
   position:absolute;left:0;right:0;bottom:0;height:84px;
   pointer-events:none;
-  background:linear-gradient(180deg,rgba(var(--ui-bg-rgb), 0),rgba(var(--ui-bg-rgb), .95) 70%,var(--ui-surface));
+  /* Every stop on the page-background channel, so the fade stays the card's
+     own hue.
+   *
+   * The last stop was `--ui-surface` (#191d25 in dark -- rgb(25,29,37), blue
+   * twelve points above red). The card it fades over is `.release-item`:
+   * `--ui-lift-rgb` at 2.8% over the page background, which composites to a
+   * neutral grey. Fading a neutral card into a blue-tinted stop is what made
+   * the overflow shadow read as navy rather than as the card continuing.
+   *
+   * `--ui-bg-rgb` is ~2% off the card's exact composite (17,17,17 against
+   * 23,23,23 in dark) and that gap is below perception at the bottom of a
+   * gradient. The old stop was wrong by twenty points on one channel, which
+   * is not. Both tokens flip with the theme, so this needs no light variant. */
+  background:linear-gradient(180deg,
+    rgba(var(--ui-bg-rgb), 0),
+    rgba(var(--ui-bg-rgb), .95) 70%,
+    rgb(var(--ui-bg-rgb)));
 }
 .release-body>*+*{margin-top:14px}
 .release-summary{
@@ -296,18 +337,41 @@ html[data-js] .release-collapsible:not(.release-expanded) .release-body::after{
 }
 /* Both margins, explicitly.
  *
- * Only `margin-top` was set, so the bottom fell through to the UA default
- * for h5 -- 1.67em, which computes to 25.65px against this font-size. A
- * heading therefore sat 18px below the previous list and 25px above its own,
- * binding it to the section it had just ended instead of the one it
- * introduces. More space above than below now, which is the relationship a
- * section heading is supposed to have. */
+ * Only `margin-top` was set, so the bottom fell through to the UA default and
+ * came out larger than the gap above. A heading therefore sat closer to the
+ * list it had just ended than to the one it introduces, binding it to the
+ * wrong section. More space above than below now, which is the relationship a
+ * section heading is supposed to have.
+ *
+ * Setting both is also what keeps this stable across heading levels: these
+ * render as <h3> today, and did render as <h5> until the heading-order fix,
+ * whose UA defaults differ. */
 .release-body .release-heading{
   color:var(--ui-text);font-size:.96rem;line-height:1.35;
   margin:26px 0 9px;
 }
 .release-body .release-heading:first-child{margin-top:0}
-.release-paragraph{margin:0;max-width:none;min-width:0;overflow-wrap:anywhere}
+/* Bottom and inline margins only -- NOT the `margin:0` shorthand.
+ *
+ * `.release-body>*+*` above is the rule that spaces every block in a release
+ * card, and it is one class deep, exactly like this selector. Same
+ * specificity means source order decides, and this rule comes later, so the
+ * shorthand's implicit `margin-top:0` beat it and every paragraph sat flush
+ * against the block above it.
+ *
+ * The visible result was on v0.3.1: the curated summary and the body's own
+ * first paragraph rendered as one unbroken run of text with only a line
+ * wrap between them, which read as a missing paragraph break rather than as
+ * two paragraphs.
+ *
+ * Leaving the top margin alone hands spacing back to the flow rule. Nothing
+ * needs a zero top here -- a paragraph is never the card's first child,
+ * because `.release-summary` always is. */
+.release-paragraph{
+  margin-block-end:0;
+  margin-inline:0;
+  max-width:none;min-width:0;overflow-wrap:anywhere;
+}
 .release-note-list{
   margin:0;padding-left:1.15rem;display:grid;gap:6px;max-width:none;
   min-width:0;

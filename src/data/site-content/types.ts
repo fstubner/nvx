@@ -81,8 +81,15 @@ export interface HeroDownload {
 }
 
 export interface Hero {
-  /** Small uppercase strip above the headline. */
+  /** Small uppercase strip above the headline. Also the server-rendered
+   *  fallback when `releaseLink` is set and the release lookup fails. */
   badge: string;
+  /** Turns the badge into a link to the release notes, and lets the page
+   *  replace its text with the latest released version once GitHub confirms
+   *  one (`v0.3.1 · What changed →`). Omit it and the badge stays the static
+   *  string above, which is the default for a product with no changelog page
+   *  or no published releases. */
+  releaseLink?: string;
   heading: string;
   subhead: string;
   /** Shell command shown in the hero's highlighted install block. */
@@ -230,6 +237,18 @@ export interface Feedback {
 export interface SocialProof {
   /** GitHub repo in "owner/name" format. Used to fetch stars + download counts. */
   repo: string;
+  /**
+   * crates.io crate name, when the product is installable with `cargo install`.
+   * Its all-time downloads are added to the GitHub release-asset total, because
+   * a cargo install never touches a release asset and the label says "total".
+   * Omit for a product that is not on crates.io: the fetch is then skipped and
+   * the total comes from GitHub alone.
+   *
+   * Name only the crate people install. Library crates alongside it are
+   * dependency resolution and docs.rs builds rather than installs, and counting
+   * them reports one `cargo install` several times.
+   */
+  cratesIoCrate?: string;
 }
 
 export interface Analytics {

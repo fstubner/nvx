@@ -14,7 +14,7 @@ interface GitHubRelease {
   html_url?: string;
 }
 
-export function initLandingPage(repo: string): void {
+export function initLandingPage(repo: string, cratesIoCrate?: string): void {
     const year = document.getElementById("y");
     if (year) year.textContent = String(new Date().getFullYear());
 
@@ -33,9 +33,7 @@ export function initLandingPage(repo: string): void {
         return `${(Math.floor(n / 100000) / 10).toFixed(1)}M+`;
       };
       // Every separator is derived from what is actually on screen, so a
-      // partial failure cannot leave a dangling interpunct. The version is
-      // part of this now: it is only rendered once a release has confirmed
-      // it, so it can be absent like the rest.
+      // partial failure cannot leave a dangling interpunct.
       const refreshMetricSeparators = () => {
         const shown = (id: string) => {
           const el = document.getElementById(id);
@@ -47,10 +45,8 @@ export function initLandingPage(repo: string): void {
         };
         const hasStars = shown("stars");
         const hasDownloads = shown("downloads");
-        const hasVersion = shown("latest-version");
         setSep("metrics-sep", hasStars && hasDownloads);
-        setSep("version-sep", (hasStars || hasDownloads) && hasVersion);
-        setSep("source-sep", hasStars || hasDownloads || hasVersion);
+        setSep("source-sep", hasStars || hasDownloads);
       };
       fetch(`https://api.github.com/repos/${repo}`)
         .then((r) => (r.ok ? r.json() : null))
@@ -63,38 +59,112 @@ export function initLandingPage(repo: string): void {
           refreshMetricSeparators();
         })
         .catch(() => {});
+      /* Downloads come from two places, and the count said "total" while
+         reporting one of them.
+       *
+         GitHub release assets are the installers and the standalone
+         binaries. crates.io is `cargo install netscli`, which the install
+         section offers and which never touched a release asset. Only the
+         `netscli` crate is counted: netscli-core and netscli-mcp are
+         libraries, so their downloads are dependency resolution and docs.rs
+         builds rather than anyone installing anything, and adding them would
+         count a single `cargo install` three times.
+
+         Either source may fail or be rate-limited, so each records its own
+         number and the label re-renders from whichever have arrived. A
+         partial count is better than none, and better than a spinner that
+         never resolves. */
+      let githubDownloads: number | null = null;
+      let cratesDownloads: number | null = null;
+      // Whether each source has finished, which is not the same as whether it
+      // produced a number. A rate-limited source never sets its count, so
+      // gating on the counts alone would leave the label waiting forever.
+      let githubSettled = false;
+      // A product with no `cratesIoCrate` has one source, not two: nothing will
+      // ever fetch crates.io, so leaving this false would hold the label at
+      // "one source has not reported" for the life of the page.
+      let cratesSettled = !cratesIoCrate;
+      const renderDownloads = () => {
+        if (githubDownloads === null && cratesDownloads === null) return;
+        const total = (githubDownloads ?? 0) + (cratesDownloads ?? 0);
+        // "total" is a claim about both sources, so only make it once both
+        // have reported. Measured on this page: "Downloads: 178 total" with
+        // only GitHub in, then "Downloads: 2,635 total" once crates.io
+        // landed -- same label, same page, a fifteenfold difference. Until
+        // both are in, the number is a lower bound and now says so.
+        const complete = githubSettled && cratesSettled
+          && githubDownloads !== null
+          && (!cratesIoCrate || cratesDownloads !== null);
+        const el = document.getElementById("downloads");
+        if (el) {
+          // fmtDownloads already appends "+" above 1000; don't double it.
+          const shown = fmtDownloads(total);
+          const text = complete || shown.endsWith("+") ? shown : `${shown}+`;
+          el.textContent = `${text} ${total === 1 ? "download" : "downloads"}`;
+          el.dataset.totalDownloads = complete
+            ? `Downloads: ${fmt(total)} total`
+            : `Downloads: ${fmt(total)} so far; one source has not reported`;
+          el.setAttribute("aria-label", el.dataset.totalDownloads);
+          el.hidden = false;
+        }
+        refreshMetricSeparators();
+      };
+
+      // crates.io sets `access-control-allow-origin: *`, so this needs no
+      // proxy or build step. `downloads` is all-time; `recent_downloads` is
+      // the trailing 90 days and is not what the label claims.
+      //
+      // Skipped entirely for a product that is not on crates.io, rather than
+      // fetched and allowed to 404: an unconditional fetch of
+      // /crates/undefined is a request every visitor's browser makes, and a
+      // failure in the console for a site that has nothing wrong with it.
+      if (cratesIoCrate) {
+        fetch(`https://crates.io/api/v1/crates/${cratesIoCrate}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => {
+            const n = d?.crate?.downloads;
+            if (typeof n !== "number") return;
+            cratesDownloads = n;
+          })
+          .catch(() => {})
+          // `finally`, not the success path: a failed or rate-limited fetch
+          // settles this source too, and the label has to know that to stop
+          // withholding the word "total".
+          .finally(() => {
+            cratesSettled = true;
+            renderDownloads();
+          });
+      }
+
       fetch(`https://api.github.com/repos/${repo}/releases?per_page=100`)
         .then((r) => (r.ok ? r.json() : null))
         .then((rs: unknown) => {
           if (!Array.isArray(rs)) return;
           const releases = rs as GitHubRelease[];
-          const total = releases.reduce(
+          githubDownloads = releases.reduce(
             (sum, release) => sum + (release.assets ?? []).reduce(
               (assetSum, asset) => assetSum + (asset.download_count ?? 0),
               0,
             ),
             0,
           );
-          const el = document.getElementById("downloads");
-          if (el) {
-            el.textContent = `${fmtDownloads(total)} ${total === 1 ? "download" : "downloads"}`;
-            el.dataset.totalDownloads = `Downloads: ${fmt(total)} total`;
-            el.setAttribute("aria-label", el.dataset.totalDownloads);
-            el.hidden = false;
-          }
-          refreshMetricSeparators();
           const latest = releases.find((release) => !release.draft && !release.prerelease)
             ?? releases.find((release) => !release.draft);
-          const versionEl = document.getElementById("latest-version");
-          // Only reveal a version a release actually carries.
-          if (latest?.tag_name && versionEl) {
-            versionEl.textContent = latest.tag_name;
-            if (latest.html_url) versionEl.setAttribute("href", latest.html_url);
-            versionEl.hidden = false;
-            refreshMetricSeparators();
+          // The badge above the headline, upgraded from the static platform
+          // list to the released version. Only a version a release actually
+          // carries: the badge already renders readable text, so a failed or
+          // rate-limited lookup leaves it exactly as served rather than
+          // blanking it or naming a version nothing confirmed.
+          const badge = document.getElementById("hero-release-badge");
+          if (latest?.tag_name && badge) {
+            badge.textContent = `${latest.tag_name} · What changed →`;
           }
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          githubSettled = true;
+          renderDownloads();
+        });
     })();
 
     initCopyButtons();

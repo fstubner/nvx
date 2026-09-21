@@ -41,6 +41,17 @@ export default defineConfig({
       title: docsTitle,
       description: docsDescription,
       disable404Route: true,
+      // Both are Starlight's own components (LastUpdated.astro, EditLink.astro)
+      // and cost one line each. The date comes from git, which is why the site
+      // workflow already checks out with `fetch-depth: 0` -- it does that for
+      // check:changelog, and without full history every page would report the
+      // date of the shallow clone instead of its own last edit.
+      lastUpdated: true,
+      editLink: {
+        // Starlight appends the page's path within the content collection, so
+        // this points at the site/ subdirectory rather than the repo root.
+        baseUrl: `https://github.com/${social.repo}/edit/main/site/`,
+      },
       logo: {
         src: docsLogo,
         replacesTitle: true,
@@ -50,6 +61,21 @@ export default defineConfig({
         Footer: './src/components/starlight/Footer.astro',
         MobileMenuFooter: './src/components/starlight/MobileMenuFooter.astro',
         PageSidebar: './src/components/starlight/PageSidebar.astro',
+        // Upstream's is a native <select>; its dropdown is drawn by the OS
+        // and cannot be styled or positioned. See ThemeControl.astro.
+        ThemeSelect: './src/components/starlight/ThemeSelect.astro',
+        // Wraps Starlight's own Head and appends per-page JSON-LD. The
+        // landing page and changelog get theirs from layouts/Page.astro,
+        // which Starlight does not use, so without this the eleven docs
+        // pages shipped no structured data at all.
+        Head: './src/components/starlight/Head.astro',
+        // Adds a "Copy page" control above the content, backed by the
+        // /docs/<page>.md routes. This was a PageTitle override, which put
+        // the control in the hero band where it belonged to nothing; moving
+        // it here also hands PageTitle back to Starlight, so the <h1> that
+        // the skip link and table of contents anchor to is no longer ours to
+        // keep correct. See the file.
+        MarkdownContent: './src/components/starlight/MarkdownContent.astro',
       },
       // One file per region of the docs shell. None uses !important (the five
       // token remaps in code.css excepted, for inline styles): Starlight's own
