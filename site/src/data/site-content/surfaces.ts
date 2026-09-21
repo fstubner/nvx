@@ -58,8 +58,13 @@ found 0 vulnerabilities`,
     // This was a section of its own with four paragraphs and nothing shown,
     // which made it the one part of the page that asserted instead of
     // demonstrating. The file below is what `nvx policy init` wrote on
-    // 2026-09-17, trimmed to the keys that carry a decision. Empty objects and
-    // the runtime block are dropped; nothing is reworded or invented.
+    // 2026-09-17, trimmed to the keys that carry a decision: every value
+    // still shown is byte-for-byte from the real file. Dropped are the
+    // empty objects and arrays (blocked_packages, trusted_packages,
+    // install_scripts, vulnerabilities, isolation.environment), the runtime
+    // block, and the scalar keys still on their installed default
+    // (enforce_ignore_scripts, isolation.filesystem.provider, isolation.level,
+    // environment.isolated_tools). Nothing shown is reworded or invented.
     codeHtml: `<span class="t-dim">$</span> nvx policy init
 <span class="t-ok">&#10004;</span> Wrote project policy to .nvx-policy.json
 {
