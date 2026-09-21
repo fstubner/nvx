@@ -284,6 +284,10 @@ func shimPathPrependSnippet(shell, shimDir string) string {
 // start makes doctor unhealthy rather than being printed and ignored.
 var reportSandboxLaunchFn = reportSandboxLaunch
 
+// reportSetupGrantsFn is the same seam for the elevated-grant check, which reads
+// the machine's real ACLs and so cannot be driven from a test either.
+var reportSetupGrantsFn = reportSetupGrants
+
 func runDoctor(nvxHome string, fix bool) int {
 	// Diagnose BEFORE writing anything.
 	//
@@ -320,6 +324,14 @@ func runDoctor(nvxHome string, fix bool) int {
 	// invokes can run. Measured 2026-09-20: a machine out of commit charge
 	// refused every AppContainer launch while doctor reported good health and exit 0.
 	sandboxBroken := !reportSandboxLaunchFn(nvxHome)
+
+	// And, when it cannot, whether the elevated grants it depends on explain why.
+	// The launch check above reports the Windows error, which for a missing
+	// traverse grant is a bare "Access is denied" naming no path; this names the
+	// path and the one command that fixes it.
+	if !reportSetupGrantsFn(nvxHome) {
+		sandboxBroken = true
+	}
 
 	// One definition, read twice: once before any repair and once after, since a
 	// --fix pass can change the answer. It was written out twice instead, and the
