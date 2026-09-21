@@ -1,4 +1,4 @@
-import type { Branding, Meta } from './types';
+import type { AppSchema, Branding, Meta } from './types';
 
 // Sample content. Everything in this directory describes one fictional
 // product -- "Example", a command-line tool -- so the site builds, renders
@@ -24,6 +24,19 @@ export const meta: Meta = {
   ogImageAlt: 'The Example command-line tool running in a terminal',
   faviconPath: '/favicon.svg',
   themeColor: '#111',
+};
+
+// Facts about the PRODUCT for the JSON-LD, not about this site. These were
+// literals in src/layouts/Page.astro until a site shipped the wrong language
+// for its own program, because no gate read a value nothing listed.
+export const appSchema: AppSchema = {
+  applicationCategory: 'DeveloperApplication',
+  applicationSubCategory: 'REPLACE_ME',
+  operatingSystem: 'Windows, macOS, Linux',
+  license: 'https://opensource.org/licenses/MIT',
+  programmingLanguage: 'REPLACE_ME',
+  price: '0',
+  priceCurrency: 'USD',
 };
 
 export const branding: Branding = {

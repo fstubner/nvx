@@ -8,7 +8,10 @@ const labels = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
 // has the hero's copyable one-liner already.
 const groups = [
   { key: 'desktop', title: 'Desktop app' },
-  { key: 'cli', title: 'CLI + terminal UI' },
+  // Neutral on purpose. This read 'CLI + terminal UI' until 2026-09-14, which
+  // is a promise about a surface most products using this shell do not ship.
+  // A label naming a feature belongs in the content files, not in a component.
+  { key: 'cli', title: 'Command line' },
 ] as const;
 ---
 <section id="install">
@@ -51,7 +54,7 @@ const groups = [
                   <div class="reco">
                     <div class="reco-meta">{recommended.label}</div>
                     {recommended.command ? (
-                      <div class="cmd big has-copy always-show">{recommended.command}</div>
+                      <div class="cmd big has-copy always-show"><span class="cmd-text" tabindex="0">{recommended.command}</span></div>
                     ) : (
                       <a class="cmd big install-download" href={recommended.href} download>
                         Download {recommended.label}
@@ -124,8 +127,7 @@ const groups = [
   border-radius:8px;padding:12px 16px;
   font-family:ui-monospace,"SF Mono",Menlo,monospace;
   font-size:clamp(.6875rem,1.4vw,.8125rem);
-  overflow-x:auto;white-space:pre;color:var(--ui-text);
-  scrollbar-width:thin;scrollbar-color:rgba(var(--ui-lift-rgb),.15) transparent;
+  overflow:hidden;color:var(--ui-text);
   position:relative;
 }
 .tryblock{
@@ -217,7 +219,29 @@ html[data-theme='light'] #install .reco{
   box-shadow:var(--ui-lift-sm);
 }
 .reco-meta{font-size:.85rem;font-weight:500;color:var(--ui-text);margin-bottom:8px}
-.cmd.big{font-size:1.05rem;padding-right:74px}
+/* The scroll container and the positioning context have to be different
+   elements. While they were the same one, `right:10px` on the copy button
+   resolved against the scrollable CONTENT box, so scrolling the command
+   carried the button along with it -- measured 674px out of place at the
+   end of a long install line. Keeping the scroll on an inner element also
+   makes `padding-right` on the chip reserve real space, which it could not
+   do while overflowing inline content painted across it. */
+.cmd-text{
+  /* Focusable because it scrolls. axe's scrollable-region-focusable
+     wants a scrollable element reachable by keyboard, and this one lost
+     its focusable descendant when the copy button became a sibling
+     rather than a child. A command you can scroll with a mouse should
+     be scrollable without one. */
+  outline-offset:2px;
+  display:block;overflow-x:auto;white-space:pre;
+  scrollbar-width:thin;scrollbar-color:rgba(var(--ui-lift-rgb),.15) transparent;
+}
+/* No right padding reservation. The copy button floats over the command's
+   right edge with an opaque background, so the text runs full width and
+   scrolls underneath it. Reserving 74px instead pushed the button out of the
+   text and shrank the box, which is not what the button looked like before the
+   scroll container was split out. */
+.cmd.big{font-size:1.05rem}
 /* The container is the divider: the rows sit on it with a 1px gap, so its
    background shows through as the hairline between them. Chip tokens, so the
    rule between two light rows is a light hairline rather than a near-black
@@ -404,7 +428,7 @@ a.install-download:focus-visible{
 .surface-download-btn:hover{
   background:rgba(var(--ui-accent-rgb),.20);
   border-color:rgba(var(--ui-accent-rgb),.6);
-  color:#1ec88c;
+  color:var(--ui-accent-bright);
 }
 .surface-download-btn .dl-label{font-size:.85rem;line-height:1.2}
 .surface-download-btn .dl-hint{
@@ -434,6 +458,7 @@ a.install-download:focus-visible{
  * rules above and silently does nothing.
  */
 @media(max-width:700px){
+  .cmd-text,
   .cmd,
   .cmd.big,
   /* `.alt-cmd` too. It was left on `overflow-wrap:anywhere`, so while the

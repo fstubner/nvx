@@ -1,4 +1,5 @@
 ---
+import { appSchema } from '../data/site-content/meta';
 // Shared with the docs shell (astro.config.mjs customCss): the palette, the
 // code surface and the theme control. Then the landing page's own tier.
 import '../styles/tokens.css';
@@ -49,19 +50,19 @@ const softwareApp = {
   url: meta.domain,
   downloadUrl: `${site.hero.sourceUrl}/releases/latest`,
   description: meta.description,
-  applicationCategory: 'DeveloperApplication',
-  applicationSubCategory: 'NetworkingApplication',
-  operatingSystem: 'Windows, macOS, Linux',
+  applicationCategory: appSchema.applicationCategory,
+  applicationSubCategory: appSchema.applicationSubCategory,
+  operatingSystem: appSchema.operatingSystem,
   softwareVersion: version,
-  license: 'https://opensource.org/licenses/MIT',
-  programmingLanguage: 'Rust',
+  license: appSchema.license,
+  programmingLanguage: appSchema.programmingLanguage,
   codeRepository: site.hero.sourceUrl,
   author: {
     '@type': 'Person',
     name: meta.author.name,
     url: meta.author.url,
   },
-  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+  offers: { '@type': 'Offer', price: appSchema.price, priceCurrency: appSchema.priceCurrency },
   screenshot: meta.ogImage,
 };
 
