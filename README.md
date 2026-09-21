@@ -112,74 +112,41 @@ git ref or a browser session:
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs every check in this repo on a **self-hosted
-runner**, because this repo is private and GitHub-hosted minutes are billed.
-Self-hosted minutes are not.
+`.github/workflows/ci.yml` runs every check in this repo on
+**`ubuntu-latest`**. Nothing to set up: open a pull request and it runs.
 
-That choice has a security condition attached: a self-hosted runner executes
-whatever a workflow tells it to, on a real machine. Safe while the repo is
-private and one person opens the pull requests; not safe if it is ever made
-public, because a fork's pull request would then run its own code on that
-machine. **If this repo is published, change `runs-on` back to
-`ubuntu-latest` in the same commit** -- public repos get GitHub-hosted
-minutes free, so nothing is lost.
+This was a self-hosted Windows runner until 2026-09-12. The reasoning was
+cost -- this repo is private, so GitHub-hosted minutes are billed against the
+account and self-hosted minutes are not -- and it failed in the way that kind
+of saving usually does. The runner went offline, and a pull request's checks
+sat queued indefinitely: not passing, not failing, just never arriving. The
+pull request looked like it was waiting on CI, and CI was waiting on a
+machine that was not coming back.
 
-The workflow's first step enforces that rather than trusting anyone to
-remember it: on a public repo it fails before the checkout runs, naming the
-fix. Making the repo public and forgetting the runner gives a red CI, not a
-stranger's code on your machine.
+A check that cannot run is worse than a metered one, because nothing about it
+looks broken. So the minutes are billed now, and that is the trade: a small
+recurring cost for checks that actually report.
 
-### Setting the runner up
-
-Once, on the machine that will run the checks. It needs Node (the workflow
-installs the version `.nvmrc` names), Chrome, and Git.
-
-```powershell
-mkdir C:ctions-runner; cd C:ctions-runner
-Invoke-WebRequest -Uri https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-win-x64-2.337.0.zip -OutFile runner.zip
-Expand-Archive -Path runner.zip -DestinationPath . -Force
-```
-
-Get a registration token -- it is short-lived, and generating one needs no
-copying out of a browser:
-
-```powershell
-gh api -X POST repos/<owner>/<repo>/actions/runners/registration-token -q .token
-```
-
-Then register and start it. The default labels are `self-hosted` and
-`windows`, which is exactly what the workflow asks for:
-
-```powershell
-./config.cmd --url https://github.com/<owner>/<repo> --token <the token>
-./run.cmd
-```
-
-`run.cmd` holds the terminal and stops when you close it, which is the right
-default while you are trying it. To have it survive a reboot, install it as
-a service instead:
-
-```powershell
-./svc.cmd install
-./svc.cmd start
-```
+The change also removed a security condition the old setup carried. A
+self-hosted runner executes whatever a workflow tells it to, on a real
+machine -- fine while the repo is private and one person opens the pull
+requests, not fine the moment it is public, because a fork's pull request
+would then run its own code there. The workflow had a guard step that failed
+the job if it ever ran self-hosted on a public repo. Hosted runners make both
+the condition and the guard unnecessary, so the guard is gone.
 
 ### What to expect
 
-Jobs queue rather than run in parallel, because there is one runner. The
-whole gate is a single job for that reason -- two would checkout and
-`npm ci` twice, in series, for nothing. Expect a few minutes, most of it the
-two browser sweeps.
+The whole gate is a single job. Two would checkout and `npm ci` twice for no
+gain; the step names report separately either way. Expect a few minutes, most
+of it the two browser sweeps.
 
-The workspace persists between runs. `actions/checkout` cleans untracked
-files each time, so `node_modules` is rebuilt per run rather than drifting.
-
-`setup-node`'s `cache: npm` is deliberately off. It exists to carry the npm
-cache between throwaway hosted VMs; here the cache is already on the disk,
-and turning a local read into an upload and a download makes every run
-slower. The first run of this workflow measured it: the checks finished in
-under four minutes, and the cache upload was still running ten minutes
-later.
+`setup-node`'s `cache: npm` is on. It carries the npm cache between throwaway
+hosted VMs, which is exactly this case. It was off under the self-hosted
+runner, where `~/.npm` already sat on the disk between runs and caching turned
+a local read into an upload and a download -- measured on that workflow's
+first run, the checks finished in under four minutes while the cache upload
+was still going ten minutes later.
 
 ## Preview builds
 

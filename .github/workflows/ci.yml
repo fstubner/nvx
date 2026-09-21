@@ -2,25 +2,19 @@
 # site root. Every step blocks; a check that is allowed to fail is a check
 # nobody reads.
 #
-# It runs on a SELF-HOSTED runner. This repo is private, so GitHub-hosted
-# minutes are billed against the account, and that bill is the only reason
-# the choice is interesting -- self-hosted minutes are not metered.
+# It runs on a GitHub-hosted runner. This was self-hosted until 2026-09-12,
+# to avoid metered minutes on a private repo, and the trade turned out badly:
+# the runner went offline and every queued run sat there indefinitely,
+# reporting neither pass nor fail. A check that cannot run is worse than a
+# metered one, because nothing about it looks broken -- the pull request just
+# waits.
 #
-# Two things follow from that, and both matter:
+# Hosted runners also remove the security condition the self-hosted setup
+# carried, which was that a fork's pull request would have executed its own
+# code on a personal machine the moment this repo was made public.
 #
-#   SECURITY. A self-hosted runner executes whatever the workflow says, on a
-#   real machine. That is fine while this repo is private and one person
-#   opens the pull requests. It stops being fine the moment the repo is
-#   public: a fork's pull request would run its own code here. If this repo
-#   is ever published, move back to `ubuntu-latest` in the same commit --
-#   public repos get GitHub-hosted minutes for free, so there is no reason
-#   not to.
-#
-#   ONE MACHINE. Jobs queue rather than run side by side, so this is one job
-#   rather than two: two jobs would checkout and `npm ci` twice, in series,
-#   for no gain. The step names still report separately.
-#
-# Setting the runner up is in the README under "Continuous integration".
+# Still one job rather than two: two would checkout and `npm ci` twice for no
+# gain. The step names report separately either way.
 name: CI
 
 on:
@@ -38,34 +32,18 @@ permissions:
 jobs:
   site:
     name: Checks
-    runs-on: [self-hosted, windows]
+    runs-on: ubuntu-latest
     # The browser sweeps are the slow part, at a couple of minutes each. This
-    # is a ceiling on a hang -- a wedged run on a self-hosted runner blocks
-    # every later run, because there is only the one.
+    # is a ceiling on a hang rather than a target; a hosted runner is torn
+    # down afterwards, so an overrun costs minutes and nothing else.
     timeout-minutes: 30
     defaults:
       run:
-        # Git Bash, so these are the same commands that work locally rather
-        # than their PowerShell equivalents.
+        # Explicit, so these are the same commands that work locally. It is
+        # already the default on Linux; naming it keeps that true if the
+        # runner image ever changes.
         shell: bash
     steps:
-      # Before the checkout, deliberately: if this ever runs on a public repo,
-      # the job must stop before it fetches anything a fork wrote.
-      #
-      # The plan if this repo is published is to move back to `ubuntu-latest`
-      # in the same commit, and the plan is sound. This is here because plans
-      # like that are remembered on the day they are made and not six months
-      # later, and forgetting this one means a stranger's pull request runs
-      # its own code on a personal machine. A comment cannot enforce it; a
-      # step that fails can.
-      - name: Refuse to run self-hosted on a public repo
-        if: ${{ github.event.repository.private == false }}
-        run: |
-          echo "This repository is public and CI is on a self-hosted runner." >&2
-          echo "A fork's pull request would execute its own code on that machine." >&2
-          echo "Change runs-on to ubuntu-latest -- public repos get hosted minutes free." >&2
-          exit 1
-
       - uses: actions/checkout@v4
         with:
           # check:changelog compares dated headings against tags; with the
@@ -75,13 +53,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          # No `cache: npm` here, deliberately. That option uploads the npm
-          # cache to GitHub's cache service after every run and downloads it
-          # before the next one -- which is a win on a fresh hosted VM and a
-          # loss on this runner, where ~/.npm is already sitting on the disk
-          # between runs. Measured on the first run of this workflow: the
-          # checks took under four minutes and the cache upload was still
-          # going ten minutes later.
+          # On now, and the reason is the runner. This was off while CI was
+          # self-hosted, where ~/.npm already sat on the disk between runs and
+          # caching turned a local read into an upload and a download -- the
+          # first run measured the checks finishing in under four minutes with
+          # the cache upload still going ten minutes later. A hosted VM is
+          # thrown away after every run, so there is no local cache to prefer
+          # and this is the case the option was written for.
+          cache: npm
       - run: npm ci
 
       # --- Static guards: no build needed ---------------------------------
@@ -112,10 +91,8 @@ jobs:
       - name: Rendered contrast sweep
         run: npm run check:contrast
 
-      # A sweep that is cancelled mid-run leaves an `astro preview` holding
-      # its port, and the next run then fails on a port conflict rather than
-      # on anything real. Cheap to prevent; `|| true` because "nothing was
-      # running" is the normal case.
-      - name: Stop any leftover preview server
-        if: always()
-        run: npx astro preview stop || true
+      # There was a cleanup step here that killed a leftover `astro preview`
+      # between runs. It existed because a cancelled sweep left one holding
+      # its port on the self-hosted runner, failing the NEXT run on a port
+      # conflict rather than on anything real. A hosted runner is destroyed
+      # after the job, so nothing survives to conflict with.
