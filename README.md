@@ -232,8 +232,8 @@ commit and syncing works in both directions afterwards:
 git subtree add --prefix=site https://github.com/<owner>/product-site-template main
 ```
 
-Then three things need doing, because the template is a repo whose root IS
-the site and a subtree is a directory inside someone else's repo. All three
+Then four things need doing, because the template is a repo whose root IS
+the site and a subtree is a directory inside someone else's repo. All four
 were found by doing this rather than by reading it:
 
 1. **Move the CI workflow to the project root.** It arrives at
@@ -251,6 +251,10 @@ were found by doing this rather than by reading it:
 3. **Move `AGENTS.md` up, or leave a pointer.** It arrives at
    `site/AGENTS.md`. An agent working in `site/` will find it; one working
    from the project root may not.
+4. **Move `.claude/skills/` up, or the skills are not found.** Same silent
+   failure as the CI workflow: Claude Code reads `.claude/` at the repo
+   root, and the subtree puts it at `site/.claude/`. Measured on a scratch
+   project alongside the other three.
 
 Everything else works unchanged from inside a subtree: the build, all four
 static guards, `check:content`, the changelog check (tags resolve from
