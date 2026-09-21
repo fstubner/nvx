@@ -716,6 +716,25 @@ func LogError(format string, a ...interface{}) {
 	fmt.Fprintf(os.Stderr, "\x1b[31m✘\x1b[0m "+format+"\n", a...)
 }
 
+// LogRefusalDetail carries the rest of a refusal: why nvx declined, and what to
+// do instead. Printed like LogInfo and, like LogError above it, unaffected by
+// -q.
+//
+// These lines were LogInfo, which -q suppresses. So `nvx -q npm install -g`
+// printed "nvx refused: global installs can't run inside the sandbox" and
+// nothing else -- no consequence, no alternative, and for an automated caller
+// no instruction to tell the person what the trade is. -q means "do not narrate
+// progress", not "hide why I would not do this"; a refusal has no progress to
+// narrate, and the part that gets dropped is the only part that is actionable.
+//
+// Deliberately separate from LogInfo rather than a flag on it: the distinction
+// is not verbosity, it is whether a line is part of an error. Warnings and
+// errors already ignore both flags for the same reason.
+func LogRefusalDetail(format string, a ...interface{}) {
+	debugCapture("info", fmt.Sprintf(format, a...))
+	fmt.Fprintf(os.Stderr, "\x1b[36mℹ\x1b[0m "+format+"\n", a...)
+}
+
 func CompareVersions(v1, v2 string) int {
 	v1Clean := strings.TrimPrefix(strings.ToLower(v1), "v")
 	v2Clean := strings.TrimPrefix(strings.ToLower(v2), "v")
