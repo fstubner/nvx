@@ -80,6 +80,29 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 	host, _, _ := net.SplitHostPort(allowedTarget)
 	blockedTarget := net.JoinHostPort(host, "9")
 
+	// The proxy runs on the HOST and dials this listener on the host's behalf, so
+	// a host that cannot reach its own non-loopback address makes every assertion
+	// below about the network rather than about the allowlist.
+	//
+	// Measured 2026-09-21 on the GitHub windows-latest runner, the first run where
+	// this probe executed at all: PROXY_ALLOWED=502 with PROXY_PAYLOAD=NONE on
+	// both the first attempt and the retry, while PROXY_BLOCKED=403 and
+	// PROXY_ANONYMOUS=407 were correct -- the relay was enforcing the allowlist
+	// exactly as intended and simply had nothing to connect to. The direct
+	// attempt named it: "connectex: No connection could be made because the
+	// target machine actively refused it", an RST from the machine rather than
+	// the i/o timeout a sandbox-blocked dial produces.
+	//
+	// Checked from the test process, which is the same side of the boundary the
+	// proxy sits on, so a failure here is the host's and not the sandbox's.
+	if probe, derr := net.DialTimeout("tcp", allowedTarget, 5*time.Second); derr != nil {
+		t.Skipf("this host cannot reach its own non-loopback listener at %s (%v), so the "+
+			"relay would have nothing to connect to and the allowlist assertions would "+
+			"measure the network", allowedTarget, derr)
+	} else {
+		_ = probe.Close()
+	}
+
 	policy := DefaultPolicy()
 	policy.Isolation.Network.PromptUnknown = false // deny unknown without prompting
 	policy.Isolation.Network.AllowHosts = []string{allowedTarget}
