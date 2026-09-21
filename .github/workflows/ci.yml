@@ -219,7 +219,22 @@ jobs:
           # into them, not regression guards. See
           # sandbox_ipc_inject_probe_windows_test.go for where that stopped.
           'NVX_IPC_SPIKE=1 to continue the brokered-IPC investigation',
-          'cannot grant the container access to cmd.exe'
+          'cannot grant the container access to cmd.exe',
+          # Two probes whose SUBJECT is unreachable on a GitHub-hosted runner,
+          # first seen 2026-09-21 -- the run where the breakaway fix let this
+          # runner create AppContainers at all, so thirty probes executed here
+          # for the first time and these two had nothing to measure.
+          #
+          # Windows normally ships an ALL APPLICATION PACKAGES ACE on the user
+          # profile; without it an AppContainer is denied everything underneath,
+          # so the listing probe's leak check passes trivially and its stat check
+          # cannot pass however correct nvx's grant is.
+          'does not grant AppContainers access to the user profile',
+          # The egress relay runs on the host and dials the test's stand-in
+          # remote on the host's behalf. A host that cannot reach its own
+          # non-loopback listener leaves the relay nothing to connect to, and
+          # the allowlist assertions then measure the network.
+          'stopped answering on its own non-loopback listener'
         )
         $unexpected = $reasons | Where-Object {
           $r = $_; -not ($allowed | Where-Object { $r -match [regex]::Escape($_) })

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 )
 
 // The allowlist decides a NAME; the connection reaches an ADDRESS.
@@ -183,4 +184,18 @@ func dialVetted(ips []net.IP, host string, port uint16) (net.Conn, error) {
 		lastErr = err
 	}
 	return nil, lastErr
+}
+
+// formatEgressIPs renders the addresses a dial attempt covered, for the warning
+// on the 502 path. Empty reads as "none", which is itself the answer when
+// resolution produced nothing.
+func formatEgressIPs(ips []net.IP) string {
+	if len(ips) == 0 {
+		return "none"
+	}
+	out := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		out = append(out, ip.String())
+	}
+	return strings.Join(out, ", ")
 }

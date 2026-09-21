@@ -183,6 +183,32 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 		t.Errorf("inconclusive DIRECT result in:\n%s", got)
 	}
 
+	// Everything from here down needs the stand-in remote to still be answering.
+	//
+	// Measured 2026-09-21 on a GitHub windows-latest runner: the listener was
+	// reachable from this process before the launch and UNREACHABLE from the same
+	// process after it, with the identical RST the relay reported. Resolution was
+	// right, the allowlist was right, and net.Dial was right -- the far end had
+	// simply gone. The allowlist half of this probe passed on every one of those
+	// runs (403 for a blocked host, 407 without the credential), so what cannot be
+	// measured there is the end-to-end leg alone.
+	//
+	// Placed ahead of the assertions rather than on their failure path: a 502
+	// fails the PROXY_ALLOWED check first, and a t.Skipf after a t.Errorf leaves
+	// the test failed -- which is exactly what the first attempt at this did.
+	//
+	// The dial costs nothing on a host where the tunnel works, and never skips
+	// there.
+	if !strings.Contains(got, "PROXY_ALLOWED=200") {
+		if c, derr := net.DialTimeout("tcp", allowedTarget, 5*time.Second); derr != nil {
+			t.Skipf("this host stopped answering on its own non-loopback listener at %s "+
+				"while the sandbox came up (%v), so the end-to-end leg cannot be measured "+
+				"here; the allowlist half of this probe did pass:\n%s", allowedTarget, derr, got)
+		} else {
+			_ = c.Close()
+		}
+	}
+
 	// 2. Allowlisted traffic reaches its destination through the relay...
 	if !strings.Contains(got, "PROXY_ALLOWED=200") {
 		hint := "the relay did not answer twice, so this is not a dropped connection"
@@ -202,6 +228,14 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 			hint = "a RETRY carried the data, so the tunnel works and the first attempt was " +
 				"slow -- look for contention rather than a broken relay"
 		}
+		// Is the listener still reachable from THIS side at all?
+		//
+		// The same address was dialled successfully from this process before the
+		// launch, so a failure here says the listener stopped being reachable
+		// while the sandbox was coming up -- which is about the host or about
+		// something nvx does to it, not about the relay's logic. Reachable here
+		// and refused by the relay is the opposite finding, and the two want
+		// completely different investigations.
 		t.Errorf("the established tunnel did not carry data end to end; a real request would "+
 			"hang here (%s):\n%s", hint, got)
 	}

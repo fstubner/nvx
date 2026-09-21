@@ -251,12 +251,10 @@ func launchAppContainerProcessOnce(
 		return 1, err
 	}
 
-	creationFlags := uintptr(
-		EXTENDED_STARTUPINFO_PRESENT |
-			CREATE_UNICODE_ENVIRONMENT |
-			CREATE_BREAKAWAY_FROM_JOB |
-			syscall.CREATE_NEW_PROCESS_GROUP,
-	)
+	// Breakaway is conditional. Asked for unconditionally, it was the whole
+	// reason contained commands failed from inside any agent harness's shell:
+	// see sandbox_job_breakaway_windows.go.
+	creationFlags := appContainerCreationFlags()
 
 	var pi processInformation
 	var createOK uintptr
@@ -308,9 +306,11 @@ func launchAppContainerProcessOnce(
 		_ = syscall.CloseHandle(pi.hThread)
 	}()
 
-	// The child was created with CREATE_BREAKAWAY_FROM_JOB (needed so a
-	// restrictive CI job object doesn't block CreateProcess), so it starts with
-	// no job membership at all. Assign it to a job of our own, configured to
+	// The child starts either outside any job (created with
+	// CREATE_BREAKAWAY_FROM_JOB, where the caller's job allowed that) or inside
+	// the caller's own job (where it did not; nested jobs are fine since Windows
+	// 8, so what follows works the same either way). Assign it to a job of our
+	// own, configured to
 	// kill everything in it the moment the job's last handle closes -- which
 	// happens automatically if this process is killed before reaching
 	// WaitForSingleObject below. Without this, a client that gives up on a slow
