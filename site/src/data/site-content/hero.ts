@@ -2,6 +2,16 @@ import type { Hero, HeroCommands, HeroDownload } from './types';
 
 export const hero: Hero = {
   badge: 'Windows · macOS · Linux',
+  // The badge becomes `v0.6.0 · What changed →` once the release lookup that
+  // already runs for the download counter confirms a version, and the
+  // version leaves the metrics line below the headline. The platform list
+  // above stays as the fallback: no extra request is made for this, but the
+  // one it rides on can be rate-limited or fail, and a badge that renders as
+  // nothing is worse than the string it replaced. The platform claim itself
+  // is not lost -- the install section's lead line and the comparison table
+  // both restate it, in the two places a reader actually deciding on
+  // platform support looks.
+  releaseLink: '/changelog/',
   heading: 'Node.js and Bun versions, with a sandbox around every install',
   subhead:
     'Install, switch and pin runtimes per project, and auto-switch on cd. Every npm install runs inside an OS sandbox that confines writes to the project and blocks hosts you did not allow.',

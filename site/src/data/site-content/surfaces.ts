@@ -17,12 +17,12 @@ export const surfaces: SurfaceCard[] = [
   {
     title: 'Versions, per project',
     body: 'Install and pin Node.js or Bun, and switch on <code>cd</code> from a <code>.nvmrc</code>, <code>.node-version</code> or <code>package.json</code>. Session-scoped, so a new terminal is unaffected until it reads the same pin.',
-    codeHtml: `<span style="color:var(--ui-code-comment)">$</span> nvx install 22
-<span style="color:var(--ui-code-comment)">✔</span> Node.js v22.23.2 installed
-<span style="color:var(--ui-code-comment)">$</span> nvx use 22
-<span style="color:var(--ui-code-comment)">✔</span> Now using Node.js v22.23.2 in this terminal.
-<span style="color:var(--ui-code-comment)">$</span> cd ../other-project   <span style="color:var(--ui-code-comment)"># pinned to 20</span>
-<span style="color:var(--ui-code-comment)">✔</span> Switched to Node.js v20.19.5`,
+    codeHtml: `<span class="t-dim">$</span> nvx install 22
+<span class="t-ok">&#10004;</span> Node.js v22.23.2 installed
+<span class="t-dim">$</span> nvx use 22
+<span class="t-ok">&#10004;</span> Now using Node.js v22.23.2 in this terminal.
+<span class="t-dim">$</span> cd ../other-project   <span class="t-dim"># pinned to 20</span>
+<span class="t-ok">&#10004;</span> Switched to Node.js v20.19.5`,
   },
   {
     title: 'Checked before it runs',
@@ -33,12 +33,12 @@ export const surfaces: SurfaceCard[] = [
     // edits only: the exact publish timestamp, the sentence naming the
     // approval flags, and a lockfile parse warning that was a defect since
     // fixed. Wrapped for the panel width. Nothing reworded.
-    codeHtml: `<span style="color:var(--ui-code-comment)">$</span> npm ci
-<span style="color:var(--ui-code-comment)">⚠</span> Non-interactive environment: denying prompt.
+    codeHtml: `<span class="t-dim">$</span> npm ci
+<span class="t-warn">&#9888;</span> Non-interactive environment: denying prompt.
   Prompt was: Package @astrojs/starlight@0.42.1 was published
   only 12.9 hours ago. Supply chain compromises are often
   caught within 24 hours. Proceed?
-<span style="color:var(--ui-code-comment)">✘</span> Installation aborted: the release-age warning was not approved.`,
+<span class="t-err">&#10008;</span> Installation aborted: the release-age warning was not approved.`,
   },
   {
     title: 'Installs, contained',
@@ -46,8 +46,8 @@ export const surfaces: SurfaceCard[] = [
     // Captured from a real contained install on 2026-09-14 rather than composed.
     // What this replaced showed a blocked egress against an invented host, and
     // was the only output on the page nvx had not actually printed.
-    codeHtml: `<span style="color:var(--ui-code-comment)">$</span> npm install left-pad
-<span style="color:var(--ui-code-comment)">ℹ</span> Running in native sandbox: npm install left-pad
+    codeHtml: `<span class="t-dim">$</span> npm install left-pad
+<span class="t-info">&#8505;</span> <span class="t-hi">Running in native sandbox: npm install left-pad</span>
 added 1 package, and audited 2 packages in 2s
 found 0 vulnerabilities`,
   },
@@ -65,8 +65,8 @@ found 0 vulnerabilities`,
     // block, and the scalar keys still on their installed default
     // (enforce_ignore_scripts, isolation.filesystem.provider, isolation.level,
     // environment.isolated_tools). Nothing shown is reworded or invented.
-    codeHtml: `<span style="color:var(--ui-code-comment)">$</span> nvx policy init
-<span style="color:var(--ui-code-comment)">✔</span> Wrote project policy to .nvx-policy.json
+    codeHtml: `<span class="t-dim">$</span> nvx policy init
+<span class="t-ok">&#10004;</span> Wrote project policy to .nvx-policy.json
 {
   "typosquatting": { "enabled": true, "max_distance": 2 },
   "release_age":   { "enabled": true, "min_age_hours": 24 },
