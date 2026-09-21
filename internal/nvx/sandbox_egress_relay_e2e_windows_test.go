@@ -225,6 +225,21 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 			hint = "a RETRY carried the data, so the tunnel works and the first attempt was " +
 				"slow -- look for contention rather than a broken relay"
 		}
+		// Is the listener still reachable from THIS side at all?
+		//
+		// The same address was dialled successfully from this process before the
+		// launch, so a failure here says the listener stopped being reachable
+		// while the sandbox was coming up -- which is about the host or about
+		// something nvx does to it, not about the relay's logic. Reachable here
+		// and refused by the relay is the opposite finding, and the two want
+		// completely different investigations.
+		after := "reachable"
+		if c, derr := net.DialTimeout("tcp", allowedTarget, 5*time.Second); derr != nil {
+			after = "UNREACHABLE: " + derr.Error()
+		} else {
+			_ = c.Close()
+		}
+		t.Logf("post-launch dial of %s from the test process: %s", allowedTarget, after)
 		t.Errorf("the established tunnel did not carry data end to end; a real request would "+
 			"hang here (%s):\n%s", hint, got)
 	}
