@@ -32,18 +32,48 @@ permissions:
 jobs:
   site:
     name: Checks
-    runs-on: ubuntu-latest
+    # Self-hosted, because this repository is PRIVATE and hosted minutes are
+    # metered for private repositories.
+    #
+    # It ran on ubuntu-latest from 2026-09-21 until the same day. Measured on
+    # that commit and two re-runs: the job completed in three seconds with ZERO
+    # steps executed, no log written at all (the API returns BlobNotFound), and
+    # no annotation. That is what GitHub does when it will not schedule a job,
+    # and it is indistinguishable from a broken workflow until you compare
+    # repositories: nvx and netscli are public, get free hosted minutes, and
+    # their jobs run on ubuntu-latest today.
+    #
+    # So the choice here is not between hosted and self-hosted on the merits --
+    # hosted does not run at all for this repository.
+    runs-on: [self-hosted, windows]
     # The browser sweeps are the slow part, at a couple of minutes each. This
-    # is a ceiling on a hang rather than a target; a hosted runner is torn
-    # down afterwards, so an overrun costs minutes and nothing else.
+    # is a ceiling on a hang rather than a target; on a self-hosted runner an
+    # overrun blocks every later job in the queue, so the ceiling matters more
+    # here than it did on a hosted one.
     timeout-minutes: 30
     defaults:
       run:
-        # Explicit, so these are the same commands that work locally. It is
-        # already the default on Linux; naming it keeps that true if the
-        # runner image ever changes.
+        # Explicit, so these are the same commands that work locally, and
+        # because the runner is Windows: without this the default shell is
+        # PowerShell and every `npm run` line would need rewriting.
         shell: bash
     steps:
+      # SECURITY. A self-hosted runner executes whatever the workflow says, on
+      # a real machine. On a PUBLIC repository a fork's pull request would run
+      # its own code there, which is why this guard exists and why it is first.
+      #
+      # It was removed on 2026-09-21 along with the move to ubuntu-latest, and
+      # restored with the move back: the hazard returns with the runner.
+      # Checked at run time rather than trusted from a comment, because the
+      # setting it depends on is one click away in the repository settings.
+      - name: Refuse to run self-hosted on a public repo
+        if: ${{ github.event.repository.private == false }}
+        run: |
+          echo "This repository is public and CI is on a self-hosted runner." >&2
+          echo "A fork's pull request would execute its own code on that machine." >&2
+          echo "Change runs-on to ubuntu-latest -- public repos get hosted minutes free." >&2
+          exit 1
+
       - uses: actions/checkout@v4
         with:
           # check:changelog compares dated headings against tags; with the
@@ -53,14 +83,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          # On now, and the reason is the runner. This was off while CI was
-          # self-hosted, where ~/.npm already sat on the disk between runs and
-          # caching turned a local read into an upload and a download -- the
-          # first run measured the checks finishing in under four minutes with
-          # the cache upload still going ten minutes later. A hosted VM is
-          # thrown away after every run, so there is no local cache to prefer
-          # and this is the case the option was written for.
-          cache: npm
+          # Deliberately not `cache: npm`, and the reason is the runner. On the
+          # self-hosted box ~/.npm already sits on the disk between runs, so
+          # caching turns a local read into an upload and a download. Measured
+          # on run 35599905672, the first run of this workflow after the netscli
+          # sync switched the option back on: all fourteen checks green at
+          # 12:33:42Z, then the setup-node post step sat on the cache upload for
+          # twenty minutes with 0.44s of CPU and had to be cancelled. Turn it
+          # back on only if CI returns to hosted runners, where the VM is thrown
+          # away and there is no local cache to prefer.
       - run: npm ci
 
       # --- Static guards: no build needed ---------------------------------

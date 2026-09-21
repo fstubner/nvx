@@ -1,3 +1,11 @@
+// Feedback's types live in ./feedback-types, and are re-exported here so an
+// import of either path keeps working. types.ts crossed the 300-line file-size
+// guard when the feedback feature landed (302, measured 2026-09-21 on the first
+// CI run after the runner came back), and the guard's exception map is for
+// transitions with a named next step rather than for carrying a file over.
+export type { Feedback, FeedbackRoute } from './feedback-types';
+import type { Feedback } from './feedback-types';
+
 // Shared type definitions for the site content modules under
 // site/src/data/site-content/. Assembled into the public `SiteData` shape
 // by site/src/data/site.ts — that's the only module other files should
@@ -200,38 +208,6 @@ export interface FaqItem {
 export interface BuiltWithEntry {
   name: string;
   url: string;
-}
-
-/** One feedback route: a labelled link that opens a prefilled GitHub issue. */
-export interface FeedbackRoute {
-  /** Button text. */
-  label: string;
-  /**
-   * Issue form filename in `.github/ISSUE_TEMPLATE/`, e.g. `bug.yml`.
-   *
-   * Optional. GitHub ignores a template that does not exist and opens a blank
-   * issue instead, so a wrong name degrades to a working link rather than a
-   * broken one — which also means nothing here warns you about a typo.
-   */
-  template?: string;
-  /** Labels applied to the new issue. The repo need not already define them. */
-  issueLabels?: string[];
-}
-
-export interface Feedback {
-  /** Whether the feedback block and its footer link render at all. */
-  enabled: boolean;
-  /** The line above the buttons. */
-  prompt: string;
-  problem: FeedbackRoute;
-  idea: FeedbackRoute;
-  /**
-   * Repo that receives the issues, "owner/name".
-   *
-   * Defaults to `social.repo`. Set it only when feedback belongs somewhere
-   * other than the product's own repository.
-   */
-  repo?: string;
 }
 
 export interface SocialProof {

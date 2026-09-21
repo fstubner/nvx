@@ -170,6 +170,26 @@ Two things are worth knowing rather than fixing:
   greys; `src/styles/README.md` lists where.
 - Deployment is the product's own: there is no `CNAME`, no Pages workflow.
 
+## CI runs on a self-hosted runner
+
+This repository is private, and hosted Actions minutes are metered for
+private repositories. Measured 2026-09-21: on `ubuntu-latest` the job
+completed in three seconds with zero steps, no log and no annotation --
+GitHub declining to schedule it. The same workflow shape runs fine on
+`ubuntu-latest` in netscli and nvx, which are public.
+
+So `runs-on` is `[self-hosted, windows]`, and the runner has to be
+running for CI to report anything. It is registered as `felix-desktop`;
+start it with `run.cmd` in the runner directory, or install it as a
+service (`config.cmd --runasservice`, which needs an Administrator
+shell) so it survives a reboot. A stopped runner does not fail the
+queue, it leaves jobs queued indefinitely -- which is what happened
+between 2026-09-12 and 2026-09-21.
+
+The workflow's first step refuses to run if the repository is ever made
+public, because a fork's pull request would then execute its own code on
+that machine.
+
 ## Keeping it in sync
 
 This tree is netscli's `site/` directory, and since 2026-09-03 the two
