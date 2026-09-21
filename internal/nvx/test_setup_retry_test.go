@@ -17,11 +17,22 @@ import (
 // removeAllBestEffort for cleanup, and stageProbeChild's five retries for reading
 // the probe child -- and now a third face, a write.
 //
+// A fourth face, 2026-09-21, same host kind: `stage the sandbox supervisor: read
+// ...\nvx.test.exe: The handle is invalid` from
+// TestSupervisorStagingDoesNotReplaceARunningCopy, failing at its first line. A
+// READ this time, of the test binary itself. Three of the four are now reads and
+// one is a write, which is the pattern: the object does not matter, the host
+// declining to hand out a handle does.
+//
 // Deliberately NOT applied to all 135 t.Fatal(err) setup sites across the 52
 // Windows test files. Machinery earns its place from a measured failure, not a
 // hypothetical one, and a sweep of that size would be unreviewable while making
-// every one of those sites quieter about real defects. Two sites use it: the one
-// that was observed failing, and the other call of the same function.
+// every one of those sites quieter about real defects. Sites using it are the
+// ones measured failing, plus the other call of the same function in the same
+// test -- four now. Notably NOT the third stageAppContainerSupervisor call in
+// that file: it asserts that staging succeeds while another build's copy is held
+// open, and its own message calls that "the bug". Retrying an assertion until it
+// skips is how a real defect stops being reported.
 //
 // The judgement matches stageProbeChild's exactly. A transient failure is
 // retried; a host that keeps refusing means the test could not run, which is a
