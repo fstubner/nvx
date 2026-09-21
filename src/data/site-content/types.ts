@@ -195,6 +195,38 @@ export interface BuiltWithEntry {
   url: string;
 }
 
+/** One feedback route: a labelled link that opens a prefilled GitHub issue. */
+export interface FeedbackRoute {
+  /** Button text. */
+  label: string;
+  /**
+   * Issue form filename in `.github/ISSUE_TEMPLATE/`, e.g. `bug.yml`.
+   *
+   * Optional. GitHub ignores a template that does not exist and opens a blank
+   * issue instead, so a wrong name degrades to a working link rather than a
+   * broken one — which also means nothing here warns you about a typo.
+   */
+  template?: string;
+  /** Labels applied to the new issue. The repo need not already define them. */
+  issueLabels?: string[];
+}
+
+export interface Feedback {
+  /** Whether the feedback block and its footer link render at all. */
+  enabled: boolean;
+  /** The line above the buttons. */
+  prompt: string;
+  problem: FeedbackRoute;
+  idea: FeedbackRoute;
+  /**
+   * Repo that receives the issues, "owner/name".
+   *
+   * Defaults to `social.repo`. Set it only when feedback belongs somewhere
+   * other than the product's own repository.
+   */
+  repo?: string;
+}
+
 export interface SocialProof {
   /** GitHub repo in "owner/name" format. Used to fetch stars + download counts. */
   repo: string;
@@ -261,6 +293,7 @@ export interface SiteData {
     notes: string[];
   };
   faq: FaqItem[];
+  feedback: Feedback;
   builtWith: BuiltWithEntry[];
   social: SocialProof;
   analytics: Analytics;

@@ -19,6 +19,10 @@ that what you delete is obvious. Everything else is the shell.
 - `src/content/docs/**/*.md` -- the docs pages, if `modules.docs` is on.
   Their sidebar, title, description and logo are `site-content/docs.ts`;
   nothing warns when an entry points at a page that no longer exists.
+- `src/data/site-content/feedback.ts` -- the two feedback buttons above the
+  footer. They open a prefilled GitHub issue on `social.repo`; point them
+  somewhere else with `repo`, name your issue forms in `template`, or set
+  `enabled: false` to remove the block and its footer link entirely.
 - `public/assets/*` -- wordmark, hero screenshot, favicon, OG image.
 - `CHANGELOG.md` -- the changelog page's local fallback; it also reads
   GitHub Releases at runtime.

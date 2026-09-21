@@ -1,0 +1,69 @@
+---
+import { site } from '../data/site';
+
+const { feedback, social } = site;
+const repo = feedback.repo ?? social.repo;
+
+/**
+ * GitHub's issue-creation URL. `template` selects an issue form from
+ * .github/ISSUE_TEMPLATE/; `labels` is a comma-separated list. Both are
+ * ignored by GitHub when they do not exist, so a repo with no forms still
+ * gets a working "new issue" link.
+ */
+function issueUrl(route: { template?: string; issueLabels?: string[] }): string {
+  const params = new URLSearchParams();
+  if (route.template) params.set('template', route.template);
+  if (route.issueLabels?.length) params.set('labels', route.issueLabels.join(','));
+  const query = params.toString();
+  return `https://github.com/${repo}/issues/new${query ? `?${query}` : ''}`;
+}
+---
+
+{feedback.enabled && (
+  <section class="feedback" aria-labelledby="feedback-heading">
+    <div class="feedback-inner">
+      <p id="feedback-heading" class="feedback-prompt">{feedback.prompt}</p>
+      <div class="feedback-actions">
+        <a class="feedback-btn external-link" href={issueUrl(feedback.problem)}>
+          {feedback.problem.label}
+        </a>
+        <a class="feedback-btn external-link" href={issueUrl(feedback.idea)}>
+          {feedback.idea.label}
+        </a>
+      </div>
+    </div>
+  </section>
+)}
+
+<style is:global>
+.feedback{
+  border-top:1px solid rgba(var(--ui-lift-rgb),.06);
+}
+.feedback-inner{
+  max-width:1060px;margin:0 auto;padding:40px 24px;
+  display:flex;align-items:center;justify-content:space-between;
+  flex-wrap:wrap;gap:16px;
+}
+.feedback-prompt{
+  margin:0;font-size:.95rem;color:var(--ui-text);
+}
+.feedback-actions{display:flex;gap:12px;flex-wrap:wrap}
+.feedback-btn{
+  display:inline-block;padding:9px 16px;
+  border:1px solid rgba(var(--ui-lift-rgb),.16);border-radius:6px;
+  font-size:.8rem;color:var(--ui-text);text-decoration:none;
+  /* Not a filled button: this is a secondary ask sitting under the page's
+     real call to action, and two solid buttons here compete with it. */
+  background:transparent;
+}
+.feedback-btn:hover{
+  border-color:rgba(var(--ui-lift-rgb),.32);
+  background:rgba(var(--ui-lift-rgb),.04);
+}
+.feedback-btn:focus-visible{
+  outline:2px solid var(--ui-accent);outline-offset:2px;
+}
+@media (max-width:560px){
+  .feedback-inner{flex-direction:column;align-items:flex-start}
+}
+</style>
