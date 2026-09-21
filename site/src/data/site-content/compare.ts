@@ -24,7 +24,7 @@ import type { ComparisonColumn, ComparisonRow, SectionCopy } from './types';
 export const compareCopy: SectionCopy = {
   heading: 'How nvx compares',
   leadHtml:
-    'Against the version managers it replaces. Out-of-the-box defaults, checked against each project on 16 September 2026.',
+    'Against the version managers it replaces. Out-of-the-box defaults, checked against each project on 18 September 2026.',
 };
 
 export const compareColumns: ComparisonColumn[] = [
@@ -36,8 +36,18 @@ export const compareColumns: ComparisonColumn[] = [
   { name: 'mise' },
 ];
 
+// nvm's cells below are nvm-sh/nvm, for macOS and Linux -- the asterisk on
+// its platform cell points at the footnote under the table. A two-column
+// split (nvm vs NVM for Windows) was tried on 2026-09-18 and reverted the
+// same day: the table is cross-platform to begin with, most rows would have
+// carried the same answer twice, and a reader on any platform other than
+// Windows had to scroll past a whole column for a tool that could never
+// apply to them. NVM for Windows is a separate, Windows-only project with no
+// shared code; the footnote says what actually differs. Checked against its
+// v2.0.0 release (2026-09-02) and the "What's new in v2" page at
+// docs.nvm-windows.com/features/newv2.
 export const compareRows: ComparisonRow[] = [
-  { feature: 'Windows / macOS / Linux', cells: ['✓', 'macOS, Linux', '✓', '✓', 'macOS, Linux', '✓'] },
+  { feature: 'Windows / macOS / Linux', cells: ['✓', 'macOS, Linux*', '✓', '✓', 'macOS, Linux', '✓'] },
   // Split from the language on 2026-09-16. One row asking "is it a single
   // binary" whose cells answered "yes, in Rust" was doing two jobs, and
   // volta's answer, "Rust, 3 binaries", read as neither a yes nor a no. It
@@ -70,8 +80,9 @@ export const compareRows: ComparisonRow[] = [
   { feature: 'Environment secrets scrubbed', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
 ];
 
-/** Shown under the table. The volta line leads because it changes a reader's
- *  decision more than any feature row does.
+/** Shown under the table. The asterisk sentence leads because a reader who
+ *  just saw it on the platform row wants the explanation next, not after an
+ *  unrelated remark about volta.
  *
  *  Stated flatly and left there. An earlier version added that volta's own
  *  maintainers recommend mise, which pointed readers at the one tool here
@@ -79,4 +90,4 @@ export const compareRows: ComparisonRow[] = [
  *  because people still run it, which nobody asked. Writing a competitor's
  *  obituary at length reads as score-settling however true it is. */
 export const compareNoteHtml =
-  "volta's maintainers announced in November 2025 that it is unmaintained. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.";
+  "NVM for Windows is a separate, Windows-only project with no shared code, and it does not sandbox installs. volta's maintainers announced in November 2025 that it is unmaintained. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.";
