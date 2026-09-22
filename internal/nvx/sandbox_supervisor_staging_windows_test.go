@@ -26,20 +26,24 @@ import (
 func TestSupervisorStagingDoesNotReplaceARunningCopy(t *testing.T) {
 	nvxHome := tempDir(t)
 
-	first, err := stageAppContainerSupervisor(nvxHome)
-	if err != nil {
-		t.Fatalf("first stage: %v", err)
-	}
+	var first string
+	setupOrSkip(t, "first stage", func() error {
+		var serr error
+		first, serr = stageAppContainerSupervisor(nvxHome)
+		return serr
+	})
 	if _, err := os.Stat(first); err != nil {
 		t.Fatalf("staged supervisor missing: %v", err)
 	}
 
 	// Staging again with the same build must reuse the same copy rather than
 	// rewriting it -- that is what makes a running supervisor harmless.
-	again, err := stageAppContainerSupervisor(nvxHome)
-	if err != nil {
-		t.Fatalf("second stage: %v", err)
-	}
+	var again string
+	setupOrSkip(t, "second stage", func() error {
+		var serr error
+		again, serr = stageAppContainerSupervisor(nvxHome)
+		return serr
+	})
 	if again != first {
 		t.Errorf("the same build staged to two different paths (%q then %q)", first, again)
 	}

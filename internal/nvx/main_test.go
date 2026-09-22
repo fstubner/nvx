@@ -58,6 +58,27 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	// doctor's sandbox-launch check is off for the suite, and each test that
+	// wants an answer supplies its own.
+	//
+	// The check starts a real process inside a real AppContainer, and doctor runs
+	// it on every invocation -- so every test that calls runDoctor to ask about
+	// PATH or shims began creating an AppContainer profile, granting ACLs on the
+	// staged supervisor and NVX_HOME, launching, and deleting the profile again.
+	// Measured here: 7 launches across the doctor tests, none of which is about
+	// containment. On the Windows CI runner that suite then failed with a child
+	// process panicking on "Failed to load iphlpapi.dll", twice, with no test
+	// marked FAIL.
+	//
+	// The real function is not left unexercised by this: the probe gate runs the
+	// same control launch directly (probe_appcontainer_capability_windows_test.go),
+	// which is where a test that needs a real AppContainer belongs.
+	reportSandboxLaunchFn = func(string) bool { return true }
+	// Same reasoning for the elevated-grant check: it reads the machine's real
+	// ACLs, so a test that calls runDoctor about PATH would otherwise turn on
+	// whatever the last `nvx setup` left on the host running the suite.
+	reportSetupGrantsFn = func(string) bool { return true }
+
 	code := m.Run()
 	cleanupProbeChildBinary()
 	os.Exit(code)

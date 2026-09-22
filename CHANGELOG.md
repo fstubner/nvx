@@ -86,6 +86,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before consulting the allowlist. Measured 2026-09-11: 25 seconds per target,
   no panic, no hang, no unauthorized acceptance, and no crasher written.
 
+### Changed
+
+* **nvx exits 77 when it refuses to run a command, instead of 1.** A global
+  install it will not contain, a package that failed pre-install verification,
+  a sandbox it could not establish — all of these returned 1, which is also what
+  npm returns when an install fails on its own terms. A script or an agent loop
+  saw "exit 1" either way and could not tell nvx saying no (fix: `--no-sandbox`
+  or `npx`) from a registry timeout (fix: retry) without parsing English off
+  stderr. The audit log already made this distinction (`mode=refused`, with a
+  reason); this is the same distinction at the one layer a program reads. 77 is
+  `EX_NOPERM` in sysexits.h. The command's own exit codes are passed through
+  unchanged.
+
+* **The global-install refusal now says what to do if you are an agent.** It
+  leads with "nvx refused", states the consequence plainly — anything installed
+  globally runs uncontained on every future invocation — and names `npx` and a
+  project-local install as the contained alternatives, and tells an agent not
+  to pass `--no-sandbox` on its own but to inform the person it works for that
+  the install would run uncontained, and let them decide. `-q` no longer hides
+  any of that: it asks nvx not to narrate progress, and a refusal has no
+  progress to narrate — `nvx -q npm install -g` used to print the one-line
+  refusal and drop every actionable part of it. The old message offered only
+  the escape hatch, which nudged an automated caller toward the
+  least-contained option and left the person out of the loop.
+
 ### Fixed
 
 * **A project directory deleted and recreated no longer fails to launch on
@@ -103,6 +128,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was measured at under a millisecond a path; warm launch times before and
   after the change were within run-to-run noise of each other. The old cache
   file is no longer read and can be deleted.
+
+* **Contained commands work again from inside AI agent shells on Windows.**
+  Every contained launch asked Windows for `CREATE_BREAKAWAY_FROM_JOB`, and a
+  process inside a job object that forbids breakaway — which is how Claude
+  Code, Codex CLI and similar harnesses run every command — is refused with a
+  bare `Access is denied` before anything is created. From an ordinary terminal
+  the same command worked, which is why it read as a machine problem for weeks:
+  memory, disk, ACLs and a security product were each ruled out on the way to
+  measuring it directly (2026-09-20: plain `cmd.exe` from such a shell — fine
+  without the flag, denied with it). nvx now asks to break away only where the
+  calling process's job permits it. A child that stays in that job is still
+  reaped through nvx's own nested job.
+
+* **A command the sandbox refused to run is no longer logged as having run
+  inside it.** The run record's mode is decided before the sandbox is asked to
+  start, and nothing corrected it when the start failed, so `nvx audit` showed
+  `sandboxed  npm install  exit=1` for a command that never began — the same
+  line a fully contained install failing on its own terms produces. Measured on
+  2026-09-20 against a host that could not launch an AppContainer at all. Those
+  runs now read `refused`, and carry the reason.
+
+  `runSandbox`'s own refusals — an unknown filesystem provider, a provider that
+  cannot enforce the requested network mode, an egress proxy that would not
+  start — wrote nothing to the audit log at all. They now record a reason like
+  every other refusal does.
 
 * **The test suite no longer writes nvx's shell integration into your real
   PowerShell profile.** `nvx doctor --fix` repairs two things a throwaway

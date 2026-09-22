@@ -39,6 +39,27 @@ type SandboxConfig struct {
 	// PassEnv are environment variables the project asked to keep inside the
 	// sandbox (isolation.environment.allow). A sensitive prefix still wins.
 	PassEnv []string
+	// OnRefusal is called with the reason when containment could not be
+	// established and the command therefore never ran.
+	//
+	// The caller owns the run record, and until this existed it had no way to
+	// learn the answer: the mode is set to "sandboxed" before the sandbox is
+	// asked to start, every layer between here and the launcher returns a bare
+	// int, and a refusal came back as the exit code 1 that a contained command
+	// failing on its own terms also returns. Measured 2026-09-20 on a host that
+	// could not launch an AppContainer at all:
+	//
+	//	{"event":"run","command":"npm","mode":"sandboxed","exit":"1",...}
+	//
+	// for a command that never started. A callback rather than a return value
+	// threaded back through runSandbox, FilesystemProvider.Run and every
+	// provider that implements it: the refusal is already funnelled through one
+	// place (sandboxDidNotStart), and widening four signatures to carry a string
+	// that only one caller reads is a larger change for the same answer.
+	//
+	// Optional. A nil OnRefusal is the normal case for any caller that has no
+	// run record to amend.
+	OnRefusal func(reason string)
 }
 
 // sensitiveEnvPrefixes are environment variable prefixes that will be scrubbed
@@ -456,10 +477,17 @@ func runSandbox(config SandboxConfig) int {
 	enterSandboxSession()
 	defer leaveSandboxSession()
 
+	// Every return below this point is a refusal: containment could not be
+	// established, so the command does not run. Each one goes through
+	// sandboxDidNotStart for the reason given on SandboxConfig.OnRefusal -- and
+	// because, before this, none of them wrote anything to the audit log at all.
+	// Only the launcher's own refusals were recorded, so a run stopped by an
+	// unknown provider or a failed egress proxy left a single "mode":"sandboxed"
+	// record behind and no trace of why the command never ran.
 	policy, err := LoadPolicy(config.NvxHome)
 	if err != nil {
 		LogError("Failed to load policy: %v", err)
-		return 1
+		return sandboxDidNotStart(config, "the policy could not be loaded", exitRefused)
 	}
 
 	providerName := policy.FilesystemProvider()
@@ -469,17 +497,17 @@ func runSandbox(config SandboxConfig) int {
 	fsProvider, ok := lookupFilesystemProvider(providerName)
 	if !ok {
 		LogError("Unknown filesystem provider %q. Supported: %s.", providerName, supportedProviderNames())
-		return 1
+		return sandboxDidNotStart(config, "the filesystem provider is not one nvx knows", exitRefused)
 	}
 	canonical := fsProvider.Name()
 
 	if err := fsProvider.Available(); err != nil {
 		LogError("Filesystem provider %q is not available: %v", canonical, err)
-		return 1
+		return sandboxDidNotStart(config, "the filesystem provider is not available on this machine", exitRefused)
 	}
 	if !fsProvider.SupportsNetworkMode(policy.Isolation.Network.Mode) {
 		LogError("Filesystem provider %q does not enforce network.mode=%q. Use network.mode=open or the native provider.", canonical, policy.Isolation.Network.Mode)
-		return 1
+		return sandboxDidNotStart(config, "the filesystem provider does not enforce the requested network mode", exitRefused)
 	}
 
 	rt := runtimeForShim(config.Command)
@@ -498,7 +526,7 @@ func runSandbox(config SandboxConfig) int {
 		egress, err = startEgressProxy(ctx, policy, rt, config.NvxHome)
 		if err != nil {
 			LogError("Egress proxy failed: %v", err)
-			return 1
+			return sandboxDidNotStart(config, "the egress proxy could not be started", exitRefused)
 		}
 		if egress != nil {
 			defer egress.Close()

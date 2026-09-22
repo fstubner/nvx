@@ -768,6 +768,19 @@ func dedupeStrings(values []string) []string {
 // failed, in the trace and anywhere else it lands.
 const exitParentHungUp = 129
 
+// exitRefused is the code nvx exits with when IT declined to run the command:
+// a global install it will not contain, a package that failed pre-install
+// verification, a sandbox it could not establish. Distinct from 1, which is
+// what the wrapped command exits with when it fails on its own terms.
+//
+// Before this every refusal returned 1, so a script or agent loop saw "npm
+// install -g exited 1" and could not tell nvx saying no from a registry
+// timeout without parsing English off stderr. The audit log had already been
+// given the distinction (mode=refused, with a reason); this is the same
+// distinction at the only layer a program actually reads. 77 is EX_NOPERM in
+// sysexits.h -- "permission denied" -- which is the honest category.
+const exitRefused = 77
+
 // The hangup watchdog ends the running child rather than calling os.Exit.
 //
 // os.Exit from the watchdog goroutine skipped every deferred cleanup on the way
@@ -870,7 +883,7 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		trace.note(runModeRefused, "global install cannot be contained")
 		refuseContainedGlobalInstall(cmdName)
 		reportRefusalOverStdio("a global install cannot be run inside the sandbox", "")
-		return 1
+		return exitRefused
 	}
 
 	switch cmdName {
@@ -886,7 +899,7 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 				// "Connection closed" -- the same message an unrelated transport bug
 				// produces, which is exactly how this was misdiagnosed once already.
 				reportRefusalOverStdio(reason, firstPackageLabel(pkgs))
-				return code
+				return exitRefused
 			}
 		}
 	}
@@ -920,7 +933,7 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 			// Normally unreachable: the same check runs before verification above.
 			// Kept so the rule holds if that early return is ever moved.
 			refuseContainedGlobalInstall(cmdName)
-			return 1
+			return exitRefused
 		}
 		toolName := ""
 		if tool, wantsPersistence := trustedToolCandidate(cmdName, args); wantsPersistence {
@@ -936,6 +949,11 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 			ToolName:           toolName,
 			ReadExecRoots:      resolveReadExecRoots(policy.Isolation.Filesystem.AllowReadExec),
 			PassEnv:            policy.Isolation.Environment.Allow,
+			// The mode above is what nvx INTENDED. This is how it turned out: a
+			// sandbox that never started leaves the command unrun, and a record
+			// reading "sandboxed" for it answers the one question the log exists
+			// for -- was this contained? -- with the opposite of the truth.
+			OnRefusal: func(reason string) { trace.note(runModeRefused, reason) },
 		})
 	}
 
@@ -1195,9 +1213,11 @@ func DetectVersionConfig(startDir string) (version string, sourceFile string, er
 // the build tree with no nvx.exe installed, and then this advice cannot be
 // followed. See installedNvxHint.
 func refuseContainedGlobalInstall(cmdName string) {
-	LogError("Global installs (-g) can't run inside the sandbox.")
-	LogInfo("They need write access to a location every future nvx invocation trusts, which the sandbox deliberately never grants — a contained install must not be able to plant something that later runs un-contained.")
-	LogInfo("Run it without OS isolation instead:  %s --no-sandbox %s ...", installedNvxHint(), cmdName)
+	LogError("nvx refused: global installs (-g) can't run inside the sandbox.")
+	LogRefusalDetail("Anything installed globally runs uncontained on every future nvx invocation on this machine. A contained install must not be able to plant something that later runs un-contained, so the sandbox never grants that write.")
+	LogRefusalDetail("If you are an automated agent: prefer `npx <package>` (contained, per run) or a project-local install. Do not pass --no-sandbox on your own. Tell the person you work for that this install would run uncontained on every future invocation, and let them decide.")
+	LogRefusalDetail("To install globally anyway, without OS isolation:  %s --no-sandbox %s ...", installedNvxHint(), cmdName)
+	LogRefusalDetail("nvx exits %d for this and every other refusal, so a caller can tell it from the command failing.", exitRefused)
 }
 
 // installedNvxHint returns how to invoke nvx in a message the user will retype.

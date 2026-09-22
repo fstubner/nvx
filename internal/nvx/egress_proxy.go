@@ -548,6 +548,23 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 		}
 		remote, err := dialVetted(ips, hp.host, hp.port)
 		if err != nil {
+			// Say which addresses were tried and what the last one said.
+			//
+			// This path emitted a bare 502 and logged nothing, so a contained
+			// command saw the tunnel refuse an ALLOWED host with no reason
+			// recorded anywhere -- indistinguishable from the allowlist denying
+			// it, which is a 403 and an entirely different fix. Measured
+			// 2026-09-21 on a GitHub windows-latest runner: 502 for a listener
+			// the proxy's own process had connected to seconds earlier, and
+			// nothing in the log to say whether resolution, the allowlist or the
+			// dial itself was responsible.
+			//
+			// The host is already in this connection's audit record and the
+			// addresses are nvx's own resolution of it, so neither puts anything
+			// in the log that is not there already. The format is a literal, as
+			// LogWarn requires.
+			LogWarn("Egress relay could not reach an allowed host: %s (tried %s): %v",
+				target, formatEgressIPs(ips), err)
 			_, _ = fmt.Fprintf(client, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
 			return
 		}

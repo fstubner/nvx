@@ -25,7 +25,7 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 	sandboxID, err := generateSandboxID()
 	if err != nil {
 		LogError("Sandbox initialization failed: %v", err)
-		return sandboxDidNotStart(config, "sandbox id could not be generated", 1)
+		return sandboxDidNotStart(config, "sandbox id could not be generated", exitRefused)
 	}
 
 	LogDetail("Sandbox session: %s", sandboxID)
@@ -36,7 +36,7 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 		guestHome, err = ensurePersistentGuestProfile(config.NvxHome, scope, config.ToolName)
 		if err != nil {
 			LogError("Failed to create persistent tool profile: %v", err)
-			return sandboxDidNotStart(config, "persistent tool profile could not be created", 1)
+			return sandboxDidNotStart(config, "persistent tool profile could not be created", exitRefused)
 		}
 		// Persistent: intentionally NOT cleaned up, so credentials survive to
 		// the next run. Still fully contained; the real home is never used.
@@ -45,7 +45,7 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 		guestHome, err = createGuestProfile(config.NvxHome, sandboxID)
 		if err != nil {
 			LogError("Failed to create sandbox guest profile: %v", err)
-			return sandboxDidNotStart(config, "guest profile could not be created", 1)
+			return sandboxDidNotStart(config, "guest profile could not be created", exitRefused)
 		}
 		// Rescue debug logs before the guest home goes, and only on failure.
 		//
@@ -75,7 +75,7 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 		// Windows one -- an NVX_HOME too long for an AF_UNIX path -- and it arrived
 		// under a heading describing something Windows does not do.
 		LogError("Could not put the egress proxy where the sandbox can reach it: %v", err)
-		return sandboxDidNotStart(config, "the egress proxy could not be reached from the sandbox", 1)
+		return sandboxDidNotStart(config, "the egress proxy could not be reached from the sandbox", exitRefused)
 	}
 
 	scrubbed := scrubEnvironmentAllowing(guestHome, config.PassEnv)
@@ -101,7 +101,7 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 	LogInfo("Running in native sandbox: %s %s", config.Command, strings.Join(config.Args, " "))
 	code, err := platformLaunchNative(config, guestHome, workDir, cmdPath, cleanEnv, netCtx)
 	if err != nil {
-		return sandboxDidNotStart(config, err.Error(), 1)
+		return sandboxDidNotStart(config, err.Error(), exitRefused)
 	}
 	return code
 }

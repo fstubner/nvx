@@ -133,11 +133,23 @@ func TestAncestorGrantsDoNotLeakDirectoryListings(t *testing.T) {
 	// ancestor walk deliberately stops below it. Windows ships an ACE for ALL
 	// APPLICATION PACKAGES on the profile, and every AppContainer is in that group,
 	// so the listing is the platform's rather than nvx's. Deny ACEs were already
-	// measured not to override it (see the secret-mask probe). Recorded here so the
-	// documentation describes it accurately instead of implying nvx closed it.
+	// measured not to override it (see the secret-mask probe).
+	//
+	// A host WITHOUT that ACE denies an AppContainer everything under the profile,
+	// and this probe's subject lives there -- so both halves below stop measuring
+	// nvx. LIST_ANCESTOR=DENIED becomes trivially true whatever nvx granted, and
+	// STAT=OK becomes unreachable however correct the grant is. That is a probe
+	// verifying nothing, which is the state the CI gate's skip allowlist exists to
+	// make visible rather than let pass as a green assertion.
+	//
+	// Measured 2026-09-21 on the GitHub windows-latest runner, the first run where
+	// this probe executed at all: LIST_HOME=DENIED, LIST_ANCESTOR=DENIED,
+	// STAT=DENIED, STAT_WORKDIR=OK. The working directory is granted directly by
+	// nvx and was fine; only what depends on the platform's profile ACE was not.
 	if strings.Contains(got, "LIST_HOME=DENIED") {
-		t.Log("note: the user profile is no longer listable from the sandbox -- if that reproduces, " +
-			"README.md and docs/enforcement-matrix.md can be tightened")
+		t.Skipf("this host does not grant AppContainers access to the user profile, so "+
+			"nothing under it is reachable and neither half of this probe measures nvx's "+
+			"grant:\n%s", got)
 	}
 
 	// The narrowing must not break what the grant is for.

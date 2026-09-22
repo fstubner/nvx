@@ -344,6 +344,14 @@ func Main() {
 		}
 		os.Exit(runLandlockExecChild(a))
 
+	// The control child for `nvx doctor`'s sandbox-launch check: start, and
+	// exit. It runs INSIDE the AppContainer, so it must not touch anything the
+	// sandbox denies -- no home, no network, no output. Exiting 0 is the whole
+	// signal; the question being asked is only whether CreateProcess could
+	// start a process in an AppContainer at all.
+	case "__appcontainer-control":
+		os.Exit(0)
+
 	case "__appcontainer-exec":
 		a, ok := parseSupervisorExecArgs(os.Args[2:])
 		if !ok {
@@ -749,6 +757,25 @@ func LogWarn(format string, a ...interface{}) {
 func LogError(format string, a ...interface{}) {
 	debugCapture("error", fmt.Sprintf(format, a...))
 	fmt.Fprintf(os.Stderr, "\x1b[31m✘\x1b[0m "+format+"\n", a...)
+}
+
+// LogRefusalDetail carries the rest of a refusal: why nvx declined, and what to
+// do instead. Printed like LogInfo and, like LogError above it, unaffected by
+// -q.
+//
+// These lines were LogInfo, which -q suppresses. So `nvx -q npm install -g`
+// printed "nvx refused: global installs can't run inside the sandbox" and
+// nothing else -- no consequence, no alternative, and for an automated caller
+// no instruction to tell the person what the trade is. -q means "do not narrate
+// progress", not "hide why I would not do this"; a refusal has no progress to
+// narrate, and the part that gets dropped is the only part that is actionable.
+//
+// Deliberately separate from LogInfo rather than a flag on it: the distinction
+// is not verbosity, it is whether a line is part of an error. Warnings and
+// errors already ignore both flags for the same reason.
+func LogRefusalDetail(format string, a ...interface{}) {
+	debugCapture("info", fmt.Sprintf(format, a...))
+	fmt.Fprintf(os.Stderr, "\x1b[36mℹ\x1b[0m "+format+"\n", a...)
 }
 
 func CompareVersions(v1, v2 string) int {

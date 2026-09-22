@@ -71,5 +71,12 @@ func sandboxDidNotStart(config SandboxConfig, reason string, code int) int {
 		"command": config.Command,
 		"reason":  reason,
 	})
+	// The run record is written by the caller and says "sandboxed" by then, so
+	// without this the same refusal appears twice in one log under two answers:
+	// a sandbox_not_started saying the command never ran, and a run saying it ran
+	// contained. See SandboxConfig.OnRefusal.
+	if config.OnRefusal != nil {
+		config.OnRefusal(reason)
+	}
 	return code
 }
