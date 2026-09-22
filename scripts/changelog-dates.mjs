@@ -24,7 +24,24 @@ import { fileURLToPath } from 'node:url';
 
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const built = path.join(siteRoot, 'dist', 'changelog', 'index.html');
-const changelog = path.join(siteRoot, 'CHANGELOG.md');
+
+// The site is the repository in the template and a `site/` subtree inside a
+// product, so the changelog is either here or one level up. Both are checked
+// rather than configured: the alternative is a path in config that is wrong
+// for whichever layout it was not written for, and this is the file a sync
+// kept re-specialising, because a product's copy pointed at `..` and the
+// template's at `.` and the merge had to pick one.
+const changelog = [
+  path.join(siteRoot, 'CHANGELOG.md'),
+  path.join(siteRoot, '..', 'CHANGELOG.md'),
+].find((candidate) => fs.existsSync(candidate));
+
+if (!changelog) {
+  console.error(
+    `No CHANGELOG.md beside the site (${siteRoot}) or in the directory above it.`,
+  );
+  process.exit(1);
+}
 
 if (!fs.existsSync(built)) {
   console.error(`No built changelog at ${built}. Run \`npm run build\` first.`);

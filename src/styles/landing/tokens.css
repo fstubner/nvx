@@ -57,6 +57,24 @@
   --ui-ondark-accent-rgb: 34, 197, 94;
   --ui-ondark-accent-bright: #86efac;
 
+  /* Status ink for a terminal panel's own glyphs -- the tick, the cross, the
+     warning and the info mark -- and nothing else.
+     *
+     * Deliberately outside the brand ramp above. A real command line prints
+     * these in ANSI 32/33/31/36, and a panel that recolours them to the brand
+     * makes every glyph read as another shade of decoration, which is the one
+     * thing the glyphs are there to avoid. So these four stay put while a
+     * product changes --ui-ondark-accent to whatever it likes.
+     *
+     * Measured on --ui-code-bg (#10151b), the surface they are always painted
+     * on: green 7.39:1, amber 8.31:1, red 6.72:1, cyan 10.15:1.
+     * scripts/contrast-sweep.mjs measures them as rendered rather than
+     * trusting the numbers written here. */
+  --ui-ondark-ok: #5cb85c;
+  --ui-ondark-warn: #d8a657;
+  --ui-ondark-err: #f0787e;
+  --ui-ondark-info: #22d3ee;
+
   /* The dark band behind every other surface card. Measured against the
      light page at 14.75:1, and it carries body ink at 11.09:1 and muted ink
      at 6.09:1. Not as dark as the code surface on purpose -- see the note on

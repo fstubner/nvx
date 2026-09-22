@@ -22,7 +22,9 @@
     "check:contrast": "node ./scripts/contrast-sweep.mjs",
     "check:lighthouse": "node ./scripts/lighthouse.mjs",
     "visual:record": "node ./scripts/visual-snapshot.mjs record",
-    "visual:check": "node ./scripts/visual-snapshot.mjs check"
+    "visual:check": "node ./scripts/visual-snapshot.mjs check",
+    "assets:terminal": "node ./scripts/terminal-image.mjs",
+    "assets:install-scripts": "node ./scripts/copy-install-scripts.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.42.1",
@@ -35,6 +37,7 @@
     "lighthouse": "^13.4.1",
     "linkedom": "^0.18.13",
     "selenium-webdriver": "^4.49.0",
+    "sharp": "^0.35.4",
     "typescript": "^5.5.0"
   }
 }

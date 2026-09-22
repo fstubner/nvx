@@ -110,6 +110,19 @@ git ref or a browser session:
 
 `src/styles/docs/README.md` has the workflow.
 
+Two more build assets rather than check them, so they run when the thing
+they read changes rather than on every commit:
+
+- `npm run assets:terminal` draws the hero terminal panel from
+  `src/data/site-content/terminal.ts` to `public/assets/hero.png`. It takes
+  its colours from the stylesheets, so changing an `--ui-ondark-*` token and
+  re-running repaints the image to match. Commit the PNG.
+- `npm run assets:install-scripts` copies `install.ps1` and `install.sh` into
+  `public/`, from beside the site or the directory above it, so the
+  documented one-liner can point at your own domain instead of
+  raw.githubusercontent.com. It copies whichever exist and says so when
+  neither does.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs every check in this repo on
@@ -246,8 +259,10 @@ were found by doing this rather than by reading it:
    imports `../../CHANGELOG.md`, which is the site directory's own copy.
    A product's changelog usually lives at the project root: change the
    import to `../../../CHANGELOG.md` and delete `site/CHANGELOG.md`, or
-   keep the site's copy deliberately. `scripts/changelog-dates.mjs` reads
-   `<site root>/CHANGELOG.md` and needs the same decision.
+   keep the site's copy deliberately. `scripts/changelog-dates.mjs` takes
+   whichever of the two exists, so it needs no decision of its own — but it
+   checks the site's copy first, so a stale `site/CHANGELOG.md` left behind
+   is what it will read.
 3. **Move `AGENTS.md` up, or leave a pointer.** It arrives at
    `site/AGENTS.md`. An agent working in `site/` will find it; one working
    from the project root may not.
