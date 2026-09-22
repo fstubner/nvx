@@ -291,21 +291,51 @@ func highestMatching(expr string, versions []string) (string, error) {
 		}
 	}
 	if !found {
-		return "", fmt.Errorf("no version matches %q", expr)
+		return "", noMatchingVersion{msg: fmt.Sprintf("no version matches %q", expr)}
 	}
 	return best, nil
 }
 
+// errNoMatchingVersion marks "I read the expression and nothing installed
+// satisfies it". It is the answer that means "offer to install", and every
+// site that produces that answer wraps this sentinel so the classifier below
+// can recognise it with errors.Is rather than by reading the sentence.
+//
+// The sentence-reading version recognised one shape, "no version matches",
+// from highestMatching. resolveLocalVersion catches that error and re-wraps it
+// as "no installed version matches query", which the prefix check had never
+// seen, so runAuto and runUse took the "cannot read this" branch and skipped
+// the install offer. An .nvmrc asking for 19 on a machine with 18, 20, 22 and
+// 24 installed printed a warning and stopped. Third instance of the same bug
+// in this file; the two before it are documented under errNoVersionsInstalled.
+var errNoMatchingVersion = errors.New("no version matches")
+
+// noMatchingVersion carries the user-facing sentence while still matching the
+// sentinel above under errors.Is. A type rather than fmt.Errorf("%w: ...") for
+// the reason noVersionsInstalled gives: wrapping put "no version matches:" in
+// front of the sentence the user actually needed to read.
+type noMatchingVersion struct{ msg string }
+
+func (e noMatchingVersion) Error() string        { return e.msg }
+func (e noMatchingVersion) Is(target error) bool { return target == errNoMatchingVersion }
+
 // isUnsupportedRange distinguishes "I could not read this expression" from "I
 // read it and nothing matched". The two need different messages: the first is a
 // syntax the user should rewrite, the second is a version they should install.
+//
+// Decided by identity, not by exclusion. Every error that is NOT one of the
+// two "install it" answers is treated as unreadable, which is the right
+// default for a parser error, but it means any new "nothing matched" site
+// that forgets the sentinel silently disables the install offer. The tests in
+// unsupported_range_test.go pin both directions.
 func isUnsupportedRange(err error) bool {
-	if err == nil || errors.Is(err, errNoVersionsInstalled) {
-		// Nothing installed is not a syntax the caller should rewrite; it is a
-		// runtime the caller should install, and the caller offers to.
+	if err == nil {
 		return false
 	}
-	return !strings.HasPrefix(err.Error(), "no version matches")
+	if errors.Is(err, errNoVersionsInstalled) || errors.Is(err, errNoMatchingVersion) {
+		return false
+	}
+	return true
 }
 
 // errNoVersionsInstalled marks "this runtime has nothing installed at all",

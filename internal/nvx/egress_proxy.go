@@ -446,11 +446,17 @@ func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
 
 func isLoopback(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
 		return true
 	}
 	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	// IsUnspecified as well as IsLoopback. 0.0.0.0 and :: are not loopback
+	// addresses, so IsLoopback answers false, but connecting to either reaches
+	// 127.0.0.1. They slipped past this refusal into the ordinary prompt, where
+	// "Allow outbound connection to 0.0.0.0:5432?" read as an unfamiliar external
+	// host rather than the developer's own database. Audit 2026-09-17, P2/P8.
+	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
 func (p *EgressProxy) serveHTTP(ctx context.Context, ln net.Listener) {

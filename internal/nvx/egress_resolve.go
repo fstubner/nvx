@@ -129,7 +129,8 @@ var resolveEgressTarget = func(host string) ([]net.IP, error) {
 // refusal in allowed().
 func anyLoopback(ips []net.IP) bool {
 	for _, ip := range ips {
-		if ip.IsLoopback() {
+		// See isLoopback for why the unspecified address counts.
+		if ip.IsLoopback() || ip.IsUnspecified() {
 			return true
 		}
 	}

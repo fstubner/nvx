@@ -36,7 +36,7 @@ import (
 // it is now confirmation rather than the only available signal.
 //
 // It also removes a process spawn per permission check from the launch path,
-// which is what the grant cache was built to avoid. Measured interleaved over ten
+// which is what the since-removed grant cache was built to avoid. Measured interleaved over ten
 // pairs of contained launches against a fresh nvx home on this machine: median
 // 4596 ms before, 3989 ms after. A first attempt suggested three times that
 // improvement and did not reproduce -- the machine is noisy enough that only the

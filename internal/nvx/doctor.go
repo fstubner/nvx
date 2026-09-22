@@ -451,6 +451,24 @@ func shimDirPath(nvxHome string) string {
 // moved to the front (deduplicated). Used to repair a persistent PATH where a
 // raw-runtime dir shadows the shim dir. Comparison is case-insensitive on
 // Windows via dirsEqual. Separator is the OS list separator.
+//
+// It prunes the CONFIGURED home's runtime dirs, not every nvx shim dir that has
+// ever existed. The 2026-09-17 audit reported that as a leak, on the basis that
+// sixteen dead nvx shim entries were sitting in this machine's persistent
+// HKCU Environment Path. Re-measured the same day: the persistent PATH holds
+// none of them. All sixteen were in one bash session's PATH, pointed at
+// directories that no longer existed, and a fresh shell had zero. They came
+// from running the Go test suite repeatedly in a single shell, each run
+// creating a throwaway NVX_HOME and prepending its bin dir.
+//
+// So the behaviour is real but narrow. Within ONE shell, repeated runs under
+// DIFFERENT NVX_HOMEs accumulate session PATH entries, because a foreign home's
+// bin dir is not matched here. It is not persistent, it clears with the shell,
+// and ordinary use has one NVX_HOME. Pruning by directory-name pattern was
+// considered and rejected. directoryHoldsNvxShims stats for the binary and
+// cannot recognise a directory that is already deleted, so the only mechanism
+// left would be matching on names that look like nvx homes, which is guesswork
+// against a real path.
 func rebuildUserPath(existing, shimDir string, dropDirs []string) string {
 	sep := string(os.PathListSeparator)
 	var kept []string

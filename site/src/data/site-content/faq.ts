@@ -21,9 +21,13 @@ export const faq: FaqItem[] = [
   {
     group: 'Basics',
     q: 'Does it replace nvm, fnm or volta?',
-    a: 'Yes. nvx installs, switches, pins and auto-switches on cd just as they do, and works the same way on Windows, which nvm does not support. What it adds is containment for what your projects install.',
+    // nvm and NVM for Windows are unrelated projects. NVM for Windows'
+    // v2 (2026-09-02) added the same per-directory auto-switching and
+    // auto-install this answer used to claim as a Windows gap, so the
+    // comparison here is now about containment, not about switching.
+    a: 'Yes. nvx installs, switches, pins and auto-switches on cd just as they do. On Windows, that includes NVM for Windows, a separate project despite the name. What nvx adds beyond any of them is containment. Every install runs inside an OS sandbox with a scrubbed environment and an egress allowlist, on all three platforms.',
     aHtml:
-      '<p>Yes. nvx installs, switches, pins and auto-switches on <code>cd</code> just as they do, and works the same way on Windows, which nvm does not support. What it adds is containment for what your projects install.</p>',
+      '<p>Yes. nvx installs, switches, pins and auto-switches on <code>cd</code> just as they do. On Windows, that includes NVM for Windows, a separate project despite the name. What nvx adds beyond any of them is containment. Every install runs inside an OS sandbox with a scrubbed environment and an egress allowlist, on all three platforms.</p>',
   },
   {
     group: 'Basics',
@@ -47,18 +51,29 @@ export const faq: FaqItem[] = [
       '<p><strong>No.</strong> On Windows and Linux a contained install cannot read your home directory, so SSH keys, cloud credentials and your npm token are out of reach. On macOS the Seatbelt profile allows filesystem reads, so those files <em>can</em> be read by absolute path. macOS still enforces write containment and egress control.</p>',
   },
   {
+    // npm v12 shipped on 2026-07-08 with lifecycle scripts blocked by default.
+    // Anyone who knows that will check this claim, so the site answers it
+    // rather than waiting to be corrected. The honest answer is also the
+    // stronger one, and every limb of it is checkable.
+    group: 'Containment',
+    q: 'npm 12 blocks install scripts by default. Is this still needed?',
+    a: 'It closes the biggest hole, and nvx is about what is left. Packages that genuinely need a build step get approved, and that approval is permanent, so a later compromise of an approved package inherits it. Your bundler, test runner and dev server evaluate package code, which no script setting touches. A git dependency can override the git binary through .npmrc and run despite ignore-scripts. Older npm and yarn classic have no per-package mechanism at all. Containment is also a different thing from detection: the packages in the August 2026 ChainDrop compromise carried valid GitHub Actions provenance.',
+    aHtml:
+      '<p>It closes the biggest hole, and nvx is about what is left.</p><p>Packages that genuinely need a build step get approved, and that approval is permanent, so a later compromise of an approved package inherits it. Your bundler, test runner and dev server evaluate package code, which no script setting touches. A git dependency can override the <code>git</code> binary through <code>.npmrc</code> and run despite <code>--ignore-scripts</code>. Older npm and yarn classic have no per-package mechanism at all.</p><p>Containment is also a different thing from detection. The packages in the <a href="https://www.microsoft.com/en-us/security/blog/2026/08/04/chaindrop-supply-chain-compromise-anatomy-self-propagating-worm/">August 2026 ChainDrop compromise</a> carried <em>valid</em> GitHub Actions provenance.</p>',
+  },
+  {
     group: 'Containment',
     q: 'Is my own code sandboxed too?',
-    a: 'Not by default. Containment covers installs and ad-hoc tool runners such as npx and bunx. npm run build, npm test and node run uncontained at the standard isolation level. Set isolation.level to strict to extend containment to your own code.',
+    a: 'Not by default. Containment covers installs and updates, such as npm install and npm update, and ad-hoc tool runners such as npx and bunx. npm run build, npm test and node run uncontained at the standard isolation level. Set isolation.level to strict to extend containment to your own code.',
     aHtml:
-      '<p>Not by default. Containment covers installs and ad-hoc tool runners such as <code>npx</code> and <code>bunx</code>. <code>npm run build</code>, <code>npm test</code> and <code>node</code> run uncontained at the <code>standard</code> isolation level. Set <code>isolation.level</code> to <code>strict</code> to extend containment to your own code.</p>',
+      '<p>Not by default. Containment covers installs and updates, such as <code>npm install</code> and <code>npm update</code>, and ad-hoc tool runners such as <code>npx</code> and <code>bunx</code>. <code>npm run build</code>, <code>npm test</code> and <code>node</code> run uncontained at the <code>standard</code> isolation level. Set <code>isolation.level</code> to <code>strict</code> to extend containment to your own code.</p>',
   },
   {
     group: 'Containment',
     q: 'What happens when an install tries to reach a host I have not allowed?',
-    a: 'nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing -y or setting NVX_YES deliberately does not count, because an agent will answer yes to anything.',
+    a: 'nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing -y or --agent-mode, or setting NVX_YES, deliberately does not count, because an agent will answer yes to anything.',
     aHtml:
-      '<p>nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing <code>-y</code> or setting <code>NVX_YES</code> deliberately does not count, because an agent will answer yes to anything.</p>',
+      '<p>nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing <code>-y</code> or <code>--agent-mode</code>, or setting <code>NVX_YES</code>, deliberately does not count, because an agent will answer yes to anything.</p>',
   },
   {
     group: 'Using it',

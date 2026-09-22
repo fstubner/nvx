@@ -137,6 +137,11 @@ Commands:
   init-shims               Generate PATH shims in ~/.nvx/bin (and project bin
                            shims when run inside a project)
   policy init              Create default policy files (--global, --project, --force)
+  policy check             Check this project against the policy in force, with a
+                           distinct exit code per failure class, for CI
+                           (--format=json, --online)
+  policy explain           Show each setting's effective value and where it came
+                           from
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH.
                            Diagnosis is read-only; --fix repairs a shadowed
                            persistent PATH
@@ -146,6 +151,8 @@ Commands:
   audit [--summary]        Review the local record of security decisions, and of
                            past runs when NVX_TRACE=1 (--runs, --failures,
                            --limit=N, --all)
+  audit export             Export that record as json, jsonl or csv, filtered by
+                           time and event (--since, --event, --format, --out)
   report [--out=FILE]      Collect version, interception, policy and log tails
                            into one file to read and send on. Nothing is uploaded
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;
@@ -207,7 +214,7 @@ Options:
 
 ### Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx` are all intercepted**, and the ones that execute code you did not write (package installs and `npx`-style tool runners) are sandboxed. **Bun on Windows is the exception: it currently fails inside the sandbox, see [Known limitations](#known-limitations).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level; `isolation.level: strict` extends containment to it. There is no separate sandbox subcommand. Run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx` are all intercepted**, and the ones that execute code you did not write (package installs and `npx`-style tool runners) are sandboxed. **On Windows only `npm` and `npx` currently run successfully inside the sandbox. `pnpm`, `yarn` and `bun` are intercepted and then fail, see [Known limitations](#known-limitations).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level; `isolation.level: strict` extends containment to it. There is no separate sandbox subcommand. Run commands normally:
 
 ```bash
 npm install
@@ -465,6 +472,16 @@ on -- is in [docs/enforcement-matrix.md](docs/enforcement-matrix.md).
   and names `--no-sandbox`.
 - **A contained server needs `--expose` to be reachable from your machine**, and a
   contained tool needs `--connect` to reach a service you are already running.
+- **On Windows, only `npm` and `npx` run successfully inside the sandbox.**
+  `pnpm`, `yarn` and `bun` are intercepted and then exit 1. Measured 2026-09-17
+  on one machine, a bare install of one dependency, with pnpm 8.7.5, yarn 1.22.19
+  and bun 1.3.1: `npm install` exits 0 and the other three exit 1. Each fails
+  differently. pnpm cannot `lstat` `~/.nvx` while resolving its temp directory,
+  yarn cannot open `~/.yarnrc`, and bun reports a bare `ENOENT`. The contained
+  process is meant to be able to read attributes up the chain above its guest
+  home through the profile root, and a measurement recorded in
+  `sandbox_appcontainer_windows.go` on 2026-09-02 found that it could. It cannot
+  now, which is the likely common cause of at least the pnpm failure.
 - **Bun needs 1.4.x inside the Windows sandbox.** Older versions fail every
   relative-path operation.
 - **A package published in the last 24 hours is held** pending your approval, so
