@@ -234,7 +234,17 @@ jobs:
           # remote on the host's behalf. A host that cannot reach its own
           # non-loopback listener leaves the relay nothing to connect to, and
           # the allowlist assertions then measure the network.
-          'stopped answering on its own non-loopback listener'
+          'stopped answering on its own non-loopback listener',
+          # The foreign-runtime probes. Creating a symlink on Windows needs
+          # Developer Mode or elevation, and the rule under test does not vary
+          # by platform, so a hosted runner without it measures nothing that
+          # the same test on Linux has not already measured.
+          'symlink creation needs Developer Mode on Windows',
+          # The same test file checks the Unix install prefixes a foreign
+          # runtime lands in (/usr/local, /opt/homebrew). Those paths do not
+          # exist on Windows and the Windows equivalents are asserted
+          # separately.
+          'the Unix prefixes under test are not the Windows ones'
         )
         $unexpected = $reasons | Where-Object {
           $r = $_; -not ($allowed | Where-Object { $r -match [regex]::Escape($_) })
