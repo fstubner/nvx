@@ -117,6 +117,13 @@ they read changes rather than on every commit:
   `src/data/site-content/terminal.ts` to `public/assets/hero.png`. It takes
   its colours from the stylesheets, so changing an `--ui-ondark-*` token and
   re-running repaints the image to match. Commit the PNG.
+- `npm run assets:wordmark` composes `public/mark.svg` with `siteName` into
+  `public/assets/wordmark.png` and `wordmark-light.png`. Replace `mark.svg`
+  with your own logo and re-run; the mark is a file rather than code because
+  the only way to parameterise a drawing is to invent a drawing language, and
+  SVG already is one. It prints the transparent-column count, so run
+  `npm run check:wordmark` after and set `--ui-mark-inset-ratio` to what it
+  reports. Commit both PNGs.
 - `npm run assets:install-scripts` copies `install.ps1` and `install.sh` into
   `public/`, from beside the site or the directory above it, so the
   documented one-liner can point at your own domain instead of

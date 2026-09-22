@@ -24,7 +24,8 @@
     "visual:record": "node ./scripts/visual-snapshot.mjs record",
     "visual:check": "node ./scripts/visual-snapshot.mjs check",
     "assets:terminal": "node ./scripts/terminal-image.mjs",
-    "assets:install-scripts": "node ./scripts/copy-install-scripts.mjs"
+    "assets:install-scripts": "node ./scripts/copy-install-scripts.mjs",
+    "assets:wordmark": "node ./scripts/wordmark.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.42.1",

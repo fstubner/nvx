@@ -65,7 +65,7 @@
      different components with their own scoped styles, and this is one
      decision, not two. */
   --ui-mark-filter: none;
-  --ui-mark-inset-ratio: 0.0778;
+  --ui-mark-inset-ratio: 0.0513;
 
   /* Tells the browser which way to draw the controls it renders itself: the
    * <select> popup in the theme control, native focus rings, and form

@@ -40,7 +40,11 @@ export const appSchema: AppSchema = {
 };
 
 export const branding: Branding = {
+  // Both built by `npm run assets:wordmark` from public/mark.svg and
+  // `siteName` above. The two differ only in the colour of the lettering:
+  // white for the dark bar, near-black for the light one.
   wordmark: '/assets/wordmark.png',
+  wordmarkLight: '/assets/wordmark-light.png',
   wordmarkAlt: 'Example',
   accentGradient: 'linear-gradient(90deg,#16a34a,#22c55e 50%,#1edcff)',
   bg: '#111',
