@@ -74,7 +74,7 @@ found 0 vulnerabilities`,
     "enabled": true,
     "network": {
       "mode": "proxy",
-      "default_allow": ["registry.npmjs.org:443", "api.osv.dev:443"],
+      "default_allow": ["registry.npmjs.org:443", "registry.yarnpkg.com:443", "api.osv.dev:443"],
       "prompt_unknown": true
     }
   }

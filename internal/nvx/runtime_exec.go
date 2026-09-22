@@ -51,6 +51,7 @@ func (n NodeProvider) SessionEnv(versionDir string) map[string]string { return n
 func (n NodeProvider) DefaultNetworkAllow() []string {
 	return []string{
 		"registry.npmjs.org:443",
+		"registry.yarnpkg.com:443", // yarn classic's name for the same registry
 		"api.osv.dev:443",
 	}
 }

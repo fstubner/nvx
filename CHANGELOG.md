@@ -113,6 +113,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`yarn install` runs inside the Windows sandbox.** yarn classic fetches from
+  `registry.yarnpkg.com`, a front for the npm registry, and that name was not
+  on the default allowlist, so every contained `yarn install` was refused on
+  its first fetch and gave up after four retries. It is allowed by default now,
+  next to `registry.npmjs.org`. Measured 2026-09-17 with yarn 1.22.19: a bare
+  install of one dependency exits 0, and so does the second run.
+
+* **A tool on Node 18 can stat nvx's own directories from inside the Windows
+  sandbox.** The entry nvx writes on the directories above a contained
+  command's home let it pass through them and read their attributes, but not
+  the SYNCHRONIZE right that every CreateFile asks for. A runtime that opens a
+  directory to stat it, which libuv did until 1.44, got EPERM on `~/.nvx` and
+  `~/.nvx/sandbox_home`; newer runtimes list the parent instead and never
+  noticed. pnpm's standalone binary bundles Node 18.5 and died on that stat
+  before doing anything. The entry carries SYNCHRONIZE now, and `~/.nvx`
+  itself gets one, written without the propagation over everything beneath it
+  that used to time out: 22.3 s for the propagating write against 1.07 ms
+  without, measured back to back. A first `pnpm install` in a fresh project
+  exits 0. A second one still does not, for a reason no permission fixes; see
+  Known limitations in the README.
+
 * **A project directory deleted and recreated no longer fails to launch on
   Windows.** nvx remembered for seven days which directories already carried
   its sandbox permission, in `~/.nvx/grant-cache.json`, and trusted that record
