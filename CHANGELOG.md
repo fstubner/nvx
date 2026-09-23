@@ -113,6 +113,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The Linux sandbox's network filter covers x32 and io_uring.** It matched
+  system calls by their x86-64 numbers only, so the same call made through the
+  x32 ABI or submitted through io_uring went past it. On a kernel with x32
+  enabled, a contained program in `network.mode: offline` could open a TCP
+  socket and connect to nvx's in-sandbox relay. It reached nothing beyond
+  that, because the relay's own outbound connection was still refused. Calls
+  from a foreign ABI are now refused, and io_uring reports itself unavailable,
+  as it does on a kernel built without it.
+
 * **`nvx default` works when the home path contains `&`.** On Windows it made
   its junction through `cmd /c mklink`, and cmd.exe split the path at the `&`
   and ran the rest as a command. With a home like `C:\Users\A&B`, the text after
