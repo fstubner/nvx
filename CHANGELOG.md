@@ -121,6 +121,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaves the previous binary working. A checksum that is present and wrong fails
   with or without the flag.
 
+* **Contained commands on Linux can write to `/dev/null`.** It was granted
+  read-only, so `>/dev/null` in any shell script failed, and so did every Node
+  spawn with `stdio: 'ignore'`, which opens it for writing. Measured on Linux
+  6.18: both failed with EACCES inside the sandbox before, and both work now.
+  The other devices stay read-only.
+
 * **The Linux sandbox forks the contained command from the thread it
   restricted.** Landlock, no-new-privs and the private `/proc` mount each apply
   to one OS thread, and nothing kept nvx on that thread, so the command could

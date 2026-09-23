@@ -29,9 +29,10 @@ jobs:
       # This job runs on the tag and only tests on Ubuntu, so on its own it can
       # publish a draft built from a commit whose Windows or macOS job later
       # fails -- and did: the draft for v0.5.5 was complete while that commit's CI
-      # run was still in progress. A human still gates publication, so nothing
-      # broken can reach users this way, but "the draft exists" should not be
-      # weaker evidence than "CI passed".
+      # run was still in progress. A human still gates publication, npm
+      # included since it moved to publish.yml, so nothing broken can reach
+      # users this way, but "the draft exists" should not be weaker evidence
+      # than "CI passed".
       #
       # Waiting rather than duplicating the matrix: re-running three platforms
       # here would double every release's cost to re-answer a question CI has
@@ -150,59 +151,16 @@ jobs:
             dist/nvx.exe
           sbom-path: dist/nvx.spdx.json
 
-      # npm is where the users are: they already run `npm install`, which is the
-      # command this tool exists to contain. Binaries on a releases page are a
-      # channel nobody is standing in -- v0.5.4 and v0.5.6 assets were downloaded
-      # zero times.
-      #
-      # optionalDependencies with os/cpu, NOT a postinstall download. nvx exists
-      # because `npm install` runs code from strangers before anyone has looked at
-      # it; shipping a postinstall to fetch our own binary would be the same trick.
-      # npm resolves the one matching package and executes nothing.
-      #
-      # Skipped when NPM_TOKEN is absent, so a release still cuts on a fork or
-      # before the secret is configured, rather than failing at the last step.
-      - name: Publish to npm
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "NPM_TOKEN is not configured; skipping the npm publish."
-            echo "Add it as a repository secret to enable this step."
-            exit 0
-          fi
-          version="${GITHUB_REF_NAME#v}"
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+      # npm is published from publish.yml, on `release: published`, not here.
+      # This job leaves a draft for review, and publishing to npm from here
+      # would put each version on the registry before anyone had looked at the
+      # draft. scripts/release/publish-npm.sh fetches these same binaries from
+      # the release and checks them against the provenance attested above.
 
-          copy_binary() { # <package dir> <dist asset> <name inside the package>
-            install -D "dist/$2" "npm/$1/bin/$3"
-          }
-          copy_binary nvx-linux-x64    nvx-linux-amd64  nvx
-          copy_binary nvx-linux-arm64  nvx-linux-arm64  nvx
-          copy_binary nvx-darwin-x64   nvx-darwin-amd64 nvx
-          copy_binary nvx-darwin-arm64 nvx-darwin-arm64 nvx
-          copy_binary nvx-win32-x64    nvx.exe          nvx.exe
-
-          # The platform packages go first: the wrapper depends on them, and a
-          # wrapper on the registry whose optional deps do not exist yet installs
-          # with no binary at all.
-          for pkg in nvx-linux-x64 nvx-linux-arm64 nvx-darwin-x64 nvx-darwin-arm64 nvx-win32-x64; do
-            ( cd "npm/$pkg"
-              npm version "$version" --no-git-tag-version --allow-same-version
-              npm publish --access public --provenance )
-          done
-
-          ( cd npm/nvx
-            npm version "$version" --no-git-tag-version --allow-same-version
-            for pkg in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64; do
-              npm pkg set "optionalDependencies.@fstubner/nvx-${pkg}=${version}"
-            done
-            npm publish --access public --provenance )
-
+      # Pinned by commit SHA for the reason given above the SBOM steps: this
+      # action runs with contents: write over the release assets.
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           draft: true
           generate_release_notes: true

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -20,6 +21,8 @@ import (
 // calling thread.
 func TestLandlockSandboxCanStartACommand(t *testing.T) {
 	if os.Getenv("NVX_TEST_LANDLOCK_CHILD") == "1" {
+		// Landlock applies to this thread only; the checks below must run on it.
+		runtime.LockOSThread()
 		if err := applyLandlockSandbox(
 			os.Getenv("NVX_TEST_GUEST"), os.Getenv("NVX_TEST_WORK"), os.Getenv("NVX_TEST_NVXHOME"), nil, false,
 		); err != nil {
@@ -34,6 +37,20 @@ func TestLandlockSandboxCanStartACommand(t *testing.T) {
 			os.Exit(3)
 		}
 		_ = f.Close()
+		// ...write to /dev/null the way a shell redirect opens it...
+		w, err := os.OpenFile("/dev/null", os.O_WRONLY|os.O_TRUNC, 0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "DEVNULL_WRITE_FAILED: %v\n", err)
+			os.Exit(5)
+		}
+		_ = w.Close()
+		// ...and not to the other devices, which the kernel would otherwise
+		// allow: this is what shows the ruleset is in force at all.
+		if z, err := os.OpenFile("/dev/zero", os.O_WRONLY, 0); err == nil {
+			_ = z.Close()
+			fmt.Fprintln(os.Stderr, "DEVZERO_WRITE_ALLOWED")
+			os.Exit(6)
+		}
 		// ...and actually execute a command.
 		out, err := exec.Command("/bin/echo", "CONTAINED_OK").Output()
 		if err != nil {
