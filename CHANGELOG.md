@@ -113,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx default` works when the home path contains `&`.** On Windows it made
+  its junction through `cmd /c mklink`, and cmd.exe split the path at the `&`
+  and ran the rest as a command. With a home like `C:\Users\A&B`, the text after
+  the `&` ran and the default was never set. nvx now writes the junction
+  itself.
+
 * **The Windows installer no longer leaves a binary that failed its checksum.**
   A download whose SHA-256 did not match stayed in `~/.nvx/bin` after the
   installer reported the failure, and `-InsecureSkipChecksum`, meant for a
