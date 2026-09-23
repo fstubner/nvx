@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -265,6 +266,14 @@ func landlockReadOnlyRules(nvxHome string, privateProc bool) []landlockRule {
 			// killed every Linux sandbox launch on every Linux system.
 			access &^= landlockAccessFSReadDir
 		}
+		if p == "/dev/null" {
+			// Writable, or the commonest idiom for discarding output fails:
+			// `cmd >/dev/null` in any shell, and every spawn Node makes with
+			// stdio 'ignore', which opens /dev/null for writing. Measured on
+			// Linux 6.18 inside the sandbox before this: both EACCES. Writing
+			// here discards the bytes, so it reaches nothing.
+			access |= landlockAccessFSWriteFile
+		}
 		rules = append(rules, landlockRule{path: p, access: access})
 	}
 	return rules
@@ -340,6 +349,17 @@ func applyLandlockSandboxForABI(abi int, guestHome, workDir, nvxHome string, rea
 }
 
 func runLandlockExecChild(a supervisorExecArgs) int {
+	// no_new_privs, landlock_restrict_self and unshare(CLONE_NEWNS) below each
+	// apply to the calling OS thread only, and the fork in cmd.Start inherits
+	// from whichever thread it runs on. Unlocked, the goroutine can move between
+	// those calls and the target can be forked from a thread none of them touched.
+	// Measured 2026-09-23 on Linux 6.18 with the same sequence in a standalone
+	// program: 164 of 300 children created a file Landlock should have refused
+	// when work separated restricting from forking, 1 of 300 with nothing in
+	// between, and 0 of 300 either way with this lock. Never unlocked: the
+	// process exits when this returns.
+	runtime.LockOSThread()
+
 	guestHome, workDir, nvxHome := a.GuestHome, a.WorkDir, a.NvxHome
 	networkMode, egressSocket := a.NetworkMode, a.EgressSocket
 	cmdPath, args := a.CmdPath, a.CmdArgs
