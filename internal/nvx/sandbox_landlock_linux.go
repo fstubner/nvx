@@ -266,6 +266,14 @@ func landlockReadOnlyRules(nvxHome string, privateProc bool) []landlockRule {
 			// killed every Linux sandbox launch on every Linux system.
 			access &^= landlockAccessFSReadDir
 		}
+		if p == "/dev/null" {
+			// Writable, or the commonest idiom for discarding output fails:
+			// `cmd >/dev/null` in any shell, and every spawn Node makes with
+			// stdio 'ignore', which opens /dev/null for writing. Measured on
+			// Linux 6.18 inside the sandbox before this: both EACCES. Writing
+			// here discards the bytes, so it reaches nothing.
+			access |= landlockAccessFSWriteFile
+		}
 		rules = append(rules, landlockRule{path: p, access: access})
 	}
 	return rules
