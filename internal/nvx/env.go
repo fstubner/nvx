@@ -104,22 +104,7 @@ func CreateLink(link, target string) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	if runtime.GOOS == "windows" {
-		// From the system directory, not PATH: see systemToolPath.
-		cmdExe, err := systemToolPath("cmd.exe")
-		if err != nil {
-			return fmt.Errorf("failed to create directory junction: %w", err)
-		}
-		cmd := exec.Command(cmdExe, "/c", "mklink", "/j", link, target)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to create directory junction: %w", err)
-		}
-	} else {
-		if err := os.Symlink(target, link); err != nil {
-			return fmt.Errorf("failed to create symbolic link: %w", err)
-		}
-	}
-	return nil
+	return createDirLink(link, target)
 }
 
 // projectToolsMarker matches PATH entries produced by project-scoped tool
