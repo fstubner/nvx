@@ -1,15 +1,13 @@
 name: Publish to package managers
 
-# Fans out from a single GitHub release to the OS package managers:
+# Fans out from a single GitHub release to the package managers: npm,
 # Homebrew tap, Scoop bucket, Winget (microsoft/winget-pkgs). Each job is
 # independent, so one failure doesn't block the others, and each is
 # re-runnable from the Actions tab.
 #
-# npm is NOT here. release.yml publishes @fstubner/nvx and its five
-# per-platform packages as part of the build, because the npm wrapper ships
-# the same binaries release.yml has just produced. Adding a second npm
-# publisher here would give two workflows write access to the same registry
-# version.
+# npm is here, rather than in release.yml where it started, so that it waits
+# for the same human review as everything else. release.yml ran it before the
+# draft existed. It is still the only workflow that publishes to npm.
 #
 # Triggers:
 #   - On `release: published`. release.yml builds on the tag push and leaves
@@ -41,9 +39,10 @@ concurrency:
   group: publish-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
-# These jobs hold three publishing PATs between them (the tap, the bucket,
-# winget) and none of them needs GITHUB_TOKEN to write to this repo. Read is
-# what the checkouts need and nothing here wants more.
+# These jobs hold four publishing tokens between them (npm, the tap, the
+# bucket, winget) and none of them needs GITHUB_TOKEN to write to this repo.
+# Read is what the checkouts need; the npm job adds id-token and attestation
+# read for itself and nothing else wants more.
 permissions:
   contents: read
 
@@ -72,6 +71,29 @@ jobs:
   # registries actually landed. Publishing is not transactional across
   # registries either way. That is a property of the design, not something a
   # timeout introduces.
+
+  # --- npm --------------------------------------------------------------
+  # @fstubner/nvx and its five per-platform packages. The binaries are the
+  # release's own assets, each checked against its sidecar and against the
+  # build provenance release.yml attested, before anything is published.
+  npm:
+    name: npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # id-token for npm --provenance; attestations to read release.yml's.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - name: Publish @fstubner/nvx
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/release/publish-npm.sh "$TAG"
 
   # --- Homebrew tap -----------------------------------------------------
   # Writes Formula/nvx.rb in fstubner/homebrew-tap, which also holds
@@ -195,10 +217,10 @@ jobs:
 
   # --- Fan-out summary --------------------------------------------------
   #
-  # The three jobs above are deliberately independent. Homebrew landing
+  # The four jobs above are deliberately independent. Homebrew landing
   # while Winget fails is a normal, recoverable state, and each job re-runs
   # on its own. The cost of that independence is that "did this release
-  # actually reach every registry?" can only be answered by opening three
+  # actually reach every registry?" can only be answered by opening four
   # job pages, and a single failure among two greens is easy to miss.
   #
   # This job REPORTS, it does not gate, and that is on purpose. Failing the
@@ -215,6 +237,7 @@ jobs:
     name: Publish summary
     if: always()
     needs:
+      - npm
       - homebrew
       - scoop
       - winget
