@@ -121,6 +121,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaves the previous binary working. A checksum that is present and wrong fails
   with or without the flag.
 
+* **A package can no longer put its own `git` ahead of yours.** nvx refuses to
+  wrap a `node_modules/.bin` entry whose name already resolves elsewhere on
+  PATH, and the check stopped at the first match. Inside any npm script that
+  first match is the project's own `node_modules/.bin`, so a file a contained
+  install dropped there as `git` was taken for the project's copy and wrapped
+  onto PATH ahead of the real one. The next `git` typed in that project ran it
+  outside the sandbox. The check now looks past every directory inside the
+  project. Measured 2026-09-23 on Windows: the same planted file is no longer
+  wrapped, `git` resolves to Git for Windows, and an ordinary project CLI is
+  still wrapped.
+
 * **Contained commands on Linux can write to `/dev/null`.** It was granted
   read-only, so `>/dev/null` in any shell script failed, and so did every Node
   spawn with `stdio: 'ignore'`, which opens it for writing. Measured on Linux
