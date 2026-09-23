@@ -8,7 +8,9 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -81,6 +83,12 @@ type stdioChannel struct {
 	closed      bool
 	childServer syscall.Handle
 	nodeServer  syscall.Handle
+
+	// started is set when pump begins and done is closed when it returns, so
+	// Close can keep cancelling until the pump has let go of the handles. See
+	// stopPump.
+	started atomic.Bool
+	done    chan struct{}
 }
 
 // stdioBroker owns the provisioned channels and the goroutines pumping them.
@@ -213,7 +221,8 @@ func newStdioChannel(sessionID string, index int, sddl string, reverse bool) (*s
 		kind = "i"
 	}
 	base := fmt.Sprintf(`\\.\pipe\nvx-stdio-%s-%s%d`, sessionID, kind, index)
-	ch := &stdioChannel{childPipe: base + "-c", nodePipe: base + "-n", reverse: reverse, sddl: sddl}
+	ch := &stdioChannel{childPipe: base + "-c", nodePipe: base + "-n", reverse: reverse, sddl: sddl,
+		done: make(chan struct{})}
 	if err := ch.createInstances(); err != nil {
 		return nil, err
 	}
@@ -253,6 +262,8 @@ func (c *stdioChannel) createInstances() error {
 // Blocking waits on both ends: a channel nobody uses parks in the first accept
 // until the session ends and Close cancels it.
 func (c *stdioChannel) pump() {
+	c.started.Store(true)
+	defer close(c.done)
 	for {
 		child, node, ok := c.current()
 		if !ok {
@@ -325,14 +336,25 @@ func (c *stdioChannel) retire(child, node syscall.Handle) bool {
 	return c.createInstances() == nil
 }
 
-// Close tears the pool down. Cancelling pending I/O first: a pump parked in
-// ConnectNamedPipe is not released by closing the handle, which is how an
-// earlier probe hung for ten minutes.
+// Close tears the pool down.
 //
-// Everything under the channel's mutex, because the pump's goroutine reads
-// and replaces the same fields. An earlier shape with a sync.Once and one
-// field read outside it raced the pump; `go test -race` caught it every time
-// under load and about 3% of the time in isolation.
+// The pump waits in synchronous ConnectNamedPipe, ReadFile and WriteFile, and
+// CloseHandle on a handle with synchronous I/O pending in another thread does
+// not return until that I/O does. CancelIoEx releases it, but only I/O already
+// issued: the pump can pass its closed check, lose the CPU, and enter
+// ConnectNamedPipe just after a single cancel and just before the close, and
+// both goroutines then wait on each other for good. CI caught that: a test
+// timed out after ten minutes with Close in CloseHandle and the pump in
+// ConnectNamedPipe on the same handle. Measured with a standalone program:
+// CloseHandle on a pipe whose ConnectNamedPipe had started was still blocked
+// three seconds later, and returned at once when CancelIoEx came after the
+// connect. So Close marks every channel closed, cancels repeatedly until each
+// pump has returned, and only then closes the handles.
+//
+// Everything that touches the handle fields does so under the channel's mutex,
+// because the pump's goroutine reads and replaces the same fields. An earlier
+// shape with a sync.Once and one field read outside it raced the pump; `go test
+// -race` caught it every time under load and about 3% of the time in isolation.
 func (b *stdioBroker) Close() {
 	if b == nil {
 		return
@@ -346,6 +368,13 @@ func (b *stdioBroker) Close() {
 	for _, ch := range b.channels {
 		ch.mu.Lock()
 		ch.closed = true
+		ch.mu.Unlock()
+	}
+	for _, ch := range b.channels {
+		ch.stopPump()
+	}
+	for _, ch := range b.channels {
+		ch.mu.Lock()
 		for _, h := range []*syscall.Handle{&ch.childServer, &ch.nodeServer} {
 			if *h != 0 && *h != syscall.InvalidHandle {
 				procCancelIoExBroker.Call(uintptr(*h), 0)
@@ -354,6 +383,39 @@ func (b *stdioBroker) Close() {
 			*h = syscall.InvalidHandle
 		}
 		ch.mu.Unlock()
+	}
+}
+
+// stopPumpLimit bounds how long Close waits for one pump to let go. A pump
+// that outlives it is left behind and its handles closed anyway, which is the
+// behaviour Close had before it waited at all.
+const stopPumpLimit = 5 * time.Second
+
+// stopPump cancels the channel's pending I/O until its pump has returned. The
+// caller has already set closed, so a pump that has not started yet, or that
+// finishes a copy, returns at its next check rather than waiting again.
+func (c *stdioChannel) stopPump() {
+	if !c.started.Load() {
+		return // pump sets started before its first check of closed
+	}
+	deadline := time.Now().Add(stopPumpLimit)
+	for {
+		c.mu.Lock()
+		child, node := c.childServer, c.nodeServer
+		c.mu.Unlock()
+		for _, h := range []syscall.Handle{child, node} {
+			if h != 0 && h != syscall.InvalidHandle {
+				procCancelIoExBroker.Call(uintptr(h), 0)
+			}
+		}
+		select {
+		case <-c.done:
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
+		if time.Now().After(deadline) {
+			return
+		}
 	}
 }
 
