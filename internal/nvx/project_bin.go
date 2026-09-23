@@ -65,19 +65,23 @@ func projectBinDir(projectRoot, nvxHome string) string {
 // the local one, contained. Letting an attacker-writable directory take
 // precedence over system commands on an interactive PATH is not a trade worth
 // making for that convenience.
+//
+// Every PATH entry inside the project is skipped, not just the first hit. npm
+// puts node_modules/.bin at the front of PATH for every script it runs, and
+// regeneration runs inside one, so stopping at the first hit found the planted
+// file itself, called it "the project's own copy", and shimmed it.
 func shimWouldShadowAnExistingCommand(name, projectRoot, shimDir string) bool {
-	resolved := resolveCommandOnPath(name, os.Getenv("PATH"))
-	if resolved == "" {
-		return false // nothing to shadow: this is the ordinary local-CLI case
+	var outside []string
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
+		if dirWithin(dir, projectRoot) || dirsEqual(dir, shimDir) {
+			continue // the project's own copies, or a shim we generated earlier
+		}
+		outside = append(outside, dir)
 	}
-	dir := filepath.Dir(resolved)
-	if dirWithin(dir, projectRoot) {
-		return false // the project's own copy, which is what we are wrapping
-	}
-	if dirsEqual(dir, shimDir) {
-		return false // a shim we generated on a previous run
-	}
-	return true
+	return resolveCommandOnPath(name, strings.Join(outside, string(os.PathListSeparator))) != ""
 }
 
 func projectNodeModulesBin(projectRoot string) string {

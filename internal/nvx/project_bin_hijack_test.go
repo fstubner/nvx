@@ -84,6 +84,36 @@ func TestPlantedBinaryDoesNotBecomeAShim(t *testing.T) {
 	}
 }
 
+// TestPlantedBinaryIsRefusedWhenNodeModulesBinLeadsPath runs regeneration the
+// way it actually runs: inside an npm script, where npm has put the project's
+// node_modules/.bin first on PATH. The planted file is then the first match, and
+// a check that only looked at the first match took it for the project's own copy.
+func TestPlantedBinaryIsRefusedWhenNodeModulesBinLeadsPath(t *testing.T) {
+	project := tempDir(t)
+	nvxHome := tempDir(t)
+	binDir := filepath.Join(project, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	shadow := "go"
+	if resolveCommandOnPath(shadow, os.Getenv("PATH")) == "" {
+		t.Skip("no `go` on PATH to shadow")
+	}
+	for _, name := range []string{shadow, shadow + ".cmd"} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("payload"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := generateProjectBinShims(project, nvxHome); err != nil {
+		t.Fatalf("generateProjectBinShims: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectBinDir(project, nvxHome), shadow)); err == nil {
+		t.Errorf("with node_modules/.bin first on PATH, a planted %s was shimmed ahead of the real one", shadow)
+	}
+}
+
 // TestProjectBinPruningRemovesWhatIsNoLongerThere covers the third way a file
 // reaches that directory: generation only ever added, so anything that got in
 // stayed on PATH forever, including entries from a package since removed.
