@@ -121,6 +121,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaves the previous binary working. A checksum that is present and wrong fails
   with or without the flag.
 
+* **The Linux sandbox forks the contained command from the thread it
+  restricted.** Landlock, no-new-privs and the private `/proc` mount each apply
+  to one OS thread, and nothing kept nvx on that thread, so the command could
+  start from another one with none of them in force. This was not reproduced
+  through nvx itself. The same sequence in a standalone program on Linux 6.18
+  let 164 of 300 children create a file Landlock should have refused, and 0 of
+  300 once the thread was pinned, which nvx now does.
+
 * **`yarn install` runs inside the Windows sandbox.** yarn classic fetches from
   `registry.yarnpkg.com`, a front for the npm registry, and that name was not
   on the default allowlist, so every contained `yarn install` was refused on
