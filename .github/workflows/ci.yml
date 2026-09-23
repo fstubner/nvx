@@ -325,6 +325,12 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: ./scripts/test-install-policy.ps1
+    # And its checksum gate: a mismatch used to leave the unverified binary in
+    # place, and -InsecureSkipChecksum installed one. Scratch files only.
+    - name: Installer checksum test
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/test-install-checksum.ps1
     # Only when something above already failed, and only on Windows.
     #
     # Five of 34 CI runs on 2026-09-07/08 failed here with socket creation or

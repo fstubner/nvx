@@ -113,6 +113,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The Windows installer no longer leaves a binary that failed its checksum.**
+  A download whose SHA-256 did not match stayed in `~/.nvx/bin` after the
+  installer reported the failure, and `-InsecureSkipChecksum`, meant for a
+  release with no checksum file, installed it. The download now goes to a side
+  file and replaces `nvx.exe` only after it verifies, so a failed upgrade also
+  leaves the previous binary working. A checksum that is present and wrong fails
+  with or without the flag.
+
 * **`yarn install` runs inside the Windows sandbox.** yarn classic fetches from
   `registry.yarnpkg.com`, a front for the npm registry, and that name was not
   on the default allowlist, so every contained `yarn install` was refused on

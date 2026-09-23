@@ -109,6 +109,45 @@ function Test-NvxAffirmative {
     return $Answer -match '^\s*(y|yes)\s*$'
 }
 
+# Verifies a downloaded nvx.exe against its published SHA-256 and moves it into
+# place, or throws and leaves Destination as it was.
+#
+# The download goes to a side path so a failed check never leaves an unverified
+# binary where the shims will run it. It used to be written straight to
+# Destination, and the cleanup after a mismatch sat behind Write-Error, which
+# throws under ErrorActionPreference Stop, so the file stayed. The catch around
+# it then read the mismatch as a missing checksum file, and with
+# -InsecureSkipChecksum went on to install it.
+#
+# AllowMissingChecksum covers a release with no checksum file and nothing else.
+# A checksum that is present and does not match always fails.
+function Install-NvxDownloadedBinary {
+    param(
+        [Parameter(Mandatory)][string]$DownloadPath,
+        [Parameter(Mandatory)][string]$ChecksumPath,
+        [Parameter(Mandatory)][string]$Destination,
+        [switch]$AllowMissingChecksum
+    )
+    try {
+        if (Test-Path $ChecksumPath) {
+            Write-Host "Verifying checksum..."
+            $expected = ((Get-Content $ChecksumPath -Raw).Trim() -split '\s+')[0].ToUpper()
+            $actual = (Get-FileHash $DownloadPath -Algorithm SHA256).Hash.ToUpper()
+            if ($expected -ne $actual) {
+                throw "Checksum verification failed: expected $expected, got $actual."
+            }
+            Write-Host "Checksum verified successfully."
+        } elseif ($AllowMissingChecksum) {
+            Write-Warning "Checksum file not available. Skipping verification because insecure skip was explicitly requested."
+        } else {
+            throw "Checksum file not available. Refusing to install without verification."
+        }
+        Move-Item -Path $DownloadPath -Destination $Destination -Force
+    } finally {
+        Remove-Item $DownloadPath, $ChecksumPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 if ($LibraryOnly) { return }
 
 Write-Host "Setting up nvx directories..."
@@ -212,34 +251,24 @@ if (($UseLocalBinary -or $env:NVX_USE_LOCAL_BINARY -eq "1") -and (Test-Path $loc
     $checksumUrl = "$downloadUrl.sha256"
     Write-Host "Downloading nvx.exe from $downloadUrl..."
     [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    $binPath = Join-Path $binDir "nvx.exe"
+    $downloadPath = "$binPath.download"
+    $checksumPath = "$binPath.sha256"
     try {
-        $binPath = Join-Path $binDir "nvx.exe"
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $binPath -UseBasicParsing
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath -UseBasicParsing
         try {
-            $checksumPath = Join-Path $binDir "nvx.exe.sha256"
             Invoke-WebRequest -Uri $checksumUrl -OutFile $checksumPath -UseBasicParsing
-            Write-Host "Verifying checksum..."
-            $expectedSha = (Get-Content $checksumPath).Split(" ")[0].Trim().ToUpper()
-            $actualSha = (Get-FileHash $binPath -Algorithm SHA256).Hash.ToUpper()
-            if ($expectedSha -ne $actualSha) {
-                Write-Error "Checksum verification failed!"
-                Remove-Item $binPath -Force
-                Remove-Item $checksumPath -Force
-                exit 1
-            }
-            Write-Host "Checksum verified successfully."
         } catch {
-            if ($InsecureSkipChecksum -or $env:NVX_INSECURE_SKIP_CHECKSUM -eq "1") {
-                Write-Warning "Checksum file not available. Skipping verification because insecure skip was explicitly requested."
-            } else {
-                Write-Error "Checksum file not available. Refusing to install without verification."
-                Remove-Item $binPath -Force -ErrorAction SilentlyContinue
-                Remove-Item $checksumPath -Force -ErrorAction SilentlyContinue
-                exit 1
-            }
+            # Absent from here on; Install-NvxDownloadedBinary decides whether
+            # that is allowed.
+            Remove-Item $checksumPath -Force -ErrorAction SilentlyContinue
         }
+        Install-NvxDownloadedBinary -DownloadPath $downloadPath -ChecksumPath $checksumPath `
+            -Destination $binPath `
+            -AllowMissingChecksum:($InsecureSkipChecksum -or $env:NVX_INSECURE_SKIP_CHECKSUM -eq "1")
     } catch {
-        Write-Error "Failed to download nvx binary: $_"
+        Remove-Item $downloadPath, $checksumPath -Force -ErrorAction SilentlyContinue
+        Write-Host "nvx was not installed: $_" -ForegroundColor Red
         exit 1
     }
 }
