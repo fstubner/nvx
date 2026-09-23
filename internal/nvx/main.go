@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -1667,6 +1668,64 @@ func parsePackageQuery(query string) (string, string) {
 	return name, version
 }
 
+type packageQueryKey struct{ name, query string }
+
+type packageDetails struct {
+	version     string
+	publishTime time.Time
+	hasScripts  bool
+	err         error
+}
+
+// verifyFetchConcurrency bounds the registry requests prefetchPackageDetails
+// has in flight at once.
+const verifyFetchConcurrency = 8
+
+// prefetchPackageDetails fetches registry metadata for every registry package
+// in args, a bounded number at a time, before runVerifyInstall walks them.
+//
+// The walk fetched each package as it reached it, one request at a time. For
+// an explicit `npm install foo` that is one request, but `npm ci` verifies
+// every lockfile entry: measured on a 651-entry lockfile, 74 s and then 36 s,
+// against 1 s for npm's own dry run. The walk itself stays sequential,
+// because its prompts must come one at a time and in order; only the network
+// wait moves ahead of it.
+func prefetchPackageDetails(args []string) map[packageQueryKey]packageDetails {
+	var keys []packageQueryKey
+	seen := map[packageQueryKey]bool{}
+	for _, arg := range args {
+		if nonRegistrySpecKind(arg) != "" {
+			continue
+		}
+		name, query := parsePackageQuery(arg)
+		k := packageQueryKey{name, query}
+		if name == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		keys = append(keys, k)
+	}
+
+	out := make(map[packageQueryKey]packageDetails, len(keys))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, verifyFetchConcurrency)
+	for _, k := range keys {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(k packageQueryKey) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			v, pub, scripts, err := resolveNpmPackageDetailsForVerify(k.name, k.query)
+			mu.Lock()
+			out[k] = packageDetails{v, pub, scripts, err}
+			mu.Unlock()
+		}(k)
+	}
+	wg.Wait()
+	return out
+}
+
 // runVerifyInstall verifies packages against policy blocklists, typosquatting, and the real-time OSV CVE database.
 // runVerifyInstall runs the pre-install security checks and returns the exit
 // code the caller should use: 0 to proceed, 1 to abort.
@@ -1690,6 +1749,7 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 
 	popularList := LoadPopularPackages(nvxHome)
 	var osvQueries []OSVQuery
+	details := prefetchPackageDetails(args)
 
 	for _, arg := range args {
 		// Classified before the name/version split, which would mangle a git URL
@@ -1739,7 +1799,8 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 		}
 
 		LogDetail("Verifying package %q...", pkgName)
-		resolvedVer, pubTime, hasScripts, err := resolveNpmPackageDetailsForVerify(pkgName, versionQuery)
+		d := details[packageQueryKey{pkgName, versionQuery}]
+		resolvedVer, pubTime, hasScripts, err := d.version, d.publishTime, d.hasScripts, d.err
 		if err != nil {
 			// The prompt names the vulnerability scan as well, because skipping it
 			// is what approving here actually does.
