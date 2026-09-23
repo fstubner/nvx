@@ -113,6 +113,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Old staged copies of commands are cleaned up on Windows.** A contained
+  command from outside nvx's own runtimes, such as a system Node or Bun, runs
+  from a copy of its whole directory, and every update to it left the previous
+  copy behind for good. The largest of four on the development machine was
+  31,814 files and 451 MB. Copies whose command has changed are now removed,
+  one after each contained command and all of them by `nvx cleanup`. A copy
+  something is still running is left until it stops.
+
 * **The Windows installer no longer leaves a binary that failed its checksum.**
   A download whose SHA-256 did not match stayed in `~/.nvx/bin` after the
   installer reported the failure, and `-InsecureSkipChecksum`, meant for a

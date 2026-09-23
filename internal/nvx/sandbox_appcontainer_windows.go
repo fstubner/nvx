@@ -636,15 +636,20 @@ func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {
 	srcDir := filepath.Dir(cmdPath)
 	base := filepath.Base(cmdPath)
 
-	st, err := os.Stat(cmdPath)
+	key, err := stagedCommandKey(cmdPath)
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256([]byte(strings.ToLower(srcDir) + fmt.Sprintf(":%d", st.ModTime().UnixNano())))
-	destDir := filepath.Join(nvxHome, "sandbox-exec", hex.EncodeToString(sum[:16]))
+	destDir := filepath.Join(nvxHome, "sandbox-exec", key)
 	destExe := filepath.Join(destDir, base)
+	marker := destDir + stagedSourceSuffix
 
 	if _, err := os.Stat(destExe); err == nil {
+		// Copies staged before the marker existed get one on their next use,
+		// which is what tells pruneStaleCommandCopies they are current.
+		if _, merr := os.Stat(marker); merr != nil {
+			_ = os.WriteFile(marker, []byte(cmdPath), 0o600)
+		}
 		return destExe, nil
 	}
 	if err := os.MkdirAll(destDir, 0700); err != nil {
@@ -653,7 +658,103 @@ func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {
 	if err := copyDirTree(srcDir, destDir); err != nil {
 		return "", err
 	}
+	_ = os.WriteFile(marker, []byte(cmdPath), 0o600)
 	return destExe, nil
+}
+
+// stagedSourceSuffix names the file beside each staged copy that records the
+// command it was staged for. Beside rather than inside, so the copy stays an
+// exact copy of the source directory.
+const stagedSourceSuffix = ".source"
+
+// stagedCommandKey names the directory a command is staged in: its source
+// directory and its modification time. A changed command gets a new key, which
+// is how a stale copy is never reused -- and why the old one is left behind.
+func stagedCommandKey(cmdPath string) (string, error) {
+	st, err := os.Stat(cmdPath)
+	if err != nil {
+		return "", err
+	}
+	srcDir := filepath.Dir(filepath.Clean(cmdPath))
+	sum := sha256.Sum256([]byte(strings.ToLower(srcDir) + fmt.Sprintf(":%d", st.ModTime().UnixNano())))
+	return hex.EncodeToString(sum[:16]), nil
+}
+
+// pruneStaleCommandCopies deletes staged command copies nothing will launch
+// again, and reports how many went. A budget of 0 means no limit.
+//
+// A copy is kept when its marker names a command whose key is still this
+// directory: that is the copy the next launch will use. Every other copy is
+// stale -- its command was updated, moved or removed -- or predates the marker
+// and has not been used since, which is the only way to still be unmarked.
+// Nothing removed them before, and each is a whole directory: the largest of
+// four on the development machine was 31,814 files and 451 MB.
+//
+// A stale copy can still be running, a long-lived MCP server started before
+// the update for one. Renaming the directory does not detect that (measured:
+// Windows renames a directory whose executable is running), but deleting a
+// running executable fails. So the executables go first, and a copy with one
+// that will not delete is left for a later sweep.
+func pruneStaleCommandCopies(nvxHome string, budget int) int {
+	if nvxHome == "" {
+		return 0
+	}
+	root := filepath.Join(nvxHome, "sandbox-exec")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	for _, e := range entries {
+		if budget > 0 && removed >= budget {
+			break
+		}
+		name := e.Name()
+		if !e.IsDir() || !isStagedCommandKey(name) {
+			continue // "supervisor" and anything nvx did not name
+		}
+		dir := filepath.Join(root, name)
+		marker := dir + stagedSourceSuffix
+		if src, rerr := os.ReadFile(marker); rerr == nil {
+			if key, kerr := stagedCommandKey(strings.TrimSpace(string(src))); kerr == nil && key == name {
+				continue
+			}
+		}
+		if !removeTopLevelExecutables(dir) {
+			continue
+		}
+		if os.RemoveAll(dir) == nil {
+			_ = os.Remove(marker)
+			removed++
+		}
+	}
+	return removed
+}
+
+func isStagedCommandKey(name string) bool {
+	if len(name) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(name)
+	return err == nil
+}
+
+// removeTopLevelExecutables deletes the .exe files directly in dir and
+// reports whether all of them went. One that will not is being run.
+func removeTopLevelExecutables(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".exe") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, e.Name())); err != nil && !os.IsNotExist(err) {
+			return false
+		}
+	}
+	return true
 }
 
 // maxStageDepth bounds the staging recursion. Directory links are followed, so a
