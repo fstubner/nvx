@@ -113,6 +113,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The Windows installer no longer leaves a binary that failed its checksum.**
+  A download whose SHA-256 did not match stayed in `~/.nvx/bin` after the
+  installer reported the failure, and `-InsecureSkipChecksum`, meant for a
+  release with no checksum file, installed it. The download now goes to a side
+  file and replaces `nvx.exe` only after it verifies, so a failed upgrade also
+  leaves the previous binary working. A checksum that is present and wrong fails
+  with or without the flag.
+
 * **A package can no longer put its own `git` ahead of yours.** nvx refuses to
   wrap a `node_modules/.bin` entry whose name already resolves elsewhere on
   PATH, and the check stopped at the first match. Inside any npm script that
