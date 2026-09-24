@@ -113,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`--connect` works in `network.mode: loopback` on Linux.** It was refused on
+  the grounds that the mode denied the sandbox every IP socket, which stopped
+  being true when loopback moved to the proxy filter on 2026-09-08. Measured
+  2026-09-25 in WSL: the previous binary refused the flag; this one carried a
+  request to a service on the host's 127.0.0.1:7788 and got its reply.
+
 * **`npm ci` spends less time in nvx's package checks.** Every lockfile entry
   is checked against the registry, and those requests went one at a time. They
   now run eight at once, ahead of the checks, which still ask their questions

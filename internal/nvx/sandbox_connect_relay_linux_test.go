@@ -100,20 +100,21 @@ func TestConnectReplacesAStaleSocketFile(t *testing.T) {
 	stop()
 }
 
-// The modes that deny the sandbox every IP socket are named, and the default is
-// not one of them.
+// The mode that denies the sandbox every IP socket is named, and the default is
+// not. loopback is on the carrying side: it runs the proxy filter, which leaves
+// the sandbox a TCP socket, so refusing --connect there refused a flag that works.
 //
 // This decides whether a developer is warned or silently given nothing, and the
 // list has to match buildOfflineNetworkFilter's own switch. Trimming is part of
 // it: "offline " with a trailing space reaching the wrong branch is a defect
 // this codebase has already had once, in networkModeRequiresNamespace.
 func TestConnectNamesTheModesThatCannotCarryIt(t *testing.T) {
-	for _, mode := range []string{"offline", "loopback", "OFFLINE", " offline "} {
+	for _, mode := range []string{"offline", "OFFLINE", " offline "} {
 		if !connectUnsupportedForMode(mode) {
 			t.Errorf("mode %q denies the sandbox an IP socket, so --connect must be refused there", mode)
 		}
 	}
-	for _, mode := range []string{"proxy", "open", "", "PROXY"} {
+	for _, mode := range []string{"proxy", "open", "", "PROXY", "loopback", " Loopback "} {
 		if connectUnsupportedForMode(mode) {
 			t.Errorf("mode %q can carry --connect, but it is refused", mode)
 		}
