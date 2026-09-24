@@ -1,4 +1,16 @@
+// The hero block's shape, split out of types.ts.
+//
+// Not a judgement about the hero being special: types.ts was 328 lines against
+// a 300-line guard once the comparison table's types landed, and this was the
+// largest self-contained run of them. feedback-types.ts named the comparison
+// types as the next candidate; they are 14 lines and would not have cleared
+// the guard on their own, so they stayed and the hero moved instead.
+//
+// `Platform` still lives in types.ts. The import back is type-only and erased
+// at compile time, so the cycle is a spelling detail rather than a runtime one.
+
 import type { Platform } from './types';
+import type { TerminalChrome } from './terminal-types';
 
 /** The hero's two command rows, per platform. */
 export type HeroCommands = Record<
@@ -48,7 +60,7 @@ export interface Hero {
   badge: string;
   /** Turns the badge into a link to the release notes, and lets the page
    *  replace its text with the latest released version once GitHub confirms
-   *  one (`v0.6.0 · What changed →`). Omit it and the badge stays the static
+   *  one (`v0.3.1 · What changed →`). Omit it and the badge stays the static
    *  string above, which is the default for a product with no changelog page
    *  or no published releases. */
   releaseLink?: string;
@@ -73,6 +85,9 @@ export interface Hero {
   heroTerminalHtml?: string;
   /** Accessible label for the terminal region when `heroTerminalHtml` is set. */
   heroTerminalLabel?: string;
+  /** Window frame around `heroTerminalHtml`, as for the image terminal: see
+   *  TerminalChrome. Defaults to 'macos'. */
+  heroTerminalChrome?: TerminalChrome;
   /** Path to the hero screenshot. */
   heroImage: string;
   heroImageAlt: string;
@@ -89,3 +104,4 @@ export interface Hero {
   /** Accessible name of the button that opens the installer menu. */
   downloadMenuLabel: string;
 }
+

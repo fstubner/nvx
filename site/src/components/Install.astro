@@ -8,10 +8,9 @@ const labels = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
 // has the hero's copyable one-liner already.
 const groups = [
   { key: 'desktop', title: 'Desktop app' },
-  // 'CLI + terminal UI' until 2026-09-13: the shell arrived carrying the
-  // product it was generalised from, which ships a TUI. nvx does not, so the
-  // label promised a surface that does not exist. Neutral wording belongs in
-  // the template -- worth pushing back upstream rather than keeping local.
+  // Neutral on purpose. This read 'CLI + terminal UI' until 2026-09-14, which
+  // is a promise about a surface most products using this shell do not ship.
+  // A label naming a feature belongs in the content files, not in a component.
   { key: 'cli', title: 'Command line' },
 ] as const;
 ---
@@ -69,14 +68,21 @@ const groups = [
                         <div class={`alt${e.command ? ' has-copy' : ''}`}>
                           <div class="alt-label">
                             {e.label}
-                            {e.hint && <span class="alt-hint">{e.hint}</span>}
+                            {/* A caveat about a command belongs by the label;
+                                a caveat about a download belongs by the
+                                button, which is where the person is looking
+                                when they act on it. */}
+                            {e.command && e.hint && <span class="alt-hint">{e.hint}</span>}
                           </div>
                           {e.command ? (
                             <div class="alt-cmd">{e.command}</div>
                           ) : (
-                            <a class="alt-cmd install-download" href={e.href} download>
-                              Download →
-                            </a>
+                            <div class="alt-action">
+                              <a class="alt-cmd install-download" href={e.href} download>
+                                Download →
+                              </a>
+                              {e.hint && <span class="alt-hint">{e.hint}</span>}
+                            </div>
                           )}
                         </div>
                       ))}
@@ -252,8 +258,20 @@ html[data-theme='light'] #install .reco{
 .alt-label{font-size:.85rem;color:var(--ui-text)}
 .alt-cmd{
   font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.82rem;
-  color:var(--ui-text);overflow-wrap:anywhere;word-break:normal;padding-right:50px;
+  color:var(--ui-text);overflow-wrap:anywhere;word-break:normal;
 }
+/* Reserve for the copy button, which only command rows have. It used to sit
+   on `.alt-cmd` unconditionally, so a download row reserved 50px for a button
+   that is never rendered there -- dead space the Download button was then
+   aligned against. */
+.alt-cmd:not(.install-download){padding-right:50px}
+/* The action column: button on the right edge, its caveat directly beneath
+   and aligned to it, so the warning reads as a note about the thing you are
+   about to click rather than a property of the row's label. */
+.alt-action{
+  display:grid;justify-items:end;justify-self:end;gap:5px;max-width:100%;
+}
+.alt-action .alt-hint{margin-top:0;text-align:right}
 /* Two groups per OS panel: desktop app, then CLI. */
 .install-group + .install-group{margin-top:26px}
 .install-group-title{
@@ -331,7 +349,18 @@ a.install-download:focus-visible{
 
 /* Always-visible Copy variant used where controls should be discoverable
    without hover, while keeping the same neutral command-bar treatment as
-   the hero copy buttons. */
+   the hero copy buttons.
+ *
+ * Applied to the RECOMMENDED command only. #416 extended it to the
+ * alternatives list too, on the grounds that a hover-hidden control reads as
+ * a missing one. That holds for the recommended row -- it is the one command
+ * in the panel most visitors act on -- and not for the rows under it: six
+ * buttons permanently lit compete with the route the panel is steering
+ * towards. The alternatives are hover-gated again, and `.alt-cmd` reserves
+ * the button's width either way, so nothing moves when one appears.
+ *
+ * Touch is unaffected: with no hover to reveal them, the (hover: none) rule
+ * in landing/base.css keeps every copy button visible. */
 .has-copy.always-show .copy-btn{
   opacity:1;
 }
@@ -343,6 +372,23 @@ a.install-download:focus-visible{
 
 #install .copy-btn{
   right:10px;
+}
+
+/* The alternatives list aligns on one edge, so the copy button matches the
+   row's own padding rather than sitting 6px proud of it.
+ *
+ * The two controls are positioned by different mechanisms and that is why
+ * they disagreed. A Download button lives in `.alt-action`, which is
+ * `justify-self:end` in the grid, so it lands on the content-box edge --
+ * `.alt`'s 16px padding. The copy button is absolutely positioned against
+ * `.alt` and so answers only to its own `right`, which was 10px. Measured
+ * before the change: copy 10px from the row edge, Download 16px, on rows
+ * stacked directly on top of each other in the same list.
+ *
+ * 16px rather than moving the button: the padding is the row's real edge,
+ * and every other thing in the row already respects it. */
+#install .alt .copy-btn{
+  right:16px;
 }
 
 /* Mobile: stack the grid into one column, Try it drops below. */

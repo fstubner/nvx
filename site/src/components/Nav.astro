@@ -247,15 +247,17 @@ html[data-theme='light'] .mark.has-light img.mark-light{display:block}
    which meant `border-inline-start` drew a 59px line floor to ceiling -- a
    divider that split the bar in two rather than grouping the links. The
    pseudo-element is 18px, centred on the text it sits between. */
+/* Margin, not padding: the current-page underline is a border on this box,
+   and padding put 20px of it to the left of the word. See the same note in
+   starlight/Header.astro, where the docs page shows it. */
 .nlinks a.nav-group-start{
   position:relative;
-  margin-inline-start:12px;
-  padding-inline-start:20px;
+  margin-inline-start:32px;
 }
 .nlinks a.nav-group-start::before{
   content:"";
   position:absolute;
-  inset-inline-start:0;
+  inset-inline-start:-16px;
   top:50%;
   width:1px;
   height:18px;

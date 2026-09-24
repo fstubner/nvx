@@ -1,5 +1,10 @@
 import { appendInline, el } from './markdown-inline';
-import { isGeneratedReleaseBoilerplate, normalizeMarkdown, summarizeRelease } from './summarize';
+import {
+  isGeneratedReleaseBoilerplate,
+  normalizeMarkdown,
+  normalizeTag,
+  summarizeRelease,
+} from './summarize';
 import type { ChangelogRelease, ListItem } from './types';
 
 function isDuplicateReleaseHeading(text: string, release: ChangelogRelease): boolean {
@@ -136,9 +141,29 @@ export function renderMarkdown(
   const lines = normalizeMarkdown(markdown).split('\n');
   let i = 0;
   let summaryPrefixConsumed = false;
+  // A CURATED summary is written independently of the body, so it shares no
+  // prefix with it -- which is why the prefix test below never fired for one,
+  // and every curated card opened by saying the same thing twice in two
+  // voices: the summary, then the body's own intro paragraph paraphrasing it.
+  //
+  // An auto-derived summary IS the body's first paragraph, so stripping the
+  // prefix already consumed it. Dropping the opening paragraph outright in the
+  // curated case is the same rule, not a new one -- the summary stands in for
+  // the paragraph either way.
+  //
+  // The one-shot latch is what keeps this to the FIRST paragraph. 0.3.1's
+  // second paragraph carries content the summary does not cover, and a rule
+  // that dropped all leading prose would lose it.
+  const curatedSummary = Boolean(
+    release.summary || releaseSummaries[normalizeTag(release.tag_name || release.name)]
+  );
   const trimSummaryPrefix = (text: string) => {
     if (summaryPrefixConsumed || !summaryText) return text;
     const normalized = text.replace(/\s+/g, ' ').trim();
+    if (curatedSummary) {
+      summaryPrefixConsumed = true;
+      return '';
+    }
     if (!normalized.startsWith(summaryText)) return text;
     summaryPrefixConsumed = true;
     return normalized.slice(summaryText.length).trim();
@@ -181,7 +206,12 @@ export function renderMarkdown(
         i += 1;
         continue;
       }
-      const depth = Math.min(heading[1].length + 2, 5);
+      // The card's own title is an <h2>, so body headings start at h3 and the
+      // document reads h2 -> h3 -> h4. This used to be `length + 2` capped at
+      // 5, which turned CHANGELOG.md's `###` sections into <h5> and skipped
+      // two levels on every release card -- the one accessibility failure on
+      // the changelog page.
+      const depth = Math.min(Math.max(heading[1].length, 3), 5);
       const node = el(`h${depth}`, 'release-heading');
       appendInline(node, normalizeReleaseHeading(heading[2]), repo);
       root.append(node);

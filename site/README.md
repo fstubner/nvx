@@ -19,6 +19,10 @@ that what you delete is obvious. Everything else is the shell.
 - `src/content/docs/**/*.md` -- the docs pages, if `modules.docs` is on.
   Their sidebar, title, description and logo are `site-content/docs.ts`;
   nothing warns when an entry points at a page that no longer exists.
+- `src/data/site-content/feedback.ts` -- the two feedback buttons above the
+  footer. They open a prefilled GitHub issue on `social.repo`; point them
+  somewhere else with `repo`, name your issue forms in `template`, or set
+  `enabled: false` to remove the block and its footer link entirely.
 - `public/assets/*` -- wordmark, hero screenshot, favicon, OG image.
 - `CHANGELOG.md` -- the changelog page's local fallback; it also reads
   GitHub Releases at runtime.
@@ -106,76 +110,63 @@ git ref or a browser session:
 
 `src/styles/docs/README.md` has the workflow.
 
+Two more build assets rather than check them, so they run when the thing
+they read changes rather than on every commit:
+
+- `npm run assets:terminal` draws the hero terminal panel from
+  `src/data/site-content/terminal.ts` to `public/assets/hero.png`. It takes
+  its colours from the stylesheets, so changing an `--ui-ondark-*` token and
+  re-running repaints the image to match. Commit the PNG.
+- `npm run assets:wordmark` composes `public/mark.svg` with `siteName` into
+  `public/assets/wordmark.png` and `wordmark-light.png`. Replace `mark.svg`
+  with your own logo and re-run; the mark is a file rather than code because
+  the only way to parameterise a drawing is to invent a drawing language, and
+  SVG already is one. It prints the transparent-column count, so run
+  `npm run check:wordmark` after and set `--ui-mark-inset-ratio` to what it
+  reports. Commit both PNGs.
+- `npm run assets:install-scripts` copies `install.ps1` and `install.sh` into
+  `public/`, from beside the site or the directory above it, so the
+  documented one-liner can point at your own domain instead of
+  raw.githubusercontent.com. It copies whichever exist and says so when
+  neither does.
+
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs every check in this repo on a **self-hosted
-runner**, because this repo is private and GitHub-hosted minutes are billed.
-Self-hosted minutes are not.
+`.github/workflows/ci.yml` runs every check in this repo on
+**`ubuntu-latest`**. Nothing to set up: open a pull request and it runs.
 
-That choice has a security condition attached: a self-hosted runner executes
-whatever a workflow tells it to, on a real machine. Safe while the repo is
-private and one person opens the pull requests; not safe if it is ever made
-public, because a fork's pull request would then run its own code on that
-machine. **If this repo is published, change `runs-on` back to
-`ubuntu-latest` in the same commit** -- public repos get GitHub-hosted
-minutes free, so nothing is lost.
+This was a self-hosted Windows runner until 2026-09-12. The reasoning was
+cost -- this repo is private, so GitHub-hosted minutes are billed against the
+account and self-hosted minutes are not -- and it failed in the way that kind
+of saving usually does. The runner went offline, and a pull request's checks
+sat queued indefinitely: not passing, not failing, just never arriving. The
+pull request looked like it was waiting on CI, and CI was waiting on a
+machine that was not coming back.
 
-The workflow's first step enforces that rather than trusting anyone to
-remember it: on a public repo it fails before the checkout runs, naming the
-fix. Making the repo public and forgetting the runner gives a red CI, not a
-stranger's code on your machine.
+A check that cannot run is worse than a metered one, because nothing about it
+looks broken. So the minutes are billed now, and that is the trade: a small
+recurring cost for checks that actually report.
 
-### Setting the runner up
-
-Once, on the machine that will run the checks. It needs Node (the workflow
-installs the version `.nvmrc` names), Chrome, and Git.
-
-```powershell
-mkdir C:ctions-runner; cd C:ctions-runner
-Invoke-WebRequest -Uri https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-win-x64-2.337.0.zip -OutFile runner.zip
-Expand-Archive -Path runner.zip -DestinationPath . -Force
-```
-
-Get a registration token -- it is short-lived, and generating one needs no
-copying out of a browser:
-
-```powershell
-gh api -X POST repos/<owner>/<repo>/actions/runners/registration-token -q .token
-```
-
-Then register and start it. The default labels are `self-hosted` and
-`windows`, which is exactly what the workflow asks for:
-
-```powershell
-./config.cmd --url https://github.com/<owner>/<repo> --token <the token>
-./run.cmd
-```
-
-`run.cmd` holds the terminal and stops when you close it, which is the right
-default while you are trying it. To have it survive a reboot, install it as
-a service instead:
-
-```powershell
-./svc.cmd install
-./svc.cmd start
-```
+The change also removed a security condition the old setup carried. A
+self-hosted runner executes whatever a workflow tells it to, on a real
+machine -- fine while the repo is private and one person opens the pull
+requests, not fine the moment it is public, because a fork's pull request
+would then run its own code there. The workflow had a guard step that failed
+the job if it ever ran self-hosted on a public repo. Hosted runners make both
+the condition and the guard unnecessary, so the guard is gone.
 
 ### What to expect
 
-Jobs queue rather than run in parallel, because there is one runner. The
-whole gate is a single job for that reason -- two would checkout and
-`npm ci` twice, in series, for nothing. Expect a few minutes, most of it the
-two browser sweeps.
+The whole gate is a single job. Two would checkout and `npm ci` twice for no
+gain; the step names report separately either way. Expect a few minutes, most
+of it the two browser sweeps.
 
-The workspace persists between runs. `actions/checkout` cleans untracked
-files each time, so `node_modules` is rebuilt per run rather than drifting.
-
-`setup-node`'s `cache: npm` is deliberately off. It exists to carry the npm
-cache between throwaway hosted VMs; here the cache is already on the disk,
-and turning a local read into an upload and a download makes every run
-slower. The first run of this workflow measured it: the checks finished in
-under four minutes, and the cache upload was still running ten minutes
-later.
+`setup-node`'s `cache: npm` is on. It carries the npm cache between throwaway
+hosted VMs, which is exactly this case. It was off under the self-hosted
+runner, where `~/.npm` already sat on the disk between runs and caching turned
+a local read into an upload and a download -- measured on that workflow's
+first run, the checks finished in under four minutes while the cache upload
+was still going ten minutes later.
 
 ## Preview builds
 
@@ -198,6 +189,26 @@ Two things are worth knowing rather than fixing:
 - The landing components carry 37 literal colours, most of them rgba()
   greys; `src/styles/README.md` lists where.
 - Deployment is the product's own: there is no `CNAME`, no Pages workflow.
+
+## CI runs on a self-hosted runner
+
+This repository is private, and hosted Actions minutes are metered for
+private repositories. Measured 2026-09-21: on `ubuntu-latest` the job
+completed in three seconds with zero steps, no log and no annotation --
+GitHub declining to schedule it. The same workflow shape runs fine on
+`ubuntu-latest` in netscli and nvx, which are public.
+
+So `runs-on` is `[self-hosted, windows]`, and the runner has to be
+running for CI to report anything. It is registered as `felix-desktop`;
+start it with `run.cmd` in the runner directory, or install it as a
+service (`config.cmd --runasservice`, which needs an Administrator
+shell) so it survives a reboot. A stopped runner does not fail the
+queue, it leaves jobs queued indefinitely -- which is what happened
+between 2026-09-12 and 2026-09-21.
+
+The workflow's first step refuses to run if the repository is ever made
+public, because a fork's pull request would then execute its own code on
+that machine.
 
 ## Keeping it in sync
 
@@ -241,8 +252,8 @@ commit and syncing works in both directions afterwards:
 git subtree add --prefix=site https://github.com/<owner>/product-site-template main
 ```
 
-Then three things need doing, because the template is a repo whose root IS
-the site and a subtree is a directory inside someone else's repo. All three
+Then four things need doing, because the template is a repo whose root IS
+the site and a subtree is a directory inside someone else's repo. All four
 were found by doing this rather than by reading it:
 
 1. **Move the CI workflow to the project root.** It arrives at
@@ -255,11 +266,17 @@ were found by doing this rather than by reading it:
    imports `../../CHANGELOG.md`, which is the site directory's own copy.
    A product's changelog usually lives at the project root: change the
    import to `../../../CHANGELOG.md` and delete `site/CHANGELOG.md`, or
-   keep the site's copy deliberately. `scripts/changelog-dates.mjs` reads
-   `<site root>/CHANGELOG.md` and needs the same decision.
+   keep the site's copy deliberately. `scripts/changelog-dates.mjs` takes
+   whichever of the two exists, so it needs no decision of its own — but it
+   checks the site's copy first, so a stale `site/CHANGELOG.md` left behind
+   is what it will read.
 3. **Move `AGENTS.md` up, or leave a pointer.** It arrives at
    `site/AGENTS.md`. An agent working in `site/` will find it; one working
    from the project root may not.
+4. **Move `.claude/skills/` up, or the skills are not found.** Same silent
+   failure as the CI workflow: Claude Code reads `.claude/` at the repo
+   root, and the subtree puts it at `site/.claude/`. Measured on a scratch
+   project alongside the other three.
 
 Everything else works unchanged from inside a subtree: the build, all four
 static guards, `check:content`, the changelog check (tags resolve from

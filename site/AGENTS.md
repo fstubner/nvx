@@ -110,10 +110,17 @@ Both have shipped broken here before, which is why they are named:
 ## If this site is a subtree inside a product's repo
 
 The template's root is the site root; a subtree puts the site in `site/`.
-Three things move with it, and the README's "Starting a new product" section
+Four things move with it, and the README's "Starting a new product" section
 has the detail: the CI workflow has to sit at the PROJECT root to run at
 all, `changelog.astro` reads the site directory's `CHANGELOG.md` rather than
-the product's, and this file arrives at `site/AGENTS.md`.
+the product's, this file arrives at `site/AGENTS.md`, and `.claude/skills/`
+arrives at `site/.claude/skills/` where nothing looks for it.
+
+The skills in `.claude/skills/` are the entry points for the work that
+happens here repeatedly: `product-site-customise` for editing a site's
+content, `product-site-spin-off` for starting one, `product-site-upstream`
+for sending a generic change back here, and `product-site-sync` for moving
+changes in either direction.
 
 Everything else is unchanged: run the commands above from inside `site/`.
 

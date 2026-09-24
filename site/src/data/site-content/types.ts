@@ -1,3 +1,16 @@
+// Feedback's types live in ./feedback-types, and are re-exported here so an
+// import of either path keeps working. types.ts crossed the 300-line file-size
+// guard when the feedback feature landed (302, measured 2026-09-21 on the first
+// CI run after the runner came back), and the guard's exception map is for
+// transitions with a named next step rather than for carrying a file over.
+export type { Feedback, FeedbackRoute } from './feedback-types';
+import type { Feedback } from './feedback-types';
+
+// The hero's types live in ./hero-types and are re-exported the same way, for
+// the same reason: the comparison table's types took this file to 328.
+export type { Hero, HeroCommands, HeroDownload } from './hero-types';
+import type { Hero, HeroCommands, HeroDownload } from './hero-types';
+
 // Shared type definitions for the site content modules under
 // site/src/data/site-content/. Assembled into the public `SiteData` shape
 // by site/src/data/site.ts — that's the only module other files should
@@ -25,10 +38,6 @@ export interface Meta {
   themeColor: string;
 }
 
-/** schema.org SoftwareApplication facts that differ per product.
- *
- * Required on purpose: these were literals in the JSON-LD where nothing made
- * a new site revisit them. The rationale is in meta.ts, next to the values. */
 /** One product surface the changelog summariser can name. */
 export interface ChangelogSurface {
   /** Matched against the release body. */
@@ -37,28 +46,26 @@ export interface ChangelogSurface {
   label: string;
 }
 
-/** One column of the competitor comparison. */
+/** A comparison column. `highlight` marks this product's, which is tinted. */
 export interface ComparisonColumn {
   name: string;
-  /** The product this site is for. Gets the tint and the left rule. */
   highlight?: boolean;
 }
 
-/** One capability row. `cells` is one entry per column, in column order.
- *  A cell is '✓', '—', or short text where the answer needs a word. */
+/** A capability row. `cells` is one per column, in order: '✓', '—', or a word. */
 export interface ComparisonRow {
   feature: string;
   cells: string[];
 }
 
+/** schema.org SoftwareApplication facts, required so a new site answers them.
+ *  As literals in the JSON-LD one site advertised the wrong language for its
+ *  own program. `programmingLanguage` is the PRODUCT's, not the site's. */
 export interface AppSchema {
   applicationCategory: string;
-  /** Free text narrowing the category for this product. */
   applicationSubCategory: string;
-  /** Platforms, as a human list: 'Windows, macOS, Linux'. */
   operatingSystem: string;
   license: string;
-  /** The language the PRODUCT is written in, not the site. */
   programmingLanguage: string;
   /** Price as a string. '0' for free. */
   price: string;
@@ -66,14 +73,11 @@ export interface AppSchema {
 }
 
 export interface Branding {
-  /** Path to the wordmark image served from /. Used on the dark theme, and on
-   *  both when `wordmarkLight` is absent. */
+  /** Wordmark served from /. Used on dark, and on both without a light one. */
   wordmark: string;
-  /** Optional light-theme wordmark. A single asset cannot carry lettering that
-   *  reads on both grounds -- it has to be light on one and dark on the other --
-   *  so a product whose mark contains type ships two files and the bars swap
-   *  them. Omit it and `--ui-mark-filter` handles the light theme instead,
-   *  which suits a mark with no lettering to invert. */
+  /** Optional light-theme wordmark. Lettering must be light on the dark bar
+   *  and dark on the light one, so a mark with type needs two files. Omit it
+   *  and `--ui-mark-filter` handles the light theme instead. */
   wordmarkLight?: string;
   /** Shown in nav at 160px desktop / 132px mobile. */
   wordmarkAlt: string;
@@ -84,10 +88,6 @@ export interface Branding {
   /** Default body text colour. */
   fg: string;
 }
-
-import type { Hero, HeroDownload } from './hero-types';
-
-export type { Hero, HeroCommands, HeroDownload } from './hero-types';
 
 export interface SurfaceCard {
   title: string;
@@ -176,6 +176,18 @@ export interface BuiltWithEntry {
 export interface SocialProof {
   /** GitHub repo in "owner/name" format. Used to fetch stars + download counts. */
   repo: string;
+  /**
+   * crates.io crate name, when the product is installable with `cargo install`.
+   * Its all-time downloads are added to the GitHub release-asset total, because
+   * a cargo install never touches a release asset and the label says "total".
+   * Omit for a product that is not on crates.io: the fetch is then skipped and
+   * the total comes from GitHub alone.
+   *
+   * Name only the crate people install. Library crates alongside it are
+   * dependency resolution and docs.rs builds rather than installs, and counting
+   * them reports one `cargo install` several times.
+   */
+  cratesIoCrate?: string;
 }
 
 export interface Analytics {
@@ -260,6 +272,7 @@ export interface SiteData {
     notes: string[];
   };
   faq: FaqItem[];
+  feedback: Feedback;
   builtWith: BuiltWithEntry[];
   social: SocialProof;
   analytics: Analytics;
