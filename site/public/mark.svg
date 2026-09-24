@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The product mark, on its own and on nothing.
+
+     scripts/wordmark.mjs renders this beside the site name to build
+     public/assets/wordmark.png. Replace it with your own and re-run
+     `npm run assets:wordmark`. Nothing here is read at runtime.
+
+     Two things this file has to get right, because the script cannot fix
+     either one for you.
+
+     No background plate. public/favicon.svg draws one, because a tab icon
+     sits on chrome of an unknown colour and needs its own ground. A wordmark
+     sits on the site's own bar, in both themes, so a plate here shows up as a
+     rectangle behind the logo in one of them.
+
+     No ink that works in only one theme. This is composited unchanged into
+     both variants, and only the lettering beside it changes colour. A mark
+     drawn in near-black disappears on the dark bar. Use the brand colour, or
+     something that holds on both.
+
+     The square below is a placeholder. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Example">
+  <rect x="18" y="18" width="28" height="28" rx="4"
+        fill="none" stroke="#22c55e" stroke-width="8"/>
+</svg>

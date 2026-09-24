@@ -22,7 +22,36 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
 
 <div class="docs-topbar">
   <a class={`docs-mark${branding.wordmarkLight ? ' has-light' : ''}`} href="/" aria-label={`${meta.siteName} home`}>
-    <img class="mark-dark" src={branding.wordmark} alt={branding.wordmarkAlt} width="160" height="32" />
+    {/* fetchpriority, because on a docs page this image IS the Largest
+        Contentful Paint. There is no hero here -- the wordmark is the largest
+        thing painted, so it is on the critical path by default rather than by
+        choice, and it is discovered late: it sits behind the inlined stylesheet
+        in <head> and competes with nothing that announces itself as urgent.
+
+        Cloudflare field data, 24h to 2026-09-15: this element is named as the
+        LCP element at 5,415ms, against a 599ms P50 on the same day. The asset
+        is 8.8 KB, so the five seconds are discovery and connection, not bytes
+        -- which is exactly what this hint addresses and what shrinking the
+        image would not.
+
+        NOT set on the landing page's copy of the same wordmark
+        (components/Nav.astro). There the hero screenshot is the LCP element and
+        already carries fetchpriority="high"; raising the logo too would put two
+        images at the front of the queue and demote the one that actually is the
+        largest paint. */}
+    <img
+      class="mark-dark"
+      src={branding.wordmark}
+      alt={branding.wordmarkAlt}
+      width="160"
+      height="32"
+      fetchpriority="high"
+    />
+    {/* The light-theme variant stays at the default priority. Exactly one of
+        the pair is ever painted, CSS picks which, and marking both high would
+        put two images at the front of the queue for the same reason the
+        landing page's logo is left alone above. The dark mark takes the hint
+        because dark is the default theme. */}
     {branding.wordmarkLight && (
       <img class="mark-light" src={branding.wordmarkLight} alt={branding.wordmarkAlt} width="160" height="32" />
     )}
@@ -89,7 +118,6 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
       text-decoration: none;
       min-width: 0;
       height: var(--sl-nav-height);
-      margin: 0 auto 0 0;
       /* Cancels the wordmark asset's own transparent left margin. This was a
          flat -18px against a 12.4px margin, so the docs logo hung 5.5px
          further left than the identical logo on the landing bar. See
@@ -124,6 +152,25 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
       filter: var(--ui-mark-filter);
     }
 
+    /* The bar is two groups: identity on the left, then search, navigation
+       and the theme control together on the right. The auto margin is the
+       seam, and it sits on the search box because search is the first
+       element of the right-hand group.
+     *
+     * Two earlier placements are worth not repeating. On the wordmark, the
+     * whole gap landed immediately after it, and since search was the next
+     * element search came to rest near the middle of the bar, reading as a
+     * stray control belonging to neither side -- measured at a 1367px bar,
+     * search at x=704, the centre to within a few pixels. On .docs-nav-links,
+     * search stayed pinned beside the wordmark at the far left, a long way
+     * from the navigation it belongs with.
+     *
+     * DOM order is unchanged: search still precedes the nav links, so it is
+     * reachable by keyboard before six nav items rather than after them. */
+    .docs-header-search {
+      margin-inline-start: auto;
+    }
+
     .docs-nav-links {
       flex: 0 0 auto;
       display: flex;
@@ -155,17 +202,23 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
 
     /* Same separator as the landing bar -- see Nav.astro, including why it is
        a short centred pseudo-element rather than a border: these links are the
-       full nav height, so a border ran floor to ceiling and split the bar. */
+       full nav height, so a border ran floor to ceiling and split the bar.
+     *
+     * The space it sits in is a MARGIN, not padding. It was padding, and the
+     * current-page underline is a border on this same box -- so on the docs
+     * page, where the group-start link is also the current one, the underline
+     * began 15px to the left of the word and read as misaligned. Margin puts
+     * the gap outside the box the border draws around; the pseudo-element
+     * sits in that margin, negatively inset. */
     .docs-nav-links a.nav-group-start {
       position: relative;
-      margin-inline-start: 0.35rem;
-      padding-inline-start: 0.95rem;
+      margin-inline-start: 1.3rem;
     }
 
     .docs-nav-links a.nav-group-start::before {
       content: "";
       position: absolute;
-      inset-inline-start: 0;
+      inset-inline-start: -0.65rem;
       top: 50%;
       width: 1px;
       height: 18px;
@@ -245,11 +298,10 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
 
     }
 
-    /* Same width the landing bar collapses at -- see the note on
-       .docs-nav-links below. The theme control moves into the mobile menu's
-       footer at this point (MobileMenuFooter.astro), so it is relocated
-       rather than lost. */
-    @media (max-width: 900px) {
+    /* Where the hamburger appears -- see the note on .docs-nav-links below.
+       The theme control moves into the mobile menu's footer at this point
+       (MobileMenuFooter.astro), so it is relocated rather than lost. */
+    @media (max-width: 49.99rem) {
       .docs-header-theme {
         display: none !important;
       }
@@ -258,8 +310,6 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
     @media (max-width: 72rem) {
       .docs-topbar {
         gap: 0.75rem;
-        width: min(100%, calc(100vw - 5.25rem));
-        max-width: calc(100vw - 5.25rem);
         justify-content: flex-start;
         margin-inline: 0 auto;
         padding-inline-start: 1.5rem;
@@ -285,19 +335,24 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
 
     }
 
-    /* 900px, matching the landing bar's own collapse in Nav.astro.
+    /* Where the hamburger appears, which since Starlight 0.42 is 50rem.
      *
-     * This was 72rem (1152px), so between 901 and 1152 the docs bar showed a
-     * hamburger while the landing bar showed the same six links -- the two
-     * halves of one site with visibly different navigation, and the shape of
-     * the bar changing under the cursor when you clicked "Docs".
+     * Two earlier numbers are worth not repeating. 72rem matched the
+     * hamburger while this site styled Starlight's <starlight-menu-button>
+     * to show up to that width. 0.42 replaced that element with a plain
+     * popover button that Starlight hides from 50rem up, so the styling
+     * stopped reaching anything, and between 50rem and 72rem the bar showed
+     * neither these links nor a menu holding them: the only way to Features,
+     * Install, FAQ or the changelog was the wordmark. 900px was the older
+     * choice, to match the landing bar, and it put these links on screen
+     * beside a hamburger listing the same links.
      *
-     * Nothing forced the early collapse: measured at 901px the bar's contents
-     * come to 476px against 842px of room, with the wordmark at its full size
-     * and search already reduced to its icon. If you change this, change
-     * Nav.astro's `@media(max-width:900px)` with it; a media query cannot read
-     * a custom property, so the number genuinely has to be written twice. */
-    @media (max-width: 900px) {
+     * The rule is the one both mistakes point at: exactly one navigation at
+     * every width. The links go when the menu that lists them arrives.
+     *
+     * Nav.astro keeps its own 900px: the landing page has no sidebar and no
+     * hamburger, so nothing there duplicates its links. */
+    @media (max-width: 49.99rem) {
       .docs-nav-links {
         display: none;
       }

@@ -30,8 +30,19 @@
   font-size: 0.72rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  font-weight: 760;
+  font-weight: 650;
   padding-inline-end: 0;
+}
+
+/* A section label, not a heading. Starlight wraps a top-level group's name
+   in `.large`, which sets its own size, weight and colour, so the rule above
+   only ever reached the wrapper: the label rendered at 16px, weight 600, in
+   full white, and uppercased by the rule above into a shout. Inheriting puts
+   it back at the 0.72rem muted small caps that rule describes. */
+.sidebar-content summary .large {
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
 }
 
 /* The group's list: a hairline down its left, with the links pulled back
@@ -88,12 +99,24 @@
   border-inline-start-color: var(--sl-color-accent);
 }
 
+/* No background fill: the marker and the white text are the signal.
+ *
+ * This carried four at once -- white text, an accent left border, a 12%
+ * accent wash, and the weight -- while the rule above gives the current
+ * page's GROUP a 13% wash and the same accent border. The two were nearly
+ * identical, so the wash was not distinguishing the page from its parent;
+ * it was the border and the text colour doing that work while the wash sat
+ * on top of both.
+ *
+ * Dropping it separates them: the page gets border plus white text, the
+ * group keeps wash plus border. It also follows the rule applied to the
+ * code blocks and table headers -- the accent marks state, not surface. */
 .sidebar-content a[aria-current='page'] {
   position: relative;
   color: var(--sl-color-white);
   border-color: transparent;
   border-inline-start-color: var(--ui-accent);
-  background: rgba(var(--ui-accent-rgb), 0.12);
+  background: transparent;
   box-shadow: none;
 }
 

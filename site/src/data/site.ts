@@ -15,6 +15,7 @@ import {
   tryCommands,
 } from './site-content/install';
 import { faq, faqCopy } from './site-content/faq';
+import { feedback } from './site-content/feedback';
 import { analytics, builtWith, social } from './site-content/footer';
 import { productVersion } from './site-content/version';
 import type { SiteData } from './site-content/types';
@@ -24,6 +25,8 @@ export type {
   Branding,
   BuiltWithEntry,
   FaqItem,
+  Feedback,
+  FeedbackRoute,
   Hero,
   HeroDownload,
   InstallEntry,
@@ -58,6 +61,7 @@ export const site: SiteData = {
     notes: installNotes,
   },
   faq,
+  feedback,
   builtWith,
   social,
   analytics,

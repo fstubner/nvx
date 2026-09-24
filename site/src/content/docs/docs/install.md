@@ -6,13 +6,13 @@ description: Install nvx on Windows, macOS or Linux, and check that it worked.
 ## Windows
 
 ```powershell
-irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex
+irm https://nvx.run/install.ps1 | iex
 ```
 
 ## macOS and Linux
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh
+curl -fsSL https://nvx.run/install.sh | sh
 ```
 
 Read a script before piping it to a shell. This one creates `~/.nvx`, puts a

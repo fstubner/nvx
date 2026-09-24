@@ -1,6 +1,7 @@
 ---
 import { site } from '../data/site';
-const { meta, hero, builtWith, modules } = site;
+const { meta, hero, builtWith, modules, feedback, social } = site;
+const feedbackRepo = feedback.repo ?? social.repo;
 ---
 <footer>
   <div class="footer-inner">
@@ -10,6 +11,9 @@ const { meta, hero, builtWith, modules } = site;
       <a class="external-link" href={`${hero.sourceUrl}/releases`}>Releases</a>
       {modules.docs && <a href="/docs/">Docs</a>}
       {modules.changelog && <a href="/changelog/">Changelog</a>}
+      {feedback.enabled && (
+        <a class="external-link" href={`https://github.com/${feedbackRepo}/issues`}>Feedback</a>
+      )}
     </div>
     {builtWith.length > 0 && (
       <div class="built-with">
