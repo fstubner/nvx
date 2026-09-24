@@ -113,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx import fnm` finds fnm's Node versions.** fnm keeps them in a
+  `node-versions` directory under its base directory, and the import looked in
+  the base directory itself, so on a standard fnm install it found nothing. It
+  now reads `node-versions` under `FNM_DIR`, the platform data directory,
+  `~/.fnm`, and on macOS `~/Library/Application Support/fnm`.
+
 * **`npm ci` spends less time in nvx's package checks.** Every lockfile entry
   is checked against the registry, and those requests went one at a time. They
   now run eight at once, ahead of the checks, which still ask their questions
