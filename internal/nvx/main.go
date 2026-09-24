@@ -292,6 +292,13 @@ func Main() {
 		// than on the launch path, where deleting one could race a sandbox about
 		// to execute it.
 		pruneUnusedSupervisors(nvxHome)
+		// Staged copies of commands from outside ~/.nvx/versions whose source
+		// has since changed, on Windows.
+		if copies := pruneStaleCommandCopies(nvxHome, 0); copies == 1 {
+			LogInfo("Removed 1 outdated staged copy of a command.")
+		} else if copies > 1 {
+			LogInfo("Removed %d outdated staged copies of commands.", copies)
+		}
 		// Per-project AppContainer profiles, on Windows. Unbudgeted here, since
 		// this is the command that asked for a full sweep; the same per-profile
 		// rules still apply, so one held by a live session is left alone rather

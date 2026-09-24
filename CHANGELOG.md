@@ -113,6 +113,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Old staged copies of commands are cleaned up on Windows.** A contained
+  command from outside nvx's own runtimes, such as a system Node or Bun, runs
+  from a copy of its whole directory, and every update to it left the previous
+  copy behind for good. The largest of four on the development machine was
+  31,814 files and 451 MB. Copies whose command has changed are now removed,
+  one after each contained command and all of them by `nvx cleanup`. A copy
+  something is still running is left until it stops.
+
 * **The Linux sandbox's network filter covers x32 and io_uring.** It matched
   system calls by their x86-64 numbers only, so the same call made through the
   x32 ABI or submitted through io_uring went past it. On a kernel with x32
