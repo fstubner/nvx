@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
 	"testing"
+	"unsafe"
 )
 
 // socketProbe is one socket(2) call the filter must either permit or refuse.
@@ -74,6 +76,17 @@ func assertFilterBehavior(t *testing.T, mode string) {
 				fmt.Printf("%s=denied\n", p.name)
 			}
 		}
+		// io_uring runs connect and socket as ring operations the rules above
+		// never see, so the filter must refuse the ring itself.
+		var params [120]byte // struct io_uring_params
+		_, _, e := syscall.RawSyscall(sysIoUringSetup, 1, uintptr(unsafe.Pointer(&params)), 0)
+		fmt.Printf("io_uring_setup=%s\n", errnoName(e))
+		// An x32 getpid: refused by the filter (EPERM) rather than reaching
+		// the kernel, which answers ENOSYS or a pid.
+		if runtime.GOARCH == "amd64" {
+			_, _, e := syscall.RawSyscall(x32SyscallBit|39, 0, 0, 0)
+			fmt.Printf("x32_getpid=%s\n", errnoName(e))
+		}
 		os.Exit(0)
 	}
 
@@ -102,6 +115,12 @@ func assertFilterBehavior(t *testing.T, mode string) {
 			t.Errorf("%s mode: socket(%s) = %s, want %s", mode, p.name, got[p.name], want)
 		}
 	}
+	if got["io_uring_setup"] != "ENOSYS" {
+		t.Errorf("%s mode: io_uring_setup = %s, want ENOSYS", mode, got["io_uring_setup"])
+	}
+	if runtime.GOARCH == "amd64" && got["x32_getpid"] != "EPERM" {
+		t.Errorf("%s mode: x32 getpid = %s, want EPERM from the filter", mode, got["x32_getpid"])
+	}
 	if t.Failed() {
 		keys := make([]string, 0, len(got))
 		for k := range got {
@@ -114,6 +133,18 @@ func assertFilterBehavior(t *testing.T, mode string) {
 		}
 		t.Logf("full probe result for %s mode:\n%s", mode, b.String())
 	}
+}
+
+func errnoName(e syscall.Errno) string {
+	switch e {
+	case 0:
+		return "ok"
+	case syscall.EPERM:
+		return "EPERM"
+	case syscall.ENOSYS:
+		return "ENOSYS"
+	}
+	return fmt.Sprintf("errno%d", int(e))
 }
 
 func parseProbeResults(out string) map[string]string {

@@ -3,3 +3,5 @@
 package nvx
 
 func seccompSyscall() uintptr { return 0 }
+
+func seccompAuditArch() uint32 { return 0 }
