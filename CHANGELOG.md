@@ -113,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`network.mode: offline` means no network, allowlist included.** The egress
+  proxy checked the allowlist before the mode, so an offline run that reached it
+  got every allowlisted host, and on Linux its socket was offered in offline mode
+  with only seccomp in the way. The proxy now refuses everything in offline mode,
+  and Linux no longer offers the socket there, as Windows already did not.
+
 * **`npm ci` spends less time in nvx's package checks.** Every lockfile entry
   is checked against the registry, and those requests went one at a time. They
   now run eight at once, ahead of the checks, which still ask their questions
