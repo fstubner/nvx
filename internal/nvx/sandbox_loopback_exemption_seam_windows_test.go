@@ -81,13 +81,15 @@ func TestDoctorReportsAnExemptSandboxWithItsRemovalCommand(t *testing.T) {
 
 	withExemptSIDs(t, []string{sidStr})
 	out := captureStdout(t, func() {
-		if !reportSandboxWeakeners(home) {
-			t.Error("doctor did not report an exempt sandbox, so `nvx doctor` would exit 0 on a weakened machine")
+		// Not a weakener any more: the exemption is on the retired shared
+		// package, and every sandbox now runs under a per-project one.
+		if reportSandboxWeakeners(home) {
+			t.Error("an exemption on the retired shared package counted against health, though no sandbox runs under it")
 		}
 	})
 
-	if !strings.Contains(out, "[FAIL]") {
-		t.Errorf("the finding must be a FAIL, or it does not count against health:\n%s", out)
+	if !strings.Contains(out, "[INFO]") || strings.Contains(out, "[FAIL]") {
+		t.Errorf("the leftover exemption should be a note, not a failure:\n%s", out)
 	}
 	if !strings.Contains(out, "CheckNetIsolation LoopbackExempt -d") {
 		t.Errorf("the removal command must be printed; it needs elevation and a SID:\n%s", out)
