@@ -25,21 +25,27 @@ import type { Terminal } from './terminal-types';
 // roughly half the canvas width in a split hero, so the type is smaller than
 // it looks here. Eleven lines is about the ceiling before the last ones stop
 // being read.
+// nvx renders the hero terminal as text (hero.ts, heroTerminalHtml), so this
+// draws only public/assets/hero.png, the social card image. Same capture as
+// the text panel: nvx 0.6.0 on Windows, 2026-09-24, edited only by removing
+// lines (see the note in hero.ts).
 export const terminal: Terminal = {
-  title: 'REPLACE_ME',
-  // 'macos' draws the three traffic lights on the left, 'windows' the
-  // minimise/maximise/close marks on the right. Match the platform your
-  // output is from: a Mac frame around Windows paths is a small lie that
-  // costs a reader a second of confusion.
-  chrome: 'macos',
+  title: 'nvx',
+  chrome: 'windows',
   lines: [
-    [['$ ', 'prompt'], ['REPLACE_ME --version', 'command']],
-    [['REPLACE_ME 1.0.0', 'text']],
+    [['$ ', 'prompt'], ['cd new-project', 'command']],
+    // One printed line, wrapped where a terminal this wide would wrap it. The
+    // renderer clips rather than wraps, which cut it off mid-word.
+    [['? ', 'warn'], ['Directory requires Node.js 22 (from .nvmrc), but it is not installed.', 'text']],
+    [['Install it now? ', 'text'], ['[y/N]: ', 'muted'], ['y', 'command']],
+    [['ℹ ', 'info'], ['Verifying checksum for node-v22.23.2-win-x64.zip...', 'text']],
+    [['✓ ', 'ok'], ['Checksum verified successfully.', 'strong']],
+    [['✓ ', 'ok'], ['Node.js v22.23.2 installed successfully', 'text']],
+    [['ℹ ', 'info'], ['[nvx] Found .nvmrc: switching to Node.js v22.23.2', 'text']],
     null,
-    [['$ ', 'prompt'], ['REPLACE_ME run', 'command']],
-    [['ℹ ', 'info'], ['Starting up', 'accent']],
-    [['✓ ', 'ok'], ['Did the thing', 'text']],
-    [['⚠ ', 'warn'], ['Something worth knowing', 'text']],
-    [['Done in 2s', 'strong']],
+    [['$ ', 'prompt'], ['npm install sample-package', 'command']],
+    [['ℹ ', 'info'], ['Running in native sandbox: npm install sample-package', 'strong']],
+    [['added 1 package, and audited 2 packages in 1s', 'text']],
+    [['found 0 vulnerabilities', 'text']],
   ],
 };

@@ -15,8 +15,8 @@ export const hero: Hero = {
   heading: 'Node.js and Bun versions, with a sandbox around every install',
   subhead:
     'Install, switch and pin runtimes per project, and auto-switch on cd. Every npm install runs inside an OS sandbox that confines writes to the project and blocks hosts you did not allow.',
-  quickInstall: 'irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex',
-  quickInstallAlt: 'curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh',
+  quickInstall: 'irm https://nvx.run/install.ps1 | iex',
+  quickInstallAlt: 'curl -fsSL https://nvx.run/install.sh | sh',
   installLinkLabel: 'More install options ↓',
   // Every line is what the command line prints at DEFAULT verbosity, from one
   // machine on 2026-09-17, after the auto-install fix in 9fcc19a.
@@ -32,8 +32,9 @@ export const hero: Hero = {
   // yellow `?`, the question runAuto builds, and ` [y/N]: `. The `y` is the
   // reader's keystroke. Subtractive edits only: the install's "Installing" and
   // "URL" lines, the download bar, the extract timing and the install path are
-  // dropped, as are npm's deprecation warning for left-pad and its upgrade
-  // notice. Nothing is reworded or invented.
+  // dropped, as is npm's upgrade notice. Nothing is reworded or invented. The
+  // install is sample-package, a real package with no dependencies and no
+  // install scripts, captured on 2026-09-24 with nvx 0.6.0 on Windows.
   heroTerminalHtml: `<span class="t-dim">$</span> cd new-project
 <span class="t-warn">?</span> Directory requires Node.js 22 (from .nvmrc), but it is not installed. Install it now? <span class="t-dim">[y/N]:</span> y
 <span class="t-info">&#8505;</span> Verifying checksum for node-v22.23.2-win-x64.zip...
@@ -41,16 +42,18 @@ export const hero: Hero = {
 <span class="t-ok">&#10004;</span> Node.js v22.23.2 installed successfully
 <span class="t-info">&#8505;</span> [nvx] Found .nvmrc: switching to Node.js v22.23.2
 
-<span class="t-dim">$</span> npm install left-pad
-<span class="t-info">&#8505;</span> <span class="t-hi">Running in native sandbox: npm install left-pad</span>
-added 1 package, and audited 2 packages in 977ms
+<span class="t-dim">$</span> npm install sample-package
+<span class="t-info">&#8505;</span> <span class="t-hi">Running in native sandbox: npm install sample-package</span>
+added 1 package, and audited 2 packages in 1s
 found 0 vulnerabilities`,
+  // Windows, because the output is: a win-x64 zip and an AppContainer run.
+  heroTerminalChrome: 'windows',
   heroTerminalLabel:
     'A terminal entering a project pinned to a Node.js version that is not installed. nvx asks whether to install it, verifies the checksum, installs it and switches to it, then a package installs inside the native sandbox',
   heroImage: '/assets/hero.png',
-  heroImageAlt: 'A terminal showing nvx list, then npm install running inside the native sandbox and finishing with no vulnerabilities',
+  heroImageAlt: 'A terminal entering a project pinned to a Node.js version that is not installed; nvx installs and switches to it, then npm install runs inside the native sandbox',
   heroImageWidth: 1200,
-  heroImageHeight: 573,
+  heroImageHeight: 618,
   sourceUrl: 'https://github.com/fstubner/nvx',
   downloadLabel: 'Desktop app',
   downloadMenuLabel: 'Choose desktop installer',
@@ -61,16 +64,16 @@ export const heroCommands: HeroCommands = {
   // Homebrew or npm. Both rows therefore carry the install script rather than
   // advertising a channel that would 404.
   windows: {
-    packageManager: 'irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex',
-    script: 'irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex',
+    packageManager: 'irm https://nvx.run/install.ps1 | iex',
+    script: 'irm https://nvx.run/install.ps1 | iex',
   },
   macos: {
-    packageManager: 'curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh',
-    script: 'curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh',
+    packageManager: 'curl -fsSL https://nvx.run/install.sh | sh',
+    script: 'curl -fsSL https://nvx.run/install.sh | sh',
   },
   linux: {
-    packageManager: 'curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh',
-    script: 'curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh',
+    packageManager: 'curl -fsSL https://nvx.run/install.sh | sh',
+    script: 'curl -fsSL https://nvx.run/install.sh | sh',
   },
 };
 

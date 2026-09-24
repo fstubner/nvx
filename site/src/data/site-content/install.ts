@@ -13,7 +13,7 @@ export const installByPlatform: Record<Platform, PlatformInstall> = {
     cli: [
       {
         label: 'PowerShell',
-        command: 'irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex',
+        command: 'irm https://nvx.run/install.ps1 | iex',
       },
       { label: 'Binary', href: `${RELEASE}/nvx.exe`, hint: 'x64, unsigned, so SmartScreen will ask before it runs.' },
     ],
@@ -23,7 +23,7 @@ export const installByPlatform: Record<Platform, PlatformInstall> = {
     cli: [
       {
         label: 'Shell',
-        command: 'curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh',
+        command: 'curl -fsSL https://nvx.run/install.sh | sh',
       },
       { label: 'Apple silicon', href: `${RELEASE}/nvx-darwin-arm64` },
       { label: 'Intel', href: `${RELEASE}/nvx-darwin-amd64` },
@@ -34,7 +34,7 @@ export const installByPlatform: Record<Platform, PlatformInstall> = {
     cli: [
       {
         label: 'Shell',
-        command: 'curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh',
+        command: 'curl -fsSL https://nvx.run/install.sh | sh',
       },
       { label: 'x86_64', href: `${RELEASE}/nvx-linux-amd64` },
       { label: 'arm64', href: `${RELEASE}/nvx-linux-arm64` },

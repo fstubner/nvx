@@ -156,9 +156,21 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
             reads as an unstyled box rather than a terminal. Decorative, so it
             is hidden from assistive technology and the region below carries
             the label. */}
-        <div class="hero-term-bar" aria-hidden="true">
-          <span></span><span></span><span></span>
+        {/* The frame follows hero.heroTerminalChrome, like the image terminal's
+            `chrome`: the macOS lights on the left, or Windows' minimise,
+            maximise and close on the right. */}
+        <div class={`hero-term-bar chrome-${hero.heroTerminalChrome ?? 'macos'}`} aria-hidden="true">
+          {(hero.heroTerminalChrome ?? 'macos') === 'macos' && (
+            <Fragment><span></span><span></span><span></span></Fragment>
+          )}
           <em>nvx</em>
+          {hero.heroTerminalChrome === 'windows' && (
+            <svg class="win-controls" viewBox="0 0 76 10" width="76" height="10">
+              <path d="M0 5.5h10" />
+              <rect x="33.5" y="0.5" width="9" height="9" />
+              <path d="M66 0.5l9 9M75 0.5l-9 9" />
+            </svg>
+          )}
         </div>
         <div
           class="hero-term"
@@ -677,6 +689,12 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
   font-style:normal;font-size:.6875rem;
   font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   color:var(--ui-ondark-text-muted);
+}
+/* Windows puts the title on the left and the three controls on the right. */
+.hero-term-bar.chrome-windows em{position:static;text-align:left;flex:1}
+.hero-term-bar .win-controls{
+  flex:none;fill:none;stroke:#9ca3af;stroke-width:1;
+  shape-rendering:crispEdges;
 }
 .hero-term{
   margin:0;

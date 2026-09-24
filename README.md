@@ -100,7 +100,7 @@ nvx is not a package manager and does not resolve dependencies or manage lockfil
 Run the installer via PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex
+irm https://nvx.run/install.ps1 | iex
 ```
 
 *Note: In future releases, I plan to make `nvx` accessible directly via **WinGet**, the **Windows Store**, and other popular repository managers for even easier setup.*
@@ -110,7 +110,7 @@ irm https://raw.githubusercontent.com/fstubner/nvx/main/install.ps1 | iex
 Run the installer via bash:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh
+curl -fsSL https://nvx.run/install.sh | sh
 ```
 
 ---

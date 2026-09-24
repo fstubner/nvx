@@ -12,7 +12,7 @@ last step removes it all.
 ## 1. Install (2 min)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fstubner/nvx/main/install.sh | sh
+curl -fsSL https://nvx.run/install.sh | sh
 ```
 
 Then **open a new terminal window** and run:
