@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type hostPort struct {
@@ -27,6 +28,17 @@ type hostPort struct {
 // sandbox; an unbounded read let a contained process grow the parent's memory
 // for as long as it kept sending bytes without a newline.
 const maxProxyRequestHeaderBytes = 64 << 10
+
+// proxyHandshakeTimeout bounds how long a client of either listener may take
+// to finish its request: the CONNECT line and headers, or the SOCKS greeting,
+// authentication and request. The client is the contained process, and without
+// a bound one that connects and sends nothing holds a goroutine and a
+// descriptor in nvx for as long as the run lasts. The loopback-redirect server
+// bounds the same read with the same value (loopbackServer.serve).
+//
+// Lifted once the request is in: the tunnel that follows is not bounded. A var
+// only so a test can shorten it.
+var proxyHandshakeTimeout = connectDialTimeout
 
 type EgressProxy struct {
 	httpAddr  string
@@ -477,8 +489,10 @@ func (p *EgressProxy) serveHTTP(ctx context.Context, ln net.Listener) {
 
 func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 	defer client.Close()
-	// Capped for the header phase and lifted after it: what follows the headers
-	// is the tunnel, and must not be bounded. See maxProxyRequestHeaderBytes.
+	// Capped for the header phase and lifted after it, in bytes and in time:
+	// what follows the headers is the tunnel, and must not be bounded. See
+	// maxProxyRequestHeaderBytes and proxyHandshakeTimeout.
+	_ = client.SetReadDeadline(time.Now().Add(proxyHandshakeTimeout))
 	lim := &io.LimitedReader{R: client, N: maxProxyRequestHeaderBytes}
 	br := bufio.NewReader(lim)
 	req, err := br.ReadString('\n')
@@ -525,6 +539,7 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 		}
 
 		lim.N = 1 << 62 // headers read; the tunnel is not bounded
+		_ = client.SetReadDeadline(time.Time{})
 
 		// Authenticate before consulting the allowlist, so a sibling sandbox
 		// scanning loopback cannot use the 403/200 difference to learn what this
@@ -678,6 +693,9 @@ func (p *EgressProxy) serveSOCKS(ctx context.Context, ln net.Listener) {
 
 func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 	defer conn.Close()
+	// Bounded until the request is in, for the reason the HTTP path is; see
+	// proxyHandshakeTimeout. Cleared below, before the tunnel.
+	_ = conn.SetReadDeadline(time.Now().Add(proxyHandshakeTimeout))
 	buf := make([]byte, 262)
 	if _, err := io.ReadFull(conn, buf[:2]); err != nil {
 		return
@@ -722,6 +740,7 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 	default:
 		return
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 
 	hp := parseHostPortSpec(host, port)
 	if p.refuseInvalidHost(hp) {
