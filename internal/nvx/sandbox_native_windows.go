@@ -428,7 +428,12 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		}
 		defer c.Close()
 		if netCtx.ConnectPorts[i].Inside == 0 {
-			netCtx.ConnectPorts[i].Inside = freeLoopbackPort()
+			port, perr := freeLoopbackPort()
+			if perr != nil {
+				LogError("Could not choose an in-sandbox port for 127.0.0.1:%d: %v", m.Host, perr)
+				return 1, refusedToStart("a path to a host service could not be opened")
+			}
+			netCtx.ConnectPorts[i].Inside = port
 		}
 		LogWarn("The sandbox may reach 127.0.0.1:%d on this machine, as 127.0.0.1:%d inside it (%s).",
 			m.Host, netCtx.ConnectPorts[i].Inside, connectEnvVar(m.Host))

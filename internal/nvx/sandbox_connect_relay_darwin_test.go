@@ -91,7 +91,10 @@ func TestConnectRelayStopsWithTheRun(t *testing.T) {
 // success: the relay accepts and then closes, so the tool sees a closed
 // connection rather than hanging.
 func TestConnectRelayToADeadPortClosesTheConnection(t *testing.T) {
-	dead := freeLoopbackPort()
+	dead, err := freeLoopbackPort()
+	if err != nil {
+		t.Fatal(err)
+	}
 	netCtx := NetworkLaunchContext{ConnectPorts: []connectMapping{{Host: dead}}}
 	_, stop, err := startSeatbeltConnectRelays(&netCtx)
 	if err != nil {
