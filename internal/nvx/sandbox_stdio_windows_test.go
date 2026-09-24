@@ -3,7 +3,6 @@
 package nvx
 
 import (
-	"os"
 	"syscall"
 	"testing"
 	"time"
@@ -175,9 +174,10 @@ func readWithTimeout(t *testing.T, read syscall.Handle) string {
 	t.Helper()
 	done := make(chan string, 1)
 	go func() {
-		f := os.NewFile(uintptr(read), "pipe")
+		// The raw handle, not an *os.File: see readProbeOutput.
 		buf := make([]byte, 256)
-		n, _ := f.Read(buf)
+		var n uint32
+		_ = syscall.ReadFile(read, buf, &n, nil)
 		done <- string(buf[:n])
 	}()
 	select {
