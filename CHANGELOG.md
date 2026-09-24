@@ -113,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Bun accepts version ranges, and `^0` means what npm means.** `nvx install
+  bun@^1.1`, and any `engines.bun` range, failed with "no Bun release matches"
+  because Bun's resolver took only exact versions and prefixes; it now takes
+  the same ranges Node does. `^0` and `^0.0` allowed only 0.0.0; they now mean
+  `<1.0.0` and `<0.1.0`, as in npm.
+
 * **`npm ci` spends less time in nvx's package checks.** Every lockfile entry
   is checked against the registry, and those requests went one at a time. They
   now run eight at once, ahead of the checks, which still ask their questions
