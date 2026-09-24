@@ -23,8 +23,10 @@ import type { ComparisonColumn, ComparisonRow, SectionCopy } from './types';
 // package resolution, went with it once every remaining cell was a dash.
 export const compareCopy: SectionCopy = {
   heading: 'How nvx compares',
-  leadHtml:
-    'Against the version managers it replaces. Out-of-the-box defaults, checked against each project on 18 September 2026.',
+  // No lead: the heading says what the table is, and the date it was checked
+  // belongs with the other notes under it rather than between the heading
+  // and the thing it qualifies.
+  leadHtml: '',
 };
 
 export const compareColumns: ComparisonColumn[] = [
@@ -47,37 +49,29 @@ export const compareColumns: ComparisonColumn[] = [
 // v2.0.0 release (2026-09-02) and the "What's new in v2" page at
 // docs.nvm-windows.com/features/newv2.
 export const compareRows: ComparisonRow[] = [
-  { feature: 'Windows / macOS / Linux', cells: ['✓', 'macOS, Linux*', '✓', '✓', 'macOS, Linux', '✓'] },
-  // Split from the language on 2026-09-16. One row asking "is it a single
-  // binary" whose cells answered "yes, in Rust" was doing two jobs, and
-  // volta's answer, "Rust, 3 binaries", read as neither a yes nor a no. It
-  // ships volta, volta-shim and volta-migrate plus a symlink per managed
-  // tool, so the honest answer to this row is no.
-  // The implementation language had its own row for part of 2026-09-16 and
-  // was dropped the same day. The argument for it was that it explains nvm's
-  // shell startup cost, but the row above already answers that: nvm is the
-  // one entry that is not a binary. Naming the language added almost nothing
-  // on top, and no reader chooses a version manager by it.
-  { feature: 'Single static binary', cells: ['✓', '—', '✓', '—', '✓', '✓'] },
-  { feature: 'Runtimes managed', cells: ['Node.js, Bun', 'Node.js', 'Node.js', 'Node.js', 'many, via plugins', 'many, via backends'] },
+  // Labels cut to a few words on 2026-09-24; the rows read as a list of
+  // sentences. "Single static binary" and "Switch affects only this shell"
+  // went: both describe how a tool is built, and neither is what someone
+  // choosing a version manager, or a safer way to run installs, is asking.
+  // "Policy file in repo" came in, checked against mise's sandboxing page the
+  // same day: its sandbox settings can live in a project's mise.toml, are off
+  // unless set, and are not enforced on Windows.
+  { feature: 'Windows, macOS, Linux', cells: ['✓', 'macOS, Linux*', '✓', '✓', 'macOS, Linux', '✓'] },
+  { feature: 'Runtimes', cells: ['Node.js, Bun', 'Node.js', 'Node.js', 'Node.js', 'many, via plugins', 'many, via backends'] },
   // volta and asdf resolve the version inside a shim when the command runs,
   // rather than hooking cd. Same result, and it is why a debugger or an IDE
   // launching node outside a project sees the wrong version.
   { feature: 'Auto-switch on cd', cells: ['✓', 'shell hook', '✓', 'on invocation', 'on invocation', '✓'] },
-  // Stated as the property rather than the mechanism. nvx puts shims on PATH
-  // too, but for interception: the version comes from env that `nvx use`
-  // emits for this shell only. volta has no session-scoped command at all,
-  // and `asdf shell` was removed in the 0.16 rewrite with no replacement.
-  { feature: 'Switch affects only this shell', cells: ['✓', '✓', '✓', '—', 'removed in 0.16', '✓'] },
-  { feature: 'Checksum-verified downloads', cells: ['✓', '✓', '—', '—', 'varies by plugin', '✓'] },
-  { feature: 'Typosquat / OSV / release-age checks', cells: ['✓', '—', '—', '—', '—', '—'] },
+  { feature: 'Verified downloads', cells: ['✓', '✓', '—', '—', 'varies by plugin', '✓'] },
+  { feature: 'Supply-chain checks', cells: ['✓', '—', '—', '—', '—', '—'] },
   // mise shipped sandboxing in April 2026, so these are no longer dashes for
   // it. Every sandbox.deny_* setting defaults to false, it covers `mise run`
   // and `mise exec` rather than an install, and mise's own docs say it is
   // unavailable on Windows.
-  { feature: 'OS sandbox for install and run', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
-  { feature: 'Egress allowlist for install scripts', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
-  { feature: 'Environment secrets scrubbed', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
+  { feature: 'Sandboxed installs', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
+  { feature: 'Network allowlist', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
+  { feature: 'Secrets hidden', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
+  { feature: 'Policy file in repo', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
 ];
 
 /** Shown under the table. The asterisk sentence leads because a reader who
@@ -89,5 +83,8 @@ export const compareRows: ComparisonRow[] = [
  *  that is ahead of nvx on integrity, and explained that volta was listed
  *  because people still run it, which nobody asked. Writing a competitor's
  *  obituary at length reads as score-settling however true it is. */
-export const compareNoteHtml =
-  "NVM for Windows is a separate, Windows-only project with no shared code, and it does not sandbox installs. volta's maintainers announced in November 2025 that it is unmaintained. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.";
+export const compareNoteHtml = [
+  "<p>* NVM for Windows is a separate, Windows-only project with no shared code, and it does not sandbox installs.</p>",
+  "<p>volta's maintainers announced in November 2025 that it is unmaintained. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.</p>",
+  '<p>Out-of-the-box defaults, checked against each project on 18 September 2026.</p>',
+].join('');
