@@ -113,6 +113,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`npm ci` spends less time in nvx's package checks.** Every lockfile entry
+  is checked against the registry, and those requests went one at a time. They
+  now run eight at once, ahead of the checks, which still ask their questions
+  one at a time and in order. Measured 2026-09-24 on a 651-entry lockfile with
+  `npm ci --dry-run`: 34.5 s and 32.7 s before, 11.0 s to 13.1 s over four runs
+  after.
+
 * **Old staged copies of commands are cleaned up on Windows.** A contained
   command from outside nvx's own runtimes, such as a system Node or Bun, runs
   from a copy of its whole directory, and every update to it left the previous
