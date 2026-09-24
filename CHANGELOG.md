@@ -120,6 +120,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `npm ci --dry-run`: 34.5 s and 32.7 s before, 11.0 s to 13.1 s over four runs
   after.
 
+* **Old staged copies of commands are cleaned up on Windows.** A contained
+  command from outside nvx's own runtimes, such as a system Node or Bun, runs
+  from a copy of its whole directory, and every update to it left the previous
+  copy behind for good. The largest of four on the development machine was
+  31,814 files and 451 MB. Copies whose command has changed are now removed,
+  one after each contained command and all of them by `nvx cleanup`. A copy
+  something is still running is left until it stops.
+
+* **The Linux sandbox's network filter covers x32 and io_uring.** It matched
+  system calls by their x86-64 numbers only, so the same call made through the
+  x32 ABI or submitted through io_uring went past it. On a kernel with x32
+  enabled, a contained program in `network.mode: offline` could open a TCP
+  socket and connect to nvx's in-sandbox relay. It reached nothing beyond
+  that, because the relay's own outbound connection was still refused. Calls
+  from a foreign ABI are now refused, and io_uring reports itself unavailable,
+  as it does on a kernel built without it.
+
+* **`nvx default` works when the home path contains `&`.** On Windows it made
+  its junction through `cmd /c mklink`, and cmd.exe split the path at the `&`
+  and ran the rest as a command. With a home like `C:\Users\A&B`, the text after
+  the `&` ran and the default was never set. nvx now writes the junction
+  itself.
+
 * **The Windows installer no longer leaves a binary that failed its checksum.**
   A download whose SHA-256 did not match stayed in `~/.nvx/bin` after the
   installer reported the failure, and `-InsecureSkipChecksum`, meant for a

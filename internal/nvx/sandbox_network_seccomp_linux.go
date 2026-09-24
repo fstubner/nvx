@@ -22,19 +22,34 @@ const (
 	bpfRet = 0x06
 	bpfAlu = 0x04
 	bpfAnd = 0x50
+	bpfJa  = 0x00
+	bpfJge = 0x30
 
 	// sockTypeMask isolates the base socket type from the SOCK_CLOEXEC /
 	// SOCK_NONBLOCK flags that socket(2) accepts OR'd into its type argument
 	// (linux/net.h SOCK_TYPE_MASK).
 	sockTypeMask = 0xF
 
-	seccompRetAllow = 0x7fff0000
-	seccompRetErrno = 0x00050000 + 1 // EPERM
+	seccompRetAllow  = 0x7fff0000
+	seccompRetErrno  = 0x00050000 + 1  // EPERM
+	seccompRetENOSYS = 0x00050000 + 38 // ENOSYS
+
+	// The x32 ABI shares AUDIT_ARCH_X86_64 and marks its syscall numbers with
+	// this bit, so an arch check alone lets them through with numbers no rule
+	// below matches.
+	x32SyscallBit = 0x40000000
+
+	// io_uring_setup, io_uring_enter and io_uring_register. Allocated after the
+	// per-architecture tables were unified, so the same on amd64 and arm64.
+	sysIoUringSetup    = 425
+	sysIoUringEnter    = 426
+	sysIoUringRegister = 427
 
 	afInet        = 2
 	afInet6       = 10
 	sockDgram     = 2
 	sdOffsetNr    = 0
+	sdOffsetArch  = 4
 	sdOffsetArgs0 = 16
 	sdOffsetArgs1 = 24
 )
@@ -51,7 +66,7 @@ func applyLinuxNetworkSeccomp(networkMode string) error {
 	if !wanted {
 		return nil
 	}
-	return installSeccompFilter(filter)
+	return installSeccompFilter(append(seccompPrologue(), filter...))
 }
 
 // seccompFilterForMode picks the filter for a mode, returning wanted=false when
@@ -84,6 +99,39 @@ func seccompFilterForMode(networkMode string) (filter []syscall.SockFilter, want
 		return buildProxyNetworkFilter(), true
 	default:
 		return nil, false
+	}
+}
+
+// seccompPrologue runs ahead of either mode's filter and handles what those
+// filters cannot see by matching syscall numbers.
+//
+// A call made through another ABI arrives with that ABI's numbering: on
+// x86_64, `int 0x80` enters the i386 table, where connect is not 42 and
+// socket is reached through socketcall(102), and x32 calls carry
+// x32SyscallBit. The mode filters compare numbers from the native table only,
+// so each of those went straight past them. Anything not native is refused.
+//
+// io_uring submits connect, socket and sendmsg as ring operations, which never
+// pass through the syscall entry the mode filters inspect. It is refused with
+// ENOSYS, the answer a kernel built without io_uring gives, so libuv and
+// other runtimes that try it fall back to ordinary syscalls as they do there.
+//
+// Jump targets are index+1+offset.
+func seccompPrologue() []syscall.SockFilter {
+	retDeny := bpfStmt(bpfRet|bpfK, seccompRetErrno)
+	retNoSys := bpfStmt(bpfRet|bpfK, seccompRetENOSYS)
+	return []syscall.SockFilter{
+		/* 0 */ ldWAbs(sdOffsetArch),
+		/* 1 */ bpfJump(bpfJmp|bpfJeq|bpfK, seccompAuditArch(), 1, 0), // native -> 3
+		/* 2 */ retDeny,
+		/* 3 */ ldWAbs(sdOffsetNr),
+		/* 4 */ bpfJump(bpfJmp|bpfJge|bpfK, x32SyscallBit, 4, 0), // x32 -> 9
+		/* 5 */ bpfJump(bpfJmp|bpfJeq|bpfK, sysIoUringSetup, 4, 0), // -> 10
+		/* 6 */ bpfJump(bpfJmp|bpfJeq|bpfK, sysIoUringEnter, 3, 0), // -> 10
+		/* 7 */ bpfJump(bpfJmp|bpfJeq|bpfK, sysIoUringRegister, 2, 0), // -> 10
+		/* 8 */ bpfStmt(bpfJmp|bpfJa, 2), // -> 11, the mode filter
+		/* 9 */ retDeny,
+		/* 10 */ retNoSys,
 	}
 }
 

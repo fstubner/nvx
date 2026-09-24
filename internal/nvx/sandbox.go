@@ -714,4 +714,8 @@ func reclaimStaleSandboxes(nvxHome string) {
 	// three-thousand-folder backlog needs some four hundred commands to clear,
 	// which is not a reclaim so much as a rumour of one.
 	sweepRescuedLogs(nvxHome, rescuedLogBudgetPerRun)
+	// Staged command copies whose command has changed. One per run: each is a
+	// whole directory, up to tens of thousands of files, and this runs before
+	// the prompt comes back.
+	pruneStaleCommandCopies(nvxHome, 1)
 }
