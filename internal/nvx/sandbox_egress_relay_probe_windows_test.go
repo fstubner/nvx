@@ -238,7 +238,10 @@ func probeParentUnixSocket(sock string) error {
 	return nil
 }
 
-// readProbeOutput drains the pipe until the child closes it. readWithTimeout does
+// readProbeOutput drains the pipe until the child closes it. It reads the raw
+// handle and never wraps it in an *os.File: the caller owns the handle and
+// closes it, and an os.File would close it again from a finalizer whenever the
+// collector got to it. See TestProbeReadersLeaveTheHandleToTheCaller. readWithTimeout does
 // a single 256-byte read, which truncates a multi-line report and would silently
 // turn a missing line into an "inconclusive" verdict. The timeout is generous
 // because the child deliberately waits on two connect attempts that should fail.
@@ -246,15 +249,15 @@ func readProbeOutput(t *testing.T, read syscall.Handle) string {
 	t.Helper()
 	done := make(chan string, 1)
 	go func() {
-		f := os.NewFile(uintptr(read), "pipe")
 		var sb strings.Builder
 		buf := make([]byte, 4096)
 		for {
-			n, err := f.Read(buf)
+			var n uint32
+			err := syscall.ReadFile(read, buf, &n, nil)
 			if n > 0 {
 				sb.Write(buf[:n])
 			}
-			if err != nil {
+			if err != nil || n == 0 {
 				break
 			}
 		}
