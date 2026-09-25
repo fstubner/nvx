@@ -468,7 +468,10 @@ func (n NodeProvider) Uninstall(version string, nvxHome string) error {
 	if getGlobalDefaultVersion(nvxHome) == resolvedVer {
 		return fmt.Errorf("refusing to uninstall Node.js %s because it is the global default; set a different default first", resolvedVer)
 	}
-	if getActiveShellVersion(nvxHome) == resolvedVer {
+	// Scoped to Node. The unscoped lookup this used returned the first runtime's
+	// version on PATH, so with Bun ahead of Node it compared Bun's version and
+	// deleted the Node tree this shell was using.
+	if getActiveShellVersionFor(nvxHome, "node") == resolvedVer {
 		return fmt.Errorf("refusing to uninstall Node.js %s because it is active in this shell", resolvedVer)
 	}
 

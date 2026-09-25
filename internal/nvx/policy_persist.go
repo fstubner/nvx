@@ -17,9 +17,10 @@ import (
 // directory) cannot edit the settings that govern it.
 //
 //   - AllowHosts:    egress hosts the user approved interactively.
-//   - TrustedTools:  ad-hoc tool names (e.g. "wrangler") approved to receive
-//     the real user home instead of the ephemeral sandbox guest home, so
-//     credentials they save (e.g. `wrangler login`) persist.
+//   - TrustedTools:  ad-hoc tool names (e.g. "wrangler") approved to keep a
+//     persistent profile under nvxHome/tool_home instead of the ephemeral
+//     sandbox guest home, so credentials they save (e.g. `wrangler login`)
+//     persist. The real user home is never used; see grants_trusted_tools.go.
 //   - PolicyPins:    sha256 of each project policy file the user has trusted,
 //     keyed by cleaned absolute path.
 //   - ReadExecGrants: filesystem ACEs nvx granted for allow_read_exec, recorded

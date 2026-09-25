@@ -32,8 +32,8 @@ type envScrubResult struct {
 	// Dropped names every variable removed, sorted. Names only: a value here is
 	// exactly the secret the scrub exists to withhold.
 	Dropped []string
-	// Refused names variables the policy asked to pass through that a sensitive
-	// prefix blocked anyway. Always reported -- someone wrote it down and it did
+	// Refused names variables the policy asked to pass through that
+	// isSensitiveEnvName blocked anyway. Always reported -- someone wrote it down and it did
 	// not happen.
 	Refused []string
 }
@@ -118,14 +118,21 @@ func passEnvSet(passEnv []string) map[string]bool {
 	return set
 }
 
-// refusedPassEnv returns the names a policy asked to pass through that a
-// sensitive prefix blocks.
+// refusedPassEnv returns the names a policy asked to pass through that
+// isSensitiveEnvName blocks.
 //
-// The prefixes win, and a project-local file cannot overrule them. Letting
+// The credential match wins, and no policy file can overrule it: the check runs
+// on the merged policy, with no setting that turns it off. Letting
 // isolation.environment.allow name AWS_SECRET_ACCESS_KEY would turn a checked-in
 // file into a way to hand a cloud credential to whatever a package's install
 // script runs -- the exact transfer the scrub exists to prevent. Refusing
 // loudly, rather than quietly honouring it, is the whole point.
+//
+// It matches names, so it catches credentials named the way credentials are
+// usually named and nothing else. A token in MY_BUILD_CONFIG passes. What stands
+// in front of that is the approval gate: adding an allow entry counts as
+// loosening (policyLoosens), and LoadPolicy ignores a loosening project file
+// until someone has approved its exact contents.
 func refusedPassEnv(passEnv []string) []string {
 	var refused []string
 	for _, name := range passEnv {
@@ -133,12 +140,8 @@ func refusedPassEnv(passEnv []string) []string {
 		if name == "" {
 			continue
 		}
-		upper := strings.ToUpper(name)
-		for _, prefix := range sensitiveEnvPrefixes {
-			if strings.HasPrefix(upper, prefix) {
-				refused = append(refused, name)
-				break
-			}
+		if isSensitiveEnvName(name) {
+			refused = append(refused, name)
 		}
 	}
 	sort.Strings(refused)

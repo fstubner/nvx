@@ -272,8 +272,9 @@ type FilesystemPolicy struct {
 // Names only, matched case-insensitively, no patterns. A glob would be the
 // obvious next step and there is no second caller asking for one yet.
 //
-// A name matching a sensitive prefix (AWS_, GITHUB_, ...) is refused and warned
-// about rather than honoured -- see refusedPassEnv. Adding an entry counts as
+// A name that holds a credential by convention (AWS_..., GH_TOKEN,
+// STRIPE_SECRET_KEY, ...) is refused and warned about rather than honoured --
+// see isSensitiveEnvName and refusedPassEnv. Adding an entry counts as
 // loosening, so a project-local file naming one needs the same approval an
 // egress host does.
 type IsolationEnvironmentPolicy struct {
