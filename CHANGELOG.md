@@ -113,6 +113,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx uninstall` no longer removes the Node version your shell is using
+  when Bun comes first on PATH.** The guard read the first nvx runtime on PATH
+  whatever it was, so with Bun ahead it compared Bun's version and let the
+  active Node go. It now checks Node's own entry, as Bun's uninstall already
+  checked Bun's.
+
+* **Smaller fixes.** `nvx import` exits 1 when every install it tried failed.
+  A truncated download of the typosquat package list is no longer cached as
+  the whole list, and the cache is written atomically. A failure to write the
+  audit log is reported once instead of silently dropped. `--connect` refuses
+  to start when it cannot pick an in-sandbox port, instead of advertising
+  port 0.
+
+* **A policy can no longer pass `GH_TOKEN` or `STRIPE_SECRET_KEY` into the
+  sandbox.** `isolation.environment.allow` refused credential-looking names by
+  their start only (`GITHUB_`, `AWS_`, ...), so names whose secret-ness is at
+  the end got through: `GH_TOKEN`, `SENTRY_AUTH_TOKEN`, `STRIPE_SECRET_KEY`,
+  `PGPASSWORD`. Names containing TOKEN, SECRET, PASSWORD, PASS, CREDENTIAL or
+  APIKEY as a word, API_KEY / ACCESS_KEY / PRIVATE_KEY, or ending in TOKEN,
+  SECRET or PASSWORD are now refused the same way. `TOKENIZERS_PARALLELISM`,
+  `MAX_TOKENS` and `AUTH_URL` still pass.
+
+* **A failed install no longer closes your PowerShell window or removes your
+  nvx.** `irm ... | iex` ended with `exit`, which closes the session it runs
+  in, so the error vanished with the window; it now reports the error and
+  leaves the window open. `install.sh` downloaded over the existing binary and
+  deleted it when the checksum did not match, leaving no nvx; it now verifies
+  the download beside it and replaces nvx only on a match.
+
 * **`npm ci` spends less time in nvx's package checks.** Every lockfile entry
   is checked against the registry, and those requests went one at a time. They
   now run eight at once, ahead of the checks, which still ask their questions
