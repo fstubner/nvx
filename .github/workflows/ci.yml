@@ -487,6 +487,16 @@ jobs:
       shell: bash
       run: ./scripts/sandbox-enforcement-macos.sh
 
+    # The profile allows every mach-lookup, so launchd and LaunchServices are
+    # reachable. This checks they refuse to start anything for a contained
+    # process, with an unsandboxed control for each.
+    - name: macOS launch escape
+      if: matrix.os == 'macos-latest'
+      shell: bash
+      run: |
+        chmod +x scripts/sandbox-launch-escape-macos.sh
+        ./scripts/sandbox-launch-escape-macos.sh
+
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
