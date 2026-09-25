@@ -199,7 +199,8 @@ func matchVersionPrefix(query string, versions []string) string {
 
 // resolveInstallVersion turns a query into a concrete vX.Y.Z. Fully-qualified
 // versions skip the GitHub API entirely (the download URL is constructed
-// directly); "latest" and partial queries consult the cached release list.
+// directly); "latest", partial queries and ranges consult the cached release
+// list.
 func (b BunProvider) resolveInstallVersion(query, nvxHome string) (string, error) {
 	q := strings.TrimSpace(strings.ToLower(query))
 	if q == "" || q == "latest" || q == "current" {
@@ -227,6 +228,14 @@ func (b BunProvider) resolveInstallVersion(query, nvxHome string) (string, error
 	}
 	if m := matchVersionPrefix(norm, versions); m != "" {
 		return m, nil
+	}
+	// A range, last, as in Node's ResolveVersion, so nothing above changes
+	// meaning. Without it `nvx install bun@^1.1`, and any engines.bun range,
+	// failed as "no Bun release matches" against a list that had matches.
+	if best, err := highestMatching(q, versions); err == nil {
+		return best, nil
+	} else if isUnsupportedRange(err) {
+		return "", err
 	}
 	return "", fmt.Errorf("no Bun release matches query %q", query)
 }

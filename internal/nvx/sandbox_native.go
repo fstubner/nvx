@@ -347,19 +347,24 @@ func connectRefusalFor(provider, goos, mode string) (warn, hint string) {
 // denies the sandbox the socket --connect needs. Lives here rather than in
 // sandbox_connect_linux.go because the dispatcher that warns compiles everywhere.
 //
-// offline and loopback both install buildOfflineNetworkFilter, which refuses
-// connect() outright and refuses to create any AF_INET or AF_INET6 socket. A
-// contained tool therefore cannot dial the in-namespace listener at all, and
-// nothing on nvx's side of the boundary can change that. Making it work would
-// mean granting those modes an IP socket, which is the thing they exist to
-// withhold -- so the flag is refused out loud instead.
+// offline installs buildOfflineNetworkFilter, which refuses connect() outright
+// and refuses to create any AF_INET or AF_INET6 socket. A contained tool
+// therefore cannot dial the in-namespace listener at all, and nothing on nvx's
+// side of the boundary can change that. Making it work would mean granting the
+// mode an IP socket, which is the thing it exists to withhold -- so the flag is
+// refused out loud instead.
+//
+// loopback was refused here too, on the same reasoning, until 2026-09-25. It
+// stopped being true on 2026-09-08, when loopback moved to the proxy filter
+// (see seccompFilterForMode): the contained process has a TCP socket and the
+// relay, and the loopback redirect already leaves --connect's own ports alone.
 //
 // Trimmed as well as lowercased, like every other reader of this field: a policy
 // carrying "offline " with a trailing space was once enough to make a mode mean
 // something else entirely.
 func connectUnsupportedForMode(mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "offline", "loopback":
+	case "offline":
 		return true
 	}
 	return false

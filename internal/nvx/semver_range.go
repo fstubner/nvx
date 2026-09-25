@@ -199,11 +199,14 @@ func parseComparator(token string) ([]comparator, error) {
 		}
 		return []comparator{{">", v}}, nil
 	case strings.HasPrefix(token, "^"):
-		v, _, err := parseSemver(token[1:])
+		v, parts, err := parseSemver(token[1:])
 		if err != nil {
 			return nil, err
 		}
-		return []comparator{{">=", v}, {"<", caretCeiling(v)}}, nil
+		if parts == 0 {
+			return []comparator{}, nil // "^x" constrains nothing, as ">=x" does
+		}
+		return []comparator{{">=", v}, {"<", caretCeiling(v, parts)}}, nil
 	case strings.HasPrefix(token, "~"):
 		v, parts, err := parseSemver(token[1:])
 		if err != nil {
@@ -249,12 +252,16 @@ func nextAfterPrefix(v semver, parts int) semver {
 	return semver{v.major, v.minor + 1, 0}
 }
 
-// caretCeiling is npm's caret rule: the leftmost non-zero part is what is held.
-func caretCeiling(v semver) semver {
+// caretCeiling is npm's caret rule: the leftmost non-zero part is what is held,
+// counting only the parts that were given. When every given part is zero, the
+// last one given is held, so "^0" is <1.0.0 and "^0.0" is <0.1.0. Treating
+// the missing parts as given zeros made both of those "<0.0.1", which allowed
+// only 0.0.0.
+func caretCeiling(v semver, parts int) semver {
 	switch {
-	case v.major > 0:
+	case v.major > 0 || parts == 1:
 		return semver{v.major + 1, 0, 0}
-	case v.minor > 0:
+	case v.minor > 0 || parts == 2:
 		return semver{0, v.minor + 1, 0}
 	default:
 		return semver{0, 0, v.patch + 1}

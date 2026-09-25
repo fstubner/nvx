@@ -107,6 +107,7 @@ func runImport(source string, nvxHome string) int {
 	provider := Providers["node"]
 	installedCount := 0
 	alreadyInstalled := 0
+	failedCount := 0
 
 	for ver, src := range discovered {
 		cleanVer := strings.TrimPrefix(strings.ToLower(ver), "v")
@@ -130,12 +131,23 @@ func runImport(source string, nvxHome string) int {
 		err := provider.Install(cleanVer, nvxHome)
 		if err != nil {
 			LogError("Failed to import Node.js v%s: %v", cleanVer, err)
+			failedCount++
 		} else {
 			LogSuccess("Installed Node.js v%s (%s has it too).", cleanVer, src)
 			installedCount++
 		}
 	}
 
+	// Exit 1 only when something was attempted and none of it landed. It used to
+	// exit 0 with "0 installed" after every install had failed, which a script
+	// running `nvx import -y` could not tell from success. A partial import still
+	// exits 0: the versions that installed are usable, and each failure has been
+	// named above. Finding nothing, or finding only versions nvx already has, is
+	// an answer rather than an error, and returns 0 earlier or here.
+	if failedCount > 0 && installedCount == 0 {
+		LogError("Import failed: %d version(s) could not be installed, %d already present.", failedCount, alreadyInstalled)
+		return 1
+	}
 	LogSuccess("Import complete: %d installed, %d already present.", installedCount, alreadyInstalled)
 	return 0
 }
@@ -165,27 +177,52 @@ func importNvm(discovered map[string]string) {
 }
 
 func importFnm(discovered map[string]string) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-
-	paths := []string{
-		filepath.Join(home, ".fnm", "current"),
-		filepath.Join(home, ".local", "share", "fnm", "current"),
-		filepath.Join(home, ".fnm"),
-	}
-
-	if runtime.GOOS == "windows" {
-		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
-			paths = append(paths, filepath.Join(localAppData, "fnm_multishells"))
-			paths = append(paths, filepath.Join(localAppData, "fnm"))
-		}
-	}
-
-	for _, p := range paths {
+	for _, p := range fnmInstallationDirs() {
 		scanVersionDirs(p, "fnm", discovered)
 	}
+}
+
+// fnmInstallationDirs lists where fnm keeps installed Node versions: a
+// node-versions directory under its base directory, one vX.Y.Z per version.
+//
+// This scanned ~/.fnm, ~/.local/share/fnm/current and %LOCALAPPDATA%nm
+// directly, so on fnm's standard layout it read the base directory's own
+// entries (node-versions, aliases) and found no version at all. The bases below
+// are fnm's own, from src/directories.rs and src/config.rs at 86adc96: FNM_DIR
+// when set, then the platform data directory's fnm (XDG_DATA_HOME or
+// ~/.local/share on Linux, %APPDATA% on Windows), then the legacy ~/.fnm, and on
+// macOS ~/Library/Application Support/fnm. %LOCALAPPDATA%nm is kept because
+// the scan looked there before; a directory that does not exist costs nothing.
+func fnmInstallationDirs() []string {
+	var bases []string
+	if dir := os.Getenv("FNM_DIR"); dir != "" {
+		bases = append(bases, dir)
+	}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+			bases = append(bases, filepath.Join(xdg, "fnm"))
+		}
+		bases = append(bases,
+			filepath.Join(home, ".local", "share", "fnm"),
+			filepath.Join(home, ".fnm"),
+		)
+		if runtime.GOOS == "darwin" {
+			bases = append(bases, filepath.Join(home, "Library", "Application Support", "fnm"))
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, env := range []string{"APPDATA", "LOCALAPPDATA"} {
+			if dir := os.Getenv(env); dir != "" {
+				bases = append(bases, filepath.Join(dir, "fnm"))
+			}
+		}
+	}
+	dirs := make([]string, 0, len(bases))
+	for _, b := range bases {
+		dirs = append(dirs, filepath.Join(b, "node-versions"))
+	}
+	return dirs
 }
 
 func importVolta(discovered map[string]string) {

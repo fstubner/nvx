@@ -4,8 +4,25 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
+
+// auditWriteFailureOnce keeps a failing audit log to one warning per process.
+// A run can write many records, and one unwritable file would otherwise repeat
+// the same line over the command's own output.
+var auditWriteFailureOnce sync.Once
+
+// reportAuditWriteFailure says, once, that audit records are being lost.
+//
+// Both failures used to be dropped without a word while the comment on auditLog
+// said they were reported. The log is the record of what nvx refused, and
+// `nvx audit` reads as complete whether or not the writes landed.
+func reportAuditWriteFailure(err error) {
+	auditWriteFailureOnce.Do(func() {
+		LogWarn("Could not write to the audit log; security events from this run may be missing from 'nvx audit': %v", err)
+	})
+}
 
 // auditLog appends a single JSON-lines record to ~/.nvx/audit.log. It is
 // best-effort: any failure is reported once and never blocks the caller.
@@ -55,8 +72,11 @@ func auditLog(nvxHome, event string, fields map[string]string) {
 
 	f, err := os.OpenFile(filepath.Join(nvxHome, "audit.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
+		reportAuditWriteFailure(err)
 		return
 	}
 	defer f.Close()
-	_, _ = f.Write(append(line, '\n'))
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		reportAuditWriteFailure(err)
+	}
 }

@@ -362,6 +362,19 @@ func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
 	if isLoopback(hp.host) && mode == "loopback" {
 		return true
 	}
+	// offline is no network at all, as README.md defines it, and that includes
+	// hosts the allowlist names. The allowlist was consulted before this check,
+	// so an offline run that reached the proxy got every allowlisted host --
+	// on Linux, the relay and this socket were started in offline mode too, and
+	// seccomp's refusal of connect() was all that stood between a contained
+	// process and registry.npmjs.org. Refused here first, and the socket is no
+	// longer offered in offline mode (prepareEgressSocket).
+	if mode == "offline" {
+		key := fmt.Sprintf("%s:%d", hp.host, hp.port)
+		LogWarn("Blocked egress (network.mode=%s): %s", mode, key)
+		auditLog(p.nvxHome, "egress_block_mode", map[string]string{"host": key, "mode": mode})
+		return false
+	}
 
 	keys := allowKeysFor(hp)
 	for _, k := range keys {
