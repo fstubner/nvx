@@ -113,6 +113,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A policy can no longer pass `GH_TOKEN` or `STRIPE_SECRET_KEY` into the
+  sandbox.** `isolation.environment.allow` refused credential-looking names by
+  their start only (`GITHUB_`, `AWS_`, ...), so names whose secret-ness is at
+  the end got through: `GH_TOKEN`, `SENTRY_AUTH_TOKEN`, `STRIPE_SECRET_KEY`,
+  `PGPASSWORD`. Names containing TOKEN, SECRET, PASSWORD, PASS, CREDENTIAL or
+  APIKEY as a word, API_KEY / ACCESS_KEY / PRIVATE_KEY, or ending in TOKEN,
+  SECRET or PASSWORD are now refused the same way. `TOKENIZERS_PARALLELISM`,
+  `MAX_TOKENS` and `AUTH_URL` still pass.
+
 * **A failed install no longer closes your PowerShell window or removes your
   nvx.** `irm ... | iex` ended with `exit`, which closes the session it runs
   in, so the error vanished with the window; it now reports the error and
