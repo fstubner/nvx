@@ -1,10 +1,52 @@
 package nvx
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
+
+// failingInstallNode is Node with an install that always fails, so runImport
+// can be driven without downloading anything.
+type failingInstallNode struct{ NodeProvider }
+
+func (failingInstallNode) Install(string, string) error {
+	return errors.New("simulated download failure")
+}
+
+// An import in which every install failed is a failure.
+//
+// runImport logged each failure and then exited 0 with "Import complete: 0
+// installed, 0 already present.", so a script running `nvx import -y` could not
+// tell that nothing had been adopted. Finding nothing to import is still exit 0:
+// that is an answer, not an error.
+func TestAnImportWhereEveryInstallFailedExitsNonZero(t *testing.T) {
+	home := tempDir(t)
+	// os.UserHomeDir reads HOME on Unix and USERPROFILE on Windows; nvm-windows
+	// is looked for under NVM_HOME, then APPDATA.
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("NVM_HOME", filepath.Join(home, "nvm-windows"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
+	t.Setenv("NVX_YES", "1")
+	orig := Providers["node"]
+	Providers["node"] = failingInstallNode{}
+	t.Cleanup(func() { Providers["node"] = orig })
+	nvxHome := filepath.Join(home, ".nvx")
+
+	if code := runImport("nvm", nvxHome); code != 0 {
+		t.Fatalf("finding nothing to import exited %d; that is an answer, not a failure", code)
+	}
+
+	if err := os.MkdirAll(filepath.Join(home, ".nvm", "versions", "node", "v20.11.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := runImport("nvm", nvxHome); code == 0 {
+		t.Fatal("every install failed and the import exited 0")
+	}
+}
 
 func TestScanVersionDirs(t *testing.T) {
 	tempDir := tempDir(t)
@@ -58,5 +100,55 @@ func TestAnUnknownImportSourceIsAnError(t *testing.T) {
 		if norm != "all" && !containsFold(importSources, norm) {
 			t.Errorf("%q is a source nvx supports but would be rejected", ok)
 		}
+	}
+}
+
+// fnm keeps each version under <base>/node-versions/vX.Y.Z/installation. The
+// import scanned the base directory itself and found only fnm's own
+// subdirectories, so on a standard fnm install it reported nothing to import.
+func TestImportFindsFnmsNodeVersions(t *testing.T) {
+	home := tempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("FNM_DIR", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
+	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+
+	base := filepath.Join(home, ".local", "share", "fnm")
+	if runtime.GOOS == "windows" {
+		base = filepath.Join(home, "AppData", "Roaming", "fnm")
+	}
+	for _, d := range []string{
+		filepath.Join(base, "node-versions", "v20.11.0", "installation"),
+		filepath.Join(base, "node-versions", "v22.3.0", "installation"),
+		filepath.Join(base, "aliases", "default"),
+	} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	discovered := map[string]string{}
+	importFnm(discovered)
+	for _, v := range []string{"20.11.0", "22.3.0"} {
+		if discovered[v] != "fnm" {
+			t.Errorf("fnm's %s was not found; discovered %v", v, discovered)
+		}
+	}
+	if len(discovered) != 2 {
+		t.Errorf("found %d versions, want exactly the 2 in node-versions: %v", len(discovered), discovered)
+	}
+
+	// FNM_DIR overrides the default base, as it does for fnm.
+	custom := filepath.Join(home, "custom-fnm")
+	if err := os.MkdirAll(filepath.Join(custom, "node-versions", "v18.20.4", "installation"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FNM_DIR", custom)
+	discovered = map[string]string{}
+	importFnm(discovered)
+	if discovered["18.20.4"] != "fnm" {
+		t.Errorf("a version under FNM_DIR was not found: %v", discovered)
 	}
 }

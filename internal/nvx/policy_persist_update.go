@@ -48,7 +48,7 @@ func updateProjectGrants(nvxHome, scope string, fn func(g *projectGrants) error)
 	}
 	defer unlock()
 
-	g := loadProjectGrants(nvxHome, scope)
+	g := loadProjectGrantsWithLock(nvxHome, scope, true)
 	if err := fn(&g); err != nil {
 		return err
 	}

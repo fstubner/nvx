@@ -918,6 +918,33 @@ func TestNodeUninstallRefusesGlobalDefaultVersion(t *testing.T) {
 	}
 }
 
+// The active-in-this-shell guard looks at Node's PATH entry, not the first
+// runtime's.
+//
+// NodeProvider.Uninstall asked getActiveShellVersion, which returned the version
+// segment of the first PATH entry under versions/ whatever runtime it belonged
+// to. With Bun ahead of Node on PATH it answered with Bun's version, the
+// comparison with the Node version never matched, and the Node tree this shell
+// was using was deleted. Bun's own uninstall already used the scoped lookup.
+func TestNodeUninstallRefusesTheShellsVersionWhenBunIsFirstOnPath(t *testing.T) {
+	nvxHome := tempDir(t)
+	nodeDir := filepath.Join(nvxHome, "versions", "node", "v20.0.0")
+	bunDir := filepath.Join(nvxHome, "versions", "bun", "v1.1.0")
+	for _, d := range []string{nodeDir, bunDir} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", filepath.Join(bunDir, "bin")+string(os.PathListSeparator)+filepath.Join(nodeDir, "bin"))
+
+	if err := (NodeProvider{}).Uninstall("20", nvxHome); err == nil {
+		t.Fatal("uninstalled the Node version on this shell's PATH")
+	}
+	if _, err := os.Stat(nodeDir); err != nil {
+		t.Fatalf("the active Node version was removed: %v", err)
+	}
+}
+
 // TestAppVersionMatchesNewestChangelogEntry replaces an assertion that appVersion
 // equalled a hardcoded "0.3.0". That restated the constant, so it could only fail
 // when someone deliberately bumped the version -- and it had to be edited at every

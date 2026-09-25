@@ -72,6 +72,63 @@ func TestNamingACredentialInThePolicyIsRefusedNotHonoured(t *testing.T) {
 	}
 }
 
+// A credential whose name says so at the end, not the start, is refused too.
+//
+// The backstop matched prefixes only, so the common spellings that put the
+// vendor first and the secret last went straight through when a policy named
+// them: GH_TOKEN (the gh CLI's own variable), STRIPE_SECRET_KEY, PGPASSWORD,
+// SENTRY_AUTH_TOKEN. Every one of these reached the contained environment
+// before this test existed.
+//
+// The second half guards the other direction. TOKENIZERS_PARALLELISM is a
+// Hugging Face setting that starts with TOKEN and AUTH_URL is Auth.js
+// configuration; matching on substrings instead of whole words would refuse
+// both, and a refusal a build needs is the thing --no-sandbox gets reached for.
+func TestACredentialNamedBySuffixIsRefused(t *testing.T) {
+	secrets := []string{
+		"GH_TOKEN",
+		"STRIPE_SECRET_KEY",
+		"PGPASSWORD",
+		"SENTRY_AUTH_TOKEN",
+		"SLACK_BOT_TOKEN",
+		"SENDGRID_API_KEY",
+		"MINIO_ACCESS_KEY",
+		"DEPLOY_PRIVATE_KEY",
+		"SMTP_PASS",
+		"MYSQL_ROOT_PASSWD",
+		"SERVICE_ACCOUNT_CREDENTIALS",
+	}
+	ordinary := []string{"NODE_ENV", "CI", "TOKENIZERS_PARALLELISM", "AUTH_URL", "MAX_TOKENS", "KEY_PATH"}
+	for _, name := range secrets {
+		t.Setenv(name, "shh")
+	}
+	for _, name := range ordinary {
+		t.Setenv(name, "1")
+	}
+
+	res := scrubEnvironmentAllowing("", append(append([]string{"PATH", "HOME"}, secrets...), ordinary...))
+
+	for _, secret := range secrets {
+		if _, ok := envValue(res.Env, secret); ok {
+			t.Errorf("%s reached the contained environment; a policy file must not be able to hand a "+
+				"credential to package code", secret)
+		}
+		if !containsString(res.Refused, secret) {
+			t.Errorf("%s was not reported as refused: refused=%v", secret, res.Refused)
+		}
+	}
+	for _, name := range append([]string{"PATH", "HOME"}, ordinary...) {
+		if containsString(res.Refused, name) {
+			t.Errorf("%s was refused; the credential match has grown into the ordinary environment", name)
+		}
+	}
+	for _, name := range append([]string{"PATH"}, ordinary...) {
+		if _, ok := envValue(res.Env, name); !ok {
+			t.Errorf("%s was named in the policy and did not reach the contained environment", name)
+		}
+	}
+}
+
 // Only variables that change behaviour reach the screen.
 //
 // Every contained run on Windows drops ~96 variables, nearly all of it OS

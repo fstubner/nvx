@@ -13,11 +13,14 @@ import (
 // this sandbox is actually running.
 //
 // It has to be asked, because an AppContainer's loopback is not private. Windows
-// permits loopback WITHIN a package, and every nvx sandbox shares one package
-// identity (stableSandboxProfile) -- only the capability SID is per-project. So a
-// TCP listener the supervisor runs inside the container is reachable from every
-// other nvx sandbox on the machine, measured 2026-08-28: sandbox B, a different
-// project with no grant of its own, read the service sandbox A had been granted.
+// permits loopback WITHIN a package, and every session of one project shares that
+// project's package (sandboxPackageName). So a TCP listener the supervisor runs
+// inside the container is reachable from the project's other sessions. When this
+// was written every sandbox on the machine shared one package, and it was
+// measured 2026-08-28 across projects: sandbox B, a different project with no
+// grant of its own, read the service sandbox A had been granted. Per-project
+// packages narrowed that to one project's sessions; the check still decides
+// between those.
 //
 // This is not a new hazard, it is a known one. The egress relay has the same
 // exposure and defends itself with a per-session proxy credential -- see the note

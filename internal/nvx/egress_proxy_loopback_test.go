@@ -112,3 +112,22 @@ func TestOfflineModeBlocksLoopbackToo(t *testing.T) {
 		t.Error("network.mode=offline permitted a remote destination")
 	}
 }
+
+// Offline is no network at all, including the hosts the allowlist names. The
+// allowlist was consulted ahead of the mode, so an offline run that could reach
+// the proxy got every allowlisted host -- and on Linux the proxy's socket was
+// offered in offline mode, with only seccomp's refusal of connect() in the way.
+func TestOfflineModeRefusesAllowlistedHostsToo(t *testing.T) {
+	p := newTestProxy(t, "offline", []string{"registry.npmjs.org:443", "127.0.0.1:3000"})
+
+	if p.allowed(parseHostPortSpec("registry.npmjs.org", 443), nil) {
+		t.Error("network.mode=offline permitted a host because the allowlist names it")
+	}
+	if p.allowed(parseHostPortSpec("127.0.0.1", 3000), nil) {
+		t.Error("network.mode=offline permitted an allowlisted loopback service")
+	}
+	// The same allowlist still works in proxy mode, so the refusal is the mode's.
+	if !newTestProxy(t, "proxy", []string{"registry.npmjs.org:443"}).allowed(parseHostPortSpec("registry.npmjs.org", 443), nil) {
+		t.Error("proxy mode refused an allowlisted host; the test is not isolating the mode")
+	}
+}
