@@ -113,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx import fnm` finds fnm's Node versions.** fnm keeps them in a
+  `node-versions` directory under its base directory, and the import looked in
+  the base directory itself, so on a standard fnm install it found nothing. It
+  now reads `node-versions` under `FNM_DIR`, the platform data directory,
+  `~/.fnm`, and on macOS `~/Library/Application Support/fnm`.
+
 * **`nvx uninstall` no longer removes the Node version your shell is using
   when Bun comes first on PATH.** The guard read the first nvx runtime on PATH
   whatever it was, so with Bun ahead it compared Bun's version and let the

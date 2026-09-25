@@ -177,27 +177,52 @@ func importNvm(discovered map[string]string) {
 }
 
 func importFnm(discovered map[string]string) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-
-	paths := []string{
-		filepath.Join(home, ".fnm", "current"),
-		filepath.Join(home, ".local", "share", "fnm", "current"),
-		filepath.Join(home, ".fnm"),
-	}
-
-	if runtime.GOOS == "windows" {
-		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
-			paths = append(paths, filepath.Join(localAppData, "fnm_multishells"))
-			paths = append(paths, filepath.Join(localAppData, "fnm"))
-		}
-	}
-
-	for _, p := range paths {
+	for _, p := range fnmInstallationDirs() {
 		scanVersionDirs(p, "fnm", discovered)
 	}
+}
+
+// fnmInstallationDirs lists where fnm keeps installed Node versions: a
+// node-versions directory under its base directory, one vX.Y.Z per version.
+//
+// This scanned ~/.fnm, ~/.local/share/fnm/current and %LOCALAPPDATA%nm
+// directly, so on fnm's standard layout it read the base directory's own
+// entries (node-versions, aliases) and found no version at all. The bases below
+// are fnm's own, from src/directories.rs and src/config.rs at 86adc96: FNM_DIR
+// when set, then the platform data directory's fnm (XDG_DATA_HOME or
+// ~/.local/share on Linux, %APPDATA% on Windows), then the legacy ~/.fnm, and on
+// macOS ~/Library/Application Support/fnm. %LOCALAPPDATA%nm is kept because
+// the scan looked there before; a directory that does not exist costs nothing.
+func fnmInstallationDirs() []string {
+	var bases []string
+	if dir := os.Getenv("FNM_DIR"); dir != "" {
+		bases = append(bases, dir)
+	}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+			bases = append(bases, filepath.Join(xdg, "fnm"))
+		}
+		bases = append(bases,
+			filepath.Join(home, ".local", "share", "fnm"),
+			filepath.Join(home, ".fnm"),
+		)
+		if runtime.GOOS == "darwin" {
+			bases = append(bases, filepath.Join(home, "Library", "Application Support", "fnm"))
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, env := range []string{"APPDATA", "LOCALAPPDATA"} {
+			if dir := os.Getenv(env); dir != "" {
+				bases = append(bases, filepath.Join(dir, "fnm"))
+			}
+		}
+	}
+	dirs := make([]string, 0, len(bases))
+	for _, b := range bases {
+		dirs = append(dirs, filepath.Join(b, "node-versions"))
+	}
+	return dirs
 }
 
 func importVolta(discovered map[string]string) {
