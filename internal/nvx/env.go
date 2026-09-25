@@ -1014,6 +1014,8 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		}
 	}
 
+	// #nosec G702 -- running the runtime nvx resolved for this project is what
+	// a shim is for; launchPath comes from nvx's own resolution, not from input.
 	cmd := exec.Command(launchPath, launchArgs...)
 	cmd.Env = childEnv // nil inherits, exactly as before
 	cmd.Stdin = os.Stdin
@@ -1431,6 +1433,8 @@ func runtimeVersionOfBinary(nvxHome, binaryPath, activeVer string) string {
 		return activeVer
 	}
 	// Not nvx-managed and no active version: ask the binary itself, cheaply.
+	// #nosec G702 -- binaryPath is the runtime nvx itself resolved; asking it
+	// for its version is the point.
 	out, err := exec.Command(binaryPath, "-v").Output()
 	if err != nil {
 		return ""

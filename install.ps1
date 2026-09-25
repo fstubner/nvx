@@ -268,8 +268,13 @@ if (($UseLocalBinary -or $env:NVX_USE_LOCAL_BINARY -eq "1") -and (Test-Path $loc
             -AllowMissingChecksum:($InsecureSkipChecksum -or $env:NVX_INSECURE_SKIP_CHECKSUM -eq "1")
     } catch {
         Remove-Item $downloadPath, $checksumPath -Force -ErrorAction SilentlyContinue
-        Write-Host "nvx was not installed: $_" -ForegroundColor Red
-        exit 1
+        # throw, not exit. The documented install is `irm ... | iex`, and exit
+        # inside Invoke-Expression ends the PowerShell session the user typed
+        # it into: the window closed before the error could be read. Measured
+        # 2026-09-25: after `iex` of a script ending in `exit 1` the next
+        # statement never ran; after one ending in throw it did. Run with
+        # -File, an uncaught throw still exits 1.
+        throw "nvx was not installed: $_"
     }
 }
 
