@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // projectGrants records per-project state that must live outside the project
@@ -71,7 +73,16 @@ func grantsPath(nvxHome, scopeDir string) string {
 	return filepath.Join(grantsDir(nvxHome), grantKey(scopeDir)+".json")
 }
 
+// loadProjectGrants reads a project's ledger without its lock, for callers that
+// only read it. See loadProjectGrantsWithLock.
 func loadProjectGrants(nvxHome, scopeDir string) projectGrants {
+	return loadProjectGrantsWithLock(nvxHome, scopeDir, false)
+}
+
+// loadProjectGrantsWithLock reads a project's ledger. lockHeld says whether the
+// caller already holds the project's ledger lock, as updateProjectGrants does;
+// the lock is not re-entrant, so taking it again there would deadlock.
+func loadProjectGrantsWithLock(nvxHome, scopeDir string, lockHeld bool) projectGrants {
 	g := projectGrants{ProjectPath: scopeDir, PolicyPins: map[string]string{}}
 	if nvxHome == "" || scopeDir == "" {
 		return g
@@ -91,13 +102,7 @@ func loadProjectGrants(nvxHome, scopeDir string) projectGrants {
 		// Keep the file under a name that says what happened, and say so. The
 		// permissions still need removing by hand, but there is at least something on
 		// disk that names them.
-		quarantine := quarantinePath(path)
-		if rerr := os.Rename(path, quarantine); rerr == nil {
-			LogWarn("This project's grant record could not be read; it has been kept as %s.", quarantine)
-			LogWarn("Directory permissions it listed are no longer tracked and must be removed with icacls.")
-		} else {
-			LogWarn("This project's grant record could not be read: %v", uerr)
-		}
+		quarantineUnreadableGrants(nvxHome, scopeDir, path, data, uerr, lockHeld)
 		return projectGrants{ProjectPath: scopeDir, PolicyPins: map[string]string{}}
 	}
 	if g.PolicyPins == nil {
@@ -212,15 +217,42 @@ func readGrantsFile(path string) (grants []readExecGrant, ok bool) {
 // Numbered rather than fixed: os.Rename replaces an existing target on Windows,
 // so a second unreadable record silently destroyed the first -- along with the
 // only record of whatever permissions that one named.
-func quarantinePath(path string) string {
-	candidate := path + ".unreadable"
-	for i := 1; ; i++ {
-		if _, err := os.Stat(candidate); os.IsNotExist(err) {
-			return candidate
+// quarantineUnreadableGrants moves an unparseable ledger aside, under the
+// project's lock, and only if the file is still the one that failed to parse.
+//
+// It used to rename whatever sat at path, from any reader, unlocked. A reader
+// that read a damaged ledger, then lost the CPU while updateProjectGrants (which
+// holds the lock) moved that ledger aside and saved a good one, would then move
+// the good one aside too: the permissions just recorded became untracked, which
+// is the loss quarantining exists to prevent. Re-reading under the lock and
+// comparing bytes means only the file that was actually unreadable moves.
+func quarantineUnreadableGrants(nvxHome, scopeDir, path string, seen []byte, parseErr error, lockHeld bool) {
+	if !lockHeld {
+		unlock, err := lockProjectGrants(nvxHome, scopeDir)
+		if err != nil {
+			LogWarn("This project's grant record could not be read: %v", parseErr)
+			return
 		}
-		if i > 100 {
-			return candidate // give up and overwrite rather than spin
+		defer unlock()
+		current, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(current, seen) {
+			return // already moved aside, or replaced by a good one
 		}
-		candidate = fmt.Sprintf("%s.unreadable.%d", path, i)
 	}
+	quarantine := quarantinePath(path)
+	if rerr := os.Rename(path, quarantine); rerr == nil {
+		LogWarn("This project's grant record could not be read; it has been kept as %s.", quarantine)
+		LogWarn("Directory permissions it listed are no longer tracked and must be removed with icacls.")
+	} else {
+		LogWarn("This project's grant record could not be read: %v", parseErr)
+	}
+}
+
+// quarantinePath names the place an unreadable ledger is kept. Unique by time,
+// not by probing for a free name: the probe and the rename were two steps, so
+// two processes could pick the same name, and os.Rename replaces an existing
+// file on Windows -- one kept copy would silently overwrite the other. Every
+// name still contains ".unreadable", which `nvx grants reset` counts.
+func quarantinePath(path string) string {
+	return fmt.Sprintf("%s.unreadable.%s", path, time.Now().UTC().Format("20060102T150405.000000000"))
 }
