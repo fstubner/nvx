@@ -37,7 +37,7 @@ type SandboxConfig struct {
 	// made absolute. Never writable.
 	ReadExecRoots []string
 	// PassEnv are environment variables the project asked to keep inside the
-	// sandbox (isolation.environment.allow). A sensitive prefix still wins.
+	// sandbox (isolation.environment.allow). A credential name still wins.
 	PassEnv []string
 	// OnRefusal is called with the reason when containment could not be
 	// established and the command therefore never ran.
@@ -109,6 +109,80 @@ var sensitiveEnvPrefixes = []string{
 	// Connection strings carry a password in the userinfo more often than not.
 	"DATABASE_URL",
 	"DATABASE_URI",
+}
+
+// credentialEnvWords refuse a name that contains one of these as a whole word,
+// wherever it sits: GH_TOKEN, STRIPE_SECRET_KEY, SMTP_PASS.
+//
+// The prefixes above only catch names that start with the vendor or the secret.
+// The common spelling is the other way round, vendor first and secret last, and
+// every one of GH_TOKEN, SENTRY_AUTH_TOKEN, SLACK_BOT_TOKEN, STRIPE_SECRET_KEY
+// and PGPASSWORD went through a policy that named it until this existed.
+//
+// Whole words, not substrings, because the substring form refuses variables a
+// build needs: TOKENIZERS_PARALLELISM (Hugging Face) contains TOKEN and
+// MAX_TOKENS is a setting, not a secret. Left out on purpose:
+//   - AUTH. It names a subject, not a secret: AUTH_URL and AUTH_TRUST_HOST are
+//     Auth.js configuration, and AUTH_SECRET and AUTH_TOKEN are caught by their
+//     other word anyway.
+//   - KEY alone. CACHE_KEY, SORT_KEY and KEY_PATH are not secrets, so KEY only
+//     counts in the pairs below.
+//   - PWD. It is the shell's working directory; MYSQL_PWD goes through as a
+//     result.
+var credentialEnvWords = map[string]bool{
+	"TOKEN":       true,
+	"SECRET":      true,
+	"PASSWORD":    true,
+	"PASSWD":      true,
+	"PASS":        true,
+	"CREDENTIAL":  true,
+	"CREDENTIALS": true,
+	"APIKEY":      true,
+}
+
+// credentialEnvPairs refuse two adjacent words that together name a key:
+// SENDGRID_API_KEY, MINIO_ACCESS_KEY, DEPLOY_PRIVATE_KEY.
+var credentialEnvPairs = map[string]bool{
+	"API_KEY":     true,
+	"ACCESS_KEY":  true,
+	"PRIVATE_KEY": true,
+}
+
+// credentialEnvSuffixes refuse a name that ends in one of these with no
+// separator before it. PGPASSWORD is libpq's own variable and is spelled as one
+// word, so neither the prefixes nor the whole-word match see it.
+var credentialEnvSuffixes = []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "APIKEY"}
+
+// isSensitiveEnvName reports whether a variable name holds a credential by
+// convention, and so must not reach a contained process even when
+// isolation.environment.allow names it.
+func isSensitiveEnvName(name string) bool {
+	upper := strings.ToUpper(name)
+	for _, prefix := range sensitiveEnvPrefixes {
+		if strings.HasPrefix(upper, prefix) {
+			return true
+		}
+	}
+	for _, suffix := range credentialEnvSuffixes {
+		if strings.HasSuffix(upper, suffix) {
+			return true
+		}
+	}
+	// Split on anything that is not a letter or digit: underscores in the usual
+	// spelling, and the dots, slashes and colons npm's lowercase config names
+	// carry.
+	words := strings.FieldsFunc(upper, func(r rune) bool {
+		return (r < 'A' || r > 'Z') && (r < '0' || r > '9')
+	})
+	for i, word := range words {
+		if credentialEnvWords[word] {
+			return true
+		}
+		if i+1 < len(words) && credentialEnvPairs[word+"_"+words[i+1]] {
+			return true
+		}
+	}
+	return false
 }
 
 // windowsAllowedEnvKeys are the only environment variables allowed through on Windows
@@ -272,18 +346,10 @@ func scrubEnvironmentAllowing(guestHome string, passEnv []string) envScrubResult
 		key := parts[0]
 		keyUpper := strings.ToUpper(key)
 
-		// Skip sensitive prefixes
-		isSensitive := false
-		for _, prefix := range sensitiveEnvPrefixes {
-			if strings.HasPrefix(keyUpper, prefix) {
-				isSensitive = true
-				break
-			}
-		}
-		// A sensitive prefix outranks isolation.environment.allow. See
+		// A credential name outranks isolation.environment.allow. See
 		// refusedPassEnv: a project-local file must not be able to hand a cloud
 		// credential to a package's install script.
-		if isSensitive {
+		if isSensitiveEnvName(key) {
 			result.Dropped = append(result.Dropped, key)
 			continue
 		}

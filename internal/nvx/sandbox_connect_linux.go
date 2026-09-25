@@ -71,7 +71,12 @@ func openConnectSockets(guestHome string, netCtx *NetworkLaunchContext) (env []s
 		listeners = append(listeners, ln)
 
 		if netCtx.ConnectPorts[i].Inside == 0 {
-			netCtx.ConnectPorts[i].Inside = freeLoopbackPort()
+			port, perr := freeLoopbackPort()
+			if perr != nil {
+				stopAll()
+				return nil, noop, fmt.Errorf("in-sandbox port for host port %d: %w", m.Host, perr)
+			}
+			netCtx.ConnectPorts[i].Inside = port
 		}
 		inside := netCtx.ConnectPorts[i].Inside
 		go serveConnectSocket(ln, m.Host)

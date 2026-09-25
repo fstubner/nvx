@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -22,13 +23,17 @@ const connectDialTimeout = 5 * time.Second
 // freeLoopbackPort asks the OS for a port and returns it. Racy in principle, and
 // the same approach the expose listener uses; the window is microseconds and the
 // alternative is guessing a number that might already be taken.
-func freeLoopbackPort() int {
+//
+// A failed listen is an error rather than port 0. The --connect callers used the
+// result as the in-sandbox port and exported it as NVX_CONNECT_<port>=0, so the
+// tool inside was told to dial a port nothing would ever listen on.
+func freeLoopbackPort() (int, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("pick a free loopback port: %w", err)
 	}
 	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
+	return ln.Addr().(*net.TCPAddr).Port, nil
 }
 
 // spliceConns copies in both directions until either side is done, then closes
