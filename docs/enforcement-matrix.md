@@ -49,7 +49,7 @@ whether the kernel honours it is not.
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes⁵ (TCP and UDP; UDP refused at bind) |
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
 | Any loopback service reachable | No, unless the policy lists it¹¹, or `network.mode: loopback`¹³ | No, unless the policy lists it, or `network.mode: loopback`¹³ | No⁶ (proxy port only), or `network.mode: loopback`¹³ |
-| One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | Via `--connect` for one run, except in `offline`/`loopback`¹² | Via `--connect` for one run¹² |
+| One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | Via `--connect` for one run, except in `offline`¹² | Via `--connect` for one run¹² |
 | Another project's sandbox reachable over loopback | No¹⁰ (per-project package) | No (each has its own netns) | Untested |
 | A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
@@ -637,12 +637,16 @@ service from outside. No peer check is needed there either, and for a stronger
 reason than on macOS: another sandbox has its own namespace and its own guest
 home, so neither half is addressable from it.
 
-`offline` and `loopback` are the exception, and the refusal is loud. Both install
+`offline` is the exception, and the refusal is loud. It installs
 `buildOfflineNetworkFilter`, which denies `connect()` outright and denies creating
 any AF_INET or AF_INET6 socket -- so a contained tool cannot dial the in-sandbox
-listener at all. Carrying `--connect` there would mean granting those modes an IP
-socket, which is the thing they exist to withhold. nvx says so and names the modes
+listener at all. Carrying `--connect` there would mean granting the mode an IP
+socket, which is the thing it exists to withhold. nvx says so and names the modes
 that can carry it, rather than accepting the flag and doing nothing.
+
+`loopback` was refused the same way until 2026-09-25, on a premise that stopped
+being true on 2026-09-08, when the mode moved to the proxy filter (¹³). It
+carries `--connect` now; the loopback redirect leaves the flag's own port alone.
 
 `scripts/sandbox-smoke.sh` runs the same two-sided check the macOS one does, and
 the negative half is load-bearing in a different way: a network namespace that

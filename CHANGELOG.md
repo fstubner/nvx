@@ -113,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`--connect` works in `network.mode: loopback` on Linux.** It was refused on
+  the grounds that the mode denied the sandbox every IP socket, which stopped
+  being true when loopback moved to the proxy filter on 2026-09-08. Measured
+  2026-09-25 in WSL: the previous binary refused the flag; this one carried a
+  request to a service on the host's 127.0.0.1:7788 and got its reply.
+
 * **Bun accepts version ranges, and `^0` means what npm means.** `nvx install
   bun@^1.1`, and any `engines.bun` range, failed with "no Bun release matches"
   because Bun's resolver took only exact versions and prefixes; it now takes
