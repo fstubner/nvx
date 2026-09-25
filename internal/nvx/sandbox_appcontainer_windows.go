@@ -636,6 +636,14 @@ func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {
 	srcDir := filepath.Dir(cmdPath)
 	base := filepath.Base(cmdPath)
 
+	runtimeExe := runtimeInstallExecutable(srcDir)
+	if runtimeExe == "" {
+		return "", fmt.Errorf("%s is not in a Node or Bun install (there is no node.exe or bun.exe beside it), "+
+			"so nvx will not copy its folder for the sandbox: whatever else is in that folder would become readable "+
+			"to every sandbox. Use a runtime nvx manages ('nvx install lts'), or put a Node or Bun install first on PATH",
+			cmdPath)
+	}
+
 	key, err := stagedCommandKey(cmdPath)
 	if err != nil {
 		return "", err
@@ -644,22 +652,94 @@ func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {
 	destExe := filepath.Join(destDir, base)
 	marker := destDir + stagedSourceSuffix
 
-	if _, err := os.Stat(destExe); err == nil {
-		// Copies staged before the marker existed get one on their next use,
-		// which is what tells pruneStaleCommandCopies they are current.
-		if _, merr := os.Stat(marker); merr != nil {
-			_ = os.WriteFile(marker, []byte(cmdPath), 0o600)
+	// The marker is written last, so it is what says a copy is complete. One
+	// copy serves every command in the install, and an interrupted copy made for
+	// npm can hold npm.cmd and not yet node.exe, which npm runs on.
+	if _, err := os.Stat(marker); err == nil {
+		if _, err := os.Stat(destExe); err == nil {
+			return destExe, nil
 		}
-		return destExe, nil
 	}
 	if err := os.MkdirAll(destDir, 0700); err != nil {
 		return "", err
 	}
-	if err := copyDirTree(srcDir, destDir); err != nil {
+	if err := copyRuntimeInstall(srcDir, destDir, base); err != nil {
 		return "", err
 	}
-	_ = os.WriteFile(marker, []byte(cmdPath), 0o600)
+	// It names the runtime executable rather than the command, because pruning
+	// recomputes the key from it: a command that is later uninstalled must not
+	// take the copy the rest of the install still uses with it.
+	if err := os.WriteFile(marker, []byte(runtimeExe), 0o600); err != nil {
+		return "", err
+	}
 	return destExe, nil
+}
+
+// stagedRuntimeExecutables mark a directory as a runtime install, the only kind
+// of directory nvx copies for the sandbox.
+//
+// It copied the command's whole directory until 2026-09-25, whatever that
+// directory was. A copy is readable by every sandbox on the machine, so a tool
+// kept in a folder beside a credentials file handed the file to all of them.
+var stagedRuntimeExecutables = []string{"node.exe", "bun.exe"}
+
+// runtimeInstallExecutable returns the runtime executable that makes dir a
+// runtime install, or "" if it is not one.
+func runtimeInstallExecutable(dir string) string {
+	for _, name := range stagedRuntimeExecutables {
+		p := filepath.Join(dir, name)
+		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
+			return p
+		}
+	}
+	return ""
+}
+
+// isStagedRuntimeEntry reports whether a top-level entry of a runtime install is
+// part of what the sandbox needs: the executables, their DLLs and the npm/npx
+// wrappers, and node_modules, where npm and the runtime's global packages live.
+// The rest of a Node install is a README, a licence and batch files for a
+// developer prompt.
+func isStagedRuntimeEntry(name string, isDir bool) bool {
+	if isDir {
+		return strings.EqualFold(name, "node_modules")
+	}
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".exe", ".dll", ".cmd", ".ps1":
+		return true
+	}
+	return false
+}
+
+// copyRuntimeInstall copies the parts of a runtime install the sandbox needs,
+// and the command being staged whatever it is.
+func copyRuntimeInstall(srcDir, destDir, command string) error {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		srcPath := filepath.Join(srcDir, name)
+		// os.Stat, not the entry's type, for the reason copyDirTreeAtDepth gives.
+		info, err := os.Stat(srcPath)
+		if err != nil {
+			return fmt.Errorf("stage %s for the sandbox: %w", srcPath, err)
+		}
+		if !isStagedRuntimeEntry(name, info.IsDir()) && !strings.EqualFold(name, command) {
+			continue
+		}
+		dstPath := filepath.Join(destDir, name)
+		if info.IsDir() {
+			err = copyDirTreeAtDepth(srcPath, dstPath, 1)
+		} else {
+			err = copyFile(srcPath, dstPath, info.Mode())
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // stagedSourceSuffix names the file beside each staged copy that records the
@@ -667,16 +747,43 @@ func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {
 // exact copy of the source directory.
 const stagedSourceSuffix = ".source"
 
+// stagedCopyLayout names what a staged copy contains. See stagedCommandKey.
+const stagedCopyLayout = "runtime-files:"
+
 // stagedCommandKey names the directory a command is staged in: its source
-// directory and its modification time. A changed command gets a new key, which
-// is how a stale copy is never reused -- and why the old one is left behind.
+// directory and the newest modification time among the parts of it that are
+// copied. A changed runtime gets a new key, which is how a stale copy is never
+// reused -- and why the old one is left behind for pruneStaleCommandCopies.
+//
+// The key belongs to the directory, not the command. It was the command's own
+// modification time until 2026-09-25, so node, npm and npx from one install
+// each got a copy of it: measured, three copies of a 1.6 GB nvm install after
+// running each once. Every command in the directory now shares one.
+//
+// stagedCopyLayout is part of the key so that copies made the old way, of a
+// whole directory, stop matching and are pruned rather than reused.
 func stagedCommandKey(cmdPath string) (string, error) {
+	cmdPath = filepath.Clean(cmdPath)
 	st, err := os.Stat(cmdPath)
 	if err != nil {
 		return "", err
 	}
-	srcDir := filepath.Dir(filepath.Clean(cmdPath))
-	sum := sha256.Sum256([]byte(strings.ToLower(srcDir) + fmt.Sprintf(":%d", st.ModTime().UnixNano())))
+	newest := st.ModTime()
+	srcDir := filepath.Dir(cmdPath)
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		info, err := os.Stat(filepath.Join(srcDir, entry.Name()))
+		if err != nil || !isStagedRuntimeEntry(entry.Name(), info.IsDir()) {
+			continue
+		}
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+	}
+	sum := sha256.Sum256([]byte(stagedCopyLayout + strings.ToLower(srcDir) + fmt.Sprintf(":%d", newest.UnixNano())))
 	return hex.EncodeToString(sum[:16]), nil
 }
 

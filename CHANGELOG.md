@@ -192,6 +192,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one after each contained command and all of them by `nvx cleanup`. A copy
   something is still running is left until it stops.
 
+* **Only a runtime's own files are copied for the Windows sandbox.** The copy
+  of a system Node or Bun was the command's whole folder, and every sandbox on
+  the machine can read it, so anything kept beside the runtime went with it.
+  nvx now copies the executables, the npm and npx wrappers and `node_modules`,
+  and refuses a command whose folder has no `node.exe` or `bun.exe` rather
+  than copying it. node, npm and npx from one install now share one copy: they
+  made three before, 1.6 GB each for the nvm install on the development
+  machine. Existing copies are replaced on next use and the old ones pruned.
+
 * **The Linux sandbox's network filter covers x32 and io_uring.** It matched
   system calls by their x86-64 numbers only, so the same call made through the
   x32 ABI or submitted through io_uring went past it. On a kernel with x32

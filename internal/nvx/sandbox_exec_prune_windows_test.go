@@ -10,12 +10,13 @@ import (
 	"time"
 )
 
-// stageFixture stages a copy of a one-executable source directory the way a
-// contained launch does, and returns the command path and the staged directory.
+// stageFixture stages a copy of a runtime install the way a contained launch
+// does, and returns the command path and the staged directory. PING.EXE stands
+// in for node.exe because the running-copy test needs something that runs.
 func stageFixture(t *testing.T, nvxHome string) (cmdPath, stagedDir string) {
 	t.Helper()
 	src := tempDir(t)
-	cmdPath = filepath.Join(src, "tool.exe")
+	cmdPath = filepath.Join(src, "node.exe")
 	ping, err := os.ReadFile(filepath.Join(os.Getenv("SystemRoot"), "System32", "PING.EXE"))
 	if err != nil {
 		t.Skipf("no PING.EXE to use as a fixture: %v", err)
@@ -23,7 +24,10 @@ func stageFixture(t *testing.T, nvxHome string) (cmdPath, stagedDir string) {
 	if err := os.WriteFile(cmdPath, ping, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(src, "lib.js"), []byte("x"), 0o600); err != nil {
+	if err := os.MkdirAll(filepath.Join(src, "node_modules"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "node_modules", "lib.js"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	staged, err := stageAppContainerExecutable(nvxHome, cmdPath)
@@ -90,7 +94,7 @@ func TestARunningStaleCopyIsLeftAlone(t *testing.T) {
 	nvxHome := tempDir(t)
 	cmdPath, stale := stageFixture(t, nvxHome)
 
-	proc := exec.Command(filepath.Join(stale, "tool.exe"), "-n", "30", "127.0.0.1")
+	proc := exec.Command(filepath.Join(stale, "node.exe"), "-n", "30", "127.0.0.1")
 	if err := proc.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +107,7 @@ func TestARunningStaleCopyIsLeftAlone(t *testing.T) {
 	if n := pruneStaleCommandCopies(nvxHome, 0); n != 0 {
 		t.Errorf("removed %d copies while one was running", n)
 	}
-	if !exists(filepath.Join(stale, "lib.js")) {
+	if !exists(filepath.Join(stale, "node_modules", "lib.js")) {
 		t.Error("files of a running copy were deleted")
 	}
 

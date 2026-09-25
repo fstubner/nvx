@@ -112,7 +112,7 @@ func TestStageAppContainerExecutableFollowsANestedLinkedDirectory(t *testing.T) 
 	if err := os.MkdirAll(srcDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(srcDir, "tool.exe"), []byte("MZ-fake"), 0o700); err != nil {
+	if err := os.WriteFile(filepath.Join(srcDir, "node.exe"), []byte("MZ-fake"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -129,7 +129,7 @@ func TestStageAppContainerExecutableFollowsANestedLinkedDirectory(t *testing.T) 
 	}
 
 	nvxHome := tempDir(t)
-	staged, err := stageAppContainerExecutable(nvxHome, filepath.Join(srcDir, "tool.exe"))
+	staged, err := stageAppContainerExecutable(nvxHome, filepath.Join(srcDir, "node.exe"))
 	if err != nil {
 		t.Fatalf("staging with a nested linked directory failed: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestStageAppContainerExecutableFollowsANestedLinkedDirectory(t *testing.T) 
 // would be a per-command cost measured in tens of megabytes.
 func TestStageAppContainerExecutableIsIdempotent(t *testing.T) {
 	srcDir := tempDir(t)
-	exe := filepath.Join(srcDir, "tool.exe")
+	exe := filepath.Join(srcDir, "node.exe")
 	if err := os.WriteFile(exe, []byte("MZ-fake"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -161,5 +161,98 @@ func TestStageAppContainerExecutableIsIdempotent(t *testing.T) {
 	}
 	if first != second {
 		t.Errorf("staging is not stable: %q then %q", first, second)
+	}
+}
+
+// Only what the runtime needs is copied. The copy is readable by every sandbox
+// on the machine, and the whole directory used to come across, so anything kept
+// beside the runtime went with it.
+func TestStagingCopiesTheRuntimeAndNothingBesideIt(t *testing.T) {
+	src := tempDir(t)
+	files := map[string]string{
+		"node.exe":                        "MZ-fake",
+		"npm.cmd":                         "@echo npm",
+		"node_modules/npm/bin/npm-cli.js": "// cli",
+		"README.md":                       "readme",
+		"credentials.txt":                 "SECRET",
+		"private/key.pem":                 "SECRET",
+	}
+	for name, body := range files {
+		p := filepath.Join(src, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	staged, err := stageAppContainerExecutable(tempDir(t), filepath.Join(src, "node.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(staged)
+	for _, want := range []string{"node.exe", "npm.cmd", "node_modules/npm/bin/npm-cli.js"} {
+		if !exists(filepath.Join(dir, filepath.FromSlash(want))) {
+			t.Errorf("%s was not staged; the runtime needs it", want)
+		}
+	}
+	for _, unwanted := range []string{"README.md", "credentials.txt", "private"} {
+		if exists(filepath.Join(dir, unwanted)) {
+			t.Errorf("%s was staged, where every sandbox can read it", unwanted)
+		}
+	}
+}
+
+// A command that is not in a runtime install is refused rather than staged:
+// nvx cannot tell what else its folder holds.
+func TestStagingRefusesAFolderThatIsNotARuntimeInstall(t *testing.T) {
+	src := tempDir(t)
+	if err := os.WriteFile(filepath.Join(src, "tool.exe"), []byte("MZ-fake"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "credentials.txt"), []byte("SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	nvxHome := tempDir(t)
+	_, err := stageAppContainerExecutable(nvxHome, filepath.Join(src, "tool.exe"))
+	if err == nil {
+		t.Fatal("a tool outside any runtime install was staged, folder and all")
+	}
+	if !strings.Contains(err.Error(), "nvx install") {
+		t.Errorf("the refusal does not say what to run instead: %v", err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(nvxHome, "sandbox-exec")); len(entries) != 0 {
+		t.Errorf("the refusal left %d entries in sandbox-exec", len(entries))
+	}
+}
+
+// node, npm and npx from one install share one copy. Each got its own until the
+// key moved from the command to the install, three copies of the same runtime.
+func TestCommandsFromOneInstallShareOneCopy(t *testing.T) {
+	src := tempDir(t)
+	for name, age := range map[string]time.Duration{"node.exe": 3 * time.Hour, "npm.cmd": 2 * time.Hour, "npx.cmd": time.Hour} {
+		p := filepath.Join(src, name)
+		if err := os.WriteFile(p, []byte(name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Now().Add(-age)
+		if err := os.Chtimes(p, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	nvxHome := tempDir(t)
+	dirs := map[string]bool{}
+	for _, name := range []string{"node.exe", "npm.cmd", "npx.cmd"} {
+		staged, err := stageAppContainerExecutable(nvxHome, filepath.Join(src, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		dirs[filepath.Dir(staged)] = true
+	}
+	if len(dirs) != 1 {
+		t.Errorf("three commands from one install made %d copies of it, want 1", len(dirs))
 	}
 }
