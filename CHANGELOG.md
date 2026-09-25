@@ -122,6 +122,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SECRET or PASSWORD are now refused the same way. `TOKENIZERS_PARALLELISM`,
   `MAX_TOKENS` and `AUTH_URL` still pass.
 
+* **A failed install no longer closes your PowerShell window or removes your
+  nvx.** `irm ... | iex` ended with `exit`, which closes the session it runs
+  in, so the error vanished with the window; it now reports the error and
+  leaves the window open. `install.sh` downloaded over the existing binary and
+  deleted it when the checksum did not match, leaving no nvx; it now verifies
+  the download beside it and replaces nvx only on a match.
+
 * **`npm ci` spends less time in nvx's package checks.** Every lockfile entry
   is checked against the registry, and those requests went one at a time. They
   now run eight at once, ahead of the checks, which still ask their questions
