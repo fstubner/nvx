@@ -113,6 +113,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx uninstall` no longer removes the Node version your shell is using
+  when Bun comes first on PATH.** The guard read the first nvx runtime on PATH
+  whatever it was, so with Bun ahead it compared Bun's version and let the
+  active Node go. It now checks Node's own entry, as Bun's uninstall already
+  checked Bun's.
+
+* **Smaller fixes.** `nvx import` exits 1 when every install it tried failed.
+  A truncated download of the typosquat package list is no longer cached as
+  the whole list, and the cache is written atomically. A failure to write the
+  audit log is reported once instead of silently dropped. `--connect` refuses
+  to start when it cannot pick an in-sandbox port, instead of advertising
+  port 0.
+
 * **A policy can no longer pass `GH_TOKEN` or `STRIPE_SECRET_KEY` into the
   sandbox.** `isolation.environment.allow` refused credential-looking names by
   their start only (`GITHUB_`, `AWS_`, ...), so names whose secret-ness is at

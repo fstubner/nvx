@@ -132,11 +132,23 @@ func LoadPopularPackages(nvxHome string) []string {
 // by downloads and dependents, refreshed quarterly), served from the npm
 // registry via the jsDelivr CDN. The file is an ES module exporting an array
 // of package name string literals.
-const popularPackagesURL = "https://cdn.jsdelivr.net/npm/npm-high-impact/lib/top.js"
+//
+// A variable so a test can serve a short list from a local server.
+var popularPackagesURL = "https://cdn.jsdelivr.net/npm/npm-high-impact/lib/top.js"
 
 // maxPopularPackages caps the typosquatting dictionary size to keep the
 // Levenshtein comparison per install fast.
 const maxPopularPackages = 2000
+
+// minPopularPackages is the fewest names a download must yield to replace the
+// dictionary. Anything shorter is a truncated or wrong response, and caching it
+// would run the typosquat check against those few names for the next week.
+//
+// Measured 2026-09-25: the upstream file was 404035 bytes and parsed to 17335
+// names, of which the first maxPopularPackages are kept. The file is ordered by
+// popularity, so a response cut off past this floor still holds the names most
+// worth checking against; one cut off before it does not.
+const minPopularPackages = 1000
 
 func syncPopularPackages(cachePath string) ([]string, error) {
 	client := &http.Client{Timeout: 8 * time.Second}
@@ -156,11 +168,10 @@ func syncPopularPackages(cachePath string) ([]string, error) {
 	}
 
 	list := extractQuotedStrings(string(body), maxPopularPackages)
-	if len(list) == 0 {
-		return nil, fmt.Errorf("parsed list is empty")
+	if len(list) < minPopularPackages {
+		return nil, fmt.Errorf("parsed %d package names, want at least %d", len(list), minPopularPackages)
 	}
 
-	// Write cache file
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0700); err != nil {
 		return list, fmt.Errorf("create popular-package cache directory: %w", err)
 	}
@@ -168,10 +179,38 @@ func syncPopularPackages(cachePath string) ([]string, error) {
 	if err != nil {
 		return list, fmt.Errorf("encode popular-package cache: %w", err)
 	}
-	if err := os.WriteFile(cachePath, data, 0600); err != nil {
+	if err := writePopularPackagesCache(cachePath, data); err != nil {
 		return list, fmt.Errorf("write popular-package cache: %w", err)
 	}
 	return list, nil
+}
+
+// writePopularPackagesCache replaces the cache through a temporary file and a
+// rename, as saveProjectGrants does. A plain write truncates first, so a reader
+// in another nvx process -- the refresh runs in the background of an ordinary
+// command -- could find the file empty or half-written, which
+// readPopularPackagesCache treats as no cache at all. The temp name is unique
+// because two processes can refresh at once.
+func writePopularPackagesCache(cachePath string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(cachePath), filepath.Base(cachePath)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, cachePath); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // extractQuotedStrings pulls single- or double-quoted string literals out of a
