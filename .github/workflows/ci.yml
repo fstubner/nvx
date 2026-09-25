@@ -360,6 +360,12 @@ jobs:
       if: matrix.os != 'windows-latest'
       shell: bash
       run: sh scripts/test-install-profile.sh
+    # And its download step, against a stub curl: a failed checksum used to
+    # delete the working nvx it had just overwritten.
+    - name: Installer download test
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: sh scripts/test-install-download.sh
 
     - name: Linux containment tests (privileged)
       if: matrix.os == 'ubuntu-latest'

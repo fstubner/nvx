@@ -51,53 +51,50 @@ elif [ "${NVX_USE_LOCAL_BINARY:-}" = "1" ] && [ -f "./$BINARY_NAME" ]; then
     echo "Copying local $BINARY_NAME to $BIN_DIR/nvx..."
     cp "./$BINARY_NAME" "$BIN_DIR/nvx"
 else
-    echo "Downloading nvx from $DOWNLOAD_URL..."
+    # fetch <url> <file>: curl or wget, failing on an HTTP error.
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$DOWNLOAD_URL" -o "$BIN_DIR/nvx"
-        if curl -fsSL --fail "${DOWNLOAD_URL}.sha256" -o "$BIN_DIR/nvx.sha256" >/dev/null 2>&1; then
-            echo "Verifying checksum..."
-            EXPECTED_SHA=$(cat "$BIN_DIR/nvx.sha256" | awk '{print $1}')
-            ACTUAL_SHA=$(compute_sha256 "$BIN_DIR/nvx")
-            if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
-                echo "Error: Checksum verification failed!" >&2
-                rm -f "$BIN_DIR/nvx" "$BIN_DIR/nvx.sha256"
-                exit 1
-            fi
-            echo "Checksum verified successfully."
-        else
-            if [ "${NVX_INSECURE_SKIP_CHECKSUM:-}" = "1" ]; then
-                echo "Warning: Checksum file not available. Skipping verification because NVX_INSECURE_SKIP_CHECKSUM=1."
-            else
-                echo "Error: Checksum file not available. Refusing to install without verification." >&2
-                rm -f "$BIN_DIR/nvx" "$BIN_DIR/nvx.sha256"
-                exit 1
-            fi
-        fi
+        fetch() { curl -fsSL "$1" -o "$2"; }
     elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$BIN_DIR/nvx" "$DOWNLOAD_URL"
-        if wget -qO "$BIN_DIR/nvx.sha256" "${DOWNLOAD_URL}.sha256" >/dev/null 2>&1; then
-            echo "Verifying checksum..."
-            EXPECTED_SHA=$(cat "$BIN_DIR/nvx.sha256" | awk '{print $1}')
-            ACTUAL_SHA=$(compute_sha256 "$BIN_DIR/nvx")
-            if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
-                echo "Error: Checksum verification failed!" >&2
-                rm -f "$BIN_DIR/nvx" "$BIN_DIR/nvx.sha256"
-                exit 1
-            fi
-            echo "Checksum verified successfully."
-        else
-            if [ "${NVX_INSECURE_SKIP_CHECKSUM:-}" = "1" ]; then
-                echo "Warning: Checksum file not available. Skipping verification because NVX_INSECURE_SKIP_CHECKSUM=1."
-            else
-                echo "Error: Checksum file not available. Refusing to install without verification." >&2
-                rm -f "$BIN_DIR/nvx" "$BIN_DIR/nvx.sha256"
-                exit 1
-            fi
-        fi
+        fetch() { wget -qO "$2" "$1"; }
     else
         echo "Error: Neither curl nor wget was found. Please install one of them." >&2
         exit 1
     fi
+
+    # The download goes beside nvx, not over it, and replaces it only once its
+    # checksum matches. It used to be written straight to $BIN_DIR/nvx, so a
+    # mismatch deleted the file it had just replaced: an upgrade that failed
+    # its check left no nvx at all, where the previous one had been working.
+    # install.ps1 does the same (Install-NvxDownloadedBinary).
+    DOWNLOAD_PATH="$BIN_DIR/nvx.download"
+    SUMS_PATH="$BIN_DIR/nvx.sha256"
+    rm -f "$DOWNLOAD_PATH" "$SUMS_PATH"
+    echo "Downloading nvx from $DOWNLOAD_URL..."
+    if ! fetch "$DOWNLOAD_URL" "$DOWNLOAD_PATH"; then
+        rm -f "$DOWNLOAD_PATH"
+        echo "Error: could not download $DOWNLOAD_URL" >&2
+        exit 1
+    fi
+    if fetch "${DOWNLOAD_URL}.sha256" "$SUMS_PATH" >/dev/null 2>&1; then
+        echo "Verifying checksum..."
+        EXPECTED_SHA=$(awk 'NR==1 {print $1}' "$SUMS_PATH")
+        ACTUAL_SHA=$(compute_sha256 "$DOWNLOAD_PATH")
+        rm -f "$SUMS_PATH"
+        if [ -z "$EXPECTED_SHA" ] || [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+            rm -f "$DOWNLOAD_PATH"
+            echo "Error: Checksum verification failed! nvx was not changed." >&2
+            exit 1
+        fi
+        echo "Checksum verified successfully."
+    elif [ "${NVX_INSECURE_SKIP_CHECKSUM:-}" = "1" ]; then
+        rm -f "$SUMS_PATH"
+        echo "Warning: Checksum file not available. Skipping verification because NVX_INSECURE_SKIP_CHECKSUM=1."
+    else
+        rm -f "$DOWNLOAD_PATH" "$SUMS_PATH"
+        echo "Error: Checksum file not available. Refusing to install without verification." >&2
+        exit 1
+    fi
+    mv -f "$DOWNLOAD_PATH" "$BIN_DIR/nvx"
 fi
 
 chmod +x "$BIN_DIR/nvx"
