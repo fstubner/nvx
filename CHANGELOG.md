@@ -113,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Bun accepts version ranges, and `^0` means what npm means.** `nvx install
+  bun@^1.1`, and any `engines.bun` range, failed with "no Bun release matches"
+  because Bun's resolver took only exact versions and prefixes; it now takes
+  the same ranges Node does. `^0` and `^0.0` allowed only 0.0.0; they now mean
+  `<1.0.0` and `<0.1.0`, as in npm.
+
 * **`network.mode: offline` means no network, allowlist included.** The egress
   proxy checked the allowlist before the mode, so an offline run that reached it
   got every allowlisted host, and on Linux its socket was offered in offline mode
