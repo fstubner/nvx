@@ -28,15 +28,14 @@ func TestDockerSaysItCannotCarryConnect(t *testing.T) {
 	}
 }
 
-// Linux refuses the two modes whose seccomp filter denies the sandbox an IP
-// socket, and no others.
+// Linux refuses only offline, whose seccomp filter denies the sandbox every IP
+// socket. Loopback keeps IP sockets inside the namespace, where the relay
+// listens, so it carries --connect like proxy does.
 func TestLinuxRefusesConnectOnlyWhereTheModeCannotCarryIt(t *testing.T) {
-	for _, mode := range []string{"offline", "loopback"} {
-		if warn, _ := connectRefusalFor("native", "linux", mode); warn == "" {
-			t.Errorf("mode %q denies the sandbox every IP socket, so --connect must be reported as unhonoured", mode)
-		}
+	if warn, _ := connectRefusalFor("native", "linux", "offline"); warn == "" {
+		t.Error(`mode "offline" denies the sandbox every IP socket, so --connect must be reported as unhonoured`)
 	}
-	for _, mode := range []string{"proxy", "open", ""} {
+	for _, mode := range []string{"proxy", "open", "loopback", ""} {
 		if warn, _ := connectRefusalFor("native", "linux", mode); warn != "" {
 			t.Errorf("mode %q can carry --connect, but nvx warns: %s", mode, warn)
 		}

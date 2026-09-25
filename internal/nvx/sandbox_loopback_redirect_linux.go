@@ -372,7 +372,7 @@ func isIPv6Conn(c *net.TCPConn) bool {
 // an IPv4-only redirect entirely -- which is the kind of half-working that is
 // worse than not working.
 func installLoopbackRedirectRules(relayPort int, excludePorts []int) error {
-	if _, err := exec.LookPath("iptables"); err != nil {
+	if _, err := systemToolPath("iptables"); err != nil {
 		return fmt.Errorf("iptables is not installed")
 	}
 
@@ -442,8 +442,19 @@ func loopbackRedirectRules(relayPort int, excludePorts []int) []iptablesRule {
 	return rules
 }
 
+// runIptables runs iptables or ip6tables taken from the system directories,
+// never from PATH: see systemToolPath. cmd.Env governs only what the tool
+// itself sees.
+//
+// A tool that is not there is returned as an error with no output, which is
+// what exec gave for a name PATH could not find, so installLoopbackRedirectRules
+// treats a missing ip6tables exactly as before.
 func runIptables(cmd string, args ...string) (string, error) {
-	c := exec.Command(cmd, args...)
+	tool, err := systemToolPath(cmd)
+	if err != nil {
+		return "", err
+	}
+	c := exec.Command(tool, args...)
 	c.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin"}
 	out, err := c.CombinedOutput()
 	return strings.TrimSpace(string(out)), err

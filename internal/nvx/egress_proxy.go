@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type hostPort struct {
@@ -27,6 +28,19 @@ type hostPort struct {
 // sandbox; an unbounded read let a contained process grow the parent's memory
 // for as long as it kept sending bytes without a newline.
 const maxProxyRequestHeaderBytes = 64 << 10
+
+// proxyHandshakeTimeout bounds how long a client of either listener may take
+// to finish its request: the CONNECT line and headers, or the SOCKS greeting,
+// authentication and request. The client is the contained process, and without
+// a bound one that connects and sends nothing holds a goroutine and a
+// descriptor in nvx for as long as the run lasts. The loopback-redirect server
+// bounds the same read with the same value (loopbackServer.serve).
+//
+// Lifted once the request is in: the tunnel that follows is not bounded. A var
+// only so a test can shorten it, and read once per proxy, when it starts: a
+// connection left over from an earlier test must not read it while the next
+// test writes it.
+var proxyHandshakeTimeout = connectDialTimeout
 
 type EgressProxy struct {
 	httpAddr  string
@@ -44,6 +58,10 @@ type EgressProxy struct {
 	// denials themselves. The environment-scrub warning taught that the same day
 	// it shipped: a line printed on nearly every event stops being read.
 	denyHintOnce sync.Once
+
+	// handshakeTimeout is proxyHandshakeTimeout as it stood when the proxy
+	// started. See handshakeBound.
+	handshakeTimeout time.Duration
 
 	// token authenticates this session's clients to this session's proxy.
 	//
@@ -92,12 +110,13 @@ func startEgressProxy(ctx context.Context, policy Policy, provider RuntimeProvid
 	}
 
 	p := &EgressProxy{
-		token:    token,
-		allow:    allow,
-		session:  map[string]bool{},
-		policy:   policy,
-		nvxHome:  nvxHome,
-		prompted: map[string]bool{},
+		handshakeTimeout: proxyHandshakeTimeout,
+		token:            token,
+		allow:            allow,
+		session:          map[string]bool{},
+		policy:           policy,
+		nvxHome:          nvxHome,
+		prompted:         map[string]bool{},
 	}
 
 	proxyCtx, cancel := context.WithCancel(ctx)
@@ -343,6 +362,19 @@ func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
 	if isLoopback(hp.host) && mode == "loopback" {
 		return true
 	}
+	// offline is no network at all, as README.md defines it, and that includes
+	// hosts the allowlist names. The allowlist was consulted before this check,
+	// so an offline run that reached the proxy got every allowlisted host --
+	// on Linux, the relay and this socket were started in offline mode too, and
+	// seccomp's refusal of connect() was all that stood between a contained
+	// process and registry.npmjs.org. Refused here first, and the socket is no
+	// longer offered in offline mode (prepareEgressSocket).
+	if mode == "offline" {
+		key := fmt.Sprintf("%s:%d", hp.host, hp.port)
+		LogWarn("Blocked egress (network.mode=%s): %s", mode, key)
+		auditLog(p.nvxHome, "egress_block_mode", map[string]string{"host": key, "mode": mode})
+		return false
+	}
 
 	keys := allowKeysFor(hp)
 	for _, k := range keys {
@@ -475,10 +507,21 @@ func (p *EgressProxy) serveHTTP(ctx context.Context, ln net.Listener) {
 	}
 }
 
+// handshakeBound is the proxy's handshake bound, or the default for a proxy
+// built without startEgressProxy.
+func (p *EgressProxy) handshakeBound() time.Duration {
+	if p.handshakeTimeout > 0 {
+		return p.handshakeTimeout
+	}
+	return connectDialTimeout
+}
+
 func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 	defer client.Close()
-	// Capped for the header phase and lifted after it: what follows the headers
-	// is the tunnel, and must not be bounded. See maxProxyRequestHeaderBytes.
+	// Capped for the header phase and lifted after it, in bytes and in time:
+	// what follows the headers is the tunnel, and must not be bounded. See
+	// maxProxyRequestHeaderBytes and proxyHandshakeTimeout.
+	_ = client.SetReadDeadline(time.Now().Add(p.handshakeBound()))
 	lim := &io.LimitedReader{R: client, N: maxProxyRequestHeaderBytes}
 	br := bufio.NewReader(lim)
 	req, err := br.ReadString('\n')
@@ -525,6 +568,7 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 		}
 
 		lim.N = 1 << 62 // headers read; the tunnel is not bounded
+		_ = client.SetReadDeadline(time.Time{})
 
 		// Authenticate before consulting the allowlist, so a sibling sandbox
 		// scanning loopback cannot use the 403/200 difference to learn what this
@@ -678,6 +722,9 @@ func (p *EgressProxy) serveSOCKS(ctx context.Context, ln net.Listener) {
 
 func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 	defer conn.Close()
+	// Bounded until the request is in, for the reason the HTTP path is; see
+	// proxyHandshakeTimeout. Cleared below, before the tunnel.
+	_ = conn.SetReadDeadline(time.Now().Add(p.handshakeBound()))
 	buf := make([]byte, 262)
 	if _, err := io.ReadFull(conn, buf[:2]); err != nil {
 		return
@@ -722,6 +769,7 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 	default:
 		return
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 
 	hp := parseHostPortSpec(host, port)
 	if p.refuseInvalidHost(hp) {

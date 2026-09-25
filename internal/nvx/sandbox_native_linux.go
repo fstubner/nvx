@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // egressSocketName is the UNIX socket, inside the guest home, that the parent's
@@ -26,6 +27,12 @@ func prepareEgressSocket(egress *EgressProxy, guestHome string, netCtx *NetworkL
 	}
 	if !networkModeRequiresNamespace(netCtx.Mode) {
 		return nil // no namespace, so the loopback TCP listeners are reachable as-is
+	}
+	// offline gets no way to the proxy at all, as on Windows
+	// (windowsEgressNeedsRelay). The namespace is still created; only the socket
+	// that would carry requests out of it is withheld.
+	if strings.EqualFold(strings.TrimSpace(netCtx.Mode), "offline") {
+		return nil
 	}
 	sock := filepath.Join(guestHome, egressSocketName)
 	if err := egress.ListenUnix(sock); err != nil {

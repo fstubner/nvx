@@ -79,8 +79,8 @@ func runtimeCurrentLinkPath(nvxHome, runtimeName string) string {
 }
 
 // getActiveShellVersionFor returns the version of runtimeName currently on PATH
-// for this shell, or "" if none. Unlike getActiveShellVersion it is scoped to a
-// single runtime so multiple runtimes can be active at once.
+// for this shell, or "" if none. It is scoped to a single runtime so multiple
+// runtimes can be active at once.
 func getActiveShellVersionFor(nvxHome, runtimeName string) string {
 	runtimeDir := filepath.Clean(filepath.Join(nvxHome, "versions", runtimeName))
 	for _, part := range filepath.SplitList(os.Getenv("PATH")) {

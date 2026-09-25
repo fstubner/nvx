@@ -67,8 +67,11 @@ func lookupBinCache(nvxHome, cmdName string) string {
 // and nvx executes the result as the unsandboxed parent process, anything able to
 // write this one JSON file could obtain arbitrary code execution as the user on
 // the next node/npm invocation -- and the PathHash is no obstacle, being a hash of
-// a PATH the writer can read. On macOS the Seatbelt profile grants a contained
-// process write access to all of ~/.nvx, which is exactly that capability.
+// a PATH the writer can read. When this was written the macOS Seatbelt profile
+// granted a contained process write access to all of ~/.nvx, which is exactly
+// that capability. It no longer does -- contained writes go to the guest home and
+// the working directory -- but the check stays: anything else running as the
+// user can still write the file.
 //
 // Checking the directory rather than maintaining a fixed allowlist is what keeps
 // this correct: a legitimate entry is by definition something PATH resolution

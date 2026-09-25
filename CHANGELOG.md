@@ -113,6 +113,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The Linux sandbox runs the system's `ip` and `iptables`, not the first ones
+  on your PATH.** It set a system-only PATH for the child, which does not change
+  which binary starts: that is looked up in nvx's own PATH. They are now taken
+  from `/usr/sbin`, `/usr/bin`, `/sbin` and `/bin` only, as Windows already does
+  for its system tools.
+
+* **A contained process can no longer hold nvx's egress proxy open by sending
+  nothing.** The proxy waited indefinitely for a request's headers; it now
+  allows 5 seconds for the handshake, the same bound the Linux loopback
+  redirect uses, and none once the tunnel is open.
+
+* **`--connect` works in `network.mode: loopback` on Linux.** It was refused on
+  the grounds that the mode denied the sandbox every IP socket, which stopped
+  being true when loopback moved to the proxy filter on 2026-09-08. Measured
+  2026-09-25 in WSL: the previous binary refused the flag; this one carried a
+  request to a service on the host's 127.0.0.1:7788 and got its reply.
+
+* **Bun accepts version ranges, and `^0` means what npm means.** `nvx install
+  bun@^1.1`, and any `engines.bun` range, failed with "no Bun release matches"
+  because Bun's resolver took only exact versions and prefixes; it now takes
+  the same ranges Node does. `^0` and `^0.0` allowed only 0.0.0; they now mean
+  `<1.0.0` and `<0.1.0`, as in npm.
+
+* **`network.mode: offline` means no network, allowlist included.** The egress
+  proxy checked the allowlist before the mode, so an offline run that reached it
+  got every allowlisted host, and on Linux its socket was offered in offline mode
+  with only seccomp in the way. The proxy now refuses everything in offline mode,
+  and Linux no longer offers the socket there, as Windows already did not.
+
+* **`nvx import fnm` finds fnm's Node versions.** fnm keeps them in a
+  `node-versions` directory under its base directory, and the import looked in
+  the base directory itself, so on a standard fnm install it found nothing. It
+  now reads `node-versions` under `FNM_DIR`, the platform data directory,
+  `~/.fnm`, and on macOS `~/Library/Application Support/fnm`.
+
+* **`nvx uninstall` no longer removes the Node version your shell is using
+  when Bun comes first on PATH.** The guard read the first nvx runtime on PATH
+  whatever it was, so with Bun ahead it compared Bun's version and let the
+  active Node go. It now checks Node's own entry, as Bun's uninstall already
+  checked Bun's.
+
+* **Smaller fixes.** `nvx import` exits 1 when every install it tried failed.
+  A truncated download of the typosquat package list is no longer cached as
+  the whole list, and the cache is written atomically. A failure to write the
+  audit log is reported once instead of silently dropped. `--connect` refuses
+  to start when it cannot pick an in-sandbox port, instead of advertising
+  port 0.
+
+* **A policy can no longer pass `GH_TOKEN` or `STRIPE_SECRET_KEY` into the
+  sandbox.** `isolation.environment.allow` refused credential-looking names by
+  their start only (`GITHUB_`, `AWS_`, ...), so names whose secret-ness is at
+  the end got through: `GH_TOKEN`, `SENTRY_AUTH_TOKEN`, `STRIPE_SECRET_KEY`,
+  `PGPASSWORD`. Names containing TOKEN, SECRET, PASSWORD, PASS, CREDENTIAL or
+  APIKEY as a word, API_KEY / ACCESS_KEY / PRIVATE_KEY, or ending in TOKEN,
+  SECRET or PASSWORD are now refused the same way. `TOKENIZERS_PARALLELISM`,
+  `MAX_TOKENS` and `AUTH_URL` still pass.
+
+* **A failed install no longer closes your PowerShell window or removes your
+  nvx.** `irm ... | iex` ended with `exit`, which closes the session it runs
+  in, so the error vanished with the window; it now reports the error and
+  leaves the window open. `install.sh` downloaded over the existing binary and
+  deleted it when the checksum did not match, leaving no nvx; it now verifies
+  the download beside it and replaces nvx only on a match.
+
 * **`npm ci` spends less time in nvx's package checks.** Every lockfile entry
   is checked against the registry, and those requests went one at a time. They
   now run eight at once, ahead of the checks, which still ask their questions

@@ -31,6 +31,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only. Every job here checks out and runs checks; none writes to the
+# repository, its releases or its pull requests. Without this block the token
+# got the repository's default permissions, which is more than a workflow that
+# builds and runs untrusted-by-design sandbox probes needs.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Build and Test
@@ -353,6 +360,12 @@ jobs:
       if: matrix.os != 'windows-latest'
       shell: bash
       run: sh scripts/test-install-profile.sh
+    # And its download step, against a stub curl: a failed checksum used to
+    # delete the working nvx it had just overwritten.
+    - name: Installer download test
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: sh scripts/test-install-download.sh
 
     - name: Linux containment tests (privileged)
       if: matrix.os == 'ubuntu-latest'
@@ -500,8 +513,17 @@ jobs:
     - name: Run govulncheck
       uses: golang/govulncheck-action@v1
 
+    # Pinned by commit, like release.yml's third-party actions: @master ran
+    # whatever that branch held on the day, inside a job with this repo's code.
+    #
+    # G702 is no longer excluded. It is the taint rule for a command built
+    # from input, and with it off the scan could not see `cmd /c mklink`
+    # splicing a user's home path into a shell line (fixed in #63). The two
+    # sites it reports today run the runtime nvx resolved, which is the shim's
+    # job, and each carries a #nosec saying so -- so a new one fails the scan
+    # rather than joining an exclusion nobody reads.
     - name: Run gosec
-      uses: securego/gosec@master
+      uses: securego/gosec@deb54465fea23d19a77f037e11e6589021f8501d # v2.29.0
       with:
-        args: -severity=high -confidence=high -exclude=G204,G304,G301,G306,G702,G703,G704 ./...
+        args: -severity=high -confidence=high -exclude=G204,G304,G301,G306,G703,G704 ./...
 

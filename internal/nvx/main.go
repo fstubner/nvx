@@ -877,31 +877,6 @@ func resolveLocalVersion(provider RuntimeProvider, query string, nvxHome string)
 	return "", noMatchingVersion{msg: fmt.Sprintf("no installed version matches query '%s'", query)}
 }
 
-func getActiveShellVersion(nvxHome string) string {
-	currentPath := os.Getenv("PATH")
-	parts := filepath.SplitList(currentPath)
-	versionsDir := filepath.Clean(filepath.Join(nvxHome, "versions"))
-
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		normPart := filepath.Clean(part)
-		if strings.HasPrefix(strings.ToLower(normPart), strings.ToLower(versionsDir)+string(os.PathSeparator)) {
-			rel, err := filepath.Rel(versionsDir, normPart)
-			if err == nil {
-				pathParts := strings.Split(rel, string(os.PathSeparator))
-				for _, subPart := range pathParts {
-					if strings.HasPrefix(subPart, "v") {
-						return subPart
-					}
-				}
-			}
-		}
-	}
-	return ""
-}
-
 func getGlobalDefaultVersion(nvxHome string) string {
 	currentLink := currentLinkPath(nvxHome)
 	target, err := os.Readlink(currentLink)

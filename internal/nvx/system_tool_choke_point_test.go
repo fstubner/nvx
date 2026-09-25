@@ -19,13 +19,15 @@ import (
 // icacls, reg, cmd and powershell were reached.
 //
 // Windows system tools are now resolved under the system directory the
-// kernel reports, never by name. What remains by name is listed here with the
-// reason it cannot be anything else, and adding one is a decision with a
-// reviewer attached rather than a habit.
+// kernel reports, and Linux ones (ip, iptables) under fixed system
+// directories, never by name. The Linux calls were on this list while they set
+// cmd.Env to a system PATH, which does not choose the program: exec.Command
+// resolves the name through nvx's own PATH before cmd.Env is ever used. What
+// remains by name is listed here with the reason it cannot be anything else,
+// and adding one is a decision with a reviewer attached rather than a habit.
 func TestEveryProgramLaunchedByNameIsANamedException(t *testing.T) {
 	allowed := map[string]string{
 		"docker": "a user-installed tool with no fixed location; nvx runs it unelevated as the user, who could run it themselves",
-		"ip":     "Linux iproute2 inside the sandbox's own network namespace, run as the user with no privilege to gain",
 	}
 	// The program is exec.Command's first argument and exec.CommandContext's
 	// second. runWinCmd is not scanned: it resolves its name under the system
@@ -75,7 +77,7 @@ func TestEveryProgramLaunchedByNameIsANamedException(t *testing.T) {
 			}
 			if _, ok := allowed[name]; !ok {
 				t.Errorf("%s:%d launches %q by bare name, which PATH resolves:\n    %s\n"+
-					"A Windows system tool must go through systemToolPath so it is taken from the system directory. "+
+					"A system tool must go through systemToolPath so it is taken from the system directory, not PATH. "+
 					"If this program genuinely has to be found on PATH, add it to this test's list WITH the reason.",
 					file, n+1, name, strings.TrimSpace(line))
 				continue
