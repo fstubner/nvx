@@ -1,11 +1,52 @@
 package nvx
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 )
+
+// failingInstallNode is Node with an install that always fails, so runImport
+// can be driven without downloading anything.
+type failingInstallNode struct{ NodeProvider }
+
+func (failingInstallNode) Install(string, string) error {
+	return errors.New("simulated download failure")
+}
+
+// An import in which every install failed is a failure.
+//
+// runImport logged each failure and then exited 0 with "Import complete: 0
+// installed, 0 already present.", so a script running `nvx import -y` could not
+// tell that nothing had been adopted. Finding nothing to import is still exit 0:
+// that is an answer, not an error.
+func TestAnImportWhereEveryInstallFailedExitsNonZero(t *testing.T) {
+	home := tempDir(t)
+	// os.UserHomeDir reads HOME on Unix and USERPROFILE on Windows; nvm-windows
+	// is looked for under NVM_HOME, then APPDATA.
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("NVM_HOME", filepath.Join(home, "nvm-windows"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
+	t.Setenv("NVX_YES", "1")
+	orig := Providers["node"]
+	Providers["node"] = failingInstallNode{}
+	t.Cleanup(func() { Providers["node"] = orig })
+	nvxHome := filepath.Join(home, ".nvx")
+
+	if code := runImport("nvm", nvxHome); code != 0 {
+		t.Fatalf("finding nothing to import exited %d; that is an answer, not a failure", code)
+	}
+
+	if err := os.MkdirAll(filepath.Join(home, ".nvm", "versions", "node", "v20.11.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := runImport("nvm", nvxHome); code == 0 {
+		t.Fatal("every install failed and the import exited 0")
+	}
+}
 
 func TestScanVersionDirs(t *testing.T) {
 	tempDir := tempDir(t)

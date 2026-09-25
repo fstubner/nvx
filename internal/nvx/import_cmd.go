@@ -107,6 +107,7 @@ func runImport(source string, nvxHome string) int {
 	provider := Providers["node"]
 	installedCount := 0
 	alreadyInstalled := 0
+	failedCount := 0
 
 	for ver, src := range discovered {
 		cleanVer := strings.TrimPrefix(strings.ToLower(ver), "v")
@@ -130,12 +131,23 @@ func runImport(source string, nvxHome string) int {
 		err := provider.Install(cleanVer, nvxHome)
 		if err != nil {
 			LogError("Failed to import Node.js v%s: %v", cleanVer, err)
+			failedCount++
 		} else {
 			LogSuccess("Installed Node.js v%s (%s has it too).", cleanVer, src)
 			installedCount++
 		}
 	}
 
+	// Exit 1 only when something was attempted and none of it landed. It used to
+	// exit 0 with "0 installed" after every install had failed, which a script
+	// running `nvx import -y` could not tell from success. A partial import still
+	// exits 0: the versions that installed are usable, and each failure has been
+	// named above. Finding nothing, or finding only versions nvx already has, is
+	// an answer rather than an error, and returns 0 earlier or here.
+	if failedCount > 0 && installedCount == 0 {
+		LogError("Import failed: %d version(s) could not be installed, %d already present.", failedCount, alreadyInstalled)
+		return 1
+	}
 	LogSuccess("Import complete: %d installed, %d already present.", installedCount, alreadyInstalled)
 	return 0
 }

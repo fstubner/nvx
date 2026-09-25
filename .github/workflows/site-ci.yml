@@ -85,6 +85,17 @@ jobs:
       # --- The build, and the checks that read dist/ ----------------------
       - name: Build
         run: npm run build
+      # Pagefind runs inside the build, and when it fails the build still exits
+      # 0 with no search index: the docs ship a search box that finds nothing.
+      # Seen on a developer machine on 2026-09-25, where Pagefind panicked with
+      # "Access is denied" and `npm run build` still reported success. Checking
+      # for the index is what makes that a failure here.
+      - name: Search index
+        run: |
+          if [ ! -f dist/pagefind/pagefind.js ]; then
+            echo "::error::the build produced no search index (dist/pagefind/pagefind.js is missing)"
+            exit 1
+          fi
       - name: Types
         run: npm run check
       - name: Changelog dates
