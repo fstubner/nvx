@@ -182,10 +182,17 @@ func deriveAppContainerSIDString(profileName string) (string, error) {
 }
 
 // reportSandboxWeakeners is the doctor hook for machine state that quietly
-// weakens containment. It reports and counts against health -- doctor printing a
-// failure line and still calling the install healthy is the shape of dishonesty
-// this command keeps being caught by. Removing the exemption needs elevation, but
-// it is one command and doctor prints it.
+// weakens containment. What weakens it is reported and counts against health --
+// doctor printing a failure line and still calling the install healthy is the
+// shape of dishonesty this command keeps being caught by.
+//
+// The loopback exemption it looks for sits on stableSandboxProfile, the single
+// package every sandbox ran under before packages became per project. Nothing
+// launches under that identity any more, so an exemption left on it reaches no
+// sandbox: this reported it as a [FAIL] saying contained code could reach every
+// loopback service, which stopped being true with per-project packages. It is
+// now a note with the cleanup command. An exemption on a package that is in use
+// is caught at launch, by warnIfSandboxLoopbackExempt with that session's SID.
 func reportSandboxWeakeners(nvxHome string) bool {
 	weakened := reportStrandedSetupGrant(nvxHome)
 
@@ -197,10 +204,10 @@ func reportSandboxWeakeners(nvxHome string) bool {
 	if err != nil || !exempt {
 		return weakened
 	}
-	fmt.Println("  [FAIL] the sandbox has a loopback exemption from an older 'nvx setup'")
-	fmt.Println("         contained code can reach any service on 127.0.0.1, whatever the egress allowlist says")
-	fmt.Printf("         remove it from an Administrator terminal: CheckNetIsolation LoopbackExempt -d -p=%s\n", sidStr)
-	return true
+	fmt.Println("  [INFO] an older 'nvx setup' left a loopback exemption on the retired 'nvx.sandbox' identity")
+	fmt.Println("         no sandbox runs under it any more, so it has no effect")
+	fmt.Printf("         to remove it, from an Administrator terminal: CheckNetIsolation LoopbackExempt -d -p=%s\n", sidStr)
+	return weakened
 }
 
 // reportStrandedSetupGrant reports a completed `nvx setup` whose grants sit on an

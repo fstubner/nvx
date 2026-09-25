@@ -2,8 +2,13 @@ package nvx
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -84,6 +89,51 @@ func TestAnUnusableTyposquatCacheFallsBack(t *testing.T) {
 				t.Fatal("no dictionary at all; the typosquat check would pass everything")
 			}
 		})
+	}
+}
+
+// A short download is a failed download, not a dictionary.
+//
+// syncPopularPackages rejected only a list that parsed to nothing, so a response
+// cut off after a handful of names was cached and used for the next seven days:
+// the typosquat check ran against those few names and said nothing about it.
+func TestAShortPopularPackageListIsNotCached(t *testing.T) {
+	var full strings.Builder
+	full.WriteString("export const top = [\n")
+	for i := 0; i < maxPopularPackages; i++ {
+		fmt.Fprintf(&full, "  'pkg-%d',\n", i)
+	}
+	full.WriteString("]\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/full" {
+			_, _ = io.WriteString(w, full.String())
+			return
+		}
+		_, _ = io.WriteString(w, "export const top = [\n  'semver',\n  'minimatch',\n  'debug',\n")
+	}))
+	defer srv.Close()
+	orig := popularPackagesURL
+	defer func() { popularPackagesURL = orig }()
+
+	popularPackagesURL = srv.URL + "/short"
+	cachePath := filepath.Join(tempDir(t), "popular_packages.json")
+	if list, err := syncPopularPackages(cachePath); err == nil {
+		t.Fatalf("a %d-name list was accepted as the typosquat dictionary", len(list))
+	}
+	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+		t.Fatalf("the short list was cached (stat: %v); it would be used for the next week", err)
+	}
+
+	// A list of normal size still goes through, or the floor is a new way to
+	// never have a dictionary.
+	popularPackagesURL = srv.URL + "/full"
+	list, err := syncPopularPackages(cachePath)
+	if err != nil {
+		t.Fatalf("a %d-name list was rejected: %v", maxPopularPackages, err)
+	}
+	cached, usable := readPopularPackagesCache(cachePath)
+	if !usable || len(cached) != len(list) {
+		t.Fatalf("cache holds %d names (usable=%v), want the %d fetched", len(cached), usable, len(list))
 	}
 }
 
