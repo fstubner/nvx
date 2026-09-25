@@ -113,6 +113,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The Linux sandbox runs the system's `ip` and `iptables`, not the first ones
+  on your PATH.** It set a system-only PATH for the child, which does not change
+  which binary starts: that is looked up in nvx's own PATH. They are now taken
+  from `/usr/sbin`, `/usr/bin`, `/sbin` and `/bin` only, as Windows already does
+  for its system tools.
+
+* **A contained process can no longer hold nvx's egress proxy open by sending
+  nothing.** The proxy waited indefinitely for a request's headers; it now
+  allows 5 seconds for the handshake, the same bound the Linux loopback
+  redirect uses, and none once the tunnel is open.
+
 * **`--connect` works in `network.mode: loopback` on Linux.** It was refused on
   the grounds that the mode denied the sandbox every IP socket, which stopped
   being true when loopback moved to the proxy filter on 2026-09-08. Measured
