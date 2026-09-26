@@ -58,7 +58,7 @@ func TestNodeAdoptsAnExternallyCreatedPipeAsItsIPCChannel(t *testing.T) {
 		t.Skipf("cannot read this user's SID: %v", err)
 	}
 	name := `\\.\pipe\nvx-ipc-adopt-probe-` + stdioSessionID(t.Name()+time.Now().Format("150405.000"))
-	server, err := createNamedPipeWithSecurity(name, "D:(A;;GA;;;"+userSID+")")
+	server, err := createNamedPipeWithSecurity(name, "D:(A;;GA;;;"+userSID+")", false)
 	if err != nil {
 		t.Fatalf("create pipe: %v", err)
 	}

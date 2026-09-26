@@ -58,7 +58,11 @@ func updateProjectGrants(nvxHome, scope string, fn func(g *projectGrants) error)
 	}
 	defer unlock()
 
-	g := loadProjectGrantsWithLock(nvxHome, scope, true)
+	// Refuse rather than save over a ledger that exists but could not be read.
+	g, err := loadProjectGrantsWithLock(nvxHome, scope, true)
+	if err != nil {
+		return err
+	}
 	if err := fn(&g); err != nil {
 		return err
 	}

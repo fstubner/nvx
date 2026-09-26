@@ -4,6 +4,8 @@ package nvx
 
 import (
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,4 +66,49 @@ func TestSetupUndoFailsWhenSomethingCouldNotBeUndone(t *testing.T) {
 			t.Error("tried to remove a loopback exemption for an identity that does not exist")
 		}
 	})
+}
+
+// --undo must revoke what setup recorded granting. It revoked only a fixed list,
+// so a grant setup made on the Users directory of another volume, or on a
+// working directory's volume that is not fixed, stayed after undo said
+// "removed".
+func TestSetupUndoRevokesTheRecordedPaths(t *testing.T) {
+	nvxHome := tempDir(t)
+	recorded := tempDir(t)
+	if err := writeWindowsSetupState(nvxHome, windowsSetupState{GrantedPaths: []string{recorded}}); err != nil {
+		t.Fatal(err)
+	}
+	var revoked []string
+	revoke := func(_, p string) error { revoked = append(revoked, p); return nil }
+	okExempt := func(bool, string) error { return nil }
+	okClear := func(string) error { return nil }
+	if code := runWindowsSetupUndo(nvxHome, "S-1-15-3-1024-a", "", revoke, okExempt, okClear); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	for _, p := range revoked {
+		if strings.EqualFold(p, filepath.Clean(recorded)) {
+			return
+		}
+	}
+	t.Fatalf("undo never revoked %s, which setup recorded granting; revoked %v", recorded, revoked)
+}
+
+// Setup must not report a loopback exemption as absent when removing it failed
+// and it is still registered. It treated every failed delete, a timeout
+// included, as "nothing to remove".
+func TestSetupNoticesALoopbackExemptionThatWasNotRemoved(t *testing.T) {
+	const legacy = "S-1-15-2-1-2-3-4-5-6-7"
+	failDelete := func(bool, string) error { return errors.New("timed out") }
+	stillThere := func() ([]string, error) { return []string{legacy}, nil }
+	gone := func() ([]string, error) { return nil, nil }
+
+	if removeLegacyLoopbackExemption(legacy, failDelete, stillThere) {
+		t.Error("reported the exemption removed while the list still carries it")
+	}
+	if !removeLegacyLoopbackExemption(legacy, failDelete, gone) {
+		t.Error("a failed delete on a machine with no exemption is not a failure")
+	}
+	if removeLegacyLoopbackExemption(legacy, failDelete, func() ([]string, error) { return nil, errors.New("no tool") }) {
+		t.Error("neither removed nor checked, and reported as gone")
+	}
 }

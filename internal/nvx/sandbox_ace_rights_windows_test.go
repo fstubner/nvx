@@ -15,9 +15,10 @@ import "testing"
 // The distinction is the access mask, so that is what these pin. They used to
 // pin it against the text icacls prints, in every order and spacing it might use;
 // with real masks the orderings and the parsing are gone and only the meaning is
-// left.
+// left. It tests the predicate the scan calls. It used to test a copy of it
+// written inline here, which no change to the scan could make fail.
 func TestTraverseAccessIsDistinguishedFromRealAccess(t *testing.T) {
-	stale := func(mask uint32) bool { return mask&^aclMaskTraverse != 0 }
+	stale := maskGrantsMoreThanTraverse
 
 	cases := []struct {
 		mask  uint32

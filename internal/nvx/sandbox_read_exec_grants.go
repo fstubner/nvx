@@ -311,7 +311,11 @@ func revokeAllReadExecGrantsWithin(grants []readExecGrant, revoke func(sid, path
 				// later reset would refuse identically and the record would be kept for
 				// ever. It is dropped, and reported.
 				LogWarn("Left the permission on %s in place: it is now wider than the read/execute one nvx recorded.", g.Path)
-				LogInfo("nvx only withdraws the exact entry it granted. Remove it yourself with: icacls %q /remove:g *%s", g.Path, g.SID)
+				// %s in literal quotes, not %q: Go's quoting doubles every backslash
+				// and the pasted command then names a path that does not exist.
+				LogInfo("nvx only withdraws the exact entry it granted. The wider entry usually carries access the sandbox "+
+					"needs for another reason, such as a writable root, so leave it unless you mean to remove all of this "+
+					"project's access to that path: icacls \"%s\" /remove:g *%s", g.Path, g.SID)
 				out.Broadened++
 				continue
 			}

@@ -159,6 +159,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Cleanup no longer removes a running session's files on Windows.** A session
+  whose owning process nvx could not open, such as an elevated one, was read as
+  finished, and its home could be deleted while it ran. A trusted tool's
+  AppContainer profile could also be deleted while the tool was running, once it
+  had gone unused for the retention window. Each trusted-tool run now marks
+  itself as live for as long as it runs.
+
+* **Two runs of one trusted tool no longer share stdio pipes on Windows.** The
+  pipe names came from the tool's home, which is the same for every run, so a
+  second run joined the first one's pipes. Each run now draws its own names, and
+  a name already in use is refused.
+
+* **`nvx setup` checks that the old loopback exemption is really gone.** Any
+  failure to remove it, a timeout included, was reported as nothing to remove.
+  Setup now reads the exemption list and fails while the exemption is still
+  registered. `nvx setup --undo` also removes the grants setup recorded, which
+  included the Users folder on other volumes, and no longer leaves an unused
+  AppContainer profile behind. `nvx doctor` now says leftover sandbox
+  permissions on a project admit sandboxes from nvx builds older than 0.5.0,
+  which is who they admit.
+
+* **`nvx doctor --fix` keeps non-ASCII entries in your User PATH.** It read the
+  PATH through `reg query`, whose output is in the console code page, so
+  `C:\Users\Jürgen\bin` came back with a wrong byte in place of the ü, and the
+  repair wrote that back. It now reads the value directly from the registry.
+
+* **An unreadable grants record is no longer replaced with an empty one.** A
+  record that existed and could not be read was treated as empty, and the next
+  change saved over it, losing the list of permissions nvx had granted. The
+  change now fails instead, and read-only commands warn.
+
+* **The egress proxy refuses a malformed CONNECT port.** `443x` went on as port 0
+  and `99999` as 65535, and the raw request, port included, was printed to the
+  terminal when the dial failed. It now answers 400 and logs only the parsed
+  host and port. The proxy also checks its credential before it judges the host,
+  so an unauthenticated caller can no longer put a warning on your terminal or a
+  line in the audit log.
+
+* **`nvx audit export --format csv` no longer emits spreadsheet formulas.** A
+  value starting with `=`, `+`, `-` or `@` became a live formula when the file
+  was opened in a spreadsheet, and several fields can come from lines anything
+  on the machine appended to the log. Such cells now start with a single quote.
+
+* **A project bin with a dot in its name gets a working shim.** A
+  `node_modules/.bin` entry named `foo.bar` was shimmed as `foo`, which ran a
+  command nothing provides. Only `.cmd`, `.ps1` and `.exe` are trimmed now.
+
+* **`bun@0.8` and other older Bun lines resolve again.** Only the first 100 Bun
+  releases were read, and that page now ends at 1.0.25. The whole list is read.
+
+* **A refused `isolation.environment.allow` entry is recorded in audit.log.** A
+  policy asking to pass a credential into the sandbox was a terminal warning and
+  nothing else. It is now an `env_pass_refused` record, with names only.
+
+* **Smaller Windows fixes.** The hangup watchdog no longer waits on an unrelated
+  process that reused its parent's pid. A contained command's exit no longer
+  waits up to 5 seconds per stuck stdio channel, one after another. A failure to
+  stage the command now has its own reason in the audit log. The icacls command
+  nvx suggests for a widened read/execute entry can be pasted as printed.
+
 * **A package installed under an npm alias is checked as itself.**
   `npm install myalias@npm:left-pad` was checked as a package called `myalias`,
   so a blocklist entry for left-pad did not stop it, and the typosquat, advisory

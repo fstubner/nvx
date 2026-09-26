@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"net"
 	"sync"
 	"testing"
 )
@@ -28,6 +29,11 @@ func TestEgressProxyAllowedIsRaceFreeAgainstSessionWrites(t *testing.T) {
 	p.policy.Isolation.Network.Mode = "proxy"
 	p.policy.Isolation.Network.PromptUnknown = false
 
+	// A resolved public address. With nil, allowed() refused the name as
+	// unresolved before it reached the session lookup, so this test raced
+	// nothing.
+	resolved := []net.IP{net.ParseIP("104.16.0.1")}
+
 	const goroutines = 8
 	const iterations = 200
 
@@ -37,7 +43,7 @@ func TestEgressProxyAllowedIsRaceFreeAgainstSessionWrites(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
-				_ = p.allowed(hostPort{host: "registry.npmjs.org", port: 443}, nil)
+				_ = p.allowed(hostPort{host: "registry.npmjs.org", port: 443}, resolved)
 			}
 		}()
 	}

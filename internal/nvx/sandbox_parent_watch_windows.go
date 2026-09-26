@@ -51,8 +51,9 @@ import (
 // process is a bad outcome; killing work someone is waiting on is a worse one.
 
 var (
-	procPeekNamedPipe = modKernel32.NewProc("PeekNamedPipe")
-	procGetFileType   = modKernel32.NewProc("GetFileType")
+	procPeekNamedPipe   = modKernel32.NewProc("PeekNamedPipe")
+	procGetFileType     = modKernel32.NewProc("GetFileType")
+	procGetProcessTimes = modKernel32.NewProc("GetProcessTimes")
 )
 
 const (
@@ -195,14 +196,45 @@ func openParentProcess() (syscall.Handle, bool) {
 	if !ok {
 		return 0, false
 	}
-	h, _, _ := procOpenProcessForJob.Call(uintptr(processSynchronize), 0, uintptr(ppid))
+	return openIfOlderThanSelf(ppid)
+}
+
+// openIfOlderThanSelf opens pid to wait on, but only if that process was created
+// before this one.
+//
+// The parent pid comes from a snapshot, and the parent can exit before it is
+// opened. Its pid can then already name a newer, unrelated process, and the
+// watchdog would wait on that one instead. A real parent is always created
+// before its child, so a process newer than this one is refused.
+func openIfOlderThanSelf(pid uint32) (syscall.Handle, bool) {
+	h, _, _ := procOpenProcessForJob.Call(uintptr(processSynchronize|processQueryLimitedInfo), 0, uintptr(pid))
 	if h == 0 {
 		// Already gone, or not ours to open. Either way this watchdog cannot
 		// make a safe decision, and the safe default is to leave the command
 		// alone.
 		return 0, false
 	}
+	self, _, _ := procGetCurrentProcess.Call()
+	theirs, ok1 := processCreationTime(syscall.Handle(h))
+	ours, ok2 := processCreationTime(syscall.Handle(self))
+	if !ok1 || !ok2 || theirs > ours {
+		syscall.CloseHandle(syscall.Handle(h))
+		return 0, false
+	}
 	return syscall.Handle(h), true
+}
+
+// processCreationTime returns when the process behind h was created, in the
+// FILETIME units GetProcessTimes reports.
+func processCreationTime(h syscall.Handle) (uint64, bool) {
+	var created, exited, kernel, user syscall.Filetime
+	ret, _, _ := procGetProcessTimes.Call(uintptr(h),
+		uintptr(unsafe.Pointer(&created)), uintptr(unsafe.Pointer(&exited)),
+		uintptr(unsafe.Pointer(&kernel)), uintptr(unsafe.Pointer(&user)))
+	if ret == 0 {
+		return 0, false
+	}
+	return uint64(created.HighDateTime)<<32 | uint64(created.LowDateTime), true
 }
 
 // parentProcessID finds this process's parent via a process snapshot.

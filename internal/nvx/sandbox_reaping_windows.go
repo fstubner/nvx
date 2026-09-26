@@ -115,11 +115,19 @@ func openProcessForJob(pid uint32) (syscall.Handle, error) {
 }
 
 // processIsRunning reports whether pid still refers to a live process.
+//
+// Only ERROR_INVALID_PARAMETER means no such process. Any other OpenProcess
+// failure resolves towards "running", as on Unix: ERROR_ACCESS_DENIED is what a
+// live process this nvx may not open returns (measured 2026-09-26 on pid 4 and
+// on csrss), and a wrong "not running" lets cleanup delete a live session's home.
 func processIsRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
 	h, _, err := procOpenProcessForJob.Call(uintptr(processSynchronize), 0, uintptr(pid))
 	if h == 0 {
-		_ = err
-		return false
+		const errorInvalidParameter = syscall.Errno(87)
+		return err != errorInvalidParameter
 	}
 	handle := syscall.Handle(h)
 	defer syscall.CloseHandle(handle)
@@ -204,9 +212,13 @@ func superviseProcessTree(process syscall.Handle) (cleanup func()) {
 		LogWarn("Could not enable process-tree reaping for this sandbox session: %v", err)
 		return func() { _ = syscall.CloseHandle(job) }
 	}
-	// Only after a successful assignment, so membership actually means something,
-	// and before the target runs, so no tunnel traffic can arrive while it is
-	// still unset.
+	// Only after a successful assignment, so membership actually means something.
+	//
+	// The target is already running by now. launchAppContainerProcessOnce does
+	// not create it suspended, so it runs from CreateProcess until this
+	// assignment. A process it spawns in that window is outside the job, is not
+	// reaped with it, and fails the tunnel's peer check. Creating it suspended
+	// and resuming it after this would close the window.
 	setSessionJob(job)
 	return func() {
 		setSessionJob(0)

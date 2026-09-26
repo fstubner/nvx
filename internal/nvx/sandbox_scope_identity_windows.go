@@ -17,11 +17,12 @@ import (
 
 // The containment identity problem this file solves.
 //
-// The AppContainer profile is stable on purpose: `nvx setup` grants drive-root
-// stat access to its SID, and that grant has to survive across runs. But it means
-// every sandbox session on the machine runs as the SAME security identity, while
-// prepareAppContainerFilesystem grants that identity (M) on each working
-// directory and never revokes it.
+// Before 0.5.0 the AppContainer profile was one shared profile: `nvx setup`
+// granted drive-root stat access to its SID, and that grant had to survive
+// across runs. But it meant every sandbox session on the machine ran as the SAME
+// security identity, while prepareAppContainerFilesystem granted that identity
+// (M) on each working directory and never revoked it. Current launches run under
+// a per-project package and never carry that shared SID.
 //
 // Those two compose into a hole. The grant added while installing in project A is
 // still present, and still satisfied by the same SID, when nvx later runs in
@@ -103,11 +104,29 @@ func deriveCapabilitySIDString(name string) (string, error) {
 	if ret == 0 {
 		return "", fmt.Errorf("DeriveCapabilitySidsFromName(%q): %v", name, callErr)
 	}
+	// The caller owns both arrays and every SID in them, each freed with
+	// LocalFree. Nothing freed them, so each derivation leaked a little.
+	defer freeLocalSIDArray(groupSids, groupCount)
+	defer freeLocalSIDArray(capSids, capSidCount)
 	if capSidCount == 0 || capSids == nil {
 		return "", fmt.Errorf("DeriveCapabilitySidsFromName(%q) returned no capability SIDs", name)
 	}
 	// Only the first capability SID is used; a single name yields exactly one.
 	return appContainerSidToString(uintptr(unsafe.Pointer(*capSids)))
+}
+
+// freeLocalSIDArray frees an array of n SIDs, and the array, that a Windows call
+// allocated with LocalAlloc.
+func freeLocalSIDArray(arr **syscall.SID, n uint32) {
+	if arr == nil {
+		return
+	}
+	for _, sid := range unsafe.Slice(arr, n) {
+		if sid != nil {
+			_, _ = syscall.LocalFree(syscall.Handle(unsafe.Pointer(sid)))
+		}
+	}
+	_, _ = syscall.LocalFree(syscall.Handle(unsafe.Pointer(arr)))
 }
 
 // scopeCapabilitySID returns the capability SID that identifies scopeDir,
@@ -134,14 +153,14 @@ func scopeCapabilitySID(scopeDir string) (string, error) {
 // removeStaleAppContainerGrant deletes an explicit ACE for the shared package SID
 // from a path now governed by a per-project capability.
 //
-// Without this the fix would do nothing for anyone upgrading: every project nvx
-// has already run in still carries a (M) ACE for the shared SID, which every
-// future session still holds. Inherited ACEs are untouched by /remove:g, so the
+// Without this, every project an older nvx ran in keeps a (M) ACE for the shared
+// SID. Current launches no longer hold that SID, but any sandbox an older nvx
+// build starts still does. Inherited ACEs are untouched by /remove:g, so the
 // drive-root grants `nvx setup` adds are not affected.
 //
 // Best-effort. Failing to clean an old grant leaves the previous behaviour for
 // that one path, which is worth a log line and not worth refusing to run.
-func removeStaleAppContainerGrant(packageSIDStr, path string) {
+func removeStaleAppContainerGrant(path string) {
 	if path == "" {
 		return
 	}
@@ -262,13 +281,20 @@ func staleAppContainerSIDsOn(path string) []string {
 		// false in every clause. The same scan drives the launch-path cleanup, so
 		// the bad match would also have revoked a grant nvx had just written.
 		// Legacy grants are modify and still match.
-		if e.Mask&^aclMaskTraverse == 0 {
+		if !maskGrantsMoreThanTraverse(e.Mask) {
 			continue
 		}
 		seen[e.SID] = true
 		sids = append(sids, e.SID)
 	}
 	return sids
+}
+
+// maskGrantsMoreThanTraverse reports whether an access mask grants anything
+// beyond traverse and read-attributes, which is what makes a package entry a
+// leftover rather than the ancestor grant nvx writes today.
+func maskGrantsMoreThanTraverse(mask uint32) bool {
+	return mask&^aclMaskTraverse != 0
 }
 
 // The two helpers that used to sit here read rights out of the TEXT icacls

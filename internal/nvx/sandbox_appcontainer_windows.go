@@ -86,7 +86,7 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 		if err := grantSandboxModify(capSID, guestHome); err != nil {
 			return nil, "", err
 		}
-		removeStaleAppContainerGrant(packageSIDStr, guestHome)
+		removeStaleAppContainerGrant(guestHome)
 		if err := labelLowIntegrity(guestHome); err != nil {
 			return nil, "", fmt.Errorf("integrity label for %q: %w", guestHome, err)
 		}
@@ -110,7 +110,7 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 				LogWarn("Could not grant the sandbox write access to %q: %v", workDir, err)
 				LogInfo("Commands that write the current folder may fail here; run from a project subfolder, or use --no-sandbox.")
 			}
-			removeStaleAppContainerGrant(packageSIDStr, workDir)
+			removeStaleAppContainerGrant(workDir)
 		} else if !grantNonProjectWorkdir(nvxHome, capSID, packageSIDStr, workDir) {
 			// The command cannot even start in a directory the sandbox may not
 			// enter, so it starts in the sandbox's home. See grantNonProjectWorkdir.
