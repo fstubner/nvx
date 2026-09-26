@@ -118,6 +118,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx grants reset --all` works after a grant has been recorded.** It read
+  the lock file kept beside each grant record as a record of its own, failed to
+  parse it, exited 1 and said to remove permissions with icacls by hand, on
+  every run after the first grant. It now skips lock and temp files, and both
+  reset forms hold the record's lock while they read, withdraw and delete it, so
+  a grant saved at the same moment is not deleted with it.
+
 * **`nvx doctor` no longer calls a bypassed command healthy.** It listed
   `[FAIL] npm -> ... (bypasses nvx)` and then said "nvx is intercepting commands
   correctly" and exited 0, because it only counted nvx's own runtime folders as

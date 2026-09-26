@@ -12,7 +12,17 @@ func lockProjectGrants(nvxHome, scope string) (unlock func(), err error) {
 	if err := os.MkdirAll(grantsDir(nvxHome), 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(grantsPath(nvxHome, scope)+".lock", os.O_RDWR|os.O_CREATE, 0o600)
+	return lockGrantsLedger(grantsPath(nvxHome, scope))
+}
+
+// grantsLockSuffix names the lock file beside each ledger. It is not a ledger,
+// and a walk over the grants directory has to know that; see isGrantsLedgerName.
+const grantsLockSuffix = ".lock"
+
+// lockGrantsLedger takes the lock for the ledger at path, for callers that
+// reach a ledger by its file rather than by its project.
+func lockGrantsLedger(path string) (unlock func(), err error) {
+	f, err := os.OpenFile(path+grantsLockSuffix, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, err
 	}
