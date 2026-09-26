@@ -130,6 +130,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   added POSIX lines to `~/.profile`, which fish never reads, and reported the
   profile as updated. It now prints the `fish_add_path` command to run.
 
+* **The one-line Windows install leaves your PowerShell session as it was.**
+  Run as `irm ... | iex`, install.ps1 left `$ErrorActionPreference = 'Stop'`,
+  a TLS 1.2-only connection setting, and its own variables and functions in
+  the window it was pasted into. It now runs in a scope of its own and puts
+  the TLS setting back.
+
 * **Homebrew and Scoop releases are checked against their build provenance.**
   Only the npm publish checked that a binary was built by `release.yml`. The
   Homebrew and Scoop jobs trusted a `.sha256` file from the same release page

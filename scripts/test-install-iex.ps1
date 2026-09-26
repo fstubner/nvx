@@ -47,7 +47,7 @@ if ($leaks) {
 '@.Replace('__INSTALLER__', $installer)
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childScript))
 $child = Start-Process -FilePath (Get-Process -Id $PID).Path -Wait -PassThru -NoNewWindow -ArgumentList @(
-    '-NoProfile', '-EncodedCommand', $encoded)
+    '-NoProfile', '-OutputFormat', 'Text', '-EncodedCommand', $encoded)
 
 if ($child.ExitCode -eq 3) {
     Write-Error "install.ps1 through Invoke-Expression left its own settings in the session it ran in (see LEAKED above)."
