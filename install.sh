@@ -24,7 +24,10 @@ case "$ARCH" in
         ARCH_LABEL="arm64"
         ;;
     *)
-        ARCH_LABEL="amd64"
+        # Releases are built for amd64 and arm64 only. This used to fall back
+        # to amd64, which installs a binary that cannot run on this machine.
+        echo "Error: unsupported CPU architecture '$ARCH'. nvx is released for x86_64 and arm64 only." >&2
+        exit 1
         ;;
 esac
 
@@ -58,6 +61,13 @@ else
         fetch() { wget -qO "$2" "$1"; }
     else
         echo "Error: Neither curl nor wget was found. Please install one of them." >&2
+        exit 1
+    fi
+    # Checked before downloading. Without either tool the hash came out empty,
+    # and the error said the checksum did not match.
+    if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+        echo "Error: Neither sha256sum nor shasum was found, so the download cannot be verified." >&2
+        echo "Install coreutils (for sha256sum) or perl (for shasum)." >&2
         exit 1
     fi
 
@@ -209,6 +219,17 @@ case "$SHELL_NAME" in
         # zsh reads .zshrc for every interactive shell, login or not, so one file
         # covers both cases.
         setup_profile "$HOME/.zshrc" "true"
+        ;;
+    fish)
+        # fish never reads ~/.profile, and the lines above are POSIX syntax it
+        # cannot run. This branch used to write them there anyway and report
+        # the profile as updated. `nvx env` has no fish output, so PATH is the
+        # whole of the setup.
+        echo ""
+        echo "nvx has been installed to $BIN_DIR."
+        echo "fish is not set up automatically. To put nvx on PATH for every fish session, run:"
+        echo "  fish_add_path \$HOME/.nvx/bin"
+        exit 0
         ;;
     *)
         setup_profile "$HOME/.profile" "true"

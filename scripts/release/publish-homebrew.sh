@@ -16,7 +16,9 @@
 # Formula/nvx.rb, so the two coexist.
 #
 # Required environment:
-#   GH_TOKEN - PAT with `repo` scope on fstubner/homebrew-tap.
+#   GH_TOKEN             - PAT with `repo` scope on fstubner/homebrew-tap.
+#   ATTESTATION_GH_TOKEN - token that can read this repo's attestations,
+#                          for verified_sha in lib.sh.
 # Required argument:
 #   $1 - tag, e.g. "v0.6.0".
 

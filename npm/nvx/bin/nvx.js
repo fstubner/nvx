@@ -11,6 +11,7 @@
 // for gets a clear error rather than a silent half-install.
 
 const { spawnSync } = require('node:child_process');
+const os = require('node:os');
 const path = require('node:path');
 
 const PKGS = {
@@ -50,6 +51,10 @@ if (r.error) {
   console.error(`nvx: could not run ${binary}: ${r.error.message}`);
   process.exit(1);
 }
-// Signals are reported as a name, not a code; 128+n is the shell convention.
-if (r.signal) process.exit(1);
+// A signal is reported as a name, not a code. Exit 128+n for it, as a shell
+// does, so a caller can tell Ctrl-C (130) from a failure.
+if (r.signal) {
+  const n = os.constants.signals[r.signal];
+  process.exit(n ? 128 + n : 1);
+}
 process.exit(r.status === null ? 1 : r.status);

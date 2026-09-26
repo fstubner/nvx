@@ -7,11 +7,11 @@ import "testing"
 // The two readers that decide whether Linux containment happens at all.
 //
 // normalizePolicy now hands them a canonical value, so in principle neither has
-// to trim. They trim anyway, and this asserts it, because both fail OPEN on an
-// unrecognised string: networkModeRequiresNamespace returns false, so no network
-// namespace is created, and seccompFilterForMode returns wanted=false, so
-// applyLinuxNetworkSeccomp returns nil having installed nothing — reporting
-// success to a caller that has no other way to tell.
+// to trim. They trim anyway, and this asserts it. Until 2026-09-26 both failed
+// OPEN on an unrecognised string: networkModeRequiresNamespace returned false,
+// so no network namespace was created, and seccompFilterForMode returned
+// wanted=false, so applyLinuxNetworkSeccomp returned nil having installed
+// nothing — reporting success to a caller that had no other way to tell.
 //
 // A single defence against a fail-open is not enough when the input arrives from
 // a file a project ships. This is the second one.
@@ -37,11 +37,12 @@ func TestLinuxNetworkReadersTolerateUntrimmedModes(t *testing.T) {
 		}
 	}
 
-	// An unrecognised mode still gets none, which is why normalizePolicy has to
-	// guarantee this is never reached with a typo — recorded so the coupling is
-	// visible rather than discovered again.
-	if networkModeRequiresNamespace("offlin") {
-		t.Error("an unrecognised mode was treated as needing a namespace; that is not what this arm does")
+	// An empty or unrecognised mode is proxy, as on Windows. This arm was the
+	// open one until 2026-09-26 and this test pinned it that way.
+	for _, mode := range []string{"", "offlin"} {
+		if !networkModeRequiresNamespace(mode) {
+			t.Errorf("networkModeRequiresNamespace(%q) = false; an unknown mode must not mean the host's network", mode)
+		}
 	}
 }
 
@@ -49,6 +50,7 @@ func TestSeccompFilterIsChosenForUntrimmedModes(t *testing.T) {
 	restricted := []string{
 		"offline", "loopback", "proxy",
 		"offline ", " loopback", "\tproxy\n", "OFFLINE ",
+		"", "offlin", // empty or unknown is proxy
 	}
 	for _, mode := range restricted {
 		filter, wanted := seccompFilterForMode(mode)
@@ -61,7 +63,7 @@ func TestSeccompFilterIsChosenForUntrimmedModes(t *testing.T) {
 		}
 	}
 
-	for _, mode := range []string{"open", "open ", ""} {
+	for _, mode := range []string{"open", "open ", " OPEN"} {
 		if _, wanted := seccompFilterForMode(mode); wanted {
 			t.Errorf("seccompFilterForMode(%q) wanted a filter; that mode asks for none", mode)
 		}

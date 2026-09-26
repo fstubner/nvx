@@ -17,9 +17,8 @@
 # npm resolves the one matching package and executes nothing.
 #
 # Required environment:
-#   NODE_AUTH_TOKEN - npm automation token. Absent means skip, so a release
-#                     on a fork or before the secret exists is not a failure.
-#   GH_TOKEN        - for `gh attestation verify`.
+#   NODE_AUTH_TOKEN - npm automation token. Absent fails the job.
+#   GH_TOKEN        - for `gh attestation verify` (see verified_sha in lib.sh).
 # Required argument:
 #   $1 - tag, e.g. "v0.6.0".
 
@@ -35,10 +34,13 @@ validate_tag "$TAG"
 VERSION="${TAG#v}"
 BASE="https://github.com/fstubner/nvx/releases/download/${TAG}"
 
+# A failure, like a missing token in the Homebrew and Scoop jobs. This used to
+# exit 0, so publish.yml's summary reported npm as published when nothing had
+# been sent to it.
 if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-  echo "NPM_TOKEN is not configured; skipping the npm publish."
-  echo "Add it as a repository secret to enable this step."
-  exit 0
+  echo "::error::NPM_TOKEN is not configured, so nothing was published to npm." >&2
+  echo "Add it as a repository secret and re-run this job." >&2
+  exit 1
 fi
 
 WORKDIR=$(mktemp -d)
@@ -66,12 +68,12 @@ fetch_binary() {
   sha=$(verified_sha "$BASE" "$asset")
   mkdir -p "$(dirname "$dest")"
   curl -fsSL "${BASE}/${asset}" -o "$dest"
+  # verified_sha checked the sidecar and the build provenance of the bytes it
+  # fetched. Matching its digest carries both over to this copy.
   if [[ "$(sha256_of "$dest")" != "$sha" ]]; then
     echo "ERROR: ${asset} changed between verifying it and downloading it" >&2
     return 1
   fi
-  gh attestation verify "$dest" --repo fstubner/nvx \
-    --signer-workflow fstubner/nvx/.github/workflows/release.yml >/dev/null
   echo "   checksum and build provenance match"
 }
 

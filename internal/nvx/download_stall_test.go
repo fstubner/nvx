@@ -1,10 +1,13 @@
 package nvx
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -88,6 +91,54 @@ func TestASlowButSteadyDownloadIsNotCutOff(t *testing.T) {
 	dest := filepath.Join(tempDir(t), "steady.bin")
 	if err := DownloadFile(srv.URL+"/steady.bin", dest); err != nil {
 		t.Fatalf("a slow but steady download was cut off: %v", err)
+	}
+}
+
+// slowBody answers each Read after its delay, with one byte, and then EOF.
+type slowBody struct{ delays []time.Duration }
+
+func (b *slowBody) Read(p []byte) (int, error) {
+	if len(b.delays) == 0 {
+		return 0, io.EOF
+	}
+	time.Sleep(b.delays[0])
+	b.delays = b.delays[1:]
+	p[0] = 'x'
+	return 1, nil
+}
+
+// A Read that returns data after the timer fired re-armed it, and the second
+// fire closed an already closed channel. That panic is in the timer's own
+// goroutine, so it takes the whole process down.
+func TestStallTimerFiringTwiceDoesNotPanic(t *testing.T) {
+	const stall = 50 * time.Millisecond
+	s := newStallReader(context.Background(), func() {}, &slowBody{delays: []time.Duration{3 * stall, 3 * stall}}, stall)
+	defer s.Stop()
+	if _, err := io.Copy(io.Discard, s); err != errDownloadStalled {
+		t.Errorf("err = %v, want the stall error", err)
+	}
+}
+
+// Time the caller spends between Reads, writing to a slow disk say, is not a
+// network stall. The clock ran between Reads and reported one.
+func TestASlowConsumerIsNotAStall(t *testing.T) {
+	const stall = 50 * time.Millisecond
+	var cancelled atomic.Bool
+	s := newStallReader(context.Background(), func() { cancelled.Store(true) }, &slowBody{delays: []time.Duration{0, 0, 0}}, stall)
+	defer s.Stop()
+	buf := make([]byte, 1)
+	for {
+		_, err := s.Read(buf)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		time.Sleep(3 * stall)
+	}
+	if cancelled.Load() {
+		t.Error("a body that answered every Read at once was cancelled as stalled")
 	}
 }
 

@@ -72,6 +72,18 @@ curl() {
 # shellcheck disable=SC2317
 sleep() { :; }
 
+# gh records how it was called, prints to stdout as the real one does, and
+# answers $GH_RESULT.
+GH_CALLS="${TMP}/gh-calls"
+GH_RESULT=0
+# shellcheck disable=SC2317
+gh() {
+  echo "$* token=${GH_TOKEN:-}" >>"$GH_CALLS"
+  echo "Loaded digest sha256:... for file://asset"
+  return "$GH_RESULT"
+}
+
+GH_TOKEN=tap-pat ATTESTATION_GH_TOKEN=workflow-token
 captured="$(verified_sha "https://example.invalid/download/v0.0.0" "nvx-fake")"
 
 if [[ "$(wc -l <"$PROBES")" -lt 2 ]]; then
@@ -91,6 +103,27 @@ if [[ "$captured" == "$DIGEST" ]]; then
 else
   bad "expected '${DIGEST}', got '${captured}'"
 fi
+
+# --- verified_sha checks build provenance --------------------------------
+#
+# The sidecar and the asset come from the same release page, so agreeing
+# with each other proves nothing about where they were built. Only the npm
+# script used to ask for release.yml's attestation.
+
+if grep -q -- "attestation verify .* --repo fstubner/nvx --signer-workflow fstubner/nvx/.github/workflows/release.yml token=workflow-token" "$GH_CALLS" 2>/dev/null; then
+  ok "verified_sha asks gh for release.yml's attestation, with the attestation token"
+else
+  bad "verified_sha did not verify the attestation as expected: '$(cat "$GH_CALLS" 2>/dev/null)'"
+fi
+
+GH_RESULT=1
+if unattested="$(verified_sha "https://example.invalid/download/v0.0.0" "nvx-fake" 2>/dev/null)"; then
+  bad "verified_sha accepted an asset with no build provenance: '${unattested}'"
+else
+  ok "rejects an asset whose build provenance does not verify"
+fi
+GH_RESULT=0
+unset GH_TOKEN ATTESTATION_GH_TOKEN
 
 # --- verified_sha refuses a sidecar that disagrees with the bytes ---------
 #
@@ -120,7 +153,7 @@ else
   ok "rejects a sidecar whose digest is not the digest of the asset"
 fi
 
-unset -f curl sleep
+unset -f curl sleep gh
 
 # --- validate_tag ---------------------------------------------------------
 #

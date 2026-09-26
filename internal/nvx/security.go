@@ -435,6 +435,10 @@ type OSVVuln struct {
 	Severity string `json:"-"`
 }
 
+// osvQueryBatchURL is OSV's batch endpoint. A variable so a test can point it at
+// a local server.
+var osvQueryBatchURL = "https://api.osv.dev/v1/querybatch"
+
 // ScanVulnerabilitiesBatch queries the OSV API for multiple packages in a single batch request
 func ScanVulnerabilitiesBatch(packages []OSVQuery) (map[string][]OSVVuln, error) {
 	if len(packages) == 0 {
@@ -448,7 +452,7 @@ func ScanVulnerabilitiesBatch(packages []OSVQuery) (map[string][]OSVVuln, error)
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post("https://api.osv.dev/v1/querybatch", "application/json", bytes.NewBuffer(data))
+	resp, err := client.Post(osvQueryBatchURL, "application/json", bytes.NewBuffer(data))
 	if err != nil {
 		return nil, fmt.Errorf("OSV API connection failed: %w", err)
 	}

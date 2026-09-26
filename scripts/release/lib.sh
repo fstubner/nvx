@@ -73,6 +73,16 @@ wait_for_asset() {
 # require all three of (sidecar is 64 hex chars), (local hash is 64 hex
 # chars), (they match). Any failure aborts the publish.
 #
+# That still only proves the two files agree, and both come from the release
+# page. So the asset must also carry the build provenance release.yml
+# attested for it. A file swapped on the release page after the build, with
+# a sidecar to match, fails here. This check used to live in the npm script
+# only, so Homebrew and Scoop published whatever the page held.
+#
+# `gh` reads ATTESTATION_GH_TOKEN when it is set, and GH_TOKEN otherwise. The
+# Homebrew and Scoop jobs hold a PAT for their own repository in GH_TOKEN,
+# and hand this check the workflow's token instead.
+#
 # Usage: sha=$(verified_sha "$BASE" "nvx-linux-amd64")
 verified_sha() {
   local base="$1" asset="$2"
@@ -113,6 +123,15 @@ verified_sha() {
     echo "ERROR: checksum mismatch for ${asset}" >&2
     echo "       sidecar says: ${expected}" >&2
     echo "       actual bytes: ${actual}" >&2
+    return 1
+  fi
+
+  # stdout to stderr: every caller captures this function's stdout as the
+  # digest (see wait_for_asset).
+  if ! GH_TOKEN="${ATTESTATION_GH_TOKEN:-${GH_TOKEN:-}}" gh attestation verify "$workdir/asset" \
+      --repo fstubner/nvx \
+      --signer-workflow fstubner/nvx/.github/workflows/release.yml >&2; then
+    echo "ERROR: ${asset} has no build provenance from release.yml" >&2
     return 1
   fi
 

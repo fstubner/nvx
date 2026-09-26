@@ -11,6 +11,14 @@ param(
 
 # Installer script for nvx (Node Version X-platform)
 
+# The body is a script block, run with & so it has a scope of its own. The
+# documented install is `irm ... | iex`, and Invoke-Expression runs a script
+# in the caller's session. Without the block, $ErrorActionPreference = 'Stop'
+# and every variable and function below stayed in the PowerShell window the
+# line was pasted into. -LibraryOnly dot-sources the block instead, because
+# scripts/test-install-*.ps1 need its functions in their own scope.
+$nvxInstaller = {
+
 $ErrorActionPreference = 'Stop'
 
 # Define installation paths
@@ -179,6 +187,9 @@ if ($useLocalBinary -and $localBinary -and (Test-Path $localBinary)) {
 
     $checksumUrl = "$downloadUrl.sha256"
     Write-Host "Downloading nvx.exe from $downloadUrl..."
+    # Process-wide, so a scope does not contain it. Put back in the finally
+    # below, or the session that ran `iex` is left TLS 1.2 only.
+    $previousProtocol = [System.Net.ServicePointManager]::SecurityProtocol
     [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
     $binPath = Join-Path $binDir "nvx.exe"
     $downloadPath = "$binPath.download"
@@ -204,6 +215,8 @@ if ($useLocalBinary -and $localBinary -and (Test-Path $localBinary)) {
         # statement never ran; after one ending in throw it did. Run with
         # -File, an uncaught throw still exits 1.
         throw "nvx was not installed: $_"
+    } finally {
+        [System.Net.ServicePointManager]::SecurityProtocol = $previousProtocol
     }
 }
 
@@ -294,3 +307,15 @@ Write-Host "nvx has been successfully installed!"
 
 Write-Host ""
 Write-Host "Please open a new PowerShell window to start using nvx."
+}
+
+if ($LibraryOnly) {
+    . $nvxInstaller
+    Remove-Variable nvxInstaller
+    return
+}
+try {
+    & $nvxInstaller
+} finally {
+    Remove-Variable nvxInstaller -ErrorAction SilentlyContinue
+}

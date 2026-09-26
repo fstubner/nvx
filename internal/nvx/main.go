@@ -314,13 +314,7 @@ func Main() {
 		LogSuccess("Sandbox cleanup complete.")
 
 	case "doctor":
-		fixPath := false
-		for _, a := range os.Args[2:] {
-			if a == "--fix" {
-				fixPath = true
-			}
-		}
-		os.Exit(runDoctor(nvxHome, fixPath))
+		os.Exit(runDoctor(nvxHome, doctorFixRequested(os.Args[2:])))
 
 	case "report":
 		os.Exit(runReport(os.Args[2:]))

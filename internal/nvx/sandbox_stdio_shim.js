@@ -429,12 +429,22 @@ try {
       // limitation, not a new failure.
       let stdinDir = null;
       let stdinTaken = null;
+      // The stdin descriptor this shim opened, and so the only one it may close.
+      // A caller's own numeric fd in slot 0, even 0 itself, stays the caller's.
+      let ownStdinFd = null;
+      const dropStdinDir = function () {
+        if (stdinDir) {
+          try { fs.rmSync(stdinDir, { recursive: true, force: true }); } catch (e) {}
+          stdinDir = null;
+        }
+      };
       if (fds[0] === 'pipe') {
         // The child reads childPipe as its fd 0; this process writes nodePipe,
         // and nvx pumps one into the other.
         const t = claim(freeIn);
         if (t) {
           fds[0] = t.childFd;
+          ownStdinFd = t.childFd;
           stdinTaken = { ch: t.ch, childFd: t.childFd, writeFd: t.nodeFd };
         } else {
           try {
@@ -442,7 +452,9 @@ try {
             const emptyPath = path.join(stdinDir, 'stdin');
             fs.writeFileSync(emptyPath, '');
             fds[0] = fs.openSync(emptyPath, 'r');
+            ownStdinFd = fds[0];
           } catch (e) {
+            dropStdinDir();
             return spawnThroughFiles(command, argv, opts, stdio, wanted);
           }
         }
@@ -458,9 +470,10 @@ try {
           if (stdinTaken) {
             release(freeIn, stdinTaken.ch, stdinTaken.childFd, stdinTaken.writeFd);
             stdinTaken = null;
-          } else if (typeof fds[0] === 'number') {
-            try { fs.closeSync(fds[0]); } catch (e) {}
+          } else if (ownStdinFd !== null) {
+            try { fs.closeSync(ownStdinFd); } catch (e) {}
           }
+          dropStdinDir();
           return spawnThroughFiles(command, argv, opts, stdio, wanted);
         }
         fds[i] = t.childFd;
@@ -561,11 +574,12 @@ try {
         for (const t of taken) {
           try { fs.closeSync(t.writeFd); } catch (e) {}
         }
-        if (typeof fds[0] === 'number') {
-          try { fs.closeSync(fds[0]); } catch (e) {}
+        if (ownStdinFd !== null) {
+          try { fs.closeSync(ownStdinFd); } catch (e) {}
         }
       });
       child.once('close', function () {
+        dropStdinDir();
         for (const t of taken) free.push(t.ch);
         if (stdinTaken) {
           // Destroy rather than close the fd directly: the socket owns it, and

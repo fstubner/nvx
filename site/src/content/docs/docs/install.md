@@ -15,8 +15,13 @@ irm https://nvx.run/install.ps1 | iex
 curl -fsSL https://nvx.run/install.sh | sh
 ```
 
-Read a script before piping it to a shell. This one creates `~/.nvx`, puts a
-single binary in `~/.nvx/bin`, and adds one line to your shell profile.
+Read a script before piping it to a shell. Each creates `~/.nvx` and puts a
+single binary in `~/.nvx/bin`. `install.sh` then adds a three-line block to your
+shell profile: a comment, a line putting `~/.nvx/bin` on `PATH`, and
+`eval "$(nvx env)"`. For bash it writes the block to `~/.bashrc` and to your
+login profile, `~/.zshrc` for zsh, and `~/.profile` otherwise. `install.ps1`
+adds `~/.nvx/bin` to your user `PATH` and one integration line, with a comment
+above it, to your PowerShell `$PROFILE`.
 
 ## Prebuilt binaries
 
@@ -59,5 +64,10 @@ repairs what it safely can.
 
 ## Uninstall
 
-Remove `~/.nvx`, take `~/.nvx/bin` off your `PATH`, and delete the integration
-line from your shell profile.
+1. If you ever ran `nvx setup` on Windows, run `nvx setup --undo` from an
+   Administrator terminal to remove the drive-root grants it added.
+2. Run `nvx grants reset --all` to withdraw the read and execute permissions
+   granted for `allow_read_exec` entries, and to forget approved grants.
+3. Delete `~/.nvx`.
+4. Remove the nvx lines from your shell profile, or from `$PROFILE` on Windows.
+5. On Windows, remove `%USERPROFILE%\.nvx\bin` from your user `Path` variable.

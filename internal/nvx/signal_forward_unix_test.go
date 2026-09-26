@@ -52,6 +52,33 @@ func TestTerminatingNvxTerminatesTheSandboxedChild(t *testing.T) {
 	}
 }
 
+// A SIGTERM that arrives while the child is starting still reaches the child.
+// The handler used to be installed after Start, so a signal in that window took
+// the default action and killed nvx, leaving the child running. Here that shows
+// as the test binary dying.
+func TestSignalDuringChildStartIsForwarded(t *testing.T) {
+	beforeChildStart = func() {
+		_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+		time.Sleep(200 * time.Millisecond) // let it be delivered before Start
+	}
+	defer func() { beforeChildStart = nil }()
+
+	errs := make(chan error, 1)
+	go func() { errs <- runChildForwardingSignals(exec.Command("/bin/sh", "-c", "sleep 60")) }()
+	select {
+	case err := <-errs:
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("expected the child to be terminated, got %v", err)
+		}
+		if ws, ok := exitErr.Sys().(syscall.WaitStatus); !ok || ws.Signal() != syscall.SIGTERM {
+			t.Errorf("the child ended with %v, want SIGTERM", err)
+		}
+	case <-time.After(childTerminationGrace + 10*time.Second):
+		t.Fatal("the signal sent during start never reached the child")
+	}
+}
+
 // The child's exit status still comes back unchanged -- the forwarding wrapper
 // stands in for cmd.Run, and a wrong exit code from a sandboxed command is a
 // silent failure in any script that checks one.

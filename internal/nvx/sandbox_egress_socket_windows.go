@@ -11,22 +11,8 @@ import (
 // windowsEgressSocketName is the UNIX socket, inside the guest home, that the
 // parent's egress proxy listens on in addition to its TCP listeners. The guest
 // home is already granted to the AppContainer, so no extra ACL is needed to reach
-// it -- and the name is kept short because of unixSocketPathMax below.
+// it -- and the name is kept short because of unixSocketPathMax.
 const windowsEgressSocketName = "egress.sock"
-
-// unixSocketPathMax is the size of sockaddr_un.sun_path. Windows uses the same
-// 108-byte field as Unix, and afunix.sys rejects anything longer with
-// WSAEINVAL -- which surfaces from Go as "bind: invalid argument", a message
-// indistinguishable from a permissions failure. The relay probe hit exactly this
-// and it cost a wrong diagnosis, so the length is checked up front and reported
-// as what it is.
-const unixSocketPathMax = 108
-
-// egressSocketPathFits reports whether path can be bound as an AF_UNIX socket.
-// One byte is reserved for the terminating NUL.
-func egressSocketPathFits(path string) bool {
-	return path != "" && len(path) < unixSocketPathMax
-}
 
 func windowsEgressSocketPath(guestHome string) string {
 	return filepath.Join(guestHome, windowsEgressSocketName)
