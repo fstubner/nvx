@@ -136,11 +136,11 @@ func TestDenyACEHidesSecretFromAppContainer(t *testing.T) {
 	// So: a contained process CAN read .env, and README.md's claim that "a bad
 	// package can't quietly read your .env" is false on Windows. If this test ever
 	// fails because the secret became unreadable, that is good news -- someone found
-	// a mechanism that works. Update the README and this test together.
+	// a mechanism that works. Update the known limitations page and this test together.
 	if contains(got, "SECRET=READ:") {
 		t.Log("CONFIRMED (unwanted): a contained process reads .env from the project directory; deny ACEs do not prevent it")
 	} else if contains(got, "SECRET=DENIED") {
-		t.Error("`.env` is now unreadable from the sandbox -- the documented limitation no longer holds, so update README.md and this test")
+		t.Error("`.env` is now unreadable from the sandbox -- the documented limitation no longer holds, so update site/src/content/docs/docs/limitations.md and this test")
 	} else {
 		t.Errorf("inconclusive secret result in %q", got)
 	}

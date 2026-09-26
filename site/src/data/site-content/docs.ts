@@ -16,7 +16,18 @@ export const docsSidebar: DocsSection[] = [
     ],
   },
   {
+    label: 'Security',
+    items: [
+      { label: 'Containment', link: '/docs/containment/' },
+      { label: 'Policy', link: '/docs/policy/' },
+      { label: 'Known limitations', link: '/docs/limitations/' },
+    ],
+  },
+  {
     label: 'Reference',
-    items: [{ label: 'Commands', link: '/docs/commands/' }],
+    items: [
+      { label: 'Commands', link: '/docs/commands/' },
+      { label: 'FAQ', link: '/docs/faq/' },
+    ],
   },
 ];

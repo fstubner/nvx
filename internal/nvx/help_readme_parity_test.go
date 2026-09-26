@@ -5,8 +5,9 @@ import (
 	"testing"
 )
 
-// The command list exists twice -- in `nvx help` and in README.md's CLI Usage
-// block -- and drifts silently.
+// The command list exists twice -- in `nvx help` and in the docs site's command
+// reference (it was README.md's CLI Usage block until 2026-09-26) -- and drifts
+// silently.
 //
 // It had already drifted when this test was written: the README was missing
 // doctor, grants, import, setup and shim, some of them for several releases.
@@ -19,7 +20,7 @@ import (
 // deliberately undocumented, so "documented in both places" is the property
 // worth having, and it is the one that broke.
 func TestHelpAndReadmeListTheSameCommands(t *testing.T) {
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(commandReferenceDoc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,10 +34,10 @@ func TestHelpAndReadmeListTheSameCommands(t *testing.T) {
 	}
 
 	if missing := difference(inHelp, inReadme); len(missing) > 0 {
-		t.Errorf("commands in `nvx help` but not in README.md: %v", missing)
+		t.Errorf("commands in `nvx help` but not in %s: %v", commandReferenceDoc, missing)
 	}
 	if extra := difference(inReadme, inHelp); len(extra) > 0 {
-		t.Errorf("commands in README.md but not in `nvx help`: %v", extra)
+		t.Errorf("commands in %s but not in `nvx help`: %v", commandReferenceDoc, extra)
 	}
 }
 
