@@ -517,6 +517,43 @@ try {
         try { child.stdio[0] = inStream; } catch (e) {}
       }
 
+      // 'close' waits for the output, as it does for a real pipe.
+      //
+      // node counts only the stdio streams it created itself before emitting
+      // 'close', and these slots were handed over as descriptors, so 'close'
+      // fired as soon as the child exited -- while nvx was still pumping its
+      // output from one pipe to the other. A caller reading its buffer in
+      // 'close' got part of it: a CI run on 2026-09-26 saw 1 line of 200 from
+      // two of twelve children. Holding 'close' until every substituted reader
+      // has closed restores node's order. It is also when the channels go back
+      // to the pool, below, so a channel is never reused while still being read.
+      const readers = [];
+      for (const t of taken) {
+        const s = t.slot === 1 ? child.stdout : child.stderr;
+        if (s && typeof s.once === 'function') readers.push(s);
+      }
+      if (readers.length) {
+        const realEmit = child.emit;
+        let open = readers.length;
+        let heldClose = null;
+        const readerClosed = function () {
+          open--;
+          if (open === 0 && heldClose) {
+            const args = heldClose;
+            heldClose = null;
+            realEmit.apply(child, args);
+          }
+        };
+        for (const s of readers) s.once('close', readerClosed);
+        child.emit = function (event) {
+          if (event === 'close' && open > 0) {
+            heldClose = Array.prototype.slice.call(arguments);
+            return true;
+          }
+          return realEmit.apply(this, arguments);
+        };
+      }
+
       // This process also holds the child's write end, and while it does the
       // reader never sees EOF: the stream would deliver every byte and then hang
       // forever, which is the bug being fixed wearing a disguise.
