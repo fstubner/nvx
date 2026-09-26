@@ -118,6 +118,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx doctor` no longer calls a bypassed command healthy.** It listed
+  `[FAIL] npm -> ... (bypasses nvx)` and then said "nvx is intercepting commands
+  correctly" and exited 0, because it only counted nvx's own runtime folders as
+  shadowing. A system Node earlier on PATH, the usual Windows layout, now makes
+  doctor exit non-zero.
+
 * **`exec()` and `execFile()` no longer hang inside the Windows sandbox.** node's
   own versions call a spawn the sandbox's preload could not reach, so they took
   the path that blocks forever before the child exists. A contained
