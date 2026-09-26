@@ -4,7 +4,8 @@ nvx records its security decisions to `~/.nvx/audit.log` (`$NVX_HOME/audit.log`)
 Nothing is ever sent anywhere: there is no uploader in nvx, and this file is read
 by `nvx audit`, by `nvx audit export`, and by whatever you point at it.
 
-`nvx audit export` is the supported way to read it from another program:
+`nvx audit export` is the supported way to read it from another program. It is
+not in v0.6.0 and is coming in the next release.
 
 ```
 nvx audit export --since 7d --event egress_deny --format csv --out evidence.csv

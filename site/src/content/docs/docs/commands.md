@@ -11,7 +11,7 @@ Run `nvx help <command>` for any of these.
 
 | Command | What it does |
 | --- | --- |
-| `nvx install <version>` | Install a Node.js or Bun version. Accepts `22`, `lts`, `latest`, a range, or whatever a `.nvmrc` says. |
+| `nvx install <version>` | Install a Node.js or Bun version. Accepts `22`, `lts`, `latest` or a range. The version is required. `nvx auto` is what reads a `.nvmrc`. |
 | `nvx use <version>` | Switch this shell to a version. |
 | `nvx default <version>` | Set the version new shells start on. |
 | `nvx list` | Installed versions. `nvx list-remote` lists what is available. |
@@ -39,7 +39,8 @@ Run `nvx help <command>` for any of these.
 | `nvx doctor` | Whether interception, the shell integration and containment are healthy. `--fix` repairs what it can. |
 | `nvx policy init` | Write a global or project policy file. |
 | `nvx audit` | What nvx recorded: runs, blocked hosts, prompts and how they were answered. |
-| `nvx grants` | Filesystem grants the sandbox holds, and which project each belongs to. |
+| `nvx grants list` | This project's approved egress hosts, trusted tools, and policy pins. |
+| `nvx grants reset [--all]` | Forget this project's grants, or every project's with `--all`. |
 | `nvx env` | Print the shell integration snippet. |
 | `nvx report` | A diagnostic bundle to attach to a bug report. |
 
@@ -68,105 +69,120 @@ Set `NVX_TRUST_YES=true` only when you have read what you are trusting.
 
 ## Full reference
 
-The complete `nvx help` surface, including every flag and environment variable.
+The output of `nvx help` on the current `main` branch.
 
 ```text
-nvx <command> [arguments]
+nvx - A modern, secure, cross-platform runtime version manager
+
+Usage:
+  nvx <command> [arguments]
+
+Runtimes: Node.js and Bun. A bare version means Node.js (nvm-compatible);
+name another runtime before an '@' (e.g. bun@1.2).
 
 Commands:
-  install <[rt@]version>   Install a runtime version. Bare version = Node.js
-                           (e.g. 20, lts, latest); prefix a runtime with @
-                           (e.g. bun@1.2, bun).
+  install <[rt@]version>   Download and install a runtime version (e.g. 20, lts, bun@1.2)
   uninstall <[rt@]version> Remove an installed runtime version
-  use <[rt@]version>       Switch the current terminal session (installs if missing)
+  use <[rt@]version>       Switch the current terminal session to a runtime version
   default <[rt@]version>   Set the global default for a runtime (creates a link)
   list, ls                 List installed runtimes and versions
   list-remote, ls-remote   List available Node.js versions from nodejs.org
   env [--shell=<type>]     Print shell integration script (powershell, bash, zsh)
-  auto [--shell=<type>]    Auto-switch based on .nvmrc / .node-version /
-                           .bun-version / package.json engines
-  import [nvm|fnm|volta]   Import Node.js versions already installed via nvm, fnm
-                           or volta (defaults to scanning all three)
-  init-shims               Generate PATH shims in ~/.nvx/bin (and project bin
-                           shims when run inside a project)
-  policy init              Create default policy files (--global, --project, --force)
+  auto [--shell=<type>]    Auto-switch runtimes from .nvmrc / .node-version /
+                           .bun-version / package.json
+  verify-install <pkgs>    Verify package safety before installing (called by wrappers)
+  init-shims               Generate PATH shims in ~/.nvx/bin (and project bin shims in a project)
+  policy init              Scaffold ~/.nvx/policy.json and/or .nvx-policy.json
   policy check             Check this project against the policy in force, with a
                            distinct exit code per failure class, for CI
-                           (--format=json, --online)
-  policy explain           Show each setting's effective value and where it came
-                           from
-  doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH.
-                           Diagnosis is read-only; --fix repairs a shadowed
-                           persistent PATH
-  grants list              Show this project's approved egress hosts, trusted
-                           tools, and policy pins
-  grants reset [--all]     Forget this project's grants (or every project's)
-  audit [--summary]        Review the local record of security decisions, and of
-                           past runs when NVX_TRACE=1 (--runs, --failures,
-                           --limit=N, --all)
-  audit export             Export that record as json, jsonl or csv, filtered by
-                           time and event (--since, --event, --format, --out)
-  report [--out=FILE]      Collect version, interception, policy and log tails
-                           into one file to read and send on. Nothing is uploaded
+  policy explain           Show each setting's effective value and where it came from
+  shim <cmd> [args]        Internal shim router for package managers
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;
                            every run reclaims some automatically)
-  setup [--undo]           (Windows, Administrator) Grant the sandbox stat access
+  setup                    (Windows, Administrator) Grant the sandbox stat access
                            to the roots of the volumes nvx, your profile and the
-                           current directory live on, and remove a loopback
-                           exemption an older nvx left. Optional: installs and
-                           `npx` do not need it. Slow on a large volume
-  verify-install <pkgs>    Verify package safety before installing (called by shims)
-  shim <cmd> [args]        Internal shim router (called by generated wrappers)
+                           current directory live on. Optional: installs and npx
+                           do not need it; only a tool that resolves a path all
+                           the way up to a drive root does, and nvx names this
+                           command after such a failure. Slow on a large volume.
+                           Also removes a loopback exemption an older nvx left;
+                           '--all-drives' covers every fixed volume, which is
+                           slow on large ones. 'setup --undo' reverses it
+  doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
+  grants list              Show this project's approved egress hosts, trusted tools, and policy pins
+  grants reset [--all]     Forget this project's grants (or every project's, with --all)
+  audit [--summary]        Review the local record of past runs and security decisions
+  audit export             Export that record as json, jsonl or csv, filtered by
+                           time and event, for a compliance pipeline
+  report [--out=FILE]      Collect version, interception, policy and logs into one file
+  import [nvm|fnm|volta]   Import Node.js versions already installed via nvm, fnm, or volta
+                           (defaults to scanning all three)
   version, -v              Print version info
   help [command]           Show this list, or detail for one command
 
-Isolation flags — ALL of these go BEFORE the command, as
-`nvx --no-sandbox npm ...`. Written after it they belong to the command: nvx
-notices them, says they did not apply, and passes them through untouched. That
-holds in both directions — no package can escape the sandbox by tacking a flag
-onto npm, and nvx does not reinterpret a word that belongs to another tool:
-  --no-sandbox             Run this invocation without the sandbox
-  --standard               Force standard containment, overriding a project
-                           policy that sets strict
-  --strict                 Contain your own code too, not just installs and
-                           ad-hoc tools
-  --expose <in>[:<host>]   (Windows) Publish a port a server inside the sandbox
-                           listens on, so the host can reach it — Windows
-                           refuses connections into an AppContainer. The two
-                           numbers must differ; omit the host one to have a free
-                           port picked and printed. Grants no network capability
-  --connect <host>[:<in>]  Let the sandbox reach one service already running on
-                           your machine — the mirror of `--expose`. Give the port
-                           your service uses; nvx runs a listener and dials the
-                           real one itself. The two numbers must differ. Grants
-                           no network capability
-
-Passed to the wrapped command only, not before it:
-  --filesystem-provider=<name>  Override isolation.filesystem.provider
-                           (native | docker). `nvx npm --filesystem-provider=…`,
-                           not `nvx --filesystem-provider=… npm`
-
 Options:
-  --shell=<type>           Shell syntax to emit: powershell, bash, zsh
-  -y, --yes                Auto-approve all prompts
-  -q, --quiet              Suppress success/info messages (errors and warnings
-                           still print)
-  --verbose                Show what nvx is doing on the way: checks, session
-                           ids, permission work. Also NVX_VERBOSE=1 (env)
-  NVX_TRACE=1              (env) Record one line per run in ~/.nvx/audit.log for
-                           `nvx audit`. Off by default; a local debugging aid
-  --agent-mode             Equivalent to -y -q; also settable with
-                           NVX_AGENT_MODE=1
-  NVX_NONINTERACTIVE=1     (env) Deny every prompt instead of asking, so a run
-                           needing approval fails rather than waits
-  NVX_TRUST_YES=true       (env) Approve trust prompts specifically — adding an
-                           egress host, trusting a tool or a project policy.
-                           -y and --agent-mode deliberately do not
-  NVX_HOME=<dir>           (env) Use a different nvx home instead of ~/.nvx
+  --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
+  --no-sandbox           Disable sandbox for this shim invocation. Must come
+                         BEFORE the command; ignored if passed to it
+  --standard             Force standard containment, overriding a project's
+                         strict policy. Must come BEFORE the command
+  --strict               Contain your own code too (not just installs/ad-hoc
+                         tools). Must come BEFORE the command, like the two
+                         above; after it, the flag belongs to the command
+  --expose <in>[:<host>] (Windows) Publish a port a server inside the sandbox
+                         listens on, so the host can reach it. The two numbers
+                         must differ. Omit the host port to have one picked and
+                         printed. Must come BEFORE the command
+  --connect <host>[:<in>]  Let the sandbox reach ONE service already
+                         running on your machine, over a tunnel nvx dials. The
+                         two numbers must differ; the in-sandbox one is printed
+                         and set as NVX_CONNECT_<host>. Must come BEFORE the
+                         command
+  --filesystem-provider=<name>  Override isolation.filesystem.provider
+                         (native | docker). Passed TO the command:
+                         nvx npm --filesystem-provider=...
+  -y, --yes              Auto-approve all prompts
+  -q, --quiet            Suppress success/info messages (errors and warnings still print)
+  --verbose              Show what nvx is doing on the way: checks, session ids, permission work
+  --agent-mode           Auto-approve all prompts and suppress success/info messages
+                         (equivalent to -y -q; also settable via NVX_AGENT_MODE=1)
+
+Environment:
+  NVX_VERBOSE=1          Same as --verbose, for every run in this shell
+  NVX_TRACE=1            Record one line per run in ~/.nvx/audit.log for
+                         'nvx audit'. Off by default; a local debugging aid
+  NVX_DEBUG=1            Record everything nvx prints in ~/.nvx/debug.log, for
+                         'nvx report'. Off by default. These lines are rendered,
+                         so they can contain paths and package names
+  NVX_YES=true           Auto-approve prompts (same as -y)
+  NVX_NONINTERACTIVE=1   Deny every prompt instead of asking, so a run that
+                         needs approval fails rather than waits
+  NVX_TRUST_YES=true     Approve trust prompts specifically -- adding an egress
+                         host, trusting a tool or a project policy. -y and
+                         --agent-mode deliberately do not
+  NVX_HOME=<dir>         Use a different nvx home instead of ~/.nvx
+
+Examples:
+  nvx install lts
+  nvx install bun@1.2
+  nvx use 20.11.0
+  nvx use bun@1.2
 ```
+
+`policy check`, `policy explain` and `audit export` are not in v0.6.0. They are
+coming in the next release.
 
 ## Exit codes
 
-`0` means the command worked. A non-zero code from `nvx doctor` means something
-needs attention rather than that doctor itself failed, and a contained command
-propagates whatever the wrapped program exited with.
+| Code | Means |
+| --- | --- |
+| `0` | The command worked. |
+| `1` | The command failed. `nvx doctor` also exits non-zero when something needs attention. |
+| `2` | A usage error, such as an unknown `--shell` value or a bad `nvx setup` flag. |
+| `77` | nvx refused to run the command: a global install it will not contain, a package that failed its pre-install checks, or a sandbox it could not establish. Not in v0.6.0, which exits `1` for these. Coming in the next release. |
+| `127` | The command to run was not found. |
+| `129` | nvx stopped the command because the program that started it had exited. |
+
+A contained or wrapped command passes through whatever the wrapped program
+exited with. `nvx policy check` has its own codes, listed in
+[docs/exit-codes.md](https://github.com/fstubner/nvx/blob/main/docs/exit-codes.md).

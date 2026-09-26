@@ -62,11 +62,10 @@ other. Three consequences follow from the answer:
   tradeable against security depth without saying so.
 
 Two smaller corrections to the account above, checked against the code: the
-second shipped runtime is **bun**, not deno — Deno, Go and Python providers exist
-on a preservation branch and were removed from the shipped set for focus (see
-`docs/runtime-providers.md`). And the extensible interface described as an
-ambition is real and shipped: `RuntimeProvider` in `version.go`, with
-`NodeProvider` and `BunProvider` implementing it.
+second shipped runtime is **bun**, not deno. Deno, Go and Python providers
+were removed from the shipped set for focus (see `docs/runtime-providers.md`).
+And the extensible interface described as an ambition is real and shipped:
+`RuntimeProvider` in `version.go`, with `NodeProvider` and `BunProvider` implementing it.
 
 ## Purpose
 

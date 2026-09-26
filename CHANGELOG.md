@@ -116,6 +116,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the escape hatch, which nudged an automated caller toward the
   least-contained option and left the person out of the loop.
 
+* **A test whose setup lost a handle now retries, and skips rather than failing
+  if the host keeps refusing.** The same Windows condition that refuses a process
+  also refuses a file write: measured 2026-09-10, a test died at `write
+  ...\windows-setup.json: The handle is invalid` before a single assertion ran,
+  and the identical commit re-run was clean. This is the third face of one host
+  state, after cleanup (`removeAllBestEffort`) and reading the staged probe child
+  (`stageProbeChild`).
+
+  Applied at the two measured call sites only, not to the 135 `t.Fatal(err)`
+  setup sites across 52 Windows test files. A sweep that size would be
+  unreviewable and would make every one of those sites quieter about real
+  defects; machinery earns its place from a failure that happened. A persistent
+  refusal skips with a message saying an assertion was not checked, so a run
+  cannot report success for a probe that never executed.
+
+* **macOS: the `sandbox-exec` provider's availability check now asks about the
+  same path the launcher uses.** It had the path written out a second time, so a
+  test that puts nvx on a machine with no `sandbox-exec` -- the only way to check
+  that nvx refuses rather than running uncontained -- could not reach the provider
+  gate.
+
+* **The tests that need an AF_UNIX socket skip on a long temporary directory
+  rather than failing.** The socket path limit is 104 bytes and includes whatever
+  `TMPDIR` is; under an agent harness's scratch directory that produced a
+  151-byte path and turned six tests red for a reason unrelated to the code. The
+  skip names the limit and the path.
+
+* **Removed the pre-AppContainer low-integrity token path** (five functions and
+  six constants on Windows, plus their no-op Linux twins). Nothing had called any
+  of it since containment moved to AppContainer security capabilities. Code that
+  compiles and looks like the security model, but is not the security model, is
+  the wrong thing to leave in the file someone opens to find out how containment
+  works. Also removed the two helpers that read permissions out of icacls' printed
+  text, superseded by reading the access mask off the entry.
+
+* **`nvx report` and the Docker provider's environment.** SECURITY.md now records
+  that `docker run` takes allowed environment values as `-e KEY=VALUE`, so they
+  are visible in the process list to other processes running as you while the
+  container starts. nvx keeps them out of its own output; the argument list is
+  docker's. The native providers are unaffected.
+
 ### Fixed
 
 * **`nvx grants reset --all` works after a grant has been recorded.** It read
@@ -334,7 +375,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that used to time out: 22.3 s for the propagating write against 1.07 ms
   without, measured back to back. A first `pnpm install` in a fresh project
   exits 0. A second one still does not, for a reason no permission fixes; see
-  Known limitations in the README.
+  Known limitations on the docs site.
 
 * **A project directory deleted and recreated no longer fails to launch on
   Windows.** nvx remembered for seven days which directories already carried
@@ -476,49 +517,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "metadata checks", so a run could report nothing about a package it had never
   asked about. nvx cannot scan without a version; the prompt and the warning now
   say that is what approving costs.
-
-### Changed
-
-* **A test whose setup lost a handle now retries, and skips rather than failing
-  if the host keeps refusing.** The same Windows condition that refuses a process
-  also refuses a file write: measured 2026-09-10, a test died at `write
-  ...\windows-setup.json: The handle is invalid` before a single assertion ran,
-  and the identical commit re-run was clean. This is the third face of one host
-  state, after cleanup (`removeAllBestEffort`) and reading the staged probe child
-  (`stageProbeChild`).
-
-  Applied at the two measured call sites only, not to the 135 `t.Fatal(err)`
-  setup sites across 52 Windows test files. A sweep that size would be
-  unreviewable and would make every one of those sites quieter about real
-  defects; machinery earns its place from a failure that happened. A persistent
-  refusal skips with a message saying an assertion was not checked, so a run
-  cannot report success for a probe that never executed.
-
-* **macOS: the `sandbox-exec` provider's availability check now asks about the
-  same path the launcher uses.** It had the path written out a second time, so a
-  test that puts nvx on a machine with no `sandbox-exec` -- the only way to check
-  that nvx refuses rather than running uncontained -- could not reach the provider
-  gate.
-
-* **The tests that need an AF_UNIX socket skip on a long temporary directory
-  rather than failing.** The socket path limit is 104 bytes and includes whatever
-  `TMPDIR` is; under an agent harness's scratch directory that produced a
-  151-byte path and turned six tests red for a reason unrelated to the code. The
-  skip names the limit and the path.
-
-* **Removed the pre-AppContainer low-integrity token path** (five functions and
-  six constants on Windows, plus their no-op Linux twins). Nothing had called any
-  of it since containment moved to AppContainer security capabilities. Code that
-  compiles and looks like the security model, but is not the security model, is
-  the wrong thing to leave in the file someone opens to find out how containment
-  works. Also removed the two helpers that read permissions out of icacls' printed
-  text, superseded by reading the access mask off the entry.
-
-* **`nvx report` and the Docker provider's environment.** SECURITY.md now records
-  that `docker run` takes allowed environment values as `-e KEY=VALUE`, so they
-  are visible in the process list to other processes running as you while the
-  container starts. nvx keeps them out of its own output; the argument list is
-  docker's. The native providers are unaffected.
 
 ## [0.6.0] - 2026-09-09
 
