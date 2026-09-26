@@ -17,12 +17,15 @@ export const surfaces: SurfaceCard[] = [
   {
     title: 'Versions, per project',
     body: 'Install and pin Node.js or Bun, and switch on <code>cd</code> from a <code>.nvmrc</code>, <code>.node-version</code> or <code>package.json</code>. Session-scoped, so a new terminal is unaffected until it reads the same pin.',
+    // The last line is what `nvx auto` printed on 2026-09-26 in a scratch
+    // project whose .nvmrc read 20. It used to say "Switched to", which nvx
+    // never prints.
     codeHtml: `<span class="t-dim">$</span> nvx install 22
 <span class="t-ok">&#10004;</span> Node.js v22.23.2 installed
 <span class="t-dim">$</span> nvx use 22
 <span class="t-ok">&#10004;</span> Now using Node.js v22.23.2 in this terminal.
 <span class="t-dim">$</span> cd ../other-project   <span class="t-dim"># pinned to 20</span>
-<span class="t-ok">&#10004;</span> Switched to Node.js v20.19.5`,
+<span class="t-info">&#8505;</span> [nvx] Found .nvmrc: switching to Node.js v20.19.5`,
   },
   {
     title: 'Checked before it runs',
@@ -54,7 +57,11 @@ found 0 vulnerabilities`,
   },
   {
     title: 'Governed by a file in your repo',
-    body: 'The rules live in <code>.nvx-policy.json</code>, next to the code they cover, reviewed in a pull request and enforced on the machine. An org can set <code>"enforced": true</code> globally and a project may then only tighten it. <code>-y</code>, <code>--agent-mode</code> and <code>NVX_YES</code> cannot widen the sandbox, <code>nvx policy check</code> gives CI a distinct exit code per failure, and <code>nvx audit export</code> turns every block into evidence.',
+    // The org baseline ("enforced"), `nvx policy check` and `nvx audit export`
+    // are on main but not in v0.6.0, the release the install script fetches.
+    // Checked 2026-09-26 against the v0.6.0 tag. Drop the "next release"
+    // wording once a release carries them.
+    body: 'The rules live in <code>.nvx-policy.json</code>, next to the code they cover, reviewed in a pull request and enforced on the machine. <code>-y</code>, <code>--agent-mode</code> and <code>NVX_YES</code> cannot widen the sandbox. The next release adds an org baseline, set with <code>"enforced": true</code>, that a project may only tighten. It also adds <code>nvx policy check</code>, which gives CI a distinct exit code per failure, and <code>nvx audit export</code>, which turns every block into evidence.',
     flip: true,
     // This was a section of its own with four paragraphs and nothing shown,
     // which made it the one part of the page that asserted instead of
