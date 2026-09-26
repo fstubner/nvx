@@ -28,7 +28,8 @@ Before an install runs, nvx checks what it is about to fetch.
   similar name.
 - **Known vulnerabilities.** Direct installs, `npx`-style tool runs and the
   packages in `package-lock.json` are checked against the OSV database. Without
-  a lockfile, the names in `package.json` are checked instead.
+  a `package-lock.json`, which pnpm, yarn and bun do not write, only the names
+  in `package.json` are checked, without versions.
 - **Fresh releases.** A version published inside a configurable window, 24
   hours by default, is held for your approval.
 
