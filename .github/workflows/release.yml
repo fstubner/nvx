@@ -4,15 +4,20 @@ on:
   push:
     tags:
       - 'v*'
+  # A dry run: builds, signs and verifies nvx.exe, and stops before the
+  # attestation and the draft. For checking the signing credentials without
+  # cutting a release.
+  workflow_dispatch:
 
+# Each job asks for what it needs. The signing job holds the Certum
+# credentials and runs a third-party signing tool, so it gets neither write
+# access to the release nor the OIDC token the attestations are made with.
 permissions:
-  contents: write        # create the GitHub Release and upload assets
-  id-token: write        # build provenance attestation
-  attestations: write    # build provenance attestation
+  contents: read
 
 jobs:
-  release:
-    name: Build and publish release
+  build:
+    name: Build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -96,6 +101,96 @@ jobs:
           build darwin arm64 nvx-darwin-arm64
           build windows amd64 nvx.exe
 
+      # Separate artifacts, so the signing job receives nvx.exe and nothing
+      # else: the tool it runs never has the other binaries in reach.
+      - name: Hand over the unsigned Windows binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-windows
+          path: dist/nvx.exe
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Hand over the other binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: binaries
+          path: |
+            dist/nvx-linux-amd64
+            dist/nvx-linux-arm64
+            dist/nvx-darwin-amd64
+            dist/nvx-darwin-arm64
+          retention-days: 1
+          if-no-files-found: error
+
+  # Authenticode, so Windows names the publisher instead of warning about an
+  # unknown one. It has to happen before anything is computed over nvx.exe:
+  # signing rewrites the file, and a checksum or attestation of the unsigned
+  # bytes would describe a file nobody downloads.
+  #
+  # The credentials live in the release-signing environment. The Certum
+  # certificate is the one netscli signs with.
+  sign-windows:
+    name: Sign nvx.exe
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release-signing
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install osslsigncode
+        run: |
+          sudo apt-get update || true
+          sudo apt-get install -y osslsigncode
+
+      - name: Collect the unsigned binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: unsigned-windows
+          path: ${{ runner.temp }}/win
+
+      - name: Authenticode sign
+        env:
+          CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP: ${{ secrets.CERTUM_OTP }}
+        run: bash scripts/release/sign-windows.sh "${RUNNER_TEMP}/win"
+
+      - name: Hand over the signed binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-windows
+          path: ${{ runner.temp }}/win/nvx.exe
+          retention-days: 1
+          if-no-files-found: error
+
+  release:
+    name: Publish draft release
+    needs: [build, sign-windows]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the GitHub Release and upload assets
+      id-token: write        # build provenance attestation
+      attestations: write    # build provenance attestation
+    steps:
+      - name: Collect the binaries
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: binaries
+          path: dist
+
+      - name: Collect the signed Windows binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: signed-windows
+          path: dist
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
           # Per-asset checksum siblings (<hash>  <name>) + a combined manifest.
           cd dist
           : > SHASUMS256.txt
