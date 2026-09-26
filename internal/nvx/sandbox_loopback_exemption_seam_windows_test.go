@@ -30,6 +30,12 @@ func withExemptSIDs(t *testing.T, sids []string) {
 	orig := listLoopbackExemptSIDs
 	listLoopbackExemptSIDs = func() ([]string, error) { return sids, nil }
 	t.Cleanup(func() { listLoopbackExemptSIDs = orig })
+	// The profile check reads the real machine, whose state is not this test's
+	// subject; a machine with an unprotected profile would otherwise make doctor
+	// speak here for a reason unrelated to the exemption.
+	origProtected := pathDACLProtected
+	pathDACLProtected = func(string) (bool, error) { return true, nil }
+	t.Cleanup(func() { pathDACLProtected = origProtected })
 }
 
 func TestSandboxIsLoopbackExemptDetectsThisSandboxsSID(t *testing.T) {
