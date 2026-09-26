@@ -19,12 +19,31 @@ the project, scrubbed environment variables, and an outbound allowlist.
 You do not change how you type anything. nvx puts shims on `PATH`, so
 `npm install` is still `npm install`.
 
+## Install-time checks
+
+Before an install runs, nvx checks what it is about to fetch.
+
+- **Typosquats.** Package names are compared with a list of popular packages,
+  and the npm download counts tell a lookalike apart from a real package with a
+  similar name.
+- **Known vulnerabilities.** Direct installs, `npx`-style tool runs and the
+  packages in `package-lock.json` are checked against the OSV database. Without
+  a lockfile, the names in `package.json` are checked instead.
+- **Fresh releases.** A version published inside a configurable window, 24
+  hours by default, is held for your approval.
+
+Each check has its own exemption list in the [policy file](/docs/policy/#reference).
+None of them certifies a package, which is why containment is the backstop.
+
 ## Where to start
 
 | If you want to | Go to |
 | --- | --- |
 | Install nvx | [Installation](/docs/install/) |
+| Know what is contained, per platform | [Containment](/docs/containment/) |
+| Write a policy file | [Policy](/docs/policy/) |
 | Look up a command | [Commands](/docs/commands/) |
+| See what nvx does not cover | [Known limitations](/docs/limitations/) |
 
 ## What it does not do
 

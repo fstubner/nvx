@@ -72,7 +72,7 @@ New-Item -ItemType Directory -Force -Path $proj, $outside | Out-Null
 # every writable root -- and %USERPROFILE% is the interesting case rather than an
 # arbitrary one, because Windows ships an ALL APPLICATION PACKAGES ACE on it that
 # nvx neither grants nor can revoke. That ACE makes directory NAMES visible to any
-# AppContainer; README says so, and says contents are not. This asserts the second
+# AppContainer; the known limitations page says so, and says contents are not. This asserts the second
 # half.
 $secret = Join-Path $outside "credentials"
 Set-Content -Path $secret -Value "SECRET-CONTENT-DO-NOT-LEAK" -Encoding utf8

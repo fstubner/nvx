@@ -8,8 +8,12 @@ import (
 	"testing"
 )
 
-// The README's command list matches what `nvx help` prints.
+// The documented command list matches what `nvx help` prints.
 //
+// commandReferenceDoc is where that list lives: the docs site's command
+// reference, since the README handed its reference sections to the site.
+const commandReferenceDoc = "../../site/src/content/docs/docs/commands.md"
+
 // Both are hand-maintained, and the README's copy fell behind: a reader
 // following it asked for a command with flags nvx no longer took, or missed one
 // that existed. Nothing catches that -- documentation renders perfectly while
@@ -17,7 +21,7 @@ import (
 // This compares the two lists mechanically, so the next command added in one
 // place fails here rather than in someone's terminal.
 func TestTheREADMECommandListMatchesNvxHelp(t *testing.T) {
-	readme, err := os.ReadFile("../../README.md")
+	readme, err := os.ReadFile(commandReferenceDoc)
 	if err != nil {
 		t.Fatal(err)
 	}
