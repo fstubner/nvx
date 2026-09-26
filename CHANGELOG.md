@@ -118,6 +118,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`exec()` and `execFile()` no longer hang inside the Windows sandbox.** node's
+  own versions call a spawn the sandbox's preload could not reach, so they took
+  the path that blocks forever before the child exists. A contained
+  `exec('cmd /c echo hi', cb)` never called back, and neither did a timer set
+  before it, while the same call uncontained answered in 300ms. node-gyp finds
+  Python this way, and many install scripts shell out the same way. Both are now
+  rebuilt on the sandbox's working spawn, with the same callback, error, timeout,
+  maxBuffer and promisified behaviour as node's. A streamed child's `close` event
+  also waits for its output again: it fired when the child exited, while nvx was
+  still passing the output along, and a CI run saw 1 line of 200 arrive by then.
+
 * **A contained command started in your home directory can no longer write it.**
   The working directory is writable inside the sandbox, and nothing checked
   which directory it was. From `~` or `/`, where editors often start MCP servers,
