@@ -97,7 +97,12 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	// (its ACL write propagates over the whole profile tree) and already grants ALL
 	// APPLICATION PACKAGES for stat/traverse. Sandbox writes go to the guest home
 	// regardless, so a failed workdir grant should not abort the run.
-	if workDir != "" && !isProfileRoot(workDir) {
+	if workDir != "" && !isProfileRoot(workDir) && workDirReachesControlPlane(nvxHome, workDir) {
+		// Above the profile or inside ~/.nvx: granting it would grant nvx's own
+		// settings or the whole profile. See workDirReachesControlPlane.
+		launchDir = guestHome
+		warnWorkDirNotWritable(workDir)
+	} else if workDir != "" && !isProfileRoot(workDir) {
 		if findProjectRoot(workDir) != "" {
 			// A project: write access to it is what the command is for, so this
 			// waits however long the tree takes.

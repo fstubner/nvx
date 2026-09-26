@@ -31,6 +31,11 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
 
 ## What surprises people
 
+- **A contained command started in your home directory, or above it, starts in
+  the sandbox's home instead.** The working directory is writable inside the
+  sandbox, and granting your home would grant everything in it, `~/.nvx` and
+  your shell profile included. nvx says so when it happens. Run the command from
+  a project folder to work on files there.
 - **A stray `package.json` above your projects merges them into one sandbox
   scope.** `nvx doctor` reports it when the manifest sits in your home directory
   or at a volume root.

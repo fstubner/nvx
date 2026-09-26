@@ -93,6 +93,7 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
+	cwd = containedWorkDir(config.NvxHome, guestHome, cwd)
 
 	cmdPath, err := exec.LookPath(config.Command)
 	if err != nil {
@@ -135,8 +136,8 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if config.WorkDir != "" {
-		cmd.Dir = config.WorkDir
+	if cwd != "" {
+		cmd.Dir = cwd
 	}
 
 	LogInfo("Running in Seatbelt sandbox (session %s): %s %s", sandboxID, config.Command, strings.Join(config.Args, " "))

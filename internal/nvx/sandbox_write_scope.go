@@ -1,5 +1,7 @@
 package nvx
 
+import "os"
+
 // sandboxWritableRoots declares what a contained process may write.
 //
 // It exists because F22 was caused by two callers disagreeing: one granted the
@@ -41,4 +43,43 @@ func sandboxWritableRoots(guestHome, workDir string) []string {
 		roots = append(roots, workDir)
 	}
 	return roots
+}
+
+// workDirReachesControlPlane reports whether granting workDir would also grant
+// nvx's own directory or the user's home: workDir is one of them, above one of
+// them, or inside nvxHome.
+//
+// The working directory is a writable root on every platform, and until
+// 2026-09-26 nothing looked at which directory it was. A contained command
+// started in ~ or / -- where editors commonly start MCP servers -- could write
+// ~/.nvx/grants, policy.json and ~/.bashrc. Measured on Linux and on a macOS
+// runner: from a project, all three writes were refused; from the home
+// directory, all three landed. Windows already skipped the profile root, and
+// nothing else.
+func workDirReachesControlPlane(nvxHome, workDir string) bool {
+	if workDir == "" {
+		return false
+	}
+	home, _ := os.UserHomeDir()
+	for _, protected := range []string{nvxHome, home} {
+		if protected != "" && dirWithin(protected, workDir) {
+			return true
+		}
+	}
+	return nvxHome != "" && dirWithin(workDir, nvxHome)
+}
+
+// containedWorkDir is the directory a contained command starts in and may write
+// as its own: workDir, or the guest home when workDir would reach nvx's own
+// directory or the user's home.
+func containedWorkDir(nvxHome, guestHome, workDir string) string {
+	if !workDirReachesControlPlane(nvxHome, workDir) {
+		return workDir
+	}
+	warnWorkDirNotWritable(workDir)
+	return guestHome
+}
+
+func warnWorkDirNotWritable(workDir string) {
+	LogWarn("The sandbox may not write %s: it contains your home directory or nvx's own settings. The command starts in the sandbox's home instead; run it from a project folder to work on files there.", workDir)
 }

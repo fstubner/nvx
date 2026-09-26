@@ -235,6 +235,20 @@ if [[ -e "$FORBIDDEN_WRITE" ]]; then
   fail=1
 fi
 
+# A contained run started ABOVE nvx's own directory must not be able to write it.
+#
+# The working directory is a writable root, and nothing checked which directory
+# it was: from ~ a contained process wrote ~/.nvx/grants and ~/.bashrc. Measured
+# on Linux and macOS before the guard. PROBE_ROOT holds NVX_HOME, so starting
+# here is the same shape as starting in ~ with the default NVX_HOME.
+HOME_WRITE="$NVX_HOME/grants-probe-from-above"
+( cd "$PROBE_ROOT" && "$NVX" -y --strict shim node -e \
+    "try{require('fs').writeFileSync(process.argv[1],'x')}catch(e){}" "$HOME_WRITE" >/dev/null 2>&1 ) || true
+if [[ -e "$HOME_WRITE" ]]; then
+  echo "FAIL: a contained run started above NVX_HOME wrote into it; the working directory reached nvx's own settings." >&2
+  fail=1
+fi
+
 if [[ $fail -ne 0 ]]; then
   echo "Linux enforcement probe FAILED." >&2
   exit 1
