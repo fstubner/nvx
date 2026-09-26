@@ -21,7 +21,7 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 PROJ="$(mktemp -d)"
-trap 'rm -rf "$PROJ"' EXIT
+trap 'rm -rf "$PROJ" "${NVX_HOME:-}"' EXIT
 cd "$PROJ"
 
 # A throwaway NVX_HOME, the way sandbox-smoke.sh already does it. Without one,
@@ -29,7 +29,10 @@ cd "$PROJ"
 # installed shims with the build under test. The Windows siblings did the same
 # and were fixed first; this was found by sweeping the rest rather than by
 # running it, since it needs macOS.
-export NVX_HOME="$PROJ/nvxhome"
+# Beside the project, not inside it. A working directory that contains
+# NVX_HOME is one the sandbox may not write (workDirReachesControlPlane), so a
+# home nested in the project would make every write below fail by design.
+export NVX_HOME="$(mktemp -d)"
 mkdir -p "$NVX_HOME"
 
 "$NVX" init-shims >/dev/null
@@ -73,7 +76,7 @@ s.listen(0, '127.0.0.1', () => fs.writeFileSync(process.argv[2], String(s.addres
 JS
 node "$PROJ/service.js" "$PROJ/port.txt" &
 SVC_PID=$!
-trap 'kill $SVC_PID 2>/dev/null || true; rm -rf "$PROJ"' EXIT
+trap 'kill $SVC_PID 2>/dev/null || true; rm -rf "$PROJ" "${NVX_HOME:-}"' EXIT
 for _ in $(seq 1 50); do [[ -s "$PROJ/port.txt" ]] && break; sleep 0.1; done
 if [[ ! -s "$PROJ/port.txt" ]]; then
   echo "the stand-in host service never reported its port" >&2
@@ -118,7 +121,7 @@ if [[ $CRC -ne 0 ]] || ! grep -q "GOT SERVICE_OK" <<<"$CONNECTED"; then
   exit 1
 fi
 kill $SVC_PID 2>/dev/null || true
-trap 'rm -rf "$PROJ"' EXIT
+trap 'rm -rf "$PROJ" "${NVX_HOME:-}"' EXIT
 
 # An actual install: see the Linux sibling for why. It exercises the runtime's
 # own child processes, a writable HOME for the npm cache and the registry
