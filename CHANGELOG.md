@@ -129,6 +129,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protection, with the `icacls ... /inheritance:r` command to restore it when the
   folder's own entries keep you in.
 
+* **The one-line Windows install works.** `irm https://nvx.run/install.ps1 | iex`
+  stopped every time with "Cannot bind argument to parameter 'Path' because it
+  is an empty string": the script read its own directory, which `iex` does not
+  have. It had already edited PATH and the PowerShell profile by then. The
+  installer now downloads and verifies nvx first and changes nothing if that
+  fails, and CI runs the whole script through `Invoke-Expression`. It also no
+  longer offers `nvx setup` at the end with a warning that package managers "run
+  without OS isolation" until you do. That was false: installs and `npx` run
+  contained without it.
+
 * **The Linux sandbox runs the system's `ip` and `iptables`, not the first ones
   on your PATH.** It set a system-only PATH for the child, which does not change
   which binary starts: that is looked up in nvx's own PATH. They are now taken
