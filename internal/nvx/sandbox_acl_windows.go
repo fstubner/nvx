@@ -62,12 +62,15 @@ var (
 	procInitializeSecurityDescriptor = modAdvapi32.NewProc("InitializeSecurityDescriptor")
 	procSetSecurityDescriptorDacl    = modAdvapi32.NewProc("SetSecurityDescriptorDacl")
 	procSetSecurityDescriptorControl = modAdvapi32.NewProc("SetSecurityDescriptorControl")
+	procGetSecurityDescriptorControl = modAdvapi32.NewProc("GetSecurityDescriptorControl")
 )
 
 const (
 	seFileObject                       = 1
 	daclSecurityInformation            = 0x00000004
 	unprotectedDaclSecurityInformation = 0x20000000
+	protectedDaclSecurityInformation   = 0x80000000
+	seDaclProtected                    = 0x1000
 	aclRevision                        = 2
 
 	accessAllowedAceType = 0
@@ -115,6 +118,39 @@ const (
 	// Measured 2026-09-17: adding S to the two entries made the same stat succeed.
 	aclMaskTraverse = fileExecute | fileReadAttributes | synchronizeAccess
 )
+
+// daclIsProtected reports whether a security descriptor's DACL is protected:
+// the directory does not take its parent's inheritable entries.
+func daclIsProtected(sd *byte) bool {
+	if sd == nil {
+		return false
+	}
+	var control uint16
+	var revision uint32
+	if ret, _, _ := procGetSecurityDescriptorControl.Call(uintptr(unsafe.Pointer(sd)),
+		uintptr(unsafe.Pointer(&control)), uintptr(unsafe.Pointer(&revision))); ret == 0 {
+		return false
+	}
+	return control&seDaclProtected != 0
+}
+
+// keepDACLProtection is the SetNamedSecurityInfo flag that leaves a DACL's
+// protection as it was.
+//
+// Every write passed UNPROTECTED_DACL_SECURITY_INFORMATION until 2026-09-26,
+// which switches inheritance back ON for the directory written. Windows ships
+// C:\Users and every profile folder protected, precisely so they do not take
+// C:\'s "Authenticated Users: Modify" for subfolders. One `nvx setup` grant on
+// C:\Users, or one traverse grant on a profile, lifted that protection, and
+// every signed-in account on the machine could then modify the whole profile.
+// Reproduced on a scratch directory: protected before a grant, unprotected
+// after, from both write paths.
+func keepDACLProtection(sd *byte) uintptr {
+	if daclIsProtected(sd) {
+		return protectedDaclSecurityInformation
+	}
+	return unprotectedDaclSecurityInformation
+}
 
 // aclEntry is one access-control entry, as data rather than as a line of text.
 type aclEntry struct {
@@ -358,7 +394,7 @@ func writeDACLEntryDropping(path, sidStr string, mask uint32, flags uint8, drop 
 	src, _ := syscall.UTF16PtrFromString(path)
 	rc, _, _ = procSetNamedSecurityInfoW.Call(
 		uintptr(unsafe.Pointer(src)), seFileObject,
-		daclSecurityInformation|unprotectedDaclSecurityInformation,
+		daclSecurityInformation|keepDACLProtection(sd),
 		0, 0, uintptr(newACL), 0)
 	if rc != 0 {
 		return fmt.Errorf("set permissions on %s: %w", path, syscall.Errno(rc))
@@ -487,7 +523,12 @@ func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 	if ret, _, e := procSetSecurityDescriptorDacl.Call(uintptr(unsafe.Pointer(&desc[0])), 1, uintptr(newACL), 0); ret == 0 {
 		return fmt.Errorf("attach the permission list for %s: %v", path, e)
 	}
-	if ret, _, e := procSetSecurityDescriptorControl.Call(uintptr(unsafe.Pointer(&desc[0])), seDaclAutoInherited, seDaclAutoInherited); ret == 0 {
+	control := uintptr(seDaclAutoInherited)
+	if daclIsProtected(sd) {
+		control |= seDaclProtected
+	}
+	if ret, _, e := procSetSecurityDescriptorControl.Call(uintptr(unsafe.Pointer(&desc[0])),
+		seDaclAutoInherited|seDaclProtected, control); ret == 0 {
 		return fmt.Errorf("mark the permission list on %s as inherited: %v", path, e)
 	}
 	if ret, _, e := procSetFileSecurityW.Call(uintptr(unsafe.Pointer(p)), daclSecurityInformation, uintptr(unsafe.Pointer(&desc[0]))); ret == 0 {

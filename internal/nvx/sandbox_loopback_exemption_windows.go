@@ -195,6 +195,9 @@ func deriveAppContainerSIDString(profileName string) (string, error) {
 // is caught at launch, by warnIfSandboxLoopbackExempt with that session's SID.
 func reportSandboxWeakeners(nvxHome string) bool {
 	weakened := reportStrandedSetupGrant(nvxHome)
+	if reportUnprotectedProfile() {
+		weakened = true
+	}
 
 	sidStr, err := deriveAppContainerSIDString(stableSandboxProfile)
 	if err != nil {

@@ -338,6 +338,13 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: ./scripts/test-install-checksum.ps1
+    # The whole installer, the documented way: through Invoke-Expression. The
+    # tests above reach its functions from a file, where $PSScriptRoot is set;
+    # under iex it is not, and every one-line install failed on it.
+    - name: Installer one-liner test
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/test-install-iex.ps1
     # Only when something above already failed, and only on Windows.
     #
     # Five of 34 CI runs on 2026-09-07/08 failed here with socket creation or
