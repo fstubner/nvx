@@ -43,7 +43,13 @@ func TestParseRuntimeSpecDefaultsBareVersionsToNode(t *testing.T) {
 func TestBinResolveCacheHitAndInvalidation(t *testing.T) {
 	nvxHome := tempDir(t)
 	binDir := tempDir(t)
-	bin := filepath.Join(binDir, "node.exe")
+	// The cache now checks the file is the command it claims to be, so the name
+	// has to be the one this platform would resolve: node.exe only on Windows.
+	name := "node"
+	if runtime.GOOS == "windows" {
+		name = "node.exe"
+	}
+	bin := filepath.Join(binDir, name)
 	if err := os.WriteFile(bin, []byte("x"), 0755); err != nil {
 		t.Fatal(err)
 	}
