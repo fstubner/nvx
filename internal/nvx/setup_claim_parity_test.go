@@ -2,6 +2,7 @@ package nvx
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -39,7 +40,12 @@ func TestNoDocumentSaysNpxNeedsElevatedSetup(t *testing.T) {
 	claim := regexp.MustCompile(`(?is)\bnpx\b[^.\n]{0,80}\b(needs? it|requires? it|needs? ` + "`?nvx setup" + `|requires? ` + "`?nvx setup" + `)`)
 	reverse := regexp.MustCompile(`(?is)\bnvx setup\b[^.\n]{0,80}\brequired\b[^.\n]{0,40}\bnpx\b`)
 
-	for _, doc := range []string{"../../README.md", "../../PRODUCT.md", "../../SECURITY.md", "../../CONTRIBUTING.md"} {
+	docs := []string{"../../README.md", "../../PRODUCT.md", "../../SECURITY.md", "../../CONTRIBUTING.md"}
+	site, _ := filepath.Glob("../../site/src/content/docs/docs/*.md")
+	if len(site) == 0 {
+		t.Fatal("found no docs site pages; the path moved and this test would check nothing there")
+	}
+	for _, doc := range append(docs, site...) {
 		b, err := os.ReadFile(doc)
 		if err != nil {
 			t.Fatalf("read %s: %v", doc, err)

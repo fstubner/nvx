@@ -88,6 +88,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **The README is a short front page, and the reference moved to the docs
+  site.** Containment, policy, known limitations and the FAQ are now docs pages,
+  and the full `nvx help` reference is on the Commands page. The tests that held
+  the README's command list to `nvx help` now read that page.
+
 * **nvx exits 77 when it refuses to run a command, instead of 1.** A global
   install it will not contain, a package that failed pre-install verification,
   a sandbox it could not establish — all of these returned 1, which is also what
