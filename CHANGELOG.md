@@ -129,6 +129,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also waits for its output again: it fired when the child exited, while nvx was
   still passing the output along, and a CI run saw 1 line of 200 arrive by then.
 
+* **A contained command started in your home directory can no longer write it.**
+  The working directory is writable inside the sandbox, and nothing checked
+  which directory it was. From `~` or `/`, where editors often start MCP servers,
+  a contained process could write `~/.nvx` (its grants and policy, so the next
+  run's trust) and `~/.bashrc`. Measured on Linux and on a macOS runner: from a
+  project all three writes were refused, from the home directory all three
+  landed. nvx now starts such a command in the sandbox's home and says why. The
+  same rule applies on Windows to a directory above the profile or inside
+  `~/.nvx`. The Linux and macOS enforcement scripts check it on every CI run.
+
+* **Windows: granting the sandbox access no longer opens your profile to other
+  accounts.** Every permission nvx wrote on a folder switched that folder's
+  inheritance protection off. Windows ships `C:\Users` and each profile folder
+  protected, so they do not take the drive root's "Authenticated Users: Modify".
+  One `nvx setup` grant on `C:\Users`, or one traverse grant on a profile, lifted
+  that, and every signed-in account on the machine could then read and change the
+  whole profile. nvx now keeps a folder's protection as it found it, and
+  `nvx doctor` reports a profile, or the folder above it, that has lost its
+  protection, with the `icacls ... /inheritance:r` command to restore it when the
+  folder's own entries keep you in.
+
+* **The one-line Windows install works.** `irm https://nvx.run/install.ps1 | iex`
+  stopped every time with "Cannot bind argument to parameter 'Path' because it
+  is an empty string": the script read its own directory, which `iex` does not
+  have. It had already edited PATH and the PowerShell profile by then. The
+  installer now downloads and verifies nvx first and changes nothing if that
+  fails, and CI runs the whole script through `Invoke-Expression`. It also no
+  longer offers `nvx setup` at the end with a warning that package managers "run
+  without OS isolation" until you do. That was false: installs and `npx` run
+  contained without it.
+
 * **The Linux sandbox runs the system's `ip` and `iptables`, not the first ones
   on your PATH.** It set a system-only PATH for the child, which does not change
   which binary starts: that is looked up in nvx's own PATH. They are now taken

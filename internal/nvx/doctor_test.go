@@ -408,6 +408,7 @@ func TestDoctorDiagnosesAPolicyItCannotRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	assumeProtectedProfile(t)
 	// The baseline has to be healthy or the comparison below proves nothing --
 	// runDoctor returns non-zero for several reasons.
 	if code := runDoctor(nvxHome, false); code != 0 {

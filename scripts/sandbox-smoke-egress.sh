@@ -33,7 +33,7 @@ if [[ "$(uname -s)" == "Linux" ]] && [[ "$(uname -r | cut -d. -f1-2)" < "5.13" ]
 fi
 
 PROJ="$(mktemp -d)"
-trap 'rm -rf "$PROJ"' EXIT
+trap 'rm -rf "$PROJ" "${NVX_HOME:-}"' EXIT
 cd "$PROJ"
 
 # An nvx-managed runtime, for the reason given in
@@ -41,7 +41,10 @@ cd "$PROJ"
 # allowlist, and a hosted runner's Node is in /opt/hostedtoolcache, which is
 # outside it. This script skipped on every unprivileged machine until now, so it
 # never met the problem.
-export NVX_HOME="$PROJ/nvxhome"
+# Beside the project, not inside it. A working directory that contains
+# NVX_HOME is one the sandbox may not write (workDirReachesControlPlane), so a
+# home nested in the project would make every write below fail by design.
+export NVX_HOME="$(mktemp -d)"
 mkdir -p "$NVX_HOME"
 echo "Installing an nvx-managed runtime (Landlock does not permit exec outside its allowlist)..."
 if ! "$NVX" -y install 22 >/dev/null 2>&1 || ! "$NVX" -y default 22 >/dev/null 2>&1; then

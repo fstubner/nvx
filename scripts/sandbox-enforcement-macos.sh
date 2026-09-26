@@ -276,6 +276,23 @@ case "$OUT2" in
     ;;
 esac
 
+# A contained run started in the home directory must not be able to write it,
+# nor ~/.nvx below it. The working directory is a writable root, and nothing
+# checked which directory it was: measured on this runner before the guard, all
+# such writes landed.
+HOME_WRITE="$OUTSIDE/written-from-home"
+NVX_WRITE="$HOME/.nvx/probe-written-from-home"
+( cd "$HOME" && "$NVX" -y --strict shim node -e \
+    "for(const p of process.argv.slice(1)){try{require('fs').writeFileSync(p,'x')}catch(e){}}" \
+    "$HOME_WRITE" "$NVX_WRITE" >/dev/null 2>&1 ) || true
+for p in "$HOME_WRITE" "$NVX_WRITE"; do
+  if [[ -e "$p" ]]; then
+    echo "FAIL: a contained run started in ~ wrote $p; the working directory reached the home directory or nvx's settings." >&2
+    rm -f "$p"
+    fail=1
+  fi
+done
+
 if [[ $fail -ne 0 ]]; then
   echo "macOS enforcement probe FAILED." >&2
   exit 1
