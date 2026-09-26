@@ -56,9 +56,9 @@ an individual is officially representing the community in public spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainer privately through GitHub (open a private
-report via the repository's Security Advisories, or contact the maintainer
-[@fstubner](https://github.com/fstubner)). All complaints will be reviewed and
+reported to the project maintainer privately, using the contact details on the
+maintainer's GitHub profile, [@fstubner](https://github.com/fstubner). The
+repository's Security Advisories are for security vulnerabilities only. All complaints will be reviewed and
 investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
