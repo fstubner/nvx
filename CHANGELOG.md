@@ -118,6 +118,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`exec()` and `execFile()` no longer hang inside the Windows sandbox.** node's
+  own versions call a spawn the sandbox's preload could not reach, so they took
+  the path that blocks forever before the child exists. A contained
+  `exec('cmd /c echo hi', cb)` never called back, and neither did a timer set
+  before it, while the same call uncontained answered in 300ms. node-gyp finds
+  Python this way, and many install scripts shell out the same way. Both are now
+  rebuilt on the sandbox's working spawn, with the same callback, error, timeout,
+  maxBuffer and promisified behaviour as node's.
+
 * **The Linux sandbox runs the system's `ip` and `iptables`, not the first ones
   on your PATH.** It set a system-only PATH for the child, which does not change
   which binary starts: that is looked up in nvx's own PATH. They are now taken

@@ -13,9 +13,9 @@
 // end", a temp file is an exact substitute: the caller cannot observe the
 // difference, because it never sees the stream either way.
 //
-// Only the sync APIs are patched. Async spawn() with stdio:'pipe' is a genuine
-// stream that a file cannot stand in for, and it stays broken -- see the Known
-// limitations entry. Nothing here weakens containment: it changes how a contained
+// The sync APIs use temp files. Async spawn() streams through pipes nvx creates
+// outside the container, further down, and exec() and execFile() are rebuilt on
+// that spawn. Nothing here weakens containment: it changes how a contained
 // process talks to its own children, and the temp files live in the guest home.
 //
 // Every patch falls back to the original function if anything at all goes wrong,
@@ -539,6 +539,109 @@ try {
       });
       return child;
     };
+
+    // exec() and execFile() do not go through cp.spawn. node's execFile calls
+    // the spawn inside its own module, so the patch above never saw them, and
+    // they took the raw path that blocks inside libuv. Measured 2026-09-26:
+    // `exec('cmd /c echo hi', cb)` in a contained node process never called
+    // back, and a 20s timer set before it never fired either, while the same
+    // call uncontained answered in 300ms. node-gyp finds Python with execFile,
+    // and plenty of install scripts shell out the same way.
+    //
+    // Rebuilt here on the patched spawn, keeping execFile's contract: the
+    // callback gets (error, stdout, stderr), a non-zero exit is an error
+    // carrying code, signal and killed, maxBuffer and timeout stop the child,
+    // and the promisified forms resolve to { stdout, stderr }.
+    const util = require('util');
+    const realExecFile = cp.execFile;
+    const realExec = cp.exec;
+
+    function nvxExecFile(file, args, options, callback) {
+      if (typeof args === 'function') { callback = args; args = []; options = undefined; }
+      else if (args && !Array.isArray(args)) { callback = options; options = args; args = []; }
+      if (typeof options === 'function') { callback = options; options = undefined; }
+      const opts = Object.assign({ encoding: 'utf8', timeout: 0, maxBuffer: 1024 * 1024, killSignal: 'SIGTERM' },
+        options || {});
+      const argv = Array.isArray(args) ? args : [];
+      const child = cp.spawn(file, argv, Object.assign({}, opts, { stdio: 'pipe' }));
+
+      const out = [], err = [];
+      let outLen = 0, errLen = 0, done = false, killed = false, overflow = null, timer = null;
+      function text(chunks) {
+        const buf = Buffer.concat(chunks);
+        return opts.encoding && opts.encoding !== 'buffer' ? buf.toString(opts.encoding) : buf;
+      }
+      function finish(error) {
+        if (done) return;
+        done = true;
+        if (timer) clearTimeout(timer);
+        const stdout = text(out), stderr = text(err);
+        if (typeof callback === 'function') callback(error || null, stdout, stderr);
+      }
+      function collect(chunks, isOut) {
+        return function (chunk) {
+          const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+          chunks.push(b);
+          if (isOut) outLen += b.length; else errLen += b.length;
+          if (!overflow && opts.maxBuffer && (isOut ? outLen : errLen) > opts.maxBuffer) {
+            overflow = new RangeError((isOut ? 'stdout' : 'stderr') + ' maxBuffer length exceeded');
+            overflow.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+            killed = true;
+            try { child.kill(opts.killSignal); } catch (e) {}
+          }
+        };
+      }
+      if (child.stdout) child.stdout.on('data', collect(out, true));
+      if (child.stderr) child.stderr.on('data', collect(err, false));
+      if (opts.timeout > 0) {
+        timer = setTimeout(function () {
+          killed = true;
+          try { child.kill(opts.killSignal); } catch (e) {}
+        }, opts.timeout);
+      }
+      child.once('error', function (e) { finish(e); });
+      child.once('close', function (code, signal) {
+        if (overflow) return finish(overflow);
+        if (code === 0 && !signal) return finish(null);
+        const cmd = [file].concat(argv).join(' ');
+        const e = new Error('Command failed: ' + cmd + '\n' + text(err).toString());
+        e.code = code === null ? signal : code;
+        e.killed = killed;
+        e.signal = signal;
+        e.cmd = cmd;
+        finish(e);
+      });
+      return child;
+    }
+
+    function nvxExec(command, options, callback) {
+      if (typeof options === 'function') { callback = options; options = undefined; }
+      const opts = Object.assign({}, options || {});
+      if (!opts.shell) opts.shell = true;
+      return nvxExecFile(command, [], opts, callback);
+    }
+
+    function promisified(fn) {
+      return function () {
+        const a = Array.prototype.slice.call(arguments);
+        let child;
+        const p = new Promise(function (resolve, reject) {
+          child = fn.apply(null, a.concat(function (error, stdout, stderr) {
+            // Only the promisified form attaches the output to the error, as node does.
+            if (error) { error.stdout = stdout; error.stderr = stderr; reject(error); }
+            else resolve({ stdout: stdout, stderr: stderr });
+          }));
+        });
+        p.child = child;
+        return p;
+      };
+    }
+    nvxExecFile[util.promisify.custom] = promisified(nvxExecFile);
+    nvxExec[util.promisify.custom] = promisified(nvxExec);
+    nvxExecFile.nvxRealExecFile = realExecFile;
+    nvxExec.nvxRealExec = realExec;
+    cp.execFile = nvxExecFile;
+    cp.exec = nvxExec;
   }
 
   // An IPC channel is a named pipe libuv creates INSIDE the container, and an
