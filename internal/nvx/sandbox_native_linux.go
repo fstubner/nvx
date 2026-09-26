@@ -35,6 +35,9 @@ func prepareEgressSocket(egress *EgressProxy, guestHome string, netCtx *NetworkL
 		return nil
 	}
 	sock := filepath.Join(guestHome, egressSocketName)
+	if err := unixSocketPathTooLong("egress socket", sock); err != nil {
+		return err
+	}
 	if err := egress.ListenUnix(sock); err != nil {
 		return err
 	}

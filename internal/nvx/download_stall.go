@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -37,31 +38,38 @@ func newDownloadClient() *http.Client {
 }
 
 // stallReader wraps a response body and cancels the request when no bytes
-// arrive for stall. Every successful Read resets the clock, so a slow steady
-// download runs to completion and a dead one is cut off in one stall period.
+// arrive for stall. The clock runs only while a Read is waiting on the body, so
+// a slow steady download runs to completion and a dead one is cut off in one
+// stall period.
+//
+// It used to run between Reads too, so time the caller spent writing to disk
+// counted as a network stall. The timer could also fire twice, when a Read that
+// returned data re-armed it after it had fired, and the second close of fired
+// panicked.
 type stallReader struct {
 	r      io.Reader
 	timer  *time.Timer
 	stall  time.Duration
 	cancel context.CancelFunc
 	fired  chan struct{}
+	once   sync.Once
 }
 
 func newStallReader(ctx context.Context, cancel context.CancelFunc, r io.Reader, stall time.Duration) *stallReader {
 	s := &stallReader{r: r, stall: stall, cancel: cancel, fired: make(chan struct{})}
 	s.timer = time.AfterFunc(stall, func() {
-		close(s.fired)
+		s.once.Do(func() { close(s.fired) })
 		cancel()
 	})
+	s.timer.Stop() // armed by Read
 	_ = ctx
 	return s
 }
 
 func (s *stallReader) Read(p []byte) (int, error) {
+	s.timer.Reset(s.stall)
 	n, err := s.r.Read(p)
-	if n > 0 {
-		s.timer.Reset(s.stall)
-	}
+	s.timer.Stop()
 	if err != nil {
 		select {
 		case <-s.fired:

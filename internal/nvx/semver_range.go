@@ -349,9 +349,10 @@ func isUnsupportedRange(err error) bool {
 // which is a different answer from "I could not read that version expression"
 // and needs a different response.
 //
-// isUnsupportedRange decides that by exclusion -- anything not starting with
-// "no version matches" is treated as an expression nvx cannot read -- and an
-// empty installation fell on the wrong side of it. `nvx use 20` on a machine
+// isUnsupportedRange used to decide that by the message text -- anything not
+// starting with "no version matches" was treated as an expression nvx cannot
+// read -- and an empty installation fell on the wrong side of it. It now
+// matches this sentinel with errors.Is. `nvx use 20` on a machine
 // where nvx is installed but no runtime is, which is the state every new user
 // is in, printed "no node versions are currently installed" and exited,
 // skipping the branch immediately below that offers to download it. The first

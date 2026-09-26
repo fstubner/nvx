@@ -47,13 +47,7 @@ func TestDoctorFixFlagIsRecognised(t *testing.T) {
 		{[]string{"nvx", "doctor", "--fixup"}, false},
 	}
 	for _, tc := range cases {
-		got := false
-		for _, a := range tc.args[2:] {
-			if a == "--fix" {
-				got = true
-			}
-		}
-		if got != tc.want {
+		if got := doctorFixRequested(tc.args[2:]); got != tc.want {
 			t.Errorf("%v: parsed --fix as %v, want %v", tc.args, got, tc.want)
 		}
 	}

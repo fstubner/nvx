@@ -34,8 +34,10 @@ func safeVersionComponent(version string) error {
 		return fmt.Errorf("version string is implausibly long (%d characters)", len(version))
 	}
 	// "." and ".." are valid under the allowlist below but are exactly the traversal
-	// this exists to stop.
-	if version == "." || version == ".." {
+	// this exists to stop. So is any name ending in a dot, "..." included, because
+	// Windows drops trailing dots from a path component and resolves `a\...` to
+	// `a`. No real version ends in one.
+	if strings.HasSuffix(version, ".") {
 		return fmt.Errorf("invalid version %q", version)
 	}
 	for _, r := range version {

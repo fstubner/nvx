@@ -90,14 +90,15 @@ func TestShimOptionsReadOnlyTheAttachedProviderForm(t *testing.T) {
 	}
 }
 
-// TestStrictIsHonouredFromTheProgramsArgumentsAndStillReachesIt covers the one
-// flag deliberately honoured in this position. --strict only ever ADDS
-// containment, so there is nothing to gain by smuggling it -- and the program
-// must receive it too, because `tsc --strict` means something to tsc.
-func TestStrictIsHonouredFromTheProgramsArgumentsAndStillReachesIt(t *testing.T) {
+// TestStrictAmongTheProgramsArgumentsIsRecordedAndStillReachesIt covers --strict
+// after the command. nvx does not honour it there, since 0.5.6, because it is
+// TypeScript's and ESLint's flag (see shouldContain). It is recorded so nvx can
+// say why nothing happened, and the program must receive it, because
+// `tsc --strict` means something to tsc.
+func TestStrictAmongTheProgramsArgumentsIsRecordedAndStillReachesIt(t *testing.T) {
 	opts := parseShimOptions([]string{"tsc", "--strict"})
 	if !opts.payloadStrict {
-		t.Error("--strict among the program's arguments must still be honoured by nvx")
+		t.Error("--strict among the program's arguments must be recorded, so nvx can say it was not read")
 	}
 	if !strings.Contains(strings.Join(opts.args, " "), "--strict") {
 		t.Errorf("...and must still reach the program: %q", opts.args)

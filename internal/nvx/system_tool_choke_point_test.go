@@ -25,6 +25,11 @@ import (
 // resolves the name through nvx's own PATH before cmd.Env is ever used. What
 // remains by name is listed here with the reason it cannot be anything else,
 // and adding one is a decision with a reviewer attached rather than a habit.
+//
+// The scan sees a name only when it is a string literal at the call. A name
+// held in a variable passes unseen. profilePathFor is the known case: it runs
+// "pwsh", and "powershell" off Windows, by bare name from a candidate list,
+// because PowerShell 7 has no fixed location and is found as the user finds it.
 func TestEveryProgramLaunchedByNameIsANamedException(t *testing.T) {
 	allowed := map[string]string{
 		"docker": "a user-installed tool with no fixed location; nvx runs it unelevated as the user, who could run it themselves",

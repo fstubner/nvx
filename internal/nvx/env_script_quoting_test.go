@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -52,12 +51,8 @@ func TestTheBashIntegrationRunsTheBinaryAtItsRealPath(t *testing.T) {
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf 'export NVX_TEST_RAN=%s\\n' \"$1\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	exeForScript := fake
-	if runtime.GOOS == "windows" {
-		// bash on Windows is Git Bash; it takes the path the script will spell.
-		exeForScript = fake
-	}
-	script := envScript("bash", exeForScript, filepath.Join(dir, "bin"))
+	// On Windows bash is Git Bash, which takes the path as the script spells it.
+	script := envScript("bash", fake, filepath.Join(dir, "bin"))
 
 	probe := script + "\nnvx use 1 >/dev/null\necho \"ran=$NVX_TEST_RAN\"\n"
 	out, err := exec.Command(bash, "-c", probe).CombinedOutput()

@@ -4,8 +4,66 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
+
+// Two waiters that both find the same abandoned lock must not both get it. The
+// steal read the dead pid and then removed the file, so a second waiter running
+// its whole steal inside that gap had its fresh lock removed by the first, and
+// both installs went ahead. On Windows the open lock file cannot be removed, so
+// the old code only lost this race on Unix.
+func TestAbandonedInstallLockIsStolenByOneWaiterOnly(t *testing.T) {
+	nvxHome := tempDir(t)
+	lockDir := filepath.Join(nvxHome, "versions", "node")
+	if err := os.MkdirAll(lockDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	name, err := installLockFileName("v22.11.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lockDir, name), []byte(fmt.Sprintf("%d\n", deadPID(t))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	type result struct {
+		release func()
+		err     error
+	}
+	second := make(chan result, 1)
+	var once sync.Once
+	installLockBeforeRemove = func() {
+		once.Do(func() {
+			go func() {
+				r, err := acquireRuntimeInstallLock(nvxHome, "node", "v22.11.0")
+				second <- result{r, err}
+			}()
+			// Room for the second waiter to run its whole steal. Serialised, it
+			// cannot, and waits until the first is done.
+			select {
+			case r := <-second:
+				second <- r
+			case <-time.After(500 * time.Millisecond):
+			}
+		})
+	}
+	first, err1 := acquireRuntimeInstallLock(nvxHome, "node", "v22.11.0")
+	r2 := <-second
+	installLockBeforeRemove = nil
+
+	held := 0
+	for _, r := range []result{{first, err1}, r2} {
+		if r.err == nil {
+			held++
+			r.release()
+		}
+	}
+	if held != 1 {
+		t.Errorf("%d waiters took the abandoned lock, want 1; two installs would extract into one directory", held)
+	}
+}
 
 // TestAbandonedInstallLockDoesNotBlockForever covers the failure an interrupted
 // install used to leave behind: the lock file recorded a pid and nothing ever
