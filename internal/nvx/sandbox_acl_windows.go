@@ -652,9 +652,12 @@ func grantACLWithin(path, sidStr string, mask uint32, flags uint8, timeout time.
 			return
 		}
 		// The reader gave up on this one. It has come back after all, so the thread
-		// is free again and the path is not permanently stalled.
-		aclAbandoned.Add(-1)
+		// is free again and the path is not permanently stalled. The path is
+		// cleared before the count drops, so anything that sees the count fall
+		// also sees the path released: the other order let a CI run read the count
+		// at zero and still find the path marked as stalling.
 		aclStalledPaths.Delete(key)
+		aclAbandoned.Add(-1)
 	}()
 
 	select {
