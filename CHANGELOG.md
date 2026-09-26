@@ -118,6 +118,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Windows: granting the sandbox access no longer opens your profile to other
+  accounts.** Every permission nvx wrote on a folder switched that folder's
+  inheritance protection off. Windows ships `C:\Users` and each profile folder
+  protected, so they do not take the drive root's "Authenticated Users: Modify".
+  One `nvx setup` grant on `C:\Users`, or one traverse grant on a profile, lifted
+  that, and every signed-in account on the machine could then read and change the
+  whole profile. nvx now keeps a folder's protection as it found it, and
+  `nvx doctor` reports a profile, or the folder above it, that has lost its
+  protection, with the `icacls ... /inheritance:r` command to restore it when the
+  folder's own entries keep you in.
+
 * **The Linux sandbox runs the system's `ip` and `iptables`, not the first ones
   on your PATH.** It set a system-only PATH for the child, which does not change
   which binary starts: that is looked up in nvx's own PATH. They are now taken
