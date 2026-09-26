@@ -18,7 +18,7 @@
 *.sh text eol=lf
 
 # PowerShell files are deliberately NOT declared here. They are stored LF today,
-# and both `-text` and `eol=crlf` would rewrite all five of them: the first tells
+# and both `-text` and `eol=crlf` would rewrite every one of them: the first tells
 # git to store the working tree's CRLF verbatim, the second asks for CRLF in the
 # index. Leaving them unmanaged keeps the stored bytes as they are. Checked with
 # `git add --renormalize .`, which staged 664 changed lines across five .ps1

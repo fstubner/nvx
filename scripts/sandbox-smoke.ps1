@@ -110,9 +110,16 @@ if ($installCode -ne 0 -or $defaultCode -ne 0) {
 # still failing normally everywhere the sandbox does work.
 $probe = (Invoke-NativeCapture $nvx @('shim', 'node', '-e', 'process.exit(0)')).Output
 if ($probe -match 'AppContainer launch failed') {
-    Write-Host "This host cannot create AppContainer children; skipping the containment assertions."
+    # Only the two shapes a HOST refusal takes, the same narrowed test as
+    # sandbox-enforcement-windows.ps1, which explains it. Any other launch
+    # failure is a regression and fails here.
+    if ($probe -match 'Access is denied' -or $probe -match 'The system cannot find the file specified') {
+        Write-Host "This host cannot create AppContainer children; skipping the containment assertions."
+        Write-Host ("  " + $probe.Trim())
+        exit 0
+    }
     Write-Host ("  " + $probe.Trim())
-    exit 0
+    Write-Error "the sandbox could not launch, and not in a way this host is known to refuse"
 }
 
 Write-Host "Testing sandboxed node via shim..."
