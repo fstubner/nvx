@@ -160,6 +160,10 @@ func Main() {
 			fmt.Print(text)
 			return
 		}
+		if text := commandSummaryFromHelp(command); text != "" {
+			fmt.Print(text)
+			return
+		}
 	}
 
 	switch command {
@@ -183,13 +187,7 @@ func Main() {
 		runUninstall(os.Args[2], nvxHome)
 
 	case "use":
-		useVersion := ""
-		for _, arg := range os.Args[2:] {
-			if !strings.HasPrefix(arg, "-") {
-				useVersion = arg
-				break
-			}
-		}
+		useVersion := useVersionArg(os.Args[2:])
 		if useVersion == "" {
 			LogError("Please specify a version to use. Example: nvx use 20")
 			os.Exit(1)
@@ -401,6 +399,52 @@ func isShimCommand(name string) bool {
 	return false
 }
 
+// commandSummaryFromHelp returns the entry `nvx help` lists for command, for a
+// command with no page in commandHelpText, or "" when the list has none.
+//
+// `nvx install --help` printed help and `nvx list-remote --help` failed with
+// "Unknown option", because only commands with a page were answered. Read out
+// of helpText so the two cannot disagree.
+func commandSummaryFromHelp(command string) string {
+	var b strings.Builder
+	inCommands, matched := false, false
+	for _, line := range strings.Split(helpText(), "\n") {
+		switch {
+		case line == "Commands:":
+			inCommands = true
+			continue
+		case !inCommands:
+			continue
+		case strings.TrimSpace(line) == "":
+			inCommands = false
+			continue
+		case strings.HasPrefix(line, "   "):
+			// A continuation of the entry above.
+			if matched {
+				b.WriteString(line + "\n")
+			}
+			continue
+		}
+		names := strings.TrimSpace(line)
+		if i := strings.Index(names, "  "); i >= 0 {
+			names = names[:i]
+		}
+		matched = false
+		for _, name := range strings.Split(names, ", ") {
+			if f := strings.Fields(name); len(f) > 0 && f[0] == command {
+				matched = true
+			}
+		}
+		if matched {
+			b.WriteString(line + "\n")
+		}
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "nvx " + command + "\n\n" + b.String() + "\nRun 'nvx help' for every command.\n"
+}
+
 func commandHelpText(command string) string {
 	switch command {
 	case "setup":
@@ -424,10 +468,12 @@ func commandHelpText(command string) string {
 nvx policy check [--format=json] [--online]
 nvx policy explain
 
-init creates a global or project .nvx policy file. It includes isolation.level
-("standard" or "strict") -- standard contains installs and ad-hoc tool runs;
-strict also contains your own code. Override per-invocation with
-nvx --strict/--standard.
+init creates a global or project .nvx policy file. The global file lists
+every setting with its default, including isolation.level ("standard" or
+"strict") -- standard contains installs and ad-hoc tool runs; strict also
+contains your own code. Override per-invocation with nvx --strict/--standard.
+The project file sets nothing until you add to it, so it never loosens the
+global policy.
 
 check is the CI gate: it evaluates this project against the policy in force and
 exits with a distinct code per failure class, documented in docs/exit-codes.md.
@@ -535,6 +581,24 @@ func defaultShell() string {
 		return "zsh"
 	}
 	return "powershell"
+}
+
+// useVersionArg picks the version out of `nvx use` arguments: the first one
+// that is neither a flag, the value of --shell, nor a shell name parseShellArg
+// reads. `nvx use --shell bash 20` took "bash" as the version.
+func useVersionArg(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--shell" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "-") || knownShells[strings.ToLower(arg)] {
+			continue
+		}
+		return arg
+	}
+	return ""
 }
 
 // parseShellArg extracts the target shell from trailing command arguments.
@@ -675,7 +739,7 @@ Options:
                          and set as NVX_CONNECT_<host>. Must come BEFORE the
                          command
   --filesystem-provider=<name>  Override isolation.filesystem.provider
-                         (native | docker). Passed TO the command:
+                         (native | docker | sandbox-exec). Passed TO the command:
                          nvx npm --filesystem-provider=...
   -y, --yes              Auto-approve all prompts
   -q, --quiet            Suppress success/info messages (errors and warnings still print)
@@ -969,6 +1033,14 @@ func runUse(query string, nvxHome string, shell string, viaIntegration bool) int
 		return 1
 	}
 	if err != nil {
+		// Looked up before offering. `nvx use 99` offered to download and
+		// install Node.js 99, which does not exist, and only the install that
+		// followed said so.
+		if _, rerr := provider.ResolveVersion(version); errors.Is(rerr, errNoReleaseFound) {
+			LogError("%s %s is not installed, and no published release matches it.", display, version)
+			LogInfo("Run 'nvx list-remote' to see what %s versions exist.", display)
+			return 1
+		}
 		promptMsg := fmt.Sprintf("%s %s is not installed. Would you like to download and install it now?", display, version)
 		if PromptYesNo(promptMsg) {
 			if instErr := provider.Install(version, nvxHome); instErr != nil {
@@ -1625,27 +1697,23 @@ func promptAnswerApproves(buf []byte, n int, err error) bool {
 }
 
 // parsePackageQuery splits a package install query (e.g. lodash@4.17.21 or @types/node@18.0.0)
+//
+// An npm alias, alias@npm:target@range, installs target, so target and its
+// range are what it returns. Checked under the alias name, `myalias@npm:left-pad`
+// passed a blocklist that stopped `left-pad` itself.
 func parsePackageQuery(query string) (string, string) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return "", ""
 	}
 
-	isScoped := false
-	if strings.HasPrefix(query, "@") {
-		isScoped = true
-		query = query[1:]
+	// The name ends at the first "@" after a scope's leading one.
+	name, version := query, ""
+	if i := strings.Index(query[1:], "@"); i >= 0 {
+		name, version = query[:i+1], query[i+2:]
 	}
-
-	parts := strings.Split(query, "@")
-	name := parts[0]
-	if isScoped {
-		name = "@" + name
-	}
-
-	version := ""
-	if len(parts) > 1 {
-		version = parts[1]
+	if strings.HasPrefix(strings.ToLower(version), "npm:") {
+		return parsePackageQuery(version[len("npm:"):])
 	}
 	return name, version
 }

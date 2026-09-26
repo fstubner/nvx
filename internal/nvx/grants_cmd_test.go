@@ -3,6 +3,7 @@ package nvx
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -38,6 +39,22 @@ func TestRunGrantsListShowsCurrentProjectGrants(t *testing.T) {
 	out := formatProjectGrants(g)
 	if !containsAll(out, "example.com:443", "wrangler") {
 		t.Fatalf("expected grants listing to mention the host and tool, got:\n%s", out)
+	}
+}
+
+// A grant record that exists and cannot be opened is reported, not listed as
+// "(none)". Here the record's path is a directory, which reads fail on with an
+// error other than "does not exist".
+func TestGrantsListWarnsWhenTheRecordCannotBeRead(t *testing.T) {
+	nvxHome := tempDir(t)
+	inProjectDir(t, tempDir(t))
+	if err := os.MkdirAll(grantsPath(nvxHome, projectScopeDir()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStderrHere(t, func() { runGrants([]string{"list"}, nvxHome) })
+	if !strings.Contains(out, "could not be read") {
+		t.Fatalf("an unreadable grant record was listed as empty with no warning:\n%s", out)
 	}
 }
 

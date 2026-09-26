@@ -164,6 +164,21 @@ func resolveDirForScope(path string) string {
 	return clean
 }
 
+// shellPathFixLine is the one line that puts shimDir first on PATH in the
+// shell doctor is running in. On Windows it printed PowerShell syntax even in
+// Git Bash, where `$env:PATH = ...` is not a command. defaultShell tells the
+// two apart the same way `nvx use` does.
+func shellPathFixLine(goos, shell, shimDir string) string {
+	switch {
+	case goos != "windows":
+		return fmt.Sprintf(`export PATH="%s:$PATH"`, shimDir)
+	case shell == "bash" || shell == "zsh":
+		return fmt.Sprintf(`export PATH="%s:$PATH"`, ToBashPath(shimDir))
+	default:
+		return fmt.Sprintf(`$env:PATH = "%s;$env:PATH"`, shimDir)
+	}
+}
+
 // dirWithin reports whether path is at or below base after cleaning.
 func dirWithin(path, base string) bool {
 	rel, err := filepath.Rel(base, path)
@@ -428,11 +443,7 @@ func runDoctor(nvxHome string, fix bool) int {
 	// changed their PATH for no reason.
 	if !rep.shimDirOnPath || len(rep.shadowedBy) > 0 || len(rep.missingExeShims) > 0 {
 		LogInfo("To fix the current shell now, run:")
-		if runtime.GOOS == "windows" {
-			LogInfo(`  $env:PATH = "%s;$env:PATH"`, shimDirPath(nvxHome))
-		} else {
-			LogInfo(`  export PATH="%s:$PATH"`, shimDirPath(nvxHome))
-		}
+		LogInfo("  %s", shellPathFixLine(runtime.GOOS, defaultShell(), shimDirPath(nvxHome)))
 	}
 
 	// After a --fix pass the shims may now be complete even though PATH still is

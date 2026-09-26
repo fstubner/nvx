@@ -241,9 +241,6 @@ func TestFindShasumEntryFormats(t *testing.T) {
 		{"wrong filename", hash + "  other.zip\n", "deno-x.zip", ""},
 		{"lone hash but multiple lines", hash + "\n" + hash + "  other.zip\n", "deno-x.zip", ""},
 		{"not a hash", "hello  deno-x.zip\n", "deno-x.zip", ""},
-		{"get-filehash format", "\r\nAlgorithm : SHA256\r\nHash      : " + hash + "\r\nPath      : C:\\w\\deno-x.zip\r\n", "deno-x.zip", hash},
-		{"get-filehash no path line", "Algorithm : SHA256\nHash : " + hash + "\n", "deno-x.zip", hash},
-		{"get-filehash wrong path", "Hash : " + hash + "\nPath : C:\\w\\other.zip\n", "deno-x.zip", ""},
 	}
 	for _, tc := range cases {
 		if got := findShasumEntry(tc.content, tc.file); got != tc.want {

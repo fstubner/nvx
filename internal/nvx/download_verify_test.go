@@ -106,11 +106,10 @@ func TestVerifyExpectedSHA256(t *testing.T) {
 
 // --- manifest verification ----------------------------------------------------
 
-func TestVerifyChecksumFromShasums(t *testing.T) {
-	dir := tempDir(t)
-	content := []byte("node binary stand-in")
-	archive := writeTempFile(t, dir, "node-v20.0.0-linux-x64.tar.gz", content)
-	sum := sha256.Sum256(content)
+// fetchExpectedShasum is what the Node installer calls; extractVerifiedArchive
+// then checks the archive against the digest it returns.
+func TestFetchExpectedShasum(t *testing.T) {
+	sum := sha256.Sum256([]byte("node binary stand-in"))
 	digest := hex.EncodeToString(sum[:])
 
 	serve := func(body string, status int) *httptest.Server {
@@ -123,23 +122,12 @@ func TestVerifyChecksumFromShasums(t *testing.T) {
 		}))
 	}
 
-	t.Run("correct manifest entry verifies", func(t *testing.T) {
+	t.Run("the manifest entry for the file is returned", func(t *testing.T) {
 		srv := serve(digest+"  node-v20.0.0-linux-x64.tar.gz\n", http.StatusOK)
 		defer srv.Close()
-		if err := VerifyChecksumFromShasums(srv.URL, archive, "node-v20.0.0-linux-x64.tar.gz"); err != nil {
-			t.Errorf("expected verification to succeed, got %v", err)
-		}
-	})
-
-	t.Run("wrong digest is rejected", func(t *testing.T) {
-		srv := serve(strings.Repeat("00", 32)+"  node-v20.0.0-linux-x64.tar.gz\n", http.StatusOK)
-		defer srv.Close()
-		err := VerifyChecksumFromShasums(srv.URL, archive, "node-v20.0.0-linux-x64.tar.gz")
-		if err == nil {
-			t.Fatal("a manifest digest that does not match the file must fail")
-		}
-		if !strings.Contains(err.Error(), "checksum verification failed") {
-			t.Errorf("error should name the mismatch, got %v", err)
+		got, err := fetchExpectedShasum(srv.URL, "node-v20.0.0-linux-x64.tar.gz")
+		if err != nil || got != digest {
+			t.Errorf("got %q, %v; want %q", got, err, digest)
 		}
 	})
 
@@ -147,7 +135,7 @@ func TestVerifyChecksumFromShasums(t *testing.T) {
 		// Fail-closed: an unlisted artifact must not be treated as unverified-but-ok.
 		srv := serve(digest+"  some-other-file.tar.gz\n", http.StatusOK)
 		defer srv.Close()
-		if err := VerifyChecksumFromShasums(srv.URL, archive, "node-v20.0.0-linux-x64.tar.gz"); err == nil {
+		if _, err := fetchExpectedShasum(srv.URL, "node-v20.0.0-linux-x64.tar.gz"); err == nil {
 			t.Error("a manifest without an entry for this file must fail")
 		}
 	})
@@ -155,7 +143,7 @@ func TestVerifyChecksumFromShasums(t *testing.T) {
 	t.Run("unreachable manifest is rejected", func(t *testing.T) {
 		srv := serve("", http.StatusNotFound)
 		defer srv.Close()
-		if err := VerifyChecksumFromShasums(srv.URL, archive, "node-v20.0.0-linux-x64.tar.gz"); err == nil {
+		if _, err := fetchExpectedShasum(srv.URL, "node-v20.0.0-linux-x64.tar.gz"); err == nil {
 			t.Error("a manifest that cannot be fetched must fail, not skip verification")
 		}
 	})
@@ -163,7 +151,7 @@ func TestVerifyChecksumFromShasums(t *testing.T) {
 	t.Run("empty manifest is rejected", func(t *testing.T) {
 		srv := serve("", http.StatusOK)
 		defer srv.Close()
-		if err := VerifyChecksumFromShasums(srv.URL, archive, "node-v20.0.0-linux-x64.tar.gz"); err == nil {
+		if _, err := fetchExpectedShasum(srv.URL, "node-v20.0.0-linux-x64.tar.gz"); err == nil {
 			t.Error("an empty manifest must fail")
 		}
 	})
@@ -389,7 +377,7 @@ func buildZip(t *testing.T, dir, name string, files map[string]string) string {
 	return writeTempFile(t, dir, name, buf.Bytes())
 }
 
-func TestExtractZipStripsWrapperAndFlatDoesNot(t *testing.T) {
+func TestExtractZipStripsWrapper(t *testing.T) {
 	dir := tempDir(t)
 	archive := buildZip(t, dir, "tool.zip", map[string]string{
 		"tool-v1/bin/tool": "binary",
@@ -401,14 +389,6 @@ func TestExtractZipStripsWrapperAndFlatDoesNot(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(stripped, "bin", "tool")); err != nil {
 		t.Errorf("ExtractZip should strip the wrapper directory: %v", err)
-	}
-
-	flat := filepath.Join(dir, "flat")
-	if err := ExtractZipFlat(archive, flat); err != nil {
-		t.Fatalf("ExtractZipFlat: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(flat, "tool-v1", "bin", "tool")); err != nil {
-		t.Errorf("ExtractZipFlat should preserve the archive layout: %v", err)
 	}
 }
 

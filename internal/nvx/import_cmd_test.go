@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -45,6 +46,36 @@ func TestAnImportWhereEveryInstallFailedExitsNonZero(t *testing.T) {
 	}
 	if code := runImport("nvm", nvxHome); code == 0 {
 		t.Fatal("every install failed and the import exited 0")
+	}
+}
+
+// The download prompt counts only what it would download. It counted every
+// version found, including the ones nvx already had.
+func TestImportAsksAboutOnlyTheVersionsItWouldDownload(t *testing.T) {
+	home := tempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("NVM_HOME", filepath.Join(home, "nvm-windows"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
+	t.Setenv("NVX_YES", "")
+	t.Setenv("NVX_NONINTERACTIVE", "1")
+	orig := Providers["node"]
+	Providers["node"] = failingInstallNode{}
+	t.Cleanup(func() { Providers["node"] = orig })
+	nvxHome := filepath.Join(home, ".nvx")
+	for _, dir := range []string{
+		filepath.Join(home, ".nvm", "versions", "node", "v20.11.0"),
+		filepath.Join(home, ".nvm", "versions", "node", "v22.1.0"),
+		filepath.Join(nvxHome, "versions", "node", "v20.11.0"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := captureStderrHere(t, func() { runImport("nvm", nvxHome) })
+	if !strings.Contains(out, "Download and install 1 Node.js version(s)") {
+		t.Fatalf("the prompt should count only v22.1.0, the one version not already installed:\n%s", out)
 	}
 }
 

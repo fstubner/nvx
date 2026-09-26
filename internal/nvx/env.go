@@ -486,8 +486,10 @@ var globalInstallFlags = map[string]bool{"-g": true, "--global": true}
 // un-contained — runShim checks this to fail with a clear message instead of
 // a confusing permission error partway through.
 func isGlobalInstall(cmdName string, args []string) bool {
+	// bun installs globally with the same -g/--global flags, into the real
+	// home's .bun, which the sandbox does not grant either.
 	switch strings.ToLower(cmdName) {
-	case "npm", "yarn", "pnpm":
+	case "npm", "yarn", "pnpm", "bun":
 	default:
 		return false
 	}
@@ -505,11 +507,15 @@ func isGlobalInstall(cmdName string, args []string) bool {
 	if !hasInstallVerb(args, ciVerbs...) {
 		return false
 	}
-	for _, arg := range args {
+	for i, arg := range args {
 		if arg == "--" {
 			return false
 		}
 		if globalInstallFlags[arg] {
+			return true
+		}
+		// npm's newer spelling of -g, in both its forms.
+		if arg == "--location=global" || (arg == "--location" && i+1 < len(args) && args[i+1] == "global") {
 			return true
 		}
 	}
@@ -635,6 +641,20 @@ type packageLockFile struct {
 // `packages`, keyed by path.
 type packageLockEntry struct {
 	Version string `json:"version"`
+	// Name is present when it differs from the path, which is what an npm alias
+	// does: `node_modules/lp` holding left-pad carries "name": "left-pad".
+	Name string `json:"name"`
+}
+
+// lockEntryPackageName is the package a `packages` entry installs. The path
+// names the directory, and under an alias that is the alias, so reading the
+// path alone checked left-pad as `lp` and the blocklist never saw it.
+func lockEntryPackageName(path string, entry packageLockEntry) string {
+	name := packageNameFromLockPath(path)
+	if name != "" && entry.Name != "" {
+		return entry.Name
+	}
+	return name
 }
 
 // A node in the lockfileVersion 1 `dependencies` tree, which nests.
@@ -675,7 +695,7 @@ func packagesFromPackageLock() []string {
 	seen := map[string]bool{}
 	var pkgs []string
 	for path, pkg := range lock.Packages {
-		name := packageNameFromLockPath(path)
+		name := lockEntryPackageName(path, pkg)
 		if name == "" || pkg.Version == "" {
 			continue
 		}
@@ -815,6 +835,10 @@ func endActiveChild() bool {
 // runShim runs a wrapped command, contained or not. It wraps runShimTraced so
 // that every exit path -- refusal, sandbox, direct -- lands in one run record.
 func runShim(cmdName string, args []string, nvxHome string) int {
+	// isShimCommand accepts `nvx NPM install x` case-insensitively, and the
+	// verification switch below matches exact lowercase names. Without this the
+	// command ran contained with every pre-install check skipped.
+	cmdName = strings.ToLower(cmdName)
 	trace := beginRunTrace(nvxHome, cmdName, args)
 	code := runShimTraced(trace, cmdName, args, nvxHome)
 	// A child killed because the client went away did not fail on its own terms;
@@ -944,7 +968,7 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 			Args:               args,
 			FilesystemProvider: opts.filesystemProvider,
 			ToolName:           toolName,
-			ReadExecRoots:      resolveReadExecRoots(policy.Isolation.Filesystem.AllowReadExec),
+			ReadExecRoots:      resolveReadExecRoots(policy.Isolation.Filesystem.AllowReadExec, nvxHome),
 			PassEnv:            policy.Isolation.Environment.Allow,
 			// The mode above is what nvx INTENDED. This is how it turned out: a
 			// sandbox that never started leaves the command unrun, and a record
@@ -1445,6 +1469,12 @@ func runtimeVersionOfBinary(nvxHome, binaryPath, activeVer string) string {
 		return activeVer
 	}
 	// Not nvx-managed and no active version: ask the binary itself, cheaply.
+	// Only node itself. The shim resolves npm, npx and yarn to their own
+	// binaries, whose -v is their own version, so a project pinned to node 22
+	// was told this command was "running 10.9.2".
+	if name := strings.ToLower(strings.TrimSuffix(filepath.Base(binaryPath), filepath.Ext(binaryPath))); name != "node" {
+		return ""
+	}
 	// #nosec G702 -- binaryPath is the runtime nvx itself resolved; asking it
 	// for its version is the point.
 	out, err := exec.Command(binaryPath, "-v").Output()

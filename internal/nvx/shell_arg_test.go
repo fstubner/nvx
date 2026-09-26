@@ -35,3 +35,18 @@ func TestAnUnknownShellIsRefusedRatherThanGuessed(t *testing.T) {
 		}
 	}
 }
+
+// The version given to `nvx use` is not the value of --shell.
+// `nvx use --shell bash 20` read "bash" as the version.
+func TestUseTakesTheVersionAfterTheShellFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"--shell", "bash", "20"},
+		{"--shell=bash", "20"},
+		{"20", "--shell", "bash"},
+		{"bash", "20"},
+	} {
+		if got := useVersionArg(args); got != "20" {
+			t.Errorf("useVersionArg(%v) = %q, want 20", args, got)
+		}
+	}
+}

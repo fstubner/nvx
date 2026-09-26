@@ -31,17 +31,32 @@ import (
 // Anything that does not resolve to an existing directory is dropped with a
 // warning rather than failing the launch -- a stale entry for a tool that is not
 // installed here should not stop the command running.
-func resolveReadExecRoots(entries []string) []string {
+//
+// An entry is also dropped when it names a variable that is not set, or
+// resolves to a volume root, the home directory, or a directory holding
+// nvxHome. `%UNSET%\` expanded to `\`, which is C:\, and `$UNSET/` to `/`, so
+// a variable missing on one machine granted read and execute on the whole
+// disk. `~` alone granted the whole home, which holds every credential store.
+func resolveReadExecRoots(entries []string, nvxHome string) []string {
 	var out []string
 	seen := map[string]bool{}
+	home, _ := os.UserHomeDir()
 	for _, raw := range entries {
-		p := expandPathVars(strings.TrimSpace(raw))
+		p, unset := expandPathVars(strings.TrimSpace(raw))
+		if unset != "" {
+			LogWarn("Ignoring allow_read_exec entry %q: %s is not set here.", raw, unset)
+			continue
+		}
 		if p == "" {
 			continue
 		}
 		abs, err := filepath.Abs(p)
 		if err != nil {
 			LogWarn("Ignoring allow_read_exec entry %q: %v.", raw, err)
+			continue
+		}
+		if tooBroadForReadExec(abs, home, nvxHome) {
+			LogWarn("Ignoring allow_read_exec entry %q: %s is a drive root, the home directory, or holds the nvx home. Name the tool's own directory instead.", raw, abs)
 			continue
 		}
 		info, err := os.Stat(abs)
@@ -66,20 +81,39 @@ func resolveReadExecRoots(entries []string) []string {
 	return out
 }
 
-// expandPathVars resolves ~, $VAR/${VAR} and %VAR% in a policy path.
+// tooBroadForReadExec reports whether dir is a volume root, the home directory,
+// or an ancestor of nvxHome. Each would hand contained code far more than one
+// tool's directory.
+func tooBroadForReadExec(dir, home, nvxHome string) bool {
+	clean := filepath.Clean(dir)
+	if filepath.Dir(clean) == clean {
+		return true // a volume or filesystem root
+	}
+	if home != "" && dirWithin(filepath.Clean(home), clean) {
+		return true
+	}
+	return nvxHome != "" && dirWithin(filepath.Clean(nvxHome), clean)
+}
+
+// expandPathVars resolves ~, $VAR/${VAR} and %VAR% in a policy path. The
+// second return names the first variable that is unset or empty, and is ""
+// when every one resolved.
 //
 // Both spellings, because this policy file is shared across platforms and a
 // developer writing it on Windows reaches for %LOCALAPPDATA% while the same
 // project on Linux wants $HOME. Supporting one would make the field usable on
 // one platform per project.
-func expandPathVars(p string) string {
+func expandPathVars(p string) (string, string) {
 	if p == "" {
-		return ""
+		return "", ""
 	}
+	unset := ""
 	if strings.HasPrefix(p, "~") {
-		if home, err := os.UserHomeDir(); err == nil {
-			p = home + p[1:]
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", "the home directory"
 		}
+		p = home + p[1:]
 	}
 	// %VAR% first: os.ExpandEnv does not understand it.
 	//
@@ -104,9 +138,20 @@ func expandPathVars(p string) string {
 		if end < 0 {
 			break
 		}
-		value := os.Getenv(p[start+1 : start+1+end])
+		name := p[start+1 : start+1+end]
+		value := os.Getenv(name)
+		if value == "" && unset == "" {
+			unset = "%" + name + "%"
+		}
 		p = p[:start] + value + p[start+1+end+1:]
 		from = start + len(value)
 	}
-	return os.ExpandEnv(p)
+	p = os.Expand(p, func(name string) string {
+		value := os.Getenv(name)
+		if value == "" && unset == "" {
+			unset = "$" + name
+		}
+		return value
+	})
+	return p, unset
 }

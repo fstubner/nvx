@@ -143,7 +143,7 @@ onto npm, and nvx does not reinterpret a word that belongs to another tool:
 
 Passed to the wrapped command only, not before it:
   --filesystem-provider=<name>  Override isolation.filesystem.provider
-                           (native | docker). `nvx npm --filesystem-provider=…`,
+                           (native | docker | sandbox-exec). `nvx npm --filesystem-provider=…`,
                            not `nvx --filesystem-provider=… npm`
 
 Options:

@@ -171,6 +171,36 @@ func TestAuditExportFailsOnAMalformedLogAndSaysWhatWasReadable(t *testing.T) {
 	}
 }
 
+// An over-long last line with no newline after it is damage, and counted. It
+// came back from the reader as an empty string, which the loop read as the end
+// of the file, so an export of that log reported itself complete.
+func TestAnOverLongLastLineIsCountedAsMalformed(t *testing.T) {
+	home := tempDir(t)
+	body := `{"time":"2026-09-01T00:00:00Z","pid":1,"event":"egress_deny"}` + "\n" + strings.Repeat("x", maxRecordBytes+10)
+	if err := os.WriteFile(filepath.Join(home, "audit.log"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, readable, malformed, err := readAuditEntriesCounted(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readable != 1 || malformed != 1 {
+		t.Fatalf("readable = %d, malformed = %d, want 1 and 1", readable, malformed)
+	}
+}
+
+// `nvx audit --limit 5` is accepted like `--limit=5`, as export accepts both
+// spellings of its flags. It was refused as an unknown option.
+func TestAuditAcceptsLimitAsASeparateValue(t *testing.T) {
+	home := tempDir(t)
+	writeAuditLog(t, home, `{"time":"2026-09-01T00:00:00Z","pid":1,"event":"egress_deny"}`)
+	var code int
+	captureStdout(t, func() { code = runAuditCommand([]string{"--limit", "5"}, home) })
+	if code != 0 {
+		t.Fatalf("nvx audit --limit 5 exited %d", code)
+	}
+}
+
 // A blank trailing line is the ordinary end of a file, not damage. Counting it
 // would make every healthy log report as corrupt, and a warning that is always
 // on is one nobody reads.

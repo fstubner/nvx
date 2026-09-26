@@ -9,7 +9,7 @@ for anything else, and that is unchanged.
 | Code | Class                 | Means                                                                                     |
 | ---- | --------------------- | ----------------------------------------------------------------------------------------- |
 | 0    | (pass)                | Every check that ran found nothing.                                                        |
-| 1    | `internal_error`      | nvx could not finish: an unknown flag, an unreadable home, a registry or OSV lookup that failed. No verdict was reached. |
+| 1    | `internal_error`      | nvx could not finish: an unknown flag, an unreadable home, a package.json or package-lock.json that does not parse, a registry or OSV lookup that failed. No verdict was reached. |
 | 10   | `policy_violation`    | A project policy file is not in force: it loosens an enforced global baseline and was refused, or it loosens settings and has never been trusted. |
 | 11   | `blocked_package`     | A package named in `blocked_packages` is a dependency of this project.                      |
 | 12   | `vulnerability`       | An advisory at or above `vulnerabilities.min_severity` that `vulnerabilities.allowed_advisories` does not accept. Needs `--online`. |
