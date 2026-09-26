@@ -13,18 +13,16 @@ import type { Feedback } from './types';
 // `repo` defaults to `social.repo` in footer.ts; set it here only when
 // feedback belongs somewhere else. Labels and templates are optional: a repo
 // with no issue templates still gets working links, just without the
-// prefilled body.
+// prefilled body. nvx has no issue forms, so neither route names one.
 export const feedback: Feedback = {
   enabled: true,
   prompt: 'Something wrong, or missing?',
   problem: {
     label: 'Report a problem',
-    template: 'bug.yml',
     issueLabels: ['bug'],
   },
   idea: {
     label: 'Suggest something',
-    template: 'idea.yml',
     issueLabels: ['enhancement'],
   },
 };

@@ -28,6 +28,21 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   That is an ACE Windows ships on your profile and nvx cannot revoke.
 - **Detection is best-effort.** Typosquat and vulnerability checks reduce risk
   without certifying a package. Containment is the backstop, not the checks.
+- **Only `package-lock.json` is read for the vulnerability check.** A project
+  that uses pnpm, yarn or bun has no `package-lock.json`, so nvx checks the
+  dependency names in `package.json` instead. Those carry no locked versions and
+  no transitive dependencies, so the packages actually installed are not all
+  checked.
+- **On Windows, a loopback exemption left by an `nvx setup` older than 0.5.0
+  opens every service on 127.0.0.1** to contained code, whatever the allowlist
+  says. Newer versions never add one. Removing it needs an Administrator
+  terminal, so on an upgraded machine it stays until you run `nvx setup` there.
+  nvx warns on every affected launch and `nvx doctor` reports it with the
+  removal command. Treat the allowlist as unenforced while it is registered.
+- **The Docker provider cannot do `proxy` mode.** A policy that selects
+  `isolation.filesystem.provider: docker` with the default `network.mode: proxy`
+  is refused. Docker runs `offline` and `loopback` with no network at all, and
+  `open` unfiltered. Use the native provider for an egress allowlist.
 
 ## What surprises people
 

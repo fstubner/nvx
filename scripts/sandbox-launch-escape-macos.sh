@@ -93,17 +93,29 @@ for vector in direct launchctl open; do
     launchctl remove nvx.probe.control 2>/dev/null
   fi
 
-  "$NVX" -y --strict shim node probe.js "$vector" "$box" nvx.probe.contained 2>&1 | grep '^PROBE' || true
+  out=$("$NVX" -y --strict shim node probe.js "$vector" "$box" nvx.probe.contained 2>&1)
   waitfor "$box" && escaped=yes || escaped=no
   launchctl remove nvx.probe.contained 2>/dev/null
+  # The PROBE line is the proof the contained node ran the attempt. Without it
+  # a sandbox that failed to launch node at all would read as DENIED below.
+  probe_ran=no
+  if grep '^PROBE' <<<"$out"; then probe_ran=yes; fi
 
   if [[ $escaped == yes ]]; then
     echo "RESULT $vector: ESCAPED (contained process caused a write outside the sandbox)"
+    fail=1
+  elif [[ $probe_ran == no ]]; then
+    echo "$out" >&2
+    echo "RESULT $vector: NOT RUN (the contained node never reported its attempt)"
     fail=1
   elif [[ $ctl_ok == yes ]]; then
     echo "RESULT $vector: DENIED (control worked, contained attempt did not)"
   else
     echo "RESULT $vector: INCONCLUSIVE (the unsandboxed control did not work on this runner)"
+    # A developer machine may lack what the control needs. A CI runner had it
+    # on 2026-09-25, so there an inconclusive vector is one that stopped
+    # being checked.
+    if [[ -n "${CI:-}" ]]; then fail=1; fi
   fi
 done
 

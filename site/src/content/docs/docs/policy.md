@@ -98,10 +98,11 @@ Policies cascade: the global policy applies everywhere, and local policy files m
   - `proxy` (default): parent-process HTTP CONNECT + SOCKS5 proxy with policy allowlist; injects `HTTP_PROXY` / `HTTPS_PROXY`.
   - `open`: no egress filtering.
   - `offline`: no network at all.
-  - `loopback`: the services on your own 127.0.0.1 are reachable at their own
-    addresses, over any TCP protocol; everything else is blocked. On Windows it
-    reaches proxy-aware tools' HTTP and HTTPS traffic only, since the reach there
-    comes from nvx's proxy. Selecting it in a project policy is a loosening and
+  - `loopback`: `proxy` mode with one addition. The services on your own
+    127.0.0.1 are reachable at their own addresses, over any TCP protocol, and
+    allowlisted remote hosts stay reachable through the proxy. On Windows the
+    loopback reach covers proxy-aware tools' HTTP and HTTPS traffic only, since
+    it comes from nvx's proxy. Selecting it in a project policy is a loosening and
     needs approval.
 * **`runtime.versions`**: Pin runtime versions used inside the sandbox (e.g. `"node": "20"`).
 * **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project (`<project>/.nvx/npm_global`) instead of being shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch. Because that directory goes on your PATH, a project file that turns this on counts as a loosening and needs the same approval as an egress host.

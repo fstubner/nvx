@@ -16,10 +16,21 @@
      No ink that works in only one theme. This is composited unchanged into
      both variants, and only the lettering beside it changes colour. A mark
      drawn in near-black disappears on the dark bar. Use the brand colour, or
-     something that holds on both.
-
-     The square below is a placeholder. -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Example">
-  <rect x="18" y="18" width="28" height="28" rx="4"
-        fill="none" stroke="#22c55e" stroke-width="8"/>
+     something that holds on both. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="nvx">
+  <!-- The double hexagon from assets/nvx_logo.png in the repo root, the one
+       public/assets/wordmark*.png already show, in public/favicon.svg's blue
+       to purple. This note sits inside the element because libvips sniffs
+       only the start of a file for "<svg", and a longer header comment made
+       sharp reject the file as an unsupported format. -->
+  <defs>
+    <linearGradient id="m" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5b9bd5"/>
+      <stop offset="100%" stop-color="#c34fd0"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 3 L57 17.5 L57 46.5 L32 61 L7 46.5 L7 17.5 Z"
+        fill="none" stroke="url(#m)" stroke-width="2.6" stroke-linejoin="round"/>
+  <path d="M32 10.5 L50.5 21.25 L50.5 42.75 L32 53.5 L13.5 42.75 L13.5 21.25 Z"
+        fill="none" stroke="url(#m)" stroke-width="2.6" stroke-linejoin="round"/>
 </svg>
