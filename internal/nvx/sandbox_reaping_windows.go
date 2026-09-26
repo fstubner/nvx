@@ -212,9 +212,13 @@ func superviseProcessTree(process syscall.Handle) (cleanup func()) {
 		LogWarn("Could not enable process-tree reaping for this sandbox session: %v", err)
 		return func() { _ = syscall.CloseHandle(job) }
 	}
-	// Only after a successful assignment, so membership actually means something,
-	// and before the target runs, so no tunnel traffic can arrive while it is
-	// still unset.
+	// Only after a successful assignment, so membership actually means something.
+	//
+	// The target is already running by now. launchAppContainerProcessOnce does
+	// not create it suspended, so it runs from CreateProcess until this
+	// assignment. A process it spawns in that window is outside the job, is not
+	// reaped with it, and fails the tunnel's peer check. Creating it suspended
+	// and resuming it after this would close the window.
 	setSessionJob(job)
 	return func() {
 		setSessionJob(0)

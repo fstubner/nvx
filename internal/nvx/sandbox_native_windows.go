@@ -352,7 +352,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	cmdPath, launchArgs, err := containedCommand(config, cmdPath)
 	if err != nil {
 		LogError("%v", err)
-		return 1, refusedToStart("the sandbox writable roots could not be granted")
+		return 1, refusedToStart("the command could not be staged where the sandbox can run it")
 	}
 
 	cleanEnv = containedEnv(cleanEnv, guestHome, cmdPath, config.NvxHome)
@@ -596,6 +596,16 @@ func wrapWithEgressSupervisor(
 	return supervisor, append(supervisorArgs, args...), nil
 }
 
+// driveRootHasGrant asks whether setup's identity can read a drive root. Setup
+// writes read/execute on the folder itself; this asked for modify until
+// 2026-09-02, which never matched, so a completed setup still read as missing
+// and the notice below fired on every package-manager run of a machine that had
+// nothing wrong with it. A variable so a test can stand in for the machine's
+// real drive roots, which are whatever the last elevated setup left them.
+var driveRootHasGrant = func(sidStr, root string) bool {
+	return appContainerHasGrantFor(sidStr, root, grantReadExec)
+}
+
 // noteMissingElevatedGrants notes, with --verbose only, which drive roots the
 // sandbox cannot read, based on the actual ACLs rather than on whether a setup
 // marker file exists -- so it stays accurate if setup was undone, or if a
@@ -622,16 +632,6 @@ func wrapWithEgressSupervisor(
 // The "already told you" marker is keyed by identity as well as path, so an
 // upgrade that changes which identity needs the grant re-arms the notice rather
 // than inheriting a tick from the old one.
-// driveRootHasGrant asks whether setup's identity can read a drive root. Setup
-// writes read/execute on the folder itself; this asked for modify until
-// 2026-09-02, which never matched, so a completed setup still read as missing
-// and the notice below fired on every package-manager run of a machine that had
-// nothing wrong with it. A variable so a test can stand in for the machine's
-// real drive roots, which are whatever the last elevated setup left them.
-var driveRootHasGrant = func(sidStr, root string) bool {
-	return appContainerHasGrantFor(sidStr, root, grantReadExec)
-}
-
 func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 	sidStr, err := deriveCapabilitySIDString(setupCapabilityName)
 	if err != nil {
@@ -684,7 +684,7 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 	// needs an entry on is inside nvx's own home. A warning that fires on every
 	// install about a condition that breaks nothing is one the person stops
 	// reading, and it was the loudest line on the screen. The failure case is
-	// still covered: remindAboutStrandedSetup says it again, after a
+	// still covered: remindAboutDriveRoots says it again, after a
 	// package-manager command has actually failed.
 	for _, r := range missing {
 		markDriveRootNoticeSeen(nvxHome, sidStr, r)

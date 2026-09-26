@@ -6,17 +6,16 @@ package nvx
 // reach an AF_UNIX socket owned by the unsandboxed parent?
 //
 // Windows blocks AppContainer -> TCP loopback unless an administrator adds a
-// loopback exemption, which is why nvx currently grants the sandbox
-// internetClient and lets it connect DIRECTLY, bypassing the egress allowlist --
-// while README.md and enforcement-matrix.md claim Windows egress is allowlisted.
+// loopback exemption. That is why nvx, until 0.5.0, granted the sandbox
+// internetClient and let it connect DIRECTLY, bypassing the egress allowlist,
+// while README.md and enforcement-matrix.md claimed Windows egress was
+// allowlisted.
 //
 // AF_UNIX on Windows (afunix.sys, Windows 10 1803+) is a filesystem object rather
 // than a TCP/IP endpoint. If the loopback restriction does not cover it, the exact
 // relay built for Linux would give Windows real allowlisted egress with no
-// elevation -- making the documentation true instead of weakening it. If it is
-// blocked, the honest fix is to correct the docs.
-//
-// This settles which.
+// elevation. This probe was written to settle that, and it did: the in-container
+// relay that shipped in 0.5.0 reaches the proxy over such a socket.
 
 import (
 	"fmt"
@@ -147,9 +146,9 @@ func indexOf(h, n string) int {
 
 // TestAppContainerIntraContainerLoopback decides whether an in-container relay is
 // possible on Windows at all. AF_UNIX reaching the parent is necessary but not
-// sufficient: unlike Linux, nvx runs no supervisor inside the AppContainer, so a
-// relay would have to listen on loopback INSIDE the container and be dialled by the
-// target. Windows blocks AppContainer loopback to outside processes; whether it
+// sufficient: a relay has to listen on loopback INSIDE the container and be
+// dialled by the target. When this was written nvx ran nothing inside the
+// AppContainer but the target. The supervisor that runs there now is the result. Windows blocks AppContainer loopback to outside processes; whether it
 // blocks a container reaching its own listener is what decides the design.
 func TestAppContainerIntraContainerLoopback(t *testing.T) {
 	if os.Getenv("NVX_PROBE") != "1" {

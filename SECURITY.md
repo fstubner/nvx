@@ -666,16 +666,17 @@ timing behind these claims is in `docs/enforcement-matrix.md`.
   exemption that 0.5.0 removed, which opened every local service to every sandbox
   on the machine, permanently, and could not be revoked without elevation.
 
-  **The grant is confined to the sandbox that asked for it**, and that takes an
-  explicit check rather than coming for free. Windows permits loopback *within* an
-  AppContainer package, and every nvx sandbox shares one package identity — so the
-  in-sandbox listener is, by default, reachable from every other nvx sandbox
-  running at that moment. Measured on 2026-08-28 before this was addressed: a
-  sandbox in an unrelated project, with no grant of its own, read the service.
-  nvx now identifies the process behind each tunnel connection and refuses any
-  that is not part of this run, so a concurrent sandbox is turned away and the
-  refusal is logged. It fails closed: a peer nvx cannot place inside this run does
-  not get through.
+  **The grant is confined to the project that asked for it.** Windows permits
+  loopback *within* an AppContainer package, and each project's sandboxes share
+  that project's package. Measured on 2026-08-28, when every nvx sandbox still
+  shared one package: a sandbox in an unrelated project, with no grant of its own,
+  read the service. Per-project packages now keep other projects' sandboxes out.
+  nvx also identifies the process behind each tunnel connection and refuses one it
+  cannot place inside this run, and logs the refusal. It fails closed. That check
+  is not a boundary between two runs of the same project, though. A concurrent run
+  of the same project can reach this run's tunnel socket and name a connection
+  that belongs to this run, and the service is then reachable from it. Treat a
+  grant as open to the project's other sandboxes for as long as the command runs.
 
   **macOS reaches the same place by a different route.** What stops a contained
   tool there is the Seatbelt profile, which in the default `proxy` mode permits

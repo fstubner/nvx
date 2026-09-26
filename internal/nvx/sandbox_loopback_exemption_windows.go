@@ -40,6 +40,10 @@ import (
 // clear answer is cached: while the exemption is present every launch re-checks,
 // so the warning stops the moment an elevated `nvx setup` removes it, rather than
 // nagging for a day after the user has done what it asked.
+//
+// The cost runs the other way. An exemption ADDED after a clear result was
+// cached goes unwarned for up to this long, because launches in that window
+// trust the cached answer and do not re-check.
 const loopbackExemptRecheckTTL = 24 * time.Hour
 
 type loopbackExemptCheck struct {

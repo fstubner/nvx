@@ -134,6 +134,36 @@ func TestAuditExportCSVHasAStableHeader(t *testing.T) {
 	}
 }
 
+// A value that a spreadsheet would run as a formula is exported as text. The
+// fields come from a log anything on the machine can append to, so a cwd of
+// =HYPERLINK(...) became a live formula in whoever opened the export.
+func TestAuditExportCSVDoesNotEmitFormulas(t *testing.T) {
+	home := tempDir(t)
+	writeAuditLog(t, home,
+		`{"time":"2026-09-01T00:00:00Z","pid":1,"event":"run","cwd":"=HYPERLINK(\"http://x\")","tool":"@SUM(1)","command":"-2+3","exit":"-1"}`,
+	)
+	out := filepath.Join(home, "export.csv")
+	if code := runAuditExport([]string{"--format", "csv", "--out", out}, home); code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	rows, err := csv.NewReader(strings.NewReader(readExport(t, out))).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	col := map[string]string{}
+	for i, name := range rows[0] {
+		col[name] = rows[1][i]
+	}
+	for _, name := range []string{"cwd", "tool", "command"} {
+		if !strings.HasPrefix(col[name], "'") {
+			t.Errorf("%s exported as %q, which a spreadsheet runs as a formula", name, col[name])
+		}
+	}
+	if col["exit"] != "-1" {
+		t.Errorf("a plain number was altered: exit = %q", col["exit"])
+	}
+}
+
 // A line that cannot be parsed is reported, and the export still says how much
 // of the log it could read.
 //

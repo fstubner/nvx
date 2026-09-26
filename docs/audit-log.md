@@ -82,6 +82,10 @@ rendering one put a live password in the log once. `nvx audit` replaces the prin
 verbs with `[…]` on the way out; the export does not, so a consumer sees exactly
 what was stored.
 
+In `csv` only, a value that starts with `=`, `+`, `-`, `@`, a tab or a carriage
+return, and is not a plain number, gets a leading `'`. Spreadsheets run such a cell
+as a formula, and the log is a file anything on the machine can append to.
+
 Arguments are never recorded. `action` holds only a subcommand nvx recognises by
 name (`install`, `run`, `add`), because a package spec or a script name can carry a
 registry token or an internal project name.

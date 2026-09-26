@@ -4,8 +4,6 @@ package nvx
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"unicode/utf16"
@@ -74,6 +72,11 @@ func buildCapabilitySIDAttrs(sidStrings []string) ([]SID_AND_ATTRIBUTES, func(),
 // CreateProcessAsUserW + PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES. The
 // lowILToken path is retained for legacy callers, but native launch passes 0.
 // capabilitySIDs grants AppContainer capabilities (e.g. internetClient).
+//
+// There is no cmd.exe fallback. One retried a "cannot find the file" failure
+// through System32\cmd.exe after granting the container traverse on it. That
+// grant is a write to an ACL TrustedInstaller owns, which fails elevated or
+// not, so the retry never ran. It also matched English error text.
 func launchAppContainerProcess(
 	cmdPath string,
 	args []string,
@@ -83,29 +86,7 @@ func launchAppContainerProcess(
 	lowILToken syscall.Token,
 	capabilitySIDs []string,
 ) (exitCode int, err error) {
-	exitCode, err = launchAppContainerProcessOnce(cmdPath, args, env, workDir, appContainerSID, lowILToken, capabilitySIDs)
-	if err == nil || !isCreateProcessMissingFile(err) {
-		return exitCode, err
-	}
-
-	sysRoot := os.Getenv("SystemRoot")
-	if sysRoot == "" {
-		sysRoot = `C:\Windows`
-	}
-	cmdExe := filepath.Join(sysRoot, "System32", "cmd.exe")
-	if grantErr := grantRuntimeTraverse(cmdExe); grantErr != nil {
-		return exitCode, err
-	}
-	wrapped := append([]string{"/c", cmdPath}, args...)
-	return launchAppContainerProcessOnce(cmdExe, wrapped, env, workDir, appContainerSID, lowILToken, capabilitySIDs)
-}
-
-func isCreateProcessMissingFile(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "cannot find the file") || strings.Contains(msg, "the system cannot find")
+	return launchAppContainerProcessOnce(cmdPath, args, env, workDir, appContainerSID, lowILToken, capabilitySIDs)
 }
 
 // Long on purpose, and kept that way.
@@ -259,7 +240,9 @@ func launchAppContainerProcessOnce(
 	var pi processInformation
 	var createOK uintptr
 	var createErr error
-	// lpApplicationName NULL — executable is the first token in lpCommandLine.
+	// lpApplicationName is cmdPath, so Windows runs exactly that file rather than
+	// searching for the first token of lpCommandLine. The command line still
+	// starts with the same path, as argv[0].
 	if lowILToken != 0 {
 		createOK, _, createErr = procCreateProcessAsUserW.Call(
 			uintptr(lowILToken),

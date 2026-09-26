@@ -3,6 +3,7 @@
 package nvx
 
 import (
+	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
@@ -107,6 +108,23 @@ func TestParentProcessIsIdentifiable(t *testing.T) {
 	defer syscall.CloseHandle(h)
 	if processHasExited(h) {
 		t.Error("the live parent of this test was reported as exited")
+	}
+}
+
+// A pid that names a process newer than this one is not our parent. The parent
+// pid comes from a snapshot, and if the parent exits before it is opened the pid
+// can be reused. The watchdog then waited on an unrelated process. A child this
+// test starts stands in for the reused pid, since it is newer by construction.
+func TestAParentNewerThanThisProcessIsRefused(t *testing.T) {
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", "Start-Sleep -Seconds 30")
+	if err := cmd.Start(); err != nil {
+		t.Skipf("cannot start a helper process: %v", err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+
+	if h, ok := openIfOlderThanSelf(uint32(cmd.Process.Pid)); ok {
+		syscall.CloseHandle(h)
+		t.Fatal("a process created after this one was accepted as its parent")
 	}
 }
 

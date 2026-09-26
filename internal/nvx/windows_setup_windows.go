@@ -16,9 +16,9 @@ import (
 )
 
 // runWinCmd runs a Windows system tool with a timeout so a stuck tool surfaces
-// as an error instead of hanging. (icacls can hang indefinitely when a filter
-// driver intercepts writes to certain paths, e.g. the OneDrive/Defender-guarded
-// profile root — so every privileged call is time-boxed.)
+// as an error instead of hanging. (An icacls write on a directory with a large
+// subtree, such as the profile root, can run for many minutes while Windows
+// propagates inheritance beneath it, so every privileged call is time-boxed.)
 //
 // name is a tool in the system directory -- "icacls", "reg",
 // "CheckNetIsolation" -- and is taken from there, never from PATH. This ran
@@ -180,8 +180,8 @@ func windowsAncestorGrantPaths() []string {
 	add(sysDrive + `\`)
 	add(filepath.Join(sysDrive+`\`, "Users"))
 	// The profile root (C:\Users\<user>) already grants ALL APPLICATION PACKAGES,
-	// so it needs no grant and is deliberately excluded (its ACL write hangs
-	// behind the OneDrive/Defender filter driver). Cover another volume's roots
+	// so it needs no grant and is deliberately excluded (its ACL write propagates
+	// over the whole profile tree). Cover another volume's roots
 	// only if the profile lives off the system drive.
 	if up := os.Getenv("USERPROFILE"); up != "" {
 		if vol := filepath.VolumeName(up); vol != "" && !strings.EqualFold(vol, sysDrive) {
@@ -470,8 +470,7 @@ func runWindowsSetup(nvxHome string, undo, allDrives bool) int {
 
 	if failed > 0 {
 		LogError("nvx sandbox setup did not finish: %d path(s) above could not be granted.", failed)
-		LogInfo("Windows sometimes completes an abandoned permission write minutes later. Re-run " +
-			"'nvx setup' (elevated) -- anything already in place is skipped, so it resumes rather than starting over.")
+		LogInfo("Re-run 'nvx setup' (elevated). Anything already in place is skipped, so it resumes rather than starting over.")
 		return 1
 	}
 	if exemptionLeft {
