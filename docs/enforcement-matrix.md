@@ -104,8 +104,9 @@ is the one that closed the largest gap here — until 2026-08-24 the whole scrip
 ran with an empty allowlist and could only ever observe refusals.
 
 `READ_OUTSIDE=ALLOWED` pins the documented weakness in ² deliberately. If the
-profile is ever tightened this fails, which forces README, SECURITY.md,
-PRODUCT.md and this page to be updated in the same change rather than quietly
+profile is ever tightened this fails, which forces the docs site's limitations
+page (`site/src/content/docs/docs/limitations.md`), SECURITY.md, PRODUCT.md and
+this page to be updated in the same change rather than quietly
 going wrong in the flattering direction.
 
 `UDP_EGRESS=DENIED` is refused at **bind**, not at send: sending on an unbound
@@ -185,8 +186,8 @@ every sandbox on the machine" for two days after that stopped being true, which
 is the safe direction to be wrong in and still worth correcting: an acceptance
 pass reproduced the scenario expecting to confirm a hole and found none.
 
-README has disclosed this under Known limitations since 0.5.0; this row said an
-unqualified "Yes" until 2026-08-20, which an acceptance pass caught by writing
+README disclosed this under Known limitations from 0.5.0, and SECURITY.md
+carries it now. This row said an unqualified "Yes" until 2026-08-20, which an acceptance pass caught by writing
 into the nvx repository itself from a sandbox scoped to a different project. That
 repository carried 19 such grants at the time.
 
@@ -339,8 +340,9 @@ opens them, which Windows permits. Measured 2026-08-29 inside a real
 AppContainer -- `spawn` with piped stdio returned its child's output and exit
 code. This file said it "still hangs" for weeks after that stopped being true,
 which matters more here than elsewhere because PRODUCT.md names this file as the
-authority. What remains under Known limitations is narrower: writing to a
-contained child's stdin, which is `null` rather than a stream. The smoke fixture's postinstall now
+authority. Writing to a contained child's stdin works through the same broker
+since 2026-09-04. What remains under Known limitations is narrower: a child given
+an IPC channel (`child_process.fork`) is refused. The smoke fixture's postinstall now
 captures a subprocess and asserts the captured text, so the case that shipped
 broken is the case it tests -- verified by disabling the preload and watching the
 smoke hang.
@@ -429,11 +431,12 @@ to connect and never where -- one port, for one run, closed when the command
 exits. `TestAContainedDialReachesTheHostServiceItWasGranted` drives a real
 connection end to end through both halves.
 
-**"For one run" is enforced, not implied.** An AppContainer's loopback is not
-private: Windows permits it within a package, and every nvx sandbox shares one
-package identity, so the in-sandbox listener is reachable from every other nvx
-sandbox running concurrently. Measured 2026-08-28 -- a sandbox in an unrelated
-project with no grant of its own read the granted service, while the same probe
+**"For one run" is checked, and the boundary is the project.** An AppContainer's
+loopback is not private: Windows permits it within a package, and every run of
+one project shares that project's package (¹⁰). Until 2026-08-29 every nvx
+sandbox shared one package, so the in-sandbox listener was reachable from every
+other nvx sandbox running concurrently. Measured 2026-08-28 -- a sandbox in an
+unrelated project with no grant of its own read the granted service, while the same probe
 could reach neither the real port nor an unrelated one. Note the shape: this is
 the hazard the egress relay already defends against with a per-session proxy
 credential (see EgressProxy.token, and the acceptance pass of 2026-08-19 that
@@ -443,7 +446,8 @@ does not, so the peer is identified instead. Every process a run launches is in
 that run's Job Object, so the parent resolves the connection to a process and
 refuses anything outside it -- in the parent, because `GetExtendedTcpTable` is
 ACCESS_DENIED inside an AppContainer. Unverifiable peers are refused, not
-admitted.
+admitted. Runs of one project still share a package and a capability, so treat
+them as one trust domain and do not rely on the peer check to keep them apart.
 
 That is what makes it defensible where the pre-0.5.0 loopback exemption was not:
 `CheckNetIsolation LoopbackExempt` was machine-wide, permanent, opened *every*
@@ -585,7 +589,8 @@ whether or not it is loopback, exemption or no exemption. An acceptance pass
 demonstrated it: a listener on `127.0.0.1:51997`, no exemption on the machine, no
 `--connect`, and the payload came back through nvx's own proxy.
 
-That behaviour is intended and is what `README.md` documents
+That behaviour is intended and is what the docs site's policy page
+(`site/src/content/docs/docs/policy.md`) documents
 (`"allow_hosts": ["localhost:5432"]`). A developer whose project talks to a local
 Postgres or a local registry needs it, and the alternative they reach for is
 `--no-sandbox`, which is worse. `PRODUCT.md` scopes the guarantee to "a host
@@ -615,8 +620,8 @@ the same command, the same two-number rule, the same `NVX_CONNECT_<port>`, and
 the same property that nvx picks the destination while the contained process
 picks the moment.
 
-Windows needs a peer check on its tunnel because every sandbox there shares one
-package identity. macOS needs none: a process outside any sandbox can open the
+Windows needs a peer check on its tunnel because every run of one project there
+shares one package identity. macOS needs none: a process outside any sandbox can open the
 service directly already, and another sandbox cannot reach the listener, since
 its own profile permits only its own proxy ports.
 
@@ -754,9 +759,8 @@ they date quickly; each carries the date and machine it was taken on.
   sandbox's identity only, and its cost is proportional to the volume's size:
   22 minutes for 5.6 million entries. `nvx setup --undo` takes it back.
 - **A contained command costs a few hundred milliseconds, and the first one after a
-  new runtime is staged can be minutes.** The ~38ms dispatch figure above measures
-  the shim, not the sandbox: a contained launch has to prepare an isolated home and
-  check permissions. The first run in a project is slower than the rest, because
+  new runtime is staged can be minutes.** A contained launch has to prepare an
+  isolated home and check permissions, which the shim's own dispatch does not. The first run in a project is slower than the rest, because
   that is when the permission grants are made and remembered.
 
   Measured on Windows 11: ~2.4s for a project's first contained run, ~390ms for
@@ -820,14 +824,17 @@ they date quickly; each carries the date and machine it was taken on.
   on **Linux** it does too, but only since the sandbox began mounting a
   procfs of its own — Bun reads `/proc/self` to size its stack, and before
   that a contained `bun install` failed with "JSON document is too deeply
-  nested" against a valid file. Windows has its own version floor, below.
-- **Bun needs 1.4.x to work inside the Windows sandbox.** Measured 2026-09-06:
-  Bun **1.4.2** runs contained correctly — `bun install`, `bunx`, relative-path
-  reads and writes all work. Bun **1.3.1** fails every relative-path operation
-  with `EBADFD`, and without `nvx setup` cannot start a script at all
-  (`CouldntReadCurrentDirectory`).
+  nested" against a valid file. Windows is below.
+- **Bun does not run inside the Windows sandbox.** Measured 2026-09-17:
+  `bun install` fails on every run, with `ENOENT` on 1.3.1 and `EBADF` on
+  1.4.2, and `bun -e` cannot read its own working directory. The docs site's
+  limitations page (`site/src/content/docs/docs/limitations.md`) has the
+  detail. An earlier measurement, on 2026-09-06, found 1.4.2 running `bun
+  install`, `bunx` and relative-path reads and writes contained, and 1.3.1
+  failing every relative-path operation with `EBADFD`. The later run is the
+  one that stands.
 
-  If a contained Bun misbehaves, check `bun --version` first. Bun added
+  Bun added
   AppContainer support in [oven-sh/bun#33119](https://github.com/oven-sh/bun/pull/33119),
   merged 2026-07-20 and shipped from 1.4.0; the related sandbox report is
   [oven-sh/bun#28220](https://github.com/oven-sh/bun/issues/28220), now closed.
@@ -835,6 +842,6 @@ they date quickly; each carries the date and machine it was taken on.
   AppContainer will not honour, so absolute paths work and relative ones do not —
   Node is unaffected because it holds no such descriptor.
 
-  `nvx install bun@1.4.2` (or later) is the fix. `nvx --no-sandbox` remains the
-  escape hatch for an older Bun, which means running it **without** containment,
-  so treat what it installs accordingly.
+  `nvx --no-sandbox` is the escape hatch, which means running Bun **without**
+  containment, so treat what it installs accordingly. npm and yarn run
+  contained.

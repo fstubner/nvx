@@ -27,9 +27,14 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   fi
 fi
 
-if [[ "$(uname -s)" == "Linux" ]] && [[ "$(uname -r | cut -d. -f1-2)" < "5.13" ]]; then
-  echo "Skipping egress smoke (Landlock/network namespace requires kernel 5.13+)." >&2
-  exit 0
+# Compared as versions, the way sandbox-enforcement-linux.sh does. A string
+# comparison put 5.4 after 5.13 and let a pre-Landlock kernel through.
+if [[ "$(uname -s)" == "Linux" ]]; then
+  KERNEL="$(uname -r | cut -d. -f1-2)"
+  if [[ "$(printf '%s\n5.13\n' "$KERNEL" | sort -V | head -1)" != "5.13" ]]; then
+    echo "Skipping egress smoke (Landlock/network namespace requires kernel 5.13+, found $KERNEL)." >&2
+    exit 0
+  fi
 fi
 
 PROJ="$(mktemp -d)"

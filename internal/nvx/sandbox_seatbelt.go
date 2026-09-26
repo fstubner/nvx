@@ -205,8 +205,12 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	// "mode": "proxy " was proxy on Windows and Linux and matched no case here, so
 	// macOS silently emitted no network rule at all -- fail-closed, but a
 	// platform-divergent behaviour change from one trailing space in a config file.
+	//
+	// Only "open" is unrestricted. An empty or unrecognised mode is proxy, as it
+	// is on Windows (windowsEgressNeedsRelay). An empty mode was open here until
+	// 2026-09-26. normalizePolicy kept it out of reach, and nothing here did.
 	mode := strings.ToLower(strings.TrimSpace(netCtx.Mode))
-	if mode == "open" || mode == "" {
+	if mode == "open" {
 		b.WriteString("(allow network*)\n")
 	}
 	// Loopback is granted per mode, narrowly.
@@ -222,7 +226,9 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	// forwards traffic (a debugging proxy, `ssh -D`, a dev server's proxy route)
 	// turns it into unrestricted egress, so the allowlist stops meaning anything.
 	switch mode {
-	case "proxy":
+	case "open":
+		// Granted in full above.
+	default: // "proxy", and an empty or unrecognised mode
 		// Only the proxy itself. If its ports are unknown, nothing is allowed and
 		// egress fails closed rather than falling back to all of loopback.
 		if netCtx.HTTPProxyPort > 0 {

@@ -202,3 +202,93 @@ const steps = [
 		t.Errorf("unexpected output:\n%s", shimmed)
 	}
 }
+
+// A descriptor the caller passes in slot 0 belongs to the caller. The patched
+// spawn used to close whatever number sat there once the child started, so a
+// file the caller opened and handed to the child as stdin lost its descriptor.
+// (fd 0 itself is not checked. libuv on Windows turns a close of fds 0 to 2
+// into a no-op, so that case cannot fail here.) The temp directory behind the
+// empty-file stdin also has to go when the child closes.
+//
+// Both paths that closed it are run. Live channels reach the 'spawn' handler,
+// and a dead channel name reaches the claim failure that falls back to files.
+func TestShimmedSpawnLeavesTheCallersStdinDescriptorAlone(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH")
+	}
+	dir := tempDir(t)
+	shim, err := writeStdioShim(dir)
+	if err != nil {
+		t.Fatalf("writeStdioShim: %v", err)
+	}
+	input := filepath.Join(dir, "input.txt")
+	if err := os.WriteFile(input, []byte("HELLO"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, "stdin.js")
+	body := `
+const fs = require('fs'), cp = require('child_process'), os = require('os');
+const node = process.execPath;
+function still(fd) {
+  try { const b = Buffer.alloc(5); fs.readSync(fd, b, 0, 5, 0); return b.toString(); } catch (e) { return e.code; }
+}
+const steps = [
+  cb => {
+    const fd = fs.openSync(process.argv[2], 'r');
+    const c = cp.spawn(node, ['-e', 'process.stdin.pipe(process.stdout)'], { stdio: [fd, 'pipe', 'ignore'] });
+    let out = '';
+    c.stdout.on('data', d => out += d);
+    c.on('close', () => { console.log('A', JSON.stringify(out), still(fd)); cb(); });
+  },
+  cb => {
+    const c = cp.spawn(node, ['-e', 'process.stdout.write("C")'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    c.stdout.resume();
+    c.on('close', () => { console.log('C', fs.readdirSync(os.tmpdir()).filter(n => n.startsWith('nvx-cap-')).length); cb(); });
+  },
+];
+(function next(i) { if (i < steps.length) steps[i](() => next(i + 1)); })(0);
+`
+	if err := os.WriteFile(script, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sddl := "D:(A;;GA;;;WD)" // both ends are this test's own processes
+	var live []string
+	broker := &stdioBroker{}
+	defer broker.Close()
+	for i := 0; i < 2; i++ {
+		ch, err := newStdioChannel("shimstdintest", i, sddl, false)
+		if err != nil {
+			t.Skipf("cannot create pipes on this host: %v", err)
+		}
+		broker.channels = append(broker.channels, ch)
+		go ch.pump()
+		live = append(live, ch.childPipe+"|"+ch.nodePipe)
+	}
+
+	for _, tc := range []struct{ name, channels string }{
+		{"live channels", strings.Join(live, ";")},
+		{"dead channel", `\\.\pipe\nvx-none-a|\\.\pipe\nvx-none-b`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			cmd := exec.Command(node, script, input)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(),
+				"NODE_OPTIONS=--require "+strings.ReplaceAll(shim, `\`, `/`),
+				nvxStdioChannelsEnv+"="+tc.channels,
+				nvxStdinChannelsEnv+"=",
+				"TEMP="+tmp, "TMP="+tmp)
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("node probe failed: %v\n%s", err, out)
+			}
+			for _, want := range []string{`A "HELLO" HELLO`, `C 0`} {
+				if !strings.Contains(string(out), want) {
+					t.Errorf("missing %q in output:\n%s", want, out)
+				}
+			}
+		})
+	}
+}

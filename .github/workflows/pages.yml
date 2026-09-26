@@ -1,16 +1,17 @@
 # Builds site/ and deploys it to GitHub Pages at nvx.run.
 #
-# Manual trigger ONLY for now (workflow_dispatch). The site currently carries
-# the template's sample content, and a push trigger would publish "Example" to
-# nvx.run the moment this merges. Add the push trigger in the same commit that
-# lands the real copy:
+# Manual trigger ONLY (workflow_dispatch). It started that way because the
+# site carried the template's sample content. The copy is nvx's own now, so
+# a push trigger is a choice about deploying on every merge to main. It would
+# look like this:
 #
 #   push:
 #     branches: [main]
-#     paths: ['site/**', 'CHANGELOG.md']
+#     paths: ['site/**', 'CHANGELOG.md', 'install.sh', 'install.ps1']
 #
-# CHANGELOG.md belongs in that list whenever it is added: the changelog page
-# imports the repository root's copy, so a release note changes the site.
+# CHANGELOG.md belongs in that list because the changelog page imports the
+# repository root's copy. The install scripts belong in it because the
+# prebuild copies them into the site (scripts/copy-install-scripts.mjs).
 #
 # Prerequisite, once: repository Settings -> Pages -> Source = "GitHub Actions"
 # (not "Deploy from a branch"). This workflow expects that mode, and the custom
@@ -46,7 +47,16 @@ jobs:
           node-version-file: site/.nvmrc
       - run: npm ci
       - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
+      # The same check as site-ci.yml. Pagefind can fail inside a build that
+      # still exits 0, and the site would then deploy a search box that finds
+      # nothing.
+      - name: Search index
+        run: |
+          if [ ! -f dist/pagefind/pagefind.js ]; then
+            echo "::error::the build produced no search index (dist/pagefind/pagefind.js is missing)"
+            exit 1
+          fi
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: site/dist
 
@@ -58,4 +68,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

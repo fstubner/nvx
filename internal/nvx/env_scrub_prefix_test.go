@@ -1,9 +1,6 @@
 package nvx
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // The refusal list is the backstop that a checked-in project file cannot pass
 // a credential into contained install code through isolation.environment.allow.
@@ -13,15 +10,9 @@ import (
 // NODE_EXTRA_CA_CERTS are not credentials but change what a contained node
 // does, which is worse.
 func TestSensitiveEnvPrefixesCoverTheAuditedFamilies(t *testing.T) {
-	refused := func(key string) bool {
-		upper := strings.ToUpper(key)
-		for _, prefix := range sensitiveEnvPrefixes {
-			if strings.HasPrefix(upper, prefix) {
-				return true
-			}
-		}
-		return false
-	}
+	// The real check, not a copy of its prefix loop, so the test cannot pass
+	// while the refusal itself disagrees.
+	refused := isSensitiveEnvName
 
 	for _, key := range []string{
 		"NPM_CONFIG__AUTH",

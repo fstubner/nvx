@@ -203,6 +203,18 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   for all of them. README and `docs/enforcement-matrix.md` were corrected and this
   file was missed — a partial sweep, which is how the same wrong sentence survives
   in one place after being fixed in two.
+- **On Windows, a profile folder that lost its inheritance protection is open
+  to other accounts.** Windows ships `C:\Users` and each profile folder
+  protected from the drive root's "Authenticated Users: Modify". Older nvx
+  builds switched that protection off on every folder they granted, and nvx now
+  keeps it as it found it. `nvx doctor` reports a profile, or the folder above
+  it, that has lost its protection, with the `icacls ... /inheritance:r`
+  command that restores it.
+- **A contained command started in your home directory cannot write it.** On
+  Linux and macOS, a command started in your home directory or above it starts
+  in the sandbox's home instead, so it cannot write `~/.nvx` or your shell
+  profile. On Windows the same applies to a directory above your profile or
+  inside `~/.nvx`. nvx says so when it happens.
 - **`audit.log` is a record, not evidence against a local attacker.** Anything
   running as you can append to it, and that includes code nvx deliberately does
   not contain: at the default `standard` level your own code — `npm run build`,
@@ -216,16 +228,17 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   what nvx recorded about its own runs, not as proof of what did or did not
   happen on a machine where untrusted code has already executed outside the
   sandbox.
-- **Projects granted by nvx before 0.5.0 remain reachable.** Every sandbox shared
-  one identity until 0.5.0 and the permissions were never revoked, so a project you
-  previously used nvx in is readable and writable from any sandbox until nvx runs
-  there again and cleans it. nvx keeps no record of where it has run, so it cannot
-  sweep them for you. See README.md for the manual command.
+- **Projects granted by nvx before 0.5.0 keep a dead permission.** Every sandbox
+  shared one identity until 0.5.0 and those permissions were never revoked. No
+  current sandbox holds that identity, so the permission grants nothing. nvx
+  removes it the next time it runs in that project, and `nvx doctor` reports it.
+  The manual command is under "Limitations in detail" below.
 - **Capturing a child's output on Windows needs help from nvx, and gets it.** An
   AppContainer may not create a named pipe, which is how Windows implements piped
   child stdio, so a contained program that captures a subprocess's output would
-  hang. Both kinds of capture are handled; what a contained process still cannot
-  do is write to a child's stdin.
+  hang. Both kinds of capture are handled, and so is writing to a child's stdin.
+  What a contained process still cannot do is give a child an IPC channel
+  (`child_process.fork`).
 
   This bullet used to be headed "cannot capture a child's output", and four lines
   later said "**Synchronous capture is handled; streaming capture is not**" —
@@ -266,15 +279,21 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   home and delivered when the stream ends rather than as it is produced —
   available from `stdout` events or `close`, not from an `exit` handler.
 
+  **A child given an IPC channel, as `child_process.fork` does, is refused.**
+  That is a second named pipe, created by libuv inside the contained process,
+  and node builds the parent half of it itself, so nvx cannot hand it over
+  ready-made. It throws at once and names `--no-sandbox`. Vitest's default
+  worker pool forks, so `nvx --no-sandbox npx vitest run` is the way to run it.
+
   nvx's diagnostic hint covers installs only, on purpose: an install still running
   after two minutes is anomalous, while an `npx`-launched dev server running for
   hours is working correctly, so a timer cannot tell the second case from a hang.
   Nothing here affects containment: it changes how a contained process talks to
   its own children, not what it may reach.
-- **Docker provider allowlist is cooperative.** Under the `docker` isolation
-  provider, `network.mode: offline` is enforced via `--network none`, but
-  proxy-mode allowlisting is cooperative only and therefore disabled by
-  default for that provider.
+- **The Docker provider has no egress allowlist.** Under the `docker` isolation
+  provider, `offline` and `loopback` both run with `--network none`. An
+  allowlist there would be cooperative only, so nvx refuses to run a command in
+  `proxy` mode under that provider.
 - **Docker passes allowed environment values on the command line.** `docker run`
   takes them as `-e KEY=VALUE`, so anything `isolation.environment.allow` lets
   through is visible in the process list to other processes running as you for as
@@ -418,8 +437,9 @@ timing behind these claims is in `docs/enforcement-matrix.md`.
   { "isolation": { "environment": { "allow": ["CI", "NODE_ENV"] } } }
   ```
 
-  Exact names, matched without regard to case; no patterns. A name matching a
-  sensitive prefix (`AWS_`, `GITHUB_`, `SECRET_`, and the rest) is refused and
+  Exact names, matched without regard to case; no patterns. A name that looks
+  like a credential (a sensitive prefix such as `AWS_` or `GITHUB_`, or a word
+  such as TOKEN, SECRET or PASSWORD, as in `GH_TOKEN`) is refused and
   reported rather than honoured — a policy file lives in the repository, and a
   single line in one must not be able to hand a cloud credential to whatever an
   install script runs. Adding an entry widens what contained code can see, so a
@@ -519,64 +539,6 @@ timing behind these claims is in `docs/enforcement-matrix.md`.
   is writable by anything else running as you. Useful for reviewing your own
   usage; not proof against someone who already runs code as you.
 
-- **On Windows, a contained process cannot pipe a child's output.** An AppContainer
-  is not allowed to create a named pipe, and that is how Windows builds piped child
-  stdio — so a contained program that captures a subprocess's output (`execSync`
-  with default options, `spawn(..., {stdio: 'pipe'})`) hangs rather than failing.
-  Inherited and discarded stdio both work normally.
-
-  **Synchronous capture is handled.** The restriction is on creating a pipe, not on
-  file descriptors, so a preload in every contained node process routes
-  `spawnSync`, `execSync` and `execFileSync` through temp files in the guest home.
-  Their contract is "run it, give me the output at the end", which a file satisfies
-  exactly. **`esbuild`** is the package this was measured against — its postinstall
-  calls `execFileSync(..., {stdio: "pipe"})` and `npm install esbuild` used to hang
-  forever; it now completes in seconds.
-
-  **Streaming capture works too, with one gap.** Async `spawn(..., {stdio: 'pipe'})`
-  is a real stream that a file cannot stand in for, and it used to block forever —
-  an `npx vitest` or `npx playwright` run left a process wedged until it was killed
-  by hand. nvx now creates the pipes outside the container and the preload only
-  opens them, which Windows permits; the container never creates one. stdout and
-  stderr stream as they are produced, stay separate, and exit codes propagate.
-
-  **Writing to a contained child's stdin works through the same broker, in
-  reverse.** nvx creates the pipe outside the container, the preload opens it,
-  and what the contained process writes is pumped into the child's stdin.
-
-  It did not until 2026-09-04: slot 0 was an empty file, so `child.stdin` was
-  `null` and this section said "a tool that feeds its child input needs
-  `nvx --no-sandbox`". That read like a corner case and was not one. esbuild's
-  service is a child driven over stdin, Vite runs on esbuild, and Vitest runs on
-  Vite, so a contained `npx vitest run` hung with nothing printed to explain it.
-
-  **A child given an IPC channel — `child_process.fork` — is refused.** That is a
-  second named pipe, created by libuv *inside* the contained process, and unlike
-  the other three it cannot be handed over ready-made: node's `'ipc'` slot is not
-  an ordinary descriptor and node builds the parent half of the channel itself.
-
-  It used to hang — inside `fork()`, before the child existed and before anything
-  was printed. It now throws immediately, naming `--no-sandbox`. The limitation is
-  the same either way; the difference is a second instead of forever, and a reason
-  instead of silence. Vitest's default worker pool forks, so
-  `nvx --no-sandbox npx vitest run` is the way to run it today.
-
-  The sandbox streams 8 piped children at once, counted across every node process
-  in the session: a nested process draws from the same pool as its parent, and a
-  channel returns to the pool when the child using it closes, so children run one
-  after another never run out. Beyond 8 at the same time, output is collected and
-  delivered **when the stream ends** rather than as it is produced. Nothing hangs,
-  and no bytes are dropped — but read it from `stdout` events or the `close`
-  event, **not from an `exit` handler**. A caller that accumulates via `data` and
-  inspects the accumulator in `exit` sees it full for the first 8 children and
-  empty for the rest, in the same process. nvx prints a warning the first time a
-  process crosses that line, because otherwise it reads as a flaky test.
-
-  The two-minute diagnostic hint deliberately covers installs only. An install
-  that has not finished in two minutes is anomalous; an `npx`-launched dev server
-  running for hours is doing its job, and a hint firing on it would be noise. So
-  for tool runners the hang is documented rather than detected.
-
 - **On Windows, a server started inside the sandbox needs `--expose` to be
   reachable from the host.** Windows refuses connections into an AppContainer, so
   a contained `npx vite` binds its port, prints that it is listening, and serves
@@ -599,7 +561,7 @@ timing behind these claims is in `docs/enforcement-matrix.md`.
   on every run of the probe, not merely intended.
 
   Your own `npm run dev` is uncontained at the default `standard` level and needs
-  none of this. Until 0.5.5 there was no way to reach a contained server at all;
+  none of this. Until 0.5.6 there was no way to reach a contained server at all;
   the FAQ had claimed loopback worked for dev servers, which was measured false on
   2026-08-20.
 
@@ -641,10 +603,11 @@ timing behind these claims is in `docs/enforcement-matrix.md`.
 
 - **On Windows and macOS, a contained tool needs `--connect` to reach a service
   running on your machine.** The other direction, and the same reason: the
-  sandbox has no route to your loopback, and the egress proxy refuses host
-  loopback destinations on purpose. A contained tool that has to talk to something you are already
-  running — a browser with remote debugging on, a local database, a device
-  emulator — gets there one named port at a time:
+  sandbox has no route to your loopback, and the egress proxy refuses a host
+  loopback destination unless `allow_hosts` names it. A contained tool that has
+  to talk to something you are already running — a browser with remote
+  debugging on, a local database, a device emulator — gets there one named
+  port at a time:
 
   ```
   nvx --connect 9222:19222 npx @playwright/mcp --cdp-endpoint http://127.0.0.1:19222
@@ -666,17 +629,15 @@ timing behind these claims is in `docs/enforcement-matrix.md`.
   exemption that 0.5.0 removed, which opened every local service to every sandbox
   on the machine, permanently, and could not be revoked without elevation.
 
-  **The grant is confined to the project that asked for it.** Windows permits
-  loopback *within* an AppContainer package, and each project's sandboxes share
-  that project's package. Measured on 2026-08-28, when every nvx sandbox still
-  shared one package, a sandbox in an unrelated project, with no grant of its own,
-  read the service. Per-project packages now keep other projects' sandboxes out.
-  nvx also identifies the process behind each tunnel connection and refuses one it
-  cannot place inside this run, and logs the refusal. It fails closed. That check
-  is not a boundary between two runs of the same project, though. A concurrent run
-  of the same project can reach this run's tunnel socket and name a connection
-  that belongs to this run, and the service is then reachable from it. Treat a
-  grant as open to the project's other sandboxes for as long as the command runs.
+  **The boundary is the project.** Windows permits loopback *within* an
+  AppContainer package, and every run of one project shares that project's
+  package. Until 2026-08-29 every nvx sandbox on the machine shared one package,
+  and on 2026-08-28 a sandbox in an unrelated project, with no grant of its own,
+  read the service. Packages are per project now, so another project's sandbox
+  cannot reach the in-sandbox listener. nvx also identifies the process behind
+  each tunnel connection and refuses any it cannot place inside this run, and
+  logs the refusal. Treat concurrent runs of one project as one trust domain all
+  the same, and do not rely on `--connect` to keep them apart.
 
   **macOS reaches the same place by a different route.** What stops a contained
   tool there is the Seatbelt profile, which in the default `proxy` mode permits
@@ -698,10 +659,10 @@ timing behind these claims is in `docs/enforcement-matrix.md`.
   guest home, which crosses because it is a filesystem object; nvx dials your
   service from outside, as everywhere else.
 
-  Two network modes cannot carry it: `offline` and `loopback` deny the contained
-  process every IP socket, including the one it would use to reach the tunnel.
-  nvx says so and names the modes that work, so the flag is never accepted in
-  silence. The default, `proxy`, carries it.
+  `offline` cannot carry it on Linux. It denies the contained process every IP
+  socket, including the one it would use to reach the tunnel. nvx says so and
+  names the modes that work, so the flag is never accepted in silence. The
+  default, `proxy`, carries it, and so does `loopback`.
 
   In a policy file it is `isolation.network.connect_ports`, and adding one counts
   as loosening, so a project cannot grant itself a host port without approval.
@@ -721,8 +682,9 @@ timing behind these claims is in `docs/enforcement-matrix.md`.
 
   The default `proxy` mode reaches loopback only where `allow_hosts` names it, and
   `offline` reaches nothing. Until 2026-09-08 the mode did nothing at all on
-  Windows, Linux and Docker: each treated it as `offline`, so a mode whose name
-  says "reach these services" reached none of them.
+  Windows and Linux: each treated it as `offline`, so a mode whose name says
+  "reach these services" reached none of them. Docker still does. It runs the
+  mode with `--network none`, the same as `offline`.
 
   A server the **sandbox itself** runs stays reachable from inside it. The relay
   tries the sandbox's own namespace before the host, so a contained `npm run dev`
