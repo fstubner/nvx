@@ -118,6 +118,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A contained command started in your home directory can no longer write it.**
+  The working directory is writable inside the sandbox, and nothing checked
+  which directory it was. From `~` or `/`, where editors often start MCP servers,
+  a contained process could write `~/.nvx` (its grants and policy, so the next
+  run's trust) and `~/.bashrc`. Measured on Linux and on a macOS runner: from a
+  project all three writes were refused, from the home directory all three
+  landed. nvx now starts such a command in the sandbox's home and says why. The
+  same rule applies on Windows to a directory above the profile or inside
+  `~/.nvx`. The Linux and macOS enforcement scripts check it on every CI run.
+
 * **The Linux sandbox runs the system's `ip` and `iptables`, not the first ones
   on your PATH.** It set a system-only PATH for the child, which does not change
   which binary starts: that is looked up in nvx's own PATH. They are now taken
