@@ -118,6 +118,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx doctor` no longer calls a bypassed command healthy.** It listed
+  `[FAIL] npm -> ... (bypasses nvx)` and then said "nvx is intercepting commands
+  correctly" and exited 0, because it only counted nvx's own runtime folders as
+  shadowing. A system Node earlier on PATH, the usual Windows layout, now makes
+  doctor exit non-zero.
+
 * **Every spelling of an install is contained and checked.** Plain `yarn` and
   `yarn --frozen-lockfile` (yarn's default command installs), `npm x`,
   `npm clean-install` and `ic`, `npm it`, `cit` and `sit`, `npm rb`, and npm's

@@ -51,6 +51,25 @@ type commandResolution struct {
 	viaShim  bool   // resolved path lives inside the nvx shim dir
 }
 
+// bypassing lists the wrapped commands a shell would run from somewhere other
+// than the shim dir.
+//
+// Doctor printed "[FAIL] npm -> ... (bypasses nvx)" for each of these and then
+// "nvx is intercepting commands correctly", exiting 0: the verdict counted only
+// shadowing by nvx's own runtime dirs, and a system Node install ahead of the
+// shim dir -- the usual Windows layout, where the Machine PATH comes before the
+// User PATH -- is not one of those. A command that is not installed at all is
+// not a bypass.
+func (r doctorReport) bypassing() []string {
+	var names []string
+	for _, c := range r.commands {
+		if c.resolved != "" && !c.viaShim {
+			names = append(names, c.name)
+		}
+	}
+	return names
+}
+
 // pathShadow is a raw-runtime PATH entry that precedes the shim dir.
 type pathShadow struct {
 	dir   string
@@ -339,7 +358,7 @@ func runDoctor(nvxHome string, fix bool) int {
 	// unreadable policy, then fell through to the second check and exited 0
 	// anyway. Closing over rep is deliberate: --fix reassigns it.
 	healthyNow := func() bool {
-		return rep.shimDirOnPath && len(rep.shadowedBy) == 0 &&
+		return rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.bypassing()) == 0 &&
 			len(rep.missingExeShims) == 0 && !weakened && !policyBroken && !sandboxBroken
 	}
 
