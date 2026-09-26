@@ -74,23 +74,42 @@ func grantsPath(nvxHome, scopeDir string) string {
 }
 
 // loadProjectGrants reads a project's ledger without its lock, for callers that
-// only read it. See loadProjectGrantsWithLock.
+// only read it. See loadProjectGrantsWithLock. A ledger that exists but cannot
+// be read is warned about and read as empty, which is safe for a reader because
+// nothing is written back.
 func loadProjectGrants(nvxHome, scopeDir string) projectGrants {
-	return loadProjectGrantsWithLock(nvxHome, scopeDir, false)
+	g, err := loadProjectGrantsWithLock(nvxHome, scopeDir, false)
+	if err != nil {
+		LogWarn("%v; carrying on as if it recorded nothing", err)
+	}
+	return g
 }
+
+// readLedgerFile reads a ledger from disk. A variable so a test can make the
+// read fail with something other than not-exist, which no file mode produces
+// portably.
+var readLedgerFile = os.ReadFile
 
 // loadProjectGrantsWithLock reads a project's ledger. lockHeld says whether the
 // caller already holds the project's ledger lock, as updateProjectGrants does;
 // the lock is not re-entrant, so taking it again there would deadlock.
-func loadProjectGrantsWithLock(nvxHome, scopeDir string, lockHeld bool) projectGrants {
+//
+// A missing ledger is an empty one. Any other read failure is an error, because
+// updateProjectGrants saves what this returns over the file: it read an
+// unreadable ledger as empty and replaced it, dropping every ReadExecGrants
+// record in it. Measured on Linux with the file at mode 000.
+func loadProjectGrantsWithLock(nvxHome, scopeDir string, lockHeld bool) (projectGrants, error) {
 	g := projectGrants{ProjectPath: scopeDir, PolicyPins: map[string]string{}}
 	if nvxHome == "" || scopeDir == "" {
-		return g
+		return g, nil
 	}
 	path := grantsPath(nvxHome, scopeDir)
-	data, err := os.ReadFile(path)
+	data, err := readLedgerFile(path)
+	if os.IsNotExist(err) {
+		return g, nil
+	}
 	if err != nil {
-		return g
+		return g, fmt.Errorf("could not read the grants ledger %s: %w", path, err)
 	}
 	if uerr := json.Unmarshal(data, &g); uerr != nil {
 		// A ledger that does not parse was treated as an empty one and then silently
@@ -103,12 +122,12 @@ func loadProjectGrantsWithLock(nvxHome, scopeDir string, lockHeld bool) projectG
 		// permissions still need removing by hand, but there is at least something on
 		// disk that names them.
 		quarantineUnreadableGrants(nvxHome, scopeDir, path, data, uerr, lockHeld)
-		return projectGrants{ProjectPath: scopeDir, PolicyPins: map[string]string{}}
+		return projectGrants{ProjectPath: scopeDir, PolicyPins: map[string]string{}}, nil
 	}
 	if g.PolicyPins == nil {
 		g.PolicyPins = map[string]string{}
 	}
-	return g
+	return g, nil
 }
 
 func saveProjectGrants(nvxHome string, g projectGrants) error {

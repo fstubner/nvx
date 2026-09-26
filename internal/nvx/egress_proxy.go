@@ -491,15 +491,30 @@ func isLoopback(host string) bool {
 	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
+// acceptRetryDelay is how long an accept loop waits after a failed Accept.
+//
+// Without it a lasting error, such as running out of file descriptors, turned
+// the loop into a busy spin on one core for as long as the error lasted.
+const acceptRetryDelay = 50 * time.Millisecond
+
+// acceptBackoff waits before the next Accept, and reports false once ctx is
+// done and the loop should end.
+func acceptBackoff(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(acceptRetryDelay):
+		return true
+	}
+}
+
 func (p *EgressProxy) serveHTTP(ctx context.Context, ln net.Listener) {
 	defer ln.Close()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			select {
-			case <-ctx.Done():
+			if !acceptBackoff(ctx) {
 				return
-			default:
 			}
 			continue
 		}
@@ -535,15 +550,8 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 	method := strings.ToUpper(parts[0])
 
 	if method == "CONNECT" {
-		target := parts[1]
-		host, portStr, err := net.SplitHostPort(target)
+		host, portStr, err := net.SplitHostPort(parts[1])
 		if err != nil {
-			return
-		}
-		port, _ := strconv.ParseUint(portStr, 10, 16)
-		hp := parseHostPortSpec(host, uint16(port))
-		if p.refuseInvalidHost(hp) {
-			_, _ = fmt.Fprintf(client, "HTTP/1.1 400 Bad Request\r\n\r\n")
 			return
 		}
 
@@ -573,10 +581,30 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 		// Authenticate before consulting the allowlist, so a sibling sandbox
 		// scanning loopback cannot use the 403/200 difference to learn what this
 		// session is permitted to reach.
+		//
+		// The destination is judged after that as well, as on the SOCKS path. An
+		// invalid host used to be refused first, with a terminal warning and an
+		// audit record, for anyone who could reach the listener.
 		if !p.authorized(auth) {
 			_, _ = fmt.Fprintf(client, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"nvx\"\r\n\r\n")
 			return
 		}
+		// A port that does not parse is refused. The parse error used to be
+		// dropped, so "443x" went on as port 0 and "99999" as 65535.
+		port, perr := strconv.ParseUint(portStr, 10, 16)
+		if perr != nil || port == 0 {
+			_, _ = fmt.Fprintf(client, "HTTP/1.1 400 Bad Request\r\n\r\n")
+			return
+		}
+		hp := parseHostPortSpec(host, uint16(port))
+		if p.refuseInvalidHost(hp) {
+			_, _ = fmt.Fprintf(client, "HTTP/1.1 400 Bad Request\r\n\r\n")
+			return
+		}
+		// What gets logged from here on is the parsed, validated host and port.
+		// The raw request target came from the sandboxed process and could carry
+		// terminal escapes in its port part.
+		target := net.JoinHostPort(hp.host, strconv.Itoa(int(hp.port)))
 		// Resolved ONCE, here, and everything below judges and dials that same
 		// answer. See resolveEgressAddresses for what resolving twice cost.
 		ips, rerr := resolveEgressTarget(hp.host)
@@ -709,10 +737,8 @@ func (p *EgressProxy) serveSOCKS(ctx context.Context, ln net.Listener) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			select {
-			case <-ctx.Done():
+			if !acceptBackoff(ctx) {
 				return
-			default:
 			}
 			continue
 		}

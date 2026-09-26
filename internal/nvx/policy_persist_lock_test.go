@@ -2,6 +2,7 @@ package nvx
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -57,5 +58,33 @@ func TestConcurrentLedgerUpdatesDoNotLoseEntries(t *testing.T) {
 			}
 		}
 		t.Fatalf("%d of %d concurrent updates were lost: %v -- a later writer overwrote an earlier one's entry", len(missing), writers, missing)
+	}
+}
+
+// An update must not save over a ledger it could not read. It read any failure
+// as an empty ledger and wrote that back, dropping the record of every
+// permission nvx had granted. Measured on Linux with the ledger at mode 000.
+func TestAnUnreadableLedgerIsNotOverwritten(t *testing.T) {
+	nvxHome := tempDir(t)
+	scope := tempDir(t)
+	if err := updateProjectGrants(nvxHome, scope, func(g *projectGrants) error {
+		g.ReadExecGrants = append(g.ReadExecGrants, readExecGrant{Path: `C:\tools`, SID: "S-1-15-3-1024-1"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := readLedgerFile
+	readLedgerFile = func(string) ([]byte, error) { return nil, os.ErrPermission }
+	err := updateProjectGrants(nvxHome, scope, func(g *projectGrants) error {
+		g.PolicyPins["p"] = "hash"
+		return nil
+	})
+	readLedgerFile = prev
+	if err == nil {
+		t.Error("the update saved over a ledger it could not read")
+	}
+	if got := loadProjectGrants(nvxHome, scope); len(got.ReadExecGrants) != 1 {
+		t.Fatalf("read_exec_grants after = %d, want the 1 recorded before", len(got.ReadExecGrants))
 	}
 }
