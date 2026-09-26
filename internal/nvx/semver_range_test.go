@@ -66,6 +66,23 @@ func TestAMajorDoesNotSweepInAnotherByPrefix(t *testing.T) {
 	}
 }
 
+// package.json engines often put a space after the operator. ">= 18" split
+// into ">=" and "18", and the bare ">=" failed with "empty version", an error
+// that did not say which text it could not read.
+func TestASpaceAfterTheOperatorIsAccepted(t *testing.T) {
+	for _, expr := range []string{">= 18", ">= 18 < 23", "^ 22", "<= 22 || >= 24"} {
+		if _, err := parseVersionRange(expr); err != nil {
+			t.Errorf("parseVersionRange(%q) errored: %v", expr, err)
+		}
+	}
+	if got, err := highestMatching(">= 20 < 22", installed); err != nil || !strings.HasPrefix(got, "v20.") {
+		t.Errorf(`">= 20 < 22" resolved to %q (%v), want a v20 release`, got, err)
+	}
+	if _, err := parseVersionRange(">= 18 <"); err == nil || !strings.Contains(err.Error(), `">= 18 <"`) {
+		t.Errorf("the error for a dangling operator should name the range, got %v", err)
+	}
+}
+
 // Nothing satisfying is an error, not a silent nearest-guess.
 func TestNoMatchIsAnError(t *testing.T) {
 	for _, expr := range []string{"^99", ">=30 <40", "19"} {

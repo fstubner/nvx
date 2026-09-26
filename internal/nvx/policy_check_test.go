@@ -2,6 +2,7 @@ package nvx
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -162,6 +163,77 @@ func TestPolicyCheckReportsAnUntrustedProjectPolicyWithoutPrompting(t *testing.T
 	case <-time.After(30 * time.Second):
 		t.Fatal("the check did not finish; something on this path is waiting for an answer, " +
 			"and in CI that is a hang rather than a failure")
+	}
+}
+
+// A dependency installed under an npm alias is checked as the package it
+// installs. The lockfile keys it by the alias directory, `node_modules/lp`, and
+// names the package in "name". Read by path, a blocked left-pad passed as `lp`.
+func TestPolicyCheckSeesABlockedPackageBehindAnAlias(t *testing.T) {
+	cases := map[string][2]string{
+		"lockfile v3": {`{"dependencies": {"lp": "npm:left-pad@^1.3.0"}}`,
+			`{"lockfileVersion": 3, "packages": {"node_modules/lp": {"name": "left-pad", "version": "1.3.0"}}}`},
+		"lockfile v1": {`{}`,
+			`{"lockfileVersion": 1, "dependencies": {"lp": {"version": "npm:left-pad@1.3.0"}}}`},
+		"package.json only": {`{"dependencies": {"lp": "npm:left-pad@^1.3.0"}}`, ""},
+	}
+	for name, files := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := tempDir(t)
+			writePolicyFixture(t, home, "policy.json", `{"blocked_packages": ["left-pad"]}`)
+			project := tempDir(t)
+			writePolicyFixture(t, project, "package.json", files[0])
+			if files[1] != "" {
+				writePolicyFixture(t, project, "package-lock.json", files[1])
+			}
+			inProjectDir(t, project)
+
+			result := evaluatePolicyCheck(home, project, false)
+			if result.ExitCode != exitBlockedPackage {
+				t.Fatalf("exit code = %d (%+v), want %d: left-pad is installed under an alias", result.ExitCode, result.Findings, exitBlockedPackage)
+			}
+		})
+	}
+}
+
+// A manifest or lockfile that does not parse has produced no verdict. The check
+// warned and passed with exit 0, having checked no dependency at all.
+func TestPolicyCheckFailsWhenAProjectFileDoesNotParse(t *testing.T) {
+	for _, file := range []string{"package.json", "package-lock.json"} {
+		t.Run(file, func(t *testing.T) {
+			home := tempDir(t)
+			project := tempDir(t)
+			if file == "package-lock.json" {
+				writePolicyFixture(t, project, "package.json", `{"dependencies": {"react": "^18.0.0"}}`)
+			}
+			writePolicyFixture(t, project, file, `{"dependencies": {`)
+			inProjectDir(t, project)
+
+			result := evaluatePolicyCheck(home, project, false)
+			if result.OK || result.ExitCode != exitPolicyInternalError {
+				t.Fatalf("exit code = %d (%+v), want %d for a %s that does not parse", result.ExitCode, result.Findings, exitPolicyInternalError, file)
+			}
+		})
+	}
+}
+
+// Run from a subdirectory, the check reads the project's package.json, which is
+// the one the package manager uses. It read the working directory only, so
+// `cd src && nvx policy check` passed a project with a blocked dependency.
+func TestPolicyCheckReadsTheProjectRootFromASubdirectory(t *testing.T) {
+	home := tempDir(t)
+	writePolicyFixture(t, home, "policy.json", `{"blocked_packages": ["left-pad"]}`)
+	project := tempDir(t)
+	writePolicyFixture(t, project, "package.json", `{"dependencies": {"left-pad": "^1.3.0"}}`)
+	sub := filepath.Join(project, "src", "deep")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inProjectDir(t, sub)
+
+	result := evaluatePolicyCheck(home, sub, false)
+	if result.ExitCode != exitBlockedPackage {
+		t.Fatalf("exit code = %d (%+v), want %d from the project root's package.json", result.ExitCode, result.Findings, exitBlockedPackage)
 	}
 }
 

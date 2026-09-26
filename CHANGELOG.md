@@ -219,6 +219,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stage the command now has its own reason in the audit log. The icacls command
   nvx suggests for a widened read/execute entry can be pasted as printed.
 
+* **A package installed under an npm alias is checked as itself.**
+  `npm install myalias@npm:left-pad` was checked as a package called `myalias`,
+  so a blocklist entry for left-pad did not stop it, and the typosquat, advisory
+  and release-age checks asked about a package that does not exist. The same
+  alias in package.json or package-lock.json was read the same way by
+  `npm ci` and by `nvx policy check`. The target package and its version are
+  what gets checked now.
+
+* **`nvx NPM install x` gets the same checks as `nvx npm install x`.** The
+  command name was accepted in any case and ran contained, and the pre-install
+  checks only matched it in lowercase, so they were skipped.
+
+* **`nvx policy check` fails when package.json or package-lock.json does not
+  parse.** It warned and exited 0 having checked no dependency. It now reports
+  an `internal_error` (exit 1). Run from a subdirectory, it also reads the
+  project root's files, as the package manager does, instead of finding none.
+
+* **`-y` and `--agent-mode` no longer approve a persistent tool profile.** The
+  help says only `NVX_TRUST_YES` approves trusting a tool, and this one prompt
+  was answered by the ordinary `-y`.
+
+* **The prompt to trust a project policy says what the file loosens.** It
+  named the file only. It now lists each setting with its value before and
+  after, for example `typosquatting.enabled: true -> false`.
+
+* **A policy key in the wrong case is no longer reported as ignored.**
+  `{"Isolation": {"Enabled": false}}` switched containment off, because JSON
+  keys match in any case, while nvx warned the key was "being ignored". It now
+  says which setting the key applies to and asks for lowercase.
+
+* **`nvx policy init` in a project no longer overrides the global policy.** It
+  wrote every default into `.nvx-policy.json`, so under a stricter global policy
+  the file loosened it, and under an enforced one every command in the project
+  was refused. It also replaced the runtimes' own default hosts. The project
+  file it writes now sets nothing until you add to it.
+
+* **An enforced global policy is not widened by hosts approved earlier.** Hosts
+  a project had approved at a prompt were added after the enforcement check, so
+  they reached the network past the baseline. Under enforcement nvx now drops
+  them and says so once.
+
+* **`allow_read_exec` refuses an entry that would grant a whole drive or home.**
+  An entry using an unset variable collapsed to a filesystem root:
+  `%UNSET%\` became `C:\` and `$UNSET/` became `/`. `~` alone granted the
+  whole home directory. These are now refused with a warning, as is a directory
+  that holds the nvx home.
+
+* **A version range with a space after the operator is accepted.** `">= 18"`,
+  common in package.json engines, failed with "empty version". The error for a
+  range that really cannot be read now names the text.
+
+* **The version-pin warning no longer reports npm's version as node's.** With
+  a `.nvmrc` asking for 22, an `npm` command warned it was "running 10.9.2",
+  which is npm's own version.
+
+* **The quickstart no longer promises read containment on macOS.** It said
+  installs run with "no access to your keys" on every platform. The macOS
+  sandbox does not contain reads, so there it now says what holds.
+
+* **`nvx use --shell bash 20` switches to 20.** It took `bash` as the version.
+
+* **`nvx grants list` says when the grant record cannot be read.** It printed
+  "(none)" for every kind of grant, which reads as nothing granted.
+
+* **The help names every `--filesystem-provider`.** It listed native and
+  docker and left out sandbox-exec, the macOS one.
+
+* **`nvx import` asks about only the versions it would download.** Its prompt
+  counted versions nvx already had.
+
+* **`nvx policy explain` no longer cuts a character in half.** A long value was
+  shortened by bytes, which split a non-ASCII character and printed invalid
+  text.
+
+* **The Docker check has a time limit.** `docker info` ran without one, so a
+  daemon that accepted the connection and never answered held the command
+  with no output. It now gives up after 15 seconds.
+
+* **`npm install --location=global` and `bun add -g` are refused up front.**
+  They are global installs like `npm install -g`, and went into the sandbox
+  instead of getting the same clear refusal.
+
+* **A cached command path must name the command.** The cache of resolved
+  command paths accepted an entry for `node` that pointed at any program in a
+  PATH directory. It now requires the file name to match. Its temporary file
+  also has a unique name, so two nvx processes saving at once cannot rename each
+  other's half-written file into place.
+
+* **`nvx audit --limit 5` works like `--limit=5`.** Export already took both
+  spellings. An over-long last line with no newline after it is now counted as
+  malformed rather than dropped without a word.
+
+* **`nvx use 99` no longer offers to install a version that does not exist.**
+  It asked whether to download and install Node.js 99. It now checks the
+  release index first and says no published release matches.
+
+* **`--help` after any command prints that command's help.**
+  `nvx install --help` printed help and `nvx list-remote --help` failed with
+  "Unknown option". Commands without a page of their own now print their entry
+  from `nvx help`.
+
+* **`nvx doctor` prints its PATH fix in Git Bash syntax under Git Bash.** On
+  Windows it always printed the PowerShell form, which bash cannot run.
+
 * **A contained `spawn` keeps the stdin descriptor its caller passed in.** In
   the Windows sandbox, `spawn(cmd, args, {stdio: [fd, 'pipe', 'pipe']})` closed
   `fd` once the child started, so a file the caller opened and handed to the

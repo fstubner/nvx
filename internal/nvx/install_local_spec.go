@@ -26,6 +26,13 @@ func nonRegistrySpecKind(spec string) string {
 	}
 	lower := strings.ToLower(s)
 
+	// An npm alias, alias@npm:target, installs target from the registry, so
+	// target is what gets classified. Read whole, `alias@npm:@scope/pkg` looked
+	// like the user/repo shorthand and skipped every check.
+	if i := strings.Index(lower, "@npm:"); i > 0 && !strings.Contains(lower[:i], ":") {
+		return nonRegistrySpecKind(s[i+len("@npm:"):])
+	}
+
 	switch {
 	case strings.HasPrefix(lower, "file:"):
 		return "a file: spec"
