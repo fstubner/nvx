@@ -281,13 +281,20 @@ func staleAppContainerSIDsOn(path string) []string {
 		// false in every clause. The same scan drives the launch-path cleanup, so
 		// the bad match would also have revoked a grant nvx had just written.
 		// Legacy grants are modify and still match.
-		if e.Mask&^aclMaskTraverse == 0 {
+		if !maskGrantsMoreThanTraverse(e.Mask) {
 			continue
 		}
 		seen[e.SID] = true
 		sids = append(sids, e.SID)
 	}
 	return sids
+}
+
+// maskGrantsMoreThanTraverse reports whether an access mask grants anything
+// beyond traverse and read-attributes, which is what makes a package entry a
+// leftover rather than the ancestor grant nvx writes today.
+func maskGrantsMoreThanTraverse(mask uint32) bool {
+	return mask&^aclMaskTraverse != 0
 }
 
 // The two helpers that used to sit here read rights out of the TEXT icacls

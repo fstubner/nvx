@@ -14,8 +14,8 @@ package nvx
 // AF_UNIX on Windows (afunix.sys, Windows 10 1803+) is a filesystem object rather
 // than a TCP/IP endpoint. If the loopback restriction does not cover it, the exact
 // relay built for Linux would give Windows real allowlisted egress with no
-// elevation. This probe was written to settle that, and it did: the in-container
-// relay that shipped in 0.5.0 reaches the proxy over such a socket.
+// elevation. This probe was written to settle that, and it did. The
+// in-container relay that shipped in 0.5.0 reaches the proxy over such a socket.
 
 import (
 	"fmt"
@@ -148,8 +148,9 @@ func indexOf(h, n string) int {
 // possible on Windows at all. AF_UNIX reaching the parent is necessary but not
 // sufficient: a relay has to listen on loopback INSIDE the container and be
 // dialled by the target. When this was written nvx ran nothing inside the
-// AppContainer but the target. The supervisor that runs there now is the result. Windows blocks AppContainer loopback to outside processes; whether it
-// blocks a container reaching its own listener is what decides the design.
+// AppContainer but the target, and the supervisor that runs there now is the
+// result. Windows blocks AppContainer loopback to outside processes. Whether it
+// blocks a container reaching its own listener is what decided the design.
 func TestAppContainerIntraContainerLoopback(t *testing.T) {
 	if os.Getenv("NVX_PROBE") != "1" {
 		t.Skip("set NVX_PROBE=1 to run")

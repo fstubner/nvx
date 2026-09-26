@@ -424,8 +424,9 @@ func runWindowsSetup(nvxHome string, undo, allDrives bool) int {
 
 	// The package identity older versions granted. Nothing launches under it any
 	// more, but --undo has to be able to take back what an older setup gave, so it
-	// is derived here for the revoke sweep below and for nothing else. Derived
-	// only: registering the profile to get it left a profile behind after --undo.
+	// is derived here for the revoke sweep below and for nothing else. It is
+	// derived without registering the profile, which used to leave a profile
+	// behind after --undo.
 	legacySidStr, _ := deriveAppContainerSIDString(stableSandboxProfile)
 
 	if undo {

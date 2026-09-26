@@ -88,8 +88,8 @@ func projectNodeModulesBin(projectRoot string) string {
 	return filepath.Join(projectRoot, "node_modules", ".bin")
 }
 
-// projectBinCommandName is the command a node_modules/.bin entry provides: the
-// file name without the launcher extension npm adds on Windows. Only those
+// projectBinCommandName is the command a node_modules/.bin entry provides, which
+// is the file name without the launcher extension npm adds on Windows. Only those
 // extensions are removed. Any extension used to be, so a bin named foo.bar got
 // a shim called foo that ran a command which does not exist.
 func projectBinCommandName(file string) string {

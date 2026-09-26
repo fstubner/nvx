@@ -11,9 +11,9 @@ const (
 	// ancestorGrantBudget caps the TOTAL time all ancestor grants may consume per
 	// launch. Measured on a real machine, granting the ancestors of a working
 	// directory under AppData consumed 45.22s on its own -- the entire observed
-	// setup stall -- running to the full icacls timeout. Every other phase of
+	// setup stall, running to the full icacls timeout. Every other phase of
 	// AppContainer setup completed in under 0.15s. The cause is the size of the
-	// subtree beneath each directory, not a filter driver; see
+	// subtree beneath each directory, not a filter driver, as measured in
 	// sandbox_ancestor_skip_windows.go.
 	ancestorGrantBudget = 3 * time.Second
 

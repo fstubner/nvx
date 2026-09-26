@@ -80,7 +80,7 @@ func grantsPath(nvxHome, scopeDir string) string {
 func loadProjectGrants(nvxHome, scopeDir string) projectGrants {
 	g, err := loadProjectGrantsWithLock(nvxHome, scopeDir, false)
 	if err != nil {
-		LogWarn("%v; carrying on as if it recorded nothing", err)
+		LogWarn("%v. Carrying on as if it recorded nothing.", err)
 	}
 	return g
 }
@@ -95,7 +95,7 @@ var readLedgerFile = os.ReadFile
 // the lock is not re-entrant, so taking it again there would deadlock.
 //
 // A missing ledger is an empty one. Any other read failure is an error, because
-// updateProjectGrants saves what this returns over the file: it read an
+// updateProjectGrants saves what this returns over the file. It read an
 // unreadable ledger as empty and replaced it, dropping every ReadExecGrants
 // record in it. Measured on Linux with the file at mode 000.
 func loadProjectGrantsWithLock(nvxHome, scopeDir string, lockHeld bool) (projectGrants, error) {

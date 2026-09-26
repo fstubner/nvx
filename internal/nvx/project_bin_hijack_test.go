@@ -3,7 +3,6 @@ package nvx
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -196,12 +195,21 @@ func TestCleanAndBuildPathUsesTheRelocatedDir(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 
+	// The relocated directory must be on PATH, and nothing inside the project
+	// may be. Only the second half was checked, and a PATH with no project-bin
+	// entry at all passed it.
 	got := CleanAndBuildPath("", nvxHome, "", "")
+	want := projectBinDir(project, nvxHome)
+	found := false
 	for _, entry := range filepath.SplitList(got) {
-		if strings.Contains(strings.ToLower(filepath.Clean(entry)),
-			strings.ToLower(filepath.Join(".nvx", "project-bin"))) &&
-			dirWithin(entry, project) {
-			t.Errorf("PATH still contains the in-project shim dir %q", entry)
+		if dirsEqual(entry, want) {
+			found = true
 		}
+		if dirWithin(entry, project) {
+			t.Errorf("PATH contains a directory inside the project: %q", entry)
+		}
+	}
+	if !found {
+		t.Errorf("PATH does not contain the relocated project-bin directory %q: %s", want, got)
 	}
 }

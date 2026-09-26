@@ -656,14 +656,13 @@ func TestRunVerifyInstallFailsClosedOnMetadataFailure(t *testing.T) {
 		// exit code now so that callers can record the run before exiting. What
 		// this test asserts is unchanged -- the child must still exit non-zero.
 		code, _ := runVerifyInstall([]string{"not-a-typo-risk"}, testNvxHomeWithTyposquattingDisabled(t))
+		fmt.Printf("%s%d\n", verifyChildExitMarker, code)
 		os.Exit(code)
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=TestRunVerifyInstallFailsClosedOnMetadataFailure")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestRunVerifyInstallFailsClosedOnMetadataFailure$")
 	cmd.Env = append(os.Environ(), "NVX_TEST_VERIFY_METADATA_FAILURE=1", "NVX_NONINTERACTIVE=1")
-	if err := cmd.Run(); err == nil {
-		t.Fatal("expected metadata failure to deny installation")
-	}
+	requireVerifyChildDenied(t, cmd, "metadata failure")
 }
 
 func TestRunVerifyInstallFailsClosedOnOSVFailure(t *testing.T) {
@@ -678,13 +677,32 @@ func TestRunVerifyInstallFailsClosedOnOSVFailure(t *testing.T) {
 		// exit code now so that callers can record the run before exiting. What
 		// this test asserts is unchanged -- the child must still exit non-zero.
 		code, _ := runVerifyInstall([]string{"not-a-typo-risk"}, testNvxHomeWithTyposquattingDisabled(t))
+		fmt.Printf("%s%d\n", verifyChildExitMarker, code)
 		os.Exit(code)
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=TestRunVerifyInstallFailsClosedOnOSVFailure")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestRunVerifyInstallFailsClosedOnOSVFailure$")
 	cmd.Env = append(os.Environ(), "NVX_TEST_VERIFY_OSV_FAILURE=1", "NVX_NONINTERACTIVE=1")
-	if err := cmd.Run(); err == nil {
-		t.Fatal("expected OSV failure to deny installation")
+	requireVerifyChildDenied(t, cmd, "OSV failure")
+}
+
+// verifyChildExitMarker is printed by a fail-closed child just before it exits
+// with runVerifyInstall's code.
+const verifyChildExitMarker = "nvx-verify-child-exit="
+
+// requireVerifyChildDenied runs a fail-closed child and requires that
+// runVerifyInstall itself returned non-zero. Any non-zero exit used to pass,
+// so a child that panicked, or matched no test, counted as a denial.
+func requireVerifyChildDenied(t *testing.T, cmd *exec.Cmd, what string) {
+	t.Helper()
+	out, _ := cmd.Output()
+	_, after, found := strings.Cut(string(out), verifyChildExitMarker)
+	if !found {
+		t.Fatalf("the child never reached runVerifyInstall's result; output:\n%s", out)
+	}
+	code, _, _ := strings.Cut(after, "\n")
+	if strings.TrimSpace(code) == "0" {
+		t.Fatalf("expected %s to deny installation, but runVerifyInstall returned 0", what)
 	}
 }
 
@@ -698,10 +716,21 @@ func testNvxHomeWithTyposquattingDisabled(t *testing.T) string {
 	return nvxHome
 }
 
-func TestShouldSandboxHonorsSandboxEnvironment(t *testing.T) {
+// An NVX_SANDBOX=1 in an ordinary process's environment does not turn
+// containment off. This replaces a test that set the marker and asserted `node`
+// was not contained, which held with or without the marker because plain `node`
+// is not contained by default. Honouring the marker inside a real sandbox
+// cannot be shown from a test process, which is provably uncontained.
+func TestAnAmbientSandboxMarkerDoesNotDisableContainment(t *testing.T) {
+	if !containmentDisproved() {
+		t.Skip("this process cannot be proven uncontained here")
+	}
+	if !shouldSandbox("npm", []string{"install"}, DefaultPolicy(), shimOptions{}) {
+		t.Skip("npm install is not contained by default here, so the marker has nothing to change")
+	}
 	t.Setenv("NVX_SANDBOX", "1")
-	if shouldSandbox("node", nil, DefaultPolicy(), shimOptions{}) {
-		t.Fatal("nested shim invocation inside an existing sandbox must not start another sandbox")
+	if !shouldSandbox("npm", []string{"install"}, DefaultPolicy(), shimOptions{}) {
+		t.Fatal("an ambient NVX_SANDBOX=1 outside any sandbox disabled containment for npm install")
 	}
 }
 

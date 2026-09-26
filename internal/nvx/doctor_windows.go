@@ -39,7 +39,7 @@ func repairPersistentPathImpl(nvxHome string, apply bool) (bool, error) {
 		// the user's entire persistent PATH with just the shim dir, silently
 		// destroying every other PATH entry they have. Refuse and let the
 		// caller fall back to the per-shell fix hint instead.
-		return false, fmt.Errorf("the current User PATH is empty; leaving it unchanged")
+		return false, fmt.Errorf("the current User PATH is empty, so it was left unchanged")
 	}
 	fixed := rebuildUserPath(existing, shimDir, nvxRuntimeDirs(nvxHome))
 	if existing == fixed {

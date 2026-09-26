@@ -280,7 +280,7 @@ func launchAppContainerProcessOnce(
 		// %w, not %v: the caller distinguishes a corrupted staged image from other
 		// launch failures, and must do it by error code. Matching the message text
 		// would work only on an English Windows.
-		return 1, fmt.Errorf("CreateProcess(AppContainer) exe=%q cwd=%q: %w", cmdPath, workDir, createErr)
+		return 1, createProcessError(cmdPath, workDir, createErr)
 	}
 	defer func() {
 		_ = syscall.CloseHandle(pi.hProcess)
@@ -328,6 +328,12 @@ func launchAppContainerProcessOnce(
 		return 1, fmt.Errorf("GetExitCodeProcess: %w", exitErr)
 	}
 	return int(code), nil
+}
+
+// createProcessError is how a failed CreateProcess is reported. Its own function
+// so a test can hold the wrapping the launch path really uses.
+func createProcessError(cmdPath, workDir string, err error) error {
+	return fmt.Errorf("CreateProcess(AppContainer) exe=%q cwd=%q: %w", cmdPath, workDir, err)
 }
 
 func initProcThreadAttributeList(count uint32) ([]byte, uintptr, error) {

@@ -37,7 +37,7 @@ func freeLoopbackPort() (int, error) {
 }
 
 // spliceConns copies in both directions until both are done, then closes both.
-// Half-close is passed on: when one side reaches EOF, the other side's write
+// Half-close is passed on. When one side reaches EOF, the other side's write
 // half is closed and the opposite direction keeps running. An HTTP client that
 // finishes its request and waits for a response needs exactly that, and closing
 // both on the first EOF would cut the response short.

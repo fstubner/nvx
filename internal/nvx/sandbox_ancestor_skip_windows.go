@@ -257,10 +257,10 @@ var advisoryAncestorMu sync.Mutex
 // applied, so the five seconds bought nothing at all.
 //
 // Fire-and-forget rather than joined at the end. An ACL write abandoned at its
-// deadline still lands while nvx is running: measured 2026-08-31, one completed
+// deadline still lands while nvx is running. Measured 2026-08-31, one completed
 // 3m45s later and was found in place by the next launch. It does not survive nvx
-// exiting. Setup measured that on 2026-09-02, a write whose process ended before
-// it finished left no entry (see grantSidReadExecThisFolder). So the worst case
+// exiting. Setup measured that on 2026-09-02, when a write whose process ended
+// before it finished left no entry (see grantSidReadExecThisFolder). So the worst case
 // is that a grant arrives late or not at all and the next launch tries again,
 // which is what "advisory" means. The
 // mutex is because these share a cache file, not because the order matters.

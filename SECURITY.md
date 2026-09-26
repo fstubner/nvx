@@ -669,7 +669,7 @@ timing behind these claims is in `docs/enforcement-matrix.md`.
   **The grant is confined to the project that asked for it.** Windows permits
   loopback *within* an AppContainer package, and each project's sandboxes share
   that project's package. Measured on 2026-08-28, when every nvx sandbox still
-  shared one package: a sandbox in an unrelated project, with no grant of its own,
+  shared one package, a sandbox in an unrelated project, with no grant of its own,
   read the service. Per-project packages now keep other projects' sandboxes out.
   nvx also identifies the process behind each tunnel connection and refuses one it
   cannot place inside this run, and logs the refusal. It fails closed. That check
