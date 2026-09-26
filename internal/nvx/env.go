@@ -932,8 +932,11 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 			Args:               args,
 			FilesystemProvider: opts.filesystemProvider,
 			ToolName:           toolName,
-			ReadExecRoots:      resolveReadExecRoots(policy.Isolation.Filesystem.AllowReadExec),
-			PassEnv:            policy.Isolation.Environment.Allow,
+			ReadExecRoots: withForeignRuntimeRoot(
+				nvxHome, cmdName,
+				resolveReadExecRoots(policy.Isolation.Filesystem.AllowReadExec),
+			),
+			PassEnv: policy.Isolation.Environment.Allow,
 			// The mode above is what nvx INTENDED. This is how it turned out: a
 			// sandbox that never started leaves the command unrun, and a record
 			// reading "sandboxed" for it answers the one question the log exists
