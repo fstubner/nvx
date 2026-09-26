@@ -3,6 +3,7 @@
 package nvx
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -57,10 +58,25 @@ func TestPermissionWritesKeepInheritanceProtection(t *testing.T) {
 
 func psDACLProtected(t *testing.T, dir string) bool {
 	t.Helper()
-	out, err := exec.Command("powershell", "-NoProfile", "-Command",
-		"(Get-Acl -LiteralPath '"+strings.ReplaceAll(dir, "'", "''")+"').AreAccessRulesProtected").Output()
+	// .NET directly rather than Get-Acl: Get-Acl lives in a module, and a Windows
+	// PowerShell started from pwsh -- as CI's steps are -- inherits a module path
+	// it cannot load that module from, and fails.
+	cmd := exec.Command("powershell", "-NoProfile", "-Command",
+		"(New-Object System.IO.DirectoryInfo '"+strings.ReplaceAll(dir, "'", "''")+"').GetAccessControl().AreAccessRulesProtected")
+	cmd.Env = withoutEnv(os.Environ(), "PSModulePath")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("read protection of %s: %v", dir, err)
+		t.Fatalf("read protection of %s: %v: %s", dir, err, out)
 	}
 	return strings.TrimSpace(string(out)) == "True"
+}
+
+func withoutEnv(env []string, name string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		if !strings.HasPrefix(strings.ToUpper(kv), strings.ToUpper(name)+"=") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
