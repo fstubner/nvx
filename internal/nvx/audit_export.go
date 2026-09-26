@@ -259,6 +259,23 @@ func renderAuditExport(entries []map[string]string, format string) (string, erro
 	return "", fmt.Errorf("unknown format %q", format)
 }
 
+// csvCellSafe stops a spreadsheet from reading a cell as a formula.
+//
+// A cell starting with = + - or @, or with a tab or carriage return, is run as a
+// formula by the common spreadsheet programs. Values such as cwd, command and
+// tool can come from lines anything on the machine appended to the log, so they
+// get a leading single quote, which makes the cell plain text. A value that is
+// just a number is left alone, since it cannot be a formula.
+func csvCellSafe(v string) string {
+	if v == "" || !strings.ContainsRune("=+-@\t\r", rune(v[0])) {
+		return v
+	}
+	if _, err := strconv.ParseFloat(v, 64); err == nil {
+		return v
+	}
+	return "'" + v
+}
+
 func renderAuditCSV(entries []map[string]string) (string, error) {
 	leading := map[string]bool{}
 	for _, c := range auditExportLeadingColumns {
@@ -281,13 +298,17 @@ func renderAuditCSV(entries []map[string]string) (string, error) {
 
 	var b strings.Builder
 	w := csv.NewWriter(&b)
-	if err := w.Write(columns); err != nil {
+	header := make([]string, len(columns))
+	for i, c := range columns {
+		header[i] = csvCellSafe(c)
+	}
+	if err := w.Write(header); err != nil {
 		return "", err
 	}
 	for _, e := range entries {
 		row := make([]string, len(columns))
 		for i, c := range columns {
-			row[i] = e[c]
+			row[i] = csvCellSafe(e[c])
 		}
 		if err := w.Write(row); err != nil {
 			return "", err

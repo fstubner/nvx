@@ -70,6 +70,7 @@ debugging aid and are written only when `NVX_TRACE=1`.
 | `install_scripts_exempt`         | `package`, `version`                                      | A package's install scripts ran without asking, per `install_scripts.trusted_packages`. |
 | `vulnerability_allowed`          | `package`, `advisory`, `severity`, `reason`               | A known advisory did not stop an install. `reason` is `allowlisted` or `below_min_severity`. |
 | `env_scrubbed`                   | `count`, `dropped`                                        | Containment dropped environment variables that a build might have wanted. `dropped` is comma-separated. |
+| `env_pass_refused`               | `names`                                                   | `isolation.environment.allow` named a variable that holds a credential by convention, and it was not passed in. `names` is comma-separated. |
 | `sandbox_not_started`            | `command`, `reason`                                       | nvx declined to run a command, or could not establish the containment it promises. |
 | `connect_peer_refused`           | `host_port`, `reason`                                     | A connection to a published port came from outside this sandbox. `reason` is `not_in_this_sandbox` or `unverifiable`. |
 | `loopback_redirect`              | `address`                                                 | A contained process reached a host service through the loopback tunnel.      |
@@ -82,6 +83,10 @@ debugging aid and are written only when `NVX_TRACE=1`.
 rendering one put a live password in the log once. `nvx audit` replaces the printf
 verbs with `[…]` on the way out; the export does not, so a consumer sees exactly
 what was stored.
+
+In `csv` only, a value that starts with `=`, `+`, `-`, `@`, a tab or a carriage
+return, and is not a plain number, gets a leading `'`. Spreadsheets run such a cell
+as a formula, and the log is a file anything on the machine can append to.
 
 Arguments are never recorded. `action` holds only a subcommand nvx recognises by
 name (`install`, `run`, `add`), because a package spec or a script name can carry a

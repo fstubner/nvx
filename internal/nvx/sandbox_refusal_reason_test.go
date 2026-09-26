@@ -92,8 +92,8 @@ func TestEveryRefusalReasonIsALiteral(t *testing.T) {
 // one machine writes one platform's reasons, so the same wording on Windows and
 // on macOS confuses nobody. Three launchers can fail to open a path to a host
 // service and say so in the same words; two branches of the SAME launcher doing
-// it is what this catches. Windows grants its writable roots from two branches
-// that fail identically, so two is allowed and three is not.
+// it is what this catches. Windows opens a path to a host service from two
+// branches that fail in the same words, so two is allowed and three is not.
 func TestRefusalReasonsAreMostlyDistinct(t *testing.T) {
 	files, _ := filepath.Glob("sandbox_native_*.go")
 	fset := token.NewFileSet()

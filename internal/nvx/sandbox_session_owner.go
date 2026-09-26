@@ -53,6 +53,51 @@ func readSessionOwner(guestHome string) (sessionOwner, bool) {
 	return owner, true
 }
 
+// sessionLeasePrefix names the per-run owner records in a persistent tool home.
+//
+// A tool home outlives its runs and several runs of the same tool can share it
+// at once, so the single write-once marker above cannot describe it. Each run
+// writes its own lease, named by its random sandbox id, and removes it when it
+// ends. Without one, a trusted tool running for longer than the package
+// retention window lost its AppContainer profile underneath it.
+const sessionLeasePrefix = ".nvx-lease-"
+
+// writeSessionLease records this process as a current user of a persistent
+// home, and returns the function that removes the record again. Best-effort for
+// the same reason as writeSessionOwner.
+func writeSessionLease(home, sandboxID string, now time.Time) (release func()) {
+	path := filepath.Join(home, sessionLeasePrefix+sandboxID)
+	data, err := json.Marshal(sessionOwner{
+		PID:        os.Getpid(),
+		StartedUTC: now.UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return func() {}
+	}
+	_ = os.WriteFile(path, data, 0600)
+	return func() { _ = os.Remove(path) }
+}
+
+// homeHasLiveLease reports whether any lease in home names a running process.
+// A lease left by a run that was killed names a dead process and holds nothing.
+func homeHasLiveLease(home string) bool {
+	matches, _ := filepath.Glob(filepath.Join(home, sessionLeasePrefix+"*"))
+	for _, m := range matches {
+		data, err := os.ReadFile(m)
+		if err != nil {
+			continue
+		}
+		var owner sessionOwner
+		if json.Unmarshal(data, &owner) != nil || owner.PID <= 0 {
+			continue
+		}
+		if owner.PID == os.Getpid() || processIsRunning(owner.PID) {
+			return true
+		}
+	}
+	return false
+}
+
 // unownedGuestHomeGrace is how long a guest home with no readable owner marker
 // is left alone.
 //

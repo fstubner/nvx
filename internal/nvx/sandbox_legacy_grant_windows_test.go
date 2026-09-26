@@ -61,7 +61,7 @@ func TestLegacyPackageSidGrantsAreRemoved(t *testing.T) {
 	}
 
 	// What a launch in this project does.
-	removeStaleAppContainerGrant("", project)
+	removeStaleAppContainerGrant(project)
 
 	if left := staleAppContainerSIDsOn(project); len(left) != 0 {
 		t.Errorf("legacy package-SID grants survived cleanup: %v\n"+
@@ -88,7 +88,7 @@ func TestCleanupLeavesTheProjectCapabilityAlone(t *testing.T) {
 		t.Fatalf("grant project capability: %v", err)
 	}
 
-	removeStaleAppContainerGrant("", project)
+	removeStaleAppContainerGrant(project)
 
 	if !appContainerHasGrant(capSID, project) {
 		t.Error("cleanup removed this project's own capability grant; the sandbox would lose access " +

@@ -1,6 +1,8 @@
 package nvx
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -69,6 +71,18 @@ func TestNamingACredentialInThePolicyIsRefusedNotHonoured(t *testing.T) {
 	// The non-sensitive entry in the same list is unaffected.
 	if containsString(res.Refused, "CI") {
 		t.Error("CI was reported as refused; only sensitive prefixes should be")
+	}
+}
+
+// A refused pass-through is recorded in audit.log, by name only. It was a
+// terminal warning and nothing else, so a run nobody watched left no trace of a
+// policy asking to hand a credential to package code.
+func TestARefusedPassThroughIsAudited(t *testing.T) {
+	nvxHome := tempDir(t)
+	reportEnvScrub(nvxHome, envScrubResult{Refused: []string{"GITHUB_TOKEN"}})
+	data, _ := os.ReadFile(filepath.Join(nvxHome, "audit.log"))
+	if !strings.Contains(string(data), "env_pass_refused") || !strings.Contains(string(data), "GITHUB_TOKEN") {
+		t.Fatalf("audit.log does not record the refusal: %q", data)
 	}
 }
 

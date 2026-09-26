@@ -3,7 +3,6 @@ package nvx
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -84,6 +83,33 @@ func TestPlantedBinaryDoesNotBecomeAShim(t *testing.T) {
 	}
 }
 
+// A bin whose name has a dot in it is shimmed under its whole name. Every
+// extension used to be trimmed, so foo.bar got a shim called foo that ran a
+// command nothing provides.
+func TestADottedBinNameKeepsItsWholeName(t *testing.T) {
+	project := tempDir(t)
+	nvxHome := tempDir(t)
+	binDir := filepath.Join(project, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"nvx-fixture.cli", "nvx-fixture.cli.cmd", "nvx-fixture.cli.ps1"} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("real"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := generateProjectBinShims(project, nvxHome); err != nil {
+		t.Fatalf("generateProjectBinShims: %v", err)
+	}
+	shimDir := projectBinDir(project, nvxHome)
+	if _, err := os.Stat(filepath.Join(shimDir, "nvx-fixture.cli")); err != nil {
+		t.Errorf("no shim named after the whole bin name: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(shimDir, "nvx-fixture")); err == nil {
+		t.Error("the bin's name was cut at its dot")
+	}
+}
+
 // TestPlantedBinaryIsRefusedWhenNodeModulesBinLeadsPath runs regeneration the
 // way it actually runs: inside an npm script, where npm has put the project's
 // node_modules/.bin first on PATH. The planted file is then the first match, and
@@ -152,6 +178,12 @@ func TestProjectBinPruningRemovesWhatIsNoLongerThere(t *testing.T) {
 // at the in-project directory, relocating would have achieved nothing.
 func TestCleanAndBuildPathUsesTheRelocatedDir(t *testing.T) {
 	project := tempDir(t)
+	// The directory's real path, which is what the working directory reports:
+	// macOS temp lives under /var, a link to /private/var, and the project-bin
+	// directory is named after the path nvx sees.
+	if real, err := filepath.EvalSymlinks(project); err == nil {
+		project = real
+	}
 	nvxHome := tempDir(t)
 	if err := os.WriteFile(filepath.Join(project, "package.json"), []byte(`{"name":"p"}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -169,12 +201,21 @@ func TestCleanAndBuildPathUsesTheRelocatedDir(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 
+	// The relocated directory must be on PATH, and nothing inside the project
+	// may be. Only the second half was checked, and a PATH with no project-bin
+	// entry at all passed it.
 	got := CleanAndBuildPath("", nvxHome, "", "")
+	want := projectBinDir(project, nvxHome)
+	found := false
 	for _, entry := range filepath.SplitList(got) {
-		if strings.Contains(strings.ToLower(filepath.Clean(entry)),
-			strings.ToLower(filepath.Join(".nvx", "project-bin"))) &&
-			dirWithin(entry, project) {
-			t.Errorf("PATH still contains the in-project shim dir %q", entry)
+		if dirsEqual(entry, want) {
+			found = true
 		}
+		if dirWithin(entry, project) {
+			t.Errorf("PATH contains a directory inside the project: %q", entry)
+		}
+	}
+	if !found {
+		t.Errorf("PATH does not contain the relocated project-bin directory %q: %s", want, got)
 	}
 }

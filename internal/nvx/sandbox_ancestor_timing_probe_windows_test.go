@@ -60,8 +60,26 @@ func TestMeasureAncestorGrantCost(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The grants below are real ACEs for a throwaway SID on the real TEMP and
+	// AppData chain. They used to be left there. Taken back at the end, wherever
+	// one landed. Untimed, because a revoke on a large subtree takes minutes and
+	// stopping it early leaves the entry in place.
+	granted := map[string]bool{}
+	t.Cleanup(func() {
+		for p := range granted {
+			if appContainerHasGrantFor(sidStr, p, grantTraverse) {
+				if err := revokeACL(p, sidStr); err != nil {
+					t.Logf("could not remove the probe's entry on %s: %v", p, err)
+				}
+			}
+		}
+	})
+
 	report := func(label, dir string) {
 		paths := ancestorGrantPaths(dir, os.Getenv("USERPROFILE"))
+		for _, p := range paths {
+			granted[p] = true
+		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "\n  %s\n  %s\n", label, dir)
 		fmt.Fprintf(&b, "  %-58s %10s %10s %10s\n", "ancestor", "has-grant", "grant#1", "grant#2")

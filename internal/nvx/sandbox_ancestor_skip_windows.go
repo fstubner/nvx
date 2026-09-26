@@ -32,8 +32,9 @@ import (
 // reading got wrong. The write is not hung: given no deadline, AppData\Local\Temp
 // returned success after 3m45s (and revoking it took 2m52s), while the other two
 // were still running at 5m. So an abandoned grant does land, minutes after the
-// caller gave up and recorded it as failed -- which is harmless only because
-// appContainerHasGrant finds it on the next launch. And the environment cannot
+// caller gave up and recorded it as failed, provided the nvx process that issued
+// it is still running then. That is harmless only because appContainerHasGrant
+// finds it on the next launch. And the environment cannot
 // "start working" again: profile trees grow.
 //
 // Passing DACL_SECURITY_INFORMATION without UNPROTECTED_DACL_SECURITY_INFORMATION
@@ -122,7 +123,25 @@ func saveAncestorSkips(nvxHome string, skips map[string]time.Time) {
 	}
 	// Best-effort: this is a cache. Failing to write it costs a retry next time,
 	// which is the behaviour that existed before it.
-	_ = os.WriteFile(ancestorSkipPath(nvxHome), data, 0o600)
+	//
+	// Written to a temporary file and renamed. Two nvx processes, or a launch
+	// and the background walk in one process, can write it at once, and a reader
+	// that caught a half-written file lost every entry in it. Concurrent writers
+	// can still drop each other's newest entry, which costs one retry.
+	final := ancestorSkipPath(nvxHome)
+	f, err := os.CreateTemp(nvxHome, filepath.Base(final)+".*.tmp")
+	if err != nil {
+		return
+	}
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	if cerr := f.Close(); werr != nil || cerr != nil {
+		_ = os.Remove(tmp)
+		return
+	}
+	if os.Rename(tmp, final) != nil {
+		_ = os.Remove(tmp)
+	}
 }
 
 func normalizeAncestorKey(path string) string {
@@ -237,10 +256,13 @@ var advisoryAncestorMu sync.Mutex
 // command does not need -- and on this machine they time out and are not even
 // applied, so the five seconds bought nothing at all.
 //
-// Fire-and-forget rather than joined at the end. An ACL write that outlives the
-// caller still lands: measured 2026-08-31, a write abandoned at its deadline
-// completed 3m45s later and was found in place by the next launch. So the worst
-// case is that a grant arrives late, which is exactly what "advisory" means. The
+// Fire-and-forget rather than joined at the end. An ACL write abandoned at its
+// deadline still lands while nvx is running. Measured 2026-08-31, one completed
+// 3m45s later and was found in place by the next launch. It does not survive nvx
+// exiting. Setup measured that on 2026-09-02, when a write whose process ended
+// before it finished left no entry (see grantSidReadExecThisFolder). So the worst case
+// is that a grant arrives late or not at all and the next launch tries again,
+// which is what "advisory" means. The
 // mutex is because these share a cache file, not because the order matters.
 func startAdvisoryAncestorGrants(nvxHome, dir string) {
 	go func() {

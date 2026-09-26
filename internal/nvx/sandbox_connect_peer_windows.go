@@ -19,8 +19,10 @@ import (
 // was written every sandbox on the machine shared one package, and it was
 // measured 2026-08-28 across projects: sandbox B, a different project with no
 // grant of its own, read the service sandbox A had been granted. Per-project
-// packages narrowed that to one project's sessions; the check still decides
-// between those.
+// packages narrowed that to one project's sessions. The check turns away such a
+// session that connects to this run's listener. It is not a boundary between
+// runs of one project, because a sibling run can open the tunnel socket itself
+// and report ports of a connection this run owns. SECURITY.md says so.
 //
 // This is not a new hazard, it is a known one. The egress relay has the same
 // exposure and defends itself with a per-session proxy credential -- see the note

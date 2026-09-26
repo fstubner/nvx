@@ -104,7 +104,7 @@ int main(void) {
 		t.Skipf("cannot read this user's SID: %v", err)
 	}
 	pipeName := `\\.\pipe\nvx-fd-control-` + stdioSessionID(t.Name())
-	server, err := createNamedPipeWithSecurity(pipeName, "D:(A;;GA;;;"+userSID+")")
+	server, err := createNamedPipeWithSecurity(pipeName, "D:(A;;GA;;;"+userSID+")", false)
 	if err != nil {
 		t.Fatalf("create pipe: %v", err)
 	}

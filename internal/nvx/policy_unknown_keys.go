@@ -160,10 +160,11 @@ func nearestPolicyKey(unknown string, known map[string]bool) string {
 	}
 	wantParent, target := split(unknown)
 
-	// Candidates are ranked by edit distance on the leaf, then by whether they sit
-	// in the same object.
+	// Candidates are ranked first by whether they sit in the same object, then by
+	// edit distance on the leaf. A key in the same object wins over a closer one
+	// elsewhere.
 	//
-	// The parent tiebreak is not cosmetic. "mode" appears under both
+	// The parent rule is not cosmetic. "mode" appears under both
 	// isolation.network and isolation.filesystem, and "enabled" appears under
 	// four different objects, so leaf distance alone picked whichever the map
 	// happened to yield -- suggesting isolation.filesystem.mode for a typo in

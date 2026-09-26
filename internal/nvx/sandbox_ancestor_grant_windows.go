@@ -11,9 +11,10 @@ const (
 	// ancestorGrantBudget caps the TOTAL time all ancestor grants may consume per
 	// launch. Measured on a real machine, granting the ancestors of a working
 	// directory under AppData consumed 45.22s on its own -- the entire observed
-	// setup stall -- by hanging to the full icacls timeout behind the
-	// OneDrive/Defender filter driver. Every other phase of AppContainer setup
-	// completed in under 0.15s.
+	// setup stall, running to the full icacls timeout. Every other phase of
+	// AppContainer setup completed in under 0.15s. The cause is the size of the
+	// subtree beneath each directory, not a filter driver, as measured in
+	// sandbox_ancestor_skip_windows.go.
 	ancestorGrantBudget = 3 * time.Second
 
 	// ancestorGrantPerPath bounds a single grant, so one pathological directory
@@ -25,9 +26,9 @@ const (
 // granted traverse rights, nearest first, stopping below the profile root.
 //
 // It stops at the profile root deliberately: that root already grants ALL
-// APPLICATION PACKAGES for stat/traverse, writing its ACL hangs behind the
-// OneDrive/Defender filter driver, and C:\ and C:\Users are handled once by
-// `nvx setup`.
+// APPLICATION PACKAGES for stat/traverse, writing its ACL propagates over the
+// whole profile tree and cannot finish in any budget a launch would accept, and
+// C:\ and C:\Users are handled once by `nvx setup`.
 func ancestorGrantPaths(workDir, profile string) []string {
 	if workDir == "" || profile == "" {
 		return nil

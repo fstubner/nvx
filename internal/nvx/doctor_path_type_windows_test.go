@@ -74,6 +74,28 @@ func TestThePathRepairPreservesTheRegistryValueType(t *testing.T) {
 	}
 }
 
+// A User PATH entry with a non-ASCII character must come back as written. It
+// was read through `reg query`, whose output is in the OEM code page, so
+// C:\Users\Jürgen\bin came back with a stray byte for the ü, and a repair
+// wrote that corrupted value back. Against a scratch key, never the real one.
+func TestTheUserPathReaderKeepsNonASCIIEntries(t *testing.T) {
+	subkey := `Software\nvx-test-path-unicode`
+	t.Cleanup(func() {
+		_, _ = runWinCmd(15e9, "reg", "delete", `HKCU\`+subkey, "/f")
+	})
+	const want = `C:\Users\Jürgen\bin;C:\Windows`
+	if err := setRegistryStringValue(subkey, "Path", want, true); err != nil {
+		t.Fatal(err)
+	}
+	got, expand, err := readRegistryStringValue(subkey, "Path")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want || !expand {
+		t.Fatalf("read back %q (expandable=%v), want %q (expandable=true)", got, expand, want)
+	}
+}
+
 // And the writer really writes that type, which is the half a stubbed setter
 // cannot show. Against a scratch key of nvx's own, never the real Environment.
 func TestTheRegistryWriterStoresTheRequestedType(t *testing.T) {
@@ -99,11 +121,15 @@ func TestTheRegistryWriterStoresTheRequestedType(t *testing.T) {
 		if !strings.Contains(string(out), tc.want) {
 			t.Fatalf("stored type is not %s:\n%s", tc.want, out)
 		}
-		if got := parseRegPath(string(out)); got != `%USERPROFILE%\bin;C:\Windows` {
+		got, expand, err := readRegistryStringValue(subkey, "Probe")
+		if err != nil {
+			t.Fatalf("read back through the API failed: %v", err)
+		}
+		if got != `%USERPROFILE%\bin;C:\Windows` {
 			t.Fatalf("stored value came back as %q", got)
 		}
-		if parseRegExpandable(string(out)) != tc.expand {
-			t.Fatalf("parseRegExpandable disagrees with the stored type:\n%s", out)
+		if expand != tc.expand {
+			t.Fatalf("readRegistryStringValue says expandable=%v, want %v", expand, tc.expand)
 		}
 	}
 }
