@@ -61,6 +61,7 @@ func runDoctorQuietly(t *testing.T, home string) int {
 // under test turns on the sandbox answer rather than on a missing shim.
 func seedDoctorShims(t *testing.T, home string) {
 	t.Helper()
+	assumeProtectedProfile(t)
 	binDir := filepath.Join(home, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatal(err)
