@@ -157,7 +157,7 @@ func TestAnInjectedOverlappedPipeWorksAsNodesIPCChannel(t *testing.T) {
 	// existing reader works. Overlapped-ness is a property of each handle, and
 	// only the CLIENT -- the one libuv adopts -- has to have it.
 	name := `\\.\pipe\nvx-ipc-inject-probe-` + stdioSessionID(t.Name()+time.Now().Format("150405.000"))
-	server, err := createNamedPipeWithSecurity(name, "D:(A;;GA;;;"+userSID+")")
+	server, err := createNamedPipeWithSecurity(name, "D:(A;;GA;;;"+userSID+")", false)
 	if err != nil {
 		t.Fatalf("create pipe: %v", err)
 	}

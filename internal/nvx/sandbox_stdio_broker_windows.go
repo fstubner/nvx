@@ -223,7 +223,7 @@ func newStdioChannel(sessionID string, index int, sddl string, reverse bool) (*s
 	base := fmt.Sprintf(`\\.\pipe\nvx-stdio-%s-%s%d`, sessionID, kind, index)
 	ch := &stdioChannel{childPipe: base + "-c", nodePipe: base + "-n", reverse: reverse, sddl: sddl,
 		done: make(chan struct{})}
-	if err := ch.createInstances(); err != nil {
+	if err := ch.createInstances(true); err != nil {
 		return nil, err
 	}
 	return ch, nil
@@ -232,15 +232,20 @@ func newStdioChannel(sessionID string, index int, sddl string, reverse bool) (*s
 // createInstances puts a fresh server instance behind each name. The caller
 // holds c.mu, or owns the channel outright as newStdioChannel does.
 //
+// first is set only when the channel is provisioned. It asks for
+// FILE_FLAG_FIRST_PIPE_INSTANCE, so a name some other process already serves is
+// refused rather than joined. Recycling after a use leaves it clear, because the
+// previous instance can linger while its client still holds its end.
+//
 // Both or neither. A child instance with no node instance behind it would
 // accept a client the pump could never serve, and that client's process would
 // wait on it forever.
-func (c *stdioChannel) createInstances() error {
-	child, err := createNamedPipeWithSecurity(c.childPipe, c.sddl)
+func (c *stdioChannel) createInstances(first bool) error {
+	child, err := createNamedPipeWithSecurity(c.childPipe, c.sddl, first)
 	if err != nil {
 		return err
 	}
-	node, err := createNamedPipeWithSecurity(c.nodePipe, c.sddl)
+	node, err := createNamedPipeWithSecurity(c.nodePipe, c.sddl, first)
 	if err != nil {
 		syscall.CloseHandle(child)
 		return err
@@ -333,7 +338,7 @@ func (c *stdioChannel) retire(child, node syscall.Handle) bool {
 	if c.closed {
 		return false
 	}
-	return c.createInstances() == nil
+	return c.createInstances(false) == nil
 }
 
 // Close tears the pool down.
@@ -457,12 +462,14 @@ func (w pipeWriter) Write(p []byte) (int, error) {
 }
 
 // createNamedPipeWithSecurity creates a byte-mode server end carrying sddl.
-func createNamedPipeWithSecurity(name, sddl string) (syscall.Handle, error) {
+// With first set, it fails if any instance of name already exists.
+func createNamedPipeWithSecurity(name, sddl string, first bool) (syscall.Handle, error) {
 	const (
-		pipeAccessDuplex = 0x00000003
-		pipeTypeByte     = 0x00000000
-		pipeWait         = 0x00000000
-		pipeUnlimited    = 255
+		pipeAccessDuplex  = 0x00000003
+		firstPipeInstance = 0x00080000
+		pipeTypeByte      = 0x00000000
+		pipeWait          = 0x00000000
+		pipeUnlimited     = 255
 	)
 	sd, err := securityDescriptorFromSDDLBroker(sddl)
 	if err != nil {
@@ -477,9 +484,13 @@ func createNamedPipeWithSecurity(name, sddl string) (syscall.Handle, error) {
 	if err != nil {
 		return syscall.InvalidHandle, err
 	}
+	openMode := uintptr(pipeAccessDuplex)
+	if first {
+		openMode |= firstPipeInstance
+	}
 	h, _, callErr := procCreateNamedPipeBroker.Call(
 		uintptr(unsafe.Pointer(p)),
-		uintptr(pipeAccessDuplex),
+		openMode,
 		uintptr(pipeTypeByte|pipeWait),
 		uintptr(pipeUnlimited),
 		65536, 65536, 0,
@@ -531,6 +542,19 @@ func addStdioChannelsEnv(env []string, names string) []string {
 		return env
 	}
 	return append(env, nvxStdioChannelsEnv+"="+names)
+}
+
+// newStdioSessionID returns a fresh random id for one run's pipe names.
+//
+// Random per run, never derived from the guest home. A trusted tool's home is
+// stable, so two concurrent runs of the same tool used to draw the same names,
+// and CreateNamedPipeW let the second join the first's pipes as extra instances.
+func newStdioSessionID() string {
+	id, err := generateSandboxID()
+	if err != nil {
+		id = fmt.Sprintf("%d", os.Getpid())
+	}
+	return stdioSessionID(id)
 }
 
 // stdioSessionID derives a short, filesystem-safe id for the pipe names.

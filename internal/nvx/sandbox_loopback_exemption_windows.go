@@ -160,6 +160,8 @@ func warnIfSandboxLoopbackExempt(nvxHome, sidStr, mode string) {
 	LogWarn("Sandbox loopback exemption active: contained code can reach any service on 127.0.0.1, and the egress allowlist can be bypassed through one. Run 'nvx doctor' to see how to remove it.")
 }
 
+var procFreeSid = modAdvapi32.NewProc("FreeSid")
+
 // deriveAppContainerSIDString returns the SID string for a profile name without
 // registering the profile. `nvx doctor` diagnoses and must not create anything;
 // DeriveAppContainerSidFromAppContainerName answers for any valid name whether or
@@ -177,7 +179,8 @@ func deriveAppContainerSIDString(profileName string) (string, error) {
 	if hr != 0 || sid == 0 {
 		return "", fmt.Errorf("DeriveAppContainerSidFromAppContainerName(%q) hr=0x%X: %v", profileName, hr, callErr)
 	}
-	defer syscall.LocalFree(syscall.Handle(sid))
+	// The SID this call returns is freed with FreeSid, not LocalFree.
+	defer procFreeSid.Call(sid)
 	return appContainerSidToString(sid)
 }
 

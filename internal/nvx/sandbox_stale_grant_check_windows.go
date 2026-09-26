@@ -71,7 +71,7 @@ func reportStaleProjectGrants(dir string, fix bool) bool {
 	}
 
 	LogWarn("  [FAIL] %s carries %d sandbox permission(s) from before 0.5.0", rep.Dir, len(rep.SIDs))
-	LogWarn("         any nvx sandbox on this machine can read and write this project, whatever its own policy says")
+	LogWarn("         a sandbox started by an nvx build older than 0.5.0 can read and write this project through them")
 	LogInfo("         remove them with: nvx doctor --fix")
 	// One worked example, not nineteen. %s not %q: a quoted Go string escapes the
 	// backslashes and the user would paste a command that does not work.

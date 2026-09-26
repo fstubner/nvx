@@ -424,14 +424,9 @@ func runWindowsSetup(nvxHome string, undo, allDrives bool) int {
 
 	// The package identity older versions granted. Nothing launches under it any
 	// more, but --undo has to be able to take back what an older setup gave, so it
-	// is derived here for the revoke sweep below and for nothing else.
-	legacySidStr := ""
-	if legacySid, lerr := ensureAppContainerSID(stableSandboxProfile); lerr == nil {
-		defer syscall.LocalFree(syscall.Handle(legacySid))
-		if s, serr := appContainerSidToString(legacySid); serr == nil {
-			legacySidStr = s
-		}
-	}
+	// is derived here for the revoke sweep below and for nothing else. Derived
+	// only: registering the profile to get it left a profile behind after --undo.
+	legacySidStr, _ := deriveAppContainerSIDString(stableSandboxProfile)
 
 	if undo {
 		return runWindowsSetupUndo(nvxHome, sidStr, legacySidStr,
@@ -451,13 +446,10 @@ func runWindowsSetup(nvxHome string, undo, allDrives bool) int {
 	//
 	// So the exemption is now a permission granted for no remaining reason -- it
 	// lets the sandbox reach every other loopback listener on the machine. Remove
-	// it, including for users who ran an earlier setup. Best-effort: on a machine
-	// that never had it, CheckNetIsolation simply reports nothing to delete.
-	if legacySidStr != "" {
-		if err := setLoopbackExempt(false, legacySidStr); err != nil {
-			LogInfo("No loopback exemption to remove (the sandbox no longer needs one).")
-		}
-	}
+	// it, including for users who ran an earlier setup. On a machine that never
+	// had it, CheckNetIsolation reports nothing to delete.
+	exemptionLeft := legacySidStr != "" &&
+		!removeLegacyLoopbackExemption(legacySidStr, setLoopbackExempt, listLoopbackExemptSIDs)
 	if err := writeWindowsSetupState(nvxHome, windowsSetupState{
 		AppContainerSID: sidStr,
 		GrantedPaths:    paths,
@@ -482,11 +474,82 @@ func runWindowsSetup(nvxHome string, undo, allDrives bool) int {
 			"'nvx setup' (elevated) -- anything already in place is skipped, so it resumes rather than starting over.")
 		return 1
 	}
+	if exemptionLeft {
+		LogError("nvx sandbox setup did not finish: the loopback exemption above is still registered.")
+		return 1
+	}
 
 	LogSuccess("nvx sandbox setup complete.")
 	LogInfo("Drive-root access granted, for tools that resolve paths that far. Undo with: nvx setup --undo (elevated).")
 	LogInfo("Egress is allowlisted with or without this step; setup is not required for it.")
 	return 0
+}
+
+// removeLegacyLoopbackExemption removes the loopback exemption older setups
+// registered for the shared package, and reports whether it is gone.
+//
+// A failed delete is ambiguous. It is what a machine that never had the
+// exemption returns, and it is also what a timeout or a missing tool returns.
+// Setup used to read every failure as the first case and say there was nothing
+// to remove. The exemption list settles it.
+func removeLegacyLoopbackExemption(legacySid string,
+	setExempt func(bool, string) error, list func() ([]string, error)) bool {
+	delErr := setExempt(false, legacySid)
+	sids, listErr := list()
+	switch {
+	case listErr == nil && sidListContains(sids, legacySid):
+		LogWarn("The loopback exemption for %s is still registered: %v", legacySid, delErr)
+		LogWarn("Remove it from an Administrator terminal: CheckNetIsolation LoopbackExempt -d -p=%s", legacySid)
+		return false
+	case listErr != nil && delErr != nil:
+		LogWarn("Could not remove or check the loopback exemption for %s: %v; %v", legacySid, delErr, listErr)
+		return false
+	case delErr != nil:
+		LogInfo("No loopback exemption to remove (the sandbox no longer needs one).")
+	}
+	return true
+}
+
+// windowsSetupUndoPaths is every path --undo revokes.
+//
+// The fixed ancestor list alone missed what setup grants from where it runs:
+// the Users directory on the nvx home's or working directory's volume, and a
+// working directory on a volume that is not fixed. The paths the last setup
+// recorded cover those. The ones this directory would grant are added too, so
+// an undo run where setup ran works without the record.
+func windowsSetupUndoPaths(nvxHome, workDir string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		c := filepath.Clean(p)
+		if key := strings.ToLower(c); !seen[key] {
+			seen[key] = true
+			out = append(out, c)
+		}
+	}
+	for _, p := range windowsAncestorGrantPaths() {
+		add(p)
+	}
+	add(os.Getenv("USERPROFILE"))
+	grant, _ := windowsSetupGrantPaths(nvxHome, workDir, false)
+	for _, p := range grant {
+		add(p)
+	}
+	if st, ok := readWindowsSetupState(nvxHome); ok {
+		for _, p := range st.GrantedPaths {
+			// A volume that is not attached now cannot be revoked now. Named, so
+			// the user knows the record is about to be cleared without it.
+			if _, err := os.Stat(p); err != nil {
+				LogInfo("Skipped %s, which setup granted but is not present now.", p)
+				continue
+			}
+			add(p)
+		}
+	}
+	return out
 }
 
 // runWindowsSetupUndo takes back what setup granted, and reports whether it
@@ -521,8 +584,8 @@ func runWindowsSetupUndo(
 	// removed" without saying which leaves the user no way to finish the job by
 	// hand.
 	failures := 0
-	undoPaths := append(windowsAncestorGrantPaths(), filepath.Clean(os.Getenv("USERPROFILE")))
-	for _, p := range undoPaths {
+	workDir, _ := os.Getwd()
+	for _, p := range windowsSetupUndoPaths(nvxHome, workDir) {
 		if err := revokeGrant(sidStr, p); err != nil {
 			LogWarn("Could not remove grant on %s: %v", p, err)
 			failures++

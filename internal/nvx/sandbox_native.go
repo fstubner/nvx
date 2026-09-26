@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // usePersistentProfile reports whether a run should use a persistent per-tool
@@ -41,6 +42,9 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 		}
 		// Persistent: intentionally NOT cleaned up, so credentials survive to
 		// the next run. Still fully contained; the real home is never used.
+		// The lease marks this run as live so the package sweep leaves the
+		// home's profile alone while it runs. See writeSessionLease.
+		defer writeSessionLease(guestHome, sandboxID, time.Now())()
 		LogInfo("%q: using a persistent profile for this project (contained; your real home is untouched).", config.ToolName)
 	} else {
 		guestHome, err = createGuestProfile(config.NvxHome, sandboxID)

@@ -115,11 +115,19 @@ func openProcessForJob(pid uint32) (syscall.Handle, error) {
 }
 
 // processIsRunning reports whether pid still refers to a live process.
+//
+// Only ERROR_INVALID_PARAMETER means no such process. Any other OpenProcess
+// failure resolves towards "running", as on Unix: ERROR_ACCESS_DENIED is what a
+// live process this nvx may not open returns (measured 2026-09-26 on pid 4 and
+// on csrss), and a wrong "not running" lets cleanup delete a live session's home.
 func processIsRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
 	h, _, err := procOpenProcessForJob.Call(uintptr(processSynchronize), 0, uintptr(pid))
 	if h == 0 {
-		_ = err
-		return false
+		const errorInvalidParameter = syscall.Errno(87)
+		return err != errorInvalidParameter
 	}
 	handle := syscall.Handle(h)
 	defer syscall.CloseHandle(handle)

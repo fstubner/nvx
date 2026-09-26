@@ -102,6 +102,28 @@ func TestStdioChannelsAreOptional(t *testing.T) {
 	}
 }
 
+// A run must never share its pipes with another run. Provisioning a name that
+// is already served has to fail, since the second server would otherwise join
+// the first's pipe as another instance and a client could reach either run.
+// Each run also draws its own id, so two runs of one trusted tool, whose guest
+// home is the same, no longer collide on the names in the first place.
+func TestStdioChannelsAreNotSharedBetweenRuns(t *testing.T) {
+	sddl := "D:(A;;GA;;;WD)"
+	first, err := newStdioChannel("sharetest", 0, sddl, false)
+	if err != nil {
+		t.Skipf("cannot create pipes on this host: %v", err)
+	}
+	defer (&stdioBroker{channels: []*stdioChannel{first}}).Close()
+
+	if second, err := newStdioChannel("sharetest", 0, sddl, false); err == nil {
+		(&stdioBroker{channels: []*stdioChannel{second}}).Close()
+		t.Fatal("a second run provisioned pipe names another run already serves")
+	}
+	if a, b := newStdioSessionID(), newStdioSessionID(); a == b {
+		t.Fatalf("two runs drew the same pipe id %q", a)
+	}
+}
+
 // The names go into a Windows pipe path, so they cannot carry whatever a session
 // id happens to contain.
 func TestStdioSessionIDIsSafeInAPipeName(t *testing.T) {

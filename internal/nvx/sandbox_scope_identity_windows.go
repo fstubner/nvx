@@ -17,11 +17,12 @@ import (
 
 // The containment identity problem this file solves.
 //
-// The AppContainer profile is stable on purpose: `nvx setup` grants drive-root
-// stat access to its SID, and that grant has to survive across runs. But it means
-// every sandbox session on the machine runs as the SAME security identity, while
-// prepareAppContainerFilesystem grants that identity (M) on each working
-// directory and never revokes it.
+// Before 0.5.0 the AppContainer profile was one shared profile: `nvx setup`
+// granted drive-root stat access to its SID, and that grant had to survive
+// across runs. But it meant every sandbox session on the machine ran as the SAME
+// security identity, while prepareAppContainerFilesystem granted that identity
+// (M) on each working directory and never revoked it. Current launches run under
+// a per-project package and never carry that shared SID.
 //
 // Those two compose into a hole. The grant added while installing in project A is
 // still present, and still satisfied by the same SID, when nvx later runs in
@@ -134,9 +135,9 @@ func scopeCapabilitySID(scopeDir string) (string, error) {
 // removeStaleAppContainerGrant deletes an explicit ACE for the shared package SID
 // from a path now governed by a per-project capability.
 //
-// Without this the fix would do nothing for anyone upgrading: every project nvx
-// has already run in still carries a (M) ACE for the shared SID, which every
-// future session still holds. Inherited ACEs are untouched by /remove:g, so the
+// Without this, every project an older nvx ran in keeps a (M) ACE for the shared
+// SID. Current launches no longer hold that SID, but any sandbox an older nvx
+// build starts still does. Inherited ACEs are untouched by /remove:g, so the
 // drive-root grants `nvx setup` adds are not affected.
 //
 // Best-effort. Failing to clean an old grant leaves the previous behaviour for
