@@ -326,11 +326,23 @@ func writeExecutableFile(path string, data []byte) error {
 // installAliases covers the install/add spellings accepted by npm, yarn, and
 // pnpm, including npm's typo aliases (isntall etc.) which would otherwise
 // bypass verification.
+//
+// install-test and install-ci-test install and then run the test script, so
+// they are installs with every alias npm gives them (it; cit, sit,
+// clean-install-test). They and isntal were missing until 2026-09-26, and each
+// ran as your own code: no sandbox and no pre-install checks.
 var installAliases = map[string]bool{
 	"install": true, "i": true, "in": true, "ins": true, "inst": true,
 	"insta": true, "instal": true, "isnt": true, "isnta": true,
-	"isntall": true, "add": true,
+	"isntal": true, "isntall": true, "add": true,
+	"install-test": true, "it": true,
+	"install-ci-test": true, "cit": true, "sit": true, "clean-install-test": true,
 }
+
+// ciVerbs are npm's clean-install and its aliases: an install from the lockfile
+// with no package arguments. Only "ci" was known until 2026-09-26, so `npm
+// clean-install` and `npm ic` ran as your own code.
+var ciVerbs = []string{"ci", "clean-install", "ic", "install-clean", "isntall-clean"}
 
 // findInstallVerbIndex scans args for a token matching installAliases or one
 // of extraVerbs, and returns its index, or -1 if none is found. It does NOT
@@ -490,7 +502,7 @@ func isGlobalInstall(cmdName string, args []string) bool {
 		return true
 	}
 
-	if !hasInstallVerb(args, "ci") {
+	if !hasInstallVerb(args, ciVerbs...) {
 		return false
 	}
 	for _, arg := range args {
@@ -530,7 +542,7 @@ func detectShimPackagesForVerification(cmdName string, args []string) []string {
 		if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
 			return pkgs
 		}
-		if hasInstallVerb(args, "ci") {
+		if hasInstallVerb(args, ciVerbs...) || isBareYarnInstall(cmdName, args) {
 			if pkgs := packagesFromPackageLock(); len(pkgs) > 0 {
 				return pkgs
 			}

@@ -55,7 +55,7 @@ var executorCommands = map[string]bool{
 // a create-* package from the registry and execute it. `npm create vite` is how
 // a large share of projects begin.
 var executorVerbs = map[string][]string{
-	"npm":  {"exec", "create"},
+	"npm":  {"exec", "x", "create"},
 	"pnpm": {"dlx", "create"},
 	"yarn": {"dlx", "create"},
 	"bun":  {"x", "create"},
@@ -68,7 +68,10 @@ var executorVerbs = map[string][]string{
 // `npm rebuild` re-runs every dependency's install scripts. `npm update` fetches
 // new versions and runs theirs. `npm audit fix` -- the command a developer runs
 // *because* of a security advisory -- installs new versions to do it.
-var refreshVerbs = []string{"update", "up", "upgrade", "rebuild", "dedupe", "ddp"}
+//
+// rb (rebuild) and udpate (npm's typo alias for update) were missing until
+// 2026-09-26.
+var refreshVerbs = []string{"update", "up", "upgrade", "udpate", "rebuild", "rb", "dedupe", "ddp"}
 
 // subcommandCandidates returns the tokens that could be this invocation's
 // subcommand: the non-flag tokens, up to the point where nothing further is
@@ -167,6 +170,28 @@ func hasExecutorVerb(cmd string, args []string) bool {
 	return false
 }
 
+// isBareYarnInstall reports `yarn` with no subcommand, which is an install:
+// yarn's default command. `yarn` and `yarn --frozen-lockfile` ran as your own
+// code until 2026-09-26, with no sandbox and no pre-install checks. Asking only
+// for its version or help installs nothing.
+func isBareYarnInstall(cmd string, args []string) bool {
+	if !strings.EqualFold(cmd, "yarn") || len(subcommandCandidates(args)) > 0 {
+		return false
+	}
+	for _, a := range args {
+		// subcommandCandidates stops at a script verb and returns nothing, which
+		// would otherwise read `yarn run build` as bare yarn.
+		if isRunScriptVerb(a) {
+			return false
+		}
+		switch strings.ToLower(a) {
+		case "--version", "-v", "--help", "-h":
+			return false
+		}
+	}
+	return true
+}
+
 // hasAuditFix reports the two-token `audit fix`, which installs. Plain `npm
 // audit` only reads, so the verb alone must not count.
 func hasAuditFix(args []string) bool {
@@ -202,7 +227,8 @@ func classifyInvocation(cmd string, args []string) invocationClass {
 
 	switch lower {
 	case "npm", "yarn", "pnpm":
-		if hasInstallVerb(args, append([]string{"ci"}, refreshVerbs...)...) || hasAuditFix(args) {
+		if hasInstallVerb(args, append(append([]string{}, ciVerbs...), refreshVerbs...)...) ||
+			hasAuditFix(args) || isBareYarnInstall(lower, args) {
 			return classInstall
 		}
 		return classYourCode

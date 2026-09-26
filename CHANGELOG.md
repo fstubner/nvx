@@ -125,6 +125,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reset forms hold the record's lock while they read, withdraw and delete it, so
   a grant saved at the same moment is not deleted with it.
 
+* **`nvx doctor` no longer calls a bypassed command healthy.** It listed
+  `[FAIL] npm -> ... (bypasses nvx)` and then said "nvx is intercepting commands
+  correctly" and exited 0, because it only counted nvx's own runtime folders as
+  shadowing. A system Node earlier on PATH, the usual Windows layout, now makes
+  doctor exit non-zero.
+
+* **Every spelling of an install is contained and checked.** Plain `yarn` and
+  `yarn --frozen-lockfile` (yarn's default command installs), `npm x`,
+  `npm clean-install` and `ic`, `npm it`, `cit` and `sit`, `npm rb`, and npm's
+  `isntal` and `udpate` typo aliases ran as your own code: no sandbox and no
+  pre-install checks. They now run as the install or tool run they are.
+
 * **`exec()` and `execFile()` no longer hang inside the Windows sandbox.** node's
   own versions call a spawn the sandbox's preload could not reach, so they took
   the path that blocks forever before the child exists. A contained
