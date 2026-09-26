@@ -118,6 +118,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx grants reset --all` works after a grant has been recorded.** It read
+  the lock file kept beside each grant record as a record of its own, failed to
+  parse it, exited 1 and said to remove permissions with icacls by hand, on
+  every run after the first grant. It now skips lock and temp files, and both
+  reset forms hold the record's lock while they read, withdraw and delete it, so
+  a grant saved at the same moment is not deleted with it.
+
 * **`exec()` and `execFile()` no longer hang inside the Windows sandbox.** node's
   own versions call a spawn the sandbox's preload could not reach, so they took
   the path that blocks forever before the child exists. A contained
