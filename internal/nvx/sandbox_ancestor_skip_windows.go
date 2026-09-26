@@ -123,7 +123,25 @@ func saveAncestorSkips(nvxHome string, skips map[string]time.Time) {
 	}
 	// Best-effort: this is a cache. Failing to write it costs a retry next time,
 	// which is the behaviour that existed before it.
-	_ = os.WriteFile(ancestorSkipPath(nvxHome), data, 0o600)
+	//
+	// Written to a temporary file and renamed. Two nvx processes, or a launch
+	// and the background walk in one process, can write it at once, and a reader
+	// that caught a half-written file lost every entry in it. Concurrent writers
+	// can still drop each other's newest entry, which costs one retry.
+	final := ancestorSkipPath(nvxHome)
+	f, err := os.CreateTemp(nvxHome, filepath.Base(final)+".*.tmp")
+	if err != nil {
+		return
+	}
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	if cerr := f.Close(); werr != nil || cerr != nil {
+		_ = os.Remove(tmp)
+		return
+	}
+	if os.Rename(tmp, final) != nil {
+		_ = os.Remove(tmp)
+	}
 }
 
 func normalizeAncestorKey(path string) string {

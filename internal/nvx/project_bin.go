@@ -88,6 +88,19 @@ func projectNodeModulesBin(projectRoot string) string {
 	return filepath.Join(projectRoot, "node_modules", ".bin")
 }
 
+// projectBinCommandName is the command a node_modules/.bin entry provides: the
+// file name without the launcher extension npm adds on Windows. Only those
+// extensions are removed. Any extension used to be, so a bin named foo.bar got
+// a shim called foo that ran a command which does not exist.
+func projectBinCommandName(file string) string {
+	for _, ext := range []string{".cmd", ".ps1", ".exe"} {
+		if len(file) > len(ext) && strings.EqualFold(file[len(file)-len(ext):], ext) {
+			return file[:len(file)-len(ext)]
+		}
+	}
+	return file
+}
+
 // generateProjectBinShims creates nvx wrappers for executables in node_modules/.bin.
 func generateProjectBinShims(projectRoot, nvxHome string) error {
 	binDir := projectNodeModulesBin(projectRoot)
@@ -118,7 +131,7 @@ func generateProjectBinShims(projectRoot, nvxHome string) error {
 		if entry.IsDir() {
 			continue
 		}
-		base := strings.TrimSuffix(name, filepath.Ext(name))
+		base := projectBinCommandName(name)
 		if base == "" || seen[base] {
 			continue
 		}
@@ -155,7 +168,7 @@ func pruneProjectBinShims(shimDir string, kept map[string]bool) {
 		if e.IsDir() {
 			continue
 		}
-		base := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
+		base := projectBinCommandName(e.Name())
 		if kept[base] {
 			continue
 		}
@@ -219,12 +232,7 @@ func resolveProjectBinCommand(cmdName string) string {
 	binDir := projectNodeModulesBin(root)
 	if runtime.GOOS == "windows" {
 		for _, ext := range []string{".cmd", ".ps1", ""} {
-			p := binDir + string(os.PathSeparator) + cmdName + ext
-			if ext == "" {
-				p = filepath.Join(binDir, cmdName)
-			} else {
-				p = filepath.Join(binDir, cmdName+ext)
-			}
+			p := filepath.Join(binDir, cmdName+ext)
 			if _, err := os.Stat(p); err == nil {
 				return p
 			}

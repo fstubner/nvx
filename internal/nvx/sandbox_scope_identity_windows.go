@@ -104,11 +104,29 @@ func deriveCapabilitySIDString(name string) (string, error) {
 	if ret == 0 {
 		return "", fmt.Errorf("DeriveCapabilitySidsFromName(%q): %v", name, callErr)
 	}
+	// The caller owns both arrays and every SID in them, each freed with
+	// LocalFree. Nothing freed them, so each derivation leaked a little.
+	defer freeLocalSIDArray(groupSids, groupCount)
+	defer freeLocalSIDArray(capSids, capSidCount)
 	if capSidCount == 0 || capSids == nil {
 		return "", fmt.Errorf("DeriveCapabilitySidsFromName(%q) returned no capability SIDs", name)
 	}
 	// Only the first capability SID is used; a single name yields exactly one.
 	return appContainerSidToString(uintptr(unsafe.Pointer(*capSids)))
+}
+
+// freeLocalSIDArray frees an array of n SIDs, and the array, that a Windows call
+// allocated with LocalAlloc.
+func freeLocalSIDArray(arr **syscall.SID, n uint32) {
+	if arr == nil {
+		return
+	}
+	for _, sid := range unsafe.Slice(arr, n) {
+		if sid != nil {
+			_, _ = syscall.LocalFree(syscall.Handle(unsafe.Pointer(sid)))
+		}
+	}
+	_, _ = syscall.LocalFree(syscall.Handle(unsafe.Pointer(arr)))
 }
 
 // scopeCapabilitySID returns the capability SID that identifies scopeDir,
@@ -142,7 +160,7 @@ func scopeCapabilitySID(scopeDir string) (string, error) {
 //
 // Best-effort. Failing to clean an old grant leaves the previous behaviour for
 // that one path, which is worth a log line and not worth refusing to run.
-func removeStaleAppContainerGrant(packageSIDStr, path string) {
+func removeStaleAppContainerGrant(path string) {
 	if path == "" {
 		return
 	}

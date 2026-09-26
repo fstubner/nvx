@@ -59,9 +59,7 @@ func reportStaleProjectGrants(dir string, fix bool) bool {
 	}
 
 	if fix {
-		// The package SID argument is unused by the removal path -- it removes
-		// every stale SID it finds -- but the signature documents intent.
-		removeStaleAppContainerGrant("", rep.Dir)
+		removeStaleAppContainerGrant(rep.Dir)
 		if remaining := staleAppContainerSIDsOn(rep.Dir); len(remaining) > 0 {
 			LogWarn("  [FAIL] %d sandbox permission(s) remain on %s; removing them needs write access to its ACL", len(remaining), rep.Dir)
 			return true

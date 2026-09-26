@@ -84,6 +84,33 @@ func TestPlantedBinaryDoesNotBecomeAShim(t *testing.T) {
 	}
 }
 
+// A bin whose name has a dot in it is shimmed under its whole name. Every
+// extension used to be trimmed, so foo.bar got a shim called foo that ran a
+// command nothing provides.
+func TestADottedBinNameKeepsItsWholeName(t *testing.T) {
+	project := tempDir(t)
+	nvxHome := tempDir(t)
+	binDir := filepath.Join(project, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"nvx-fixture.cli", "nvx-fixture.cli.cmd", "nvx-fixture.cli.ps1"} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("real"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := generateProjectBinShims(project, nvxHome); err != nil {
+		t.Fatalf("generateProjectBinShims: %v", err)
+	}
+	shimDir := projectBinDir(project, nvxHome)
+	if _, err := os.Stat(filepath.Join(shimDir, "nvx-fixture.cli")); err != nil {
+		t.Errorf("no shim named after the whole bin name: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(shimDir, "nvx-fixture")); err == nil {
+		t.Error("the bin's name was cut at its dot")
+	}
+}
+
 // TestPlantedBinaryIsRefusedWhenNodeModulesBinLeadsPath runs regeneration the
 // way it actually runs: inside an npm script, where npm has put the project's
 // node_modules/.bin first on PATH. The planted file is then the first match, and

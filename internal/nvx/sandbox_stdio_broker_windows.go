@@ -375,13 +375,26 @@ func (b *stdioBroker) Close() {
 		ch.closed = true
 		ch.mu.Unlock()
 	}
-	for _, ch := range b.channels {
-		ch.stopPump()
+	// In parallel. One after another, a pool of pumps that would not let go
+	// cost the whole limit each, 24 channels times 5 seconds, before nvx could
+	// exit.
+	stopped := make([]bool, len(b.channels))
+	var wg sync.WaitGroup
+	for i, ch := range b.channels {
+		wg.Add(1)
+		go func(i int, ch *stdioChannel) {
+			defer wg.Done()
+			stopped[i] = ch.stopPump()
+		}(i, ch)
 	}
-	for _, ch := range b.channels {
+	wg.Wait()
+	for i, ch := range b.channels {
 		ch.mu.Lock()
 		for _, h := range []*syscall.Handle{&ch.childServer, &ch.nodeServer} {
-			if *h != 0 && *h != syscall.InvalidHandle {
+			// A pump that did not let go may still be blocked on this handle,
+			// and CloseHandle would then wait for it, possibly for good. Its
+			// handles are left for process exit to close instead.
+			if stopped[i] && *h != 0 && *h != syscall.InvalidHandle {
 				procCancelIoExBroker.Call(uintptr(*h), 0)
 				syscall.CloseHandle(*h)
 			}
@@ -392,16 +405,17 @@ func (b *stdioBroker) Close() {
 }
 
 // stopPumpLimit bounds how long Close waits for one pump to let go. A pump
-// that outlives it is left behind and its handles closed anyway, which is the
-// behaviour Close had before it waited at all.
-const stopPumpLimit = 5 * time.Second
+// that outlives it is left behind with its handles open. A variable so a test
+// can shorten it.
+var stopPumpLimit = 5 * time.Second
 
-// stopPump cancels the channel's pending I/O until its pump has returned. The
-// caller has already set closed, so a pump that has not started yet, or that
-// finishes a copy, returns at its next check rather than waiting again.
-func (c *stdioChannel) stopPump() {
+// stopPump cancels the channel's pending I/O until its pump has returned, and
+// reports whether it did within stopPumpLimit. The caller has already set
+// closed, so a pump that has not started yet, or that finishes a copy, returns
+// at its next check rather than waiting again.
+func (c *stdioChannel) stopPump() bool {
 	if !c.started.Load() {
-		return // pump sets started before its first check of closed
+		return true // pump sets started before its first check of closed
 	}
 	deadline := time.Now().Add(stopPumpLimit)
 	for {
@@ -415,11 +429,11 @@ func (c *stdioChannel) stopPump() {
 		}
 		select {
 		case <-c.done:
-			return
+			return true
 		case <-time.After(10 * time.Millisecond):
 		}
 		if time.Now().After(deadline) {
-			return
+			return false
 		}
 	}
 }
