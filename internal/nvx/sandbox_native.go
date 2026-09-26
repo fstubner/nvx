@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -97,6 +98,11 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 		workDir, _ = os.Getwd()
 	}
 	workDir, _ = filepath.Abs(workDir)
+	// Windows decides this where it grants the directory, because its profile
+	// root keeps its own rule; see prepareAppContainerFilesystem.
+	if runtime.GOOS != "windows" {
+		workDir = containedWorkDir(config.NvxHome, guestHome, workDir)
+	}
 
 	LogInfo("Running in native sandbox: %s %s", config.Command, strings.Join(config.Args, " "))
 	code, err := platformLaunchNative(config, guestHome, workDir, cmdPath, cleanEnv, netCtx)

@@ -46,7 +46,7 @@ if (( MAJOR < 5 || (MAJOR == 5 && MINOR < 13) )); then
 fi
 
 PROJ="$(mktemp -d)"
-trap 'rm -rf "$PROJ"' EXIT
+trap 'rm -rf "$PROJ" "${NVX_HOME:-}"' EXIT
 cd "$PROJ"
 
 # A runtime Landlock actually permits, for the reason spelled out in
@@ -55,7 +55,10 @@ cd "$PROJ"
 # and a hosted runner's Node lives in /opt/hostedtoolcache, which is on none of
 # them. Until now this script never reached the question, because its namespace
 # check skipped it on every unprivileged machine.
-export NVX_HOME="$PROJ/nvxhome"
+# Beside the project, not inside it. A working directory that contains
+# NVX_HOME is one the sandbox may not write (workDirReachesControlPlane), so a
+# home nested in the project would make every write below fail by design.
+export NVX_HOME="$(mktemp -d)"
 mkdir -p "$NVX_HOME"
 echo "Installing an nvx-managed runtime (Landlock does not permit exec outside its allowlist)..."
 if ! "$NVX" -y install 22 >/dev/null 2>&1 || ! "$NVX" -y default 22 >/dev/null 2>&1; then
@@ -105,7 +108,7 @@ s.listen(0, '127.0.0.1', () => fs.writeFileSync(process.argv[2], String(s.addres
 JS
 node "$PROJ/service.js" "$PROJ/port.txt" &
 SVC_PID=$!
-trap 'kill $SVC_PID 2>/dev/null || true; rm -rf "$PROJ"' EXIT
+trap 'kill $SVC_PID 2>/dev/null || true; rm -rf "$PROJ" "${NVX_HOME:-}"' EXIT
 for _ in $(seq 1 50); do [[ -s "$PROJ/port.txt" ]] && break; sleep 0.1; done
 if [[ ! -s "$PROJ/port.txt" ]]; then
   echo "the stand-in host service never reported its port" >&2
@@ -232,7 +235,7 @@ fi
 echo "  a raw connection reached the service too"
 
 kill $SVC_PID 2>/dev/null || true
-trap 'rm -rf "$PROJ"' EXIT
+trap 'rm -rf "$PROJ" "${NVX_HOME:-}"' EXIT
 
 # An actual install, which is what the sandbox is mostly for and what no test on
 # this platform had ever run. Windows has had one since a contained `npm install`
