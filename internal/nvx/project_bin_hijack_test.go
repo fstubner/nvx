@@ -178,6 +178,12 @@ func TestProjectBinPruningRemovesWhatIsNoLongerThere(t *testing.T) {
 // at the in-project directory, relocating would have achieved nothing.
 func TestCleanAndBuildPathUsesTheRelocatedDir(t *testing.T) {
 	project := tempDir(t)
+	// The directory's real path, which is what the working directory reports:
+	// macOS temp lives under /var, a link to /private/var, and the project-bin
+	// directory is named after the path nvx sees.
+	if real, err := filepath.EvalSymlinks(project); err == nil {
+		project = real
+	}
 	nvxHome := tempDir(t)
 	if err := os.WriteFile(filepath.Join(project, "package.json"), []byte(`{"name":"p"}`), 0o600); err != nil {
 		t.Fatal(err)
