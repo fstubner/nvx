@@ -13,7 +13,8 @@
 #
 #   A paths filter. nvx's CI already runs several minutes on Windows, and a Go
 #   change has no business running browser sweeps. CHANGELOG.md is listed
-#   because the changelog page reads it.
+#   because the changelog page reads it, and the install scripts because the
+#   site serves copies of them.
 name: Site CI
 
 on:
@@ -22,6 +23,9 @@ on:
     paths: &site_paths
       - 'site/**'
       - 'CHANGELOG.md'
+      # The prebuild copies these into the site (copy-install-scripts.mjs).
+      - 'install.sh'
+      - 'install.ps1'
       - '.github/workflows/site-ci.yml'
   pull_request:
     paths: *site_paths
@@ -38,8 +42,7 @@ jobs:
     name: Checks
     runs-on: ubuntu-latest
     # The browser sweeps are the slow part, at a couple of minutes each. This
-    # is a ceiling on a hang -- a wedged run on a self-hosted runner blocks
-    # every later run, because there is only the one.
+    # is a ceiling on a hang.
     timeout-minutes: 30
     defaults:
       run:
@@ -57,13 +60,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: site/.nvmrc
-          # No `cache: npm` here, deliberately. That option uploads the npm
-          # cache to GitHub's cache service after every run and downloads it
-          # before the next one -- which is a win on a fresh hosted VM and a
-          # loss on this runner, where ~/.npm is already sitting on the disk
-          # between runs. Measured on the first run of this workflow: the
-          # checks took under four minutes and the cache upload was still
-          # going ten minutes later.
+          # No `cache: npm` here. It was left off for the template's
+          # self-hosted runner, where ~/.npm stays on the disk between runs.
+          # On the first run of this workflow there, the checks took under
+          # four minutes and the cache upload was still going ten minutes
+          # later. On ubuntu-latest nothing persists between runs, and the
+          # trade has not been measured here.
       - run: npm ci
 
       # --- Static guards: no build needed ---------------------------------

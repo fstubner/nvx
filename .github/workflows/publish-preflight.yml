@@ -1,6 +1,6 @@
 name: Publish preflight
 
-# Checks the three publishing credentials WITHOUT publishing anything.
+# Checks the four publishing credentials WITHOUT publishing anything.
 #
 # publish.yml pushes to each registry the moment that job succeeds, and its
 # own concurrency note says a run that dies halfway "leaves some registries
@@ -32,15 +32,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # One step, not three, so a bad credential does not stop the others
-      # from being checked. Finding out that the other two are fine is the
+      # One step, not four, so a bad credential does not stop the others
+      # from being checked. Finding out that the others are fine is the
       # point. Discovering them one release at a time is what this workflow
       # exists to prevent.
-      - name: Check all three credentials
+      - name: Check all four credentials
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         shell: bash
         run: |
           set -uo pipefail   # NOT -e: every check must run even after one fails.
@@ -81,9 +82,9 @@ jobs:
           check_gh_repo "SCOOP_BUCKET_TOKEN" "$SCOOP_BUCKET_TOKEN" "fstubner/scoop-bucket"
 
           # ---- winget -----------------------------------------------------
-          # Nobody has push on microsoft/winget-pkgs. The action forks and
-          # opens a PR. So validity is what matters, and the fork is reported
-          # for information. Its absence is fine, the action creates it.
+          # Nobody has push on microsoft/winget-pkgs. Komac forks and opens a
+          # PR. So validity is what matters, and the fork is reported for
+          # information. Its absence is fine, Komac creates it.
           code=$(curl -sS -o /dev/null -w '%{http_code}' \
             -H "Authorization: Bearer ${WINGET_TOKEN}" -H 'Accept: application/vnd.github+json' \
             https://api.github.com/user || echo 000)
@@ -102,9 +103,25 @@ jobs:
             record "WINGET_TOKEN" "microsoft/winget-pkgs" 1 "token rejected (HTTP $code)"
           fi
 
+          # ---- npm --------------------------------------------------------
+          # `npm whoami` is a read that needs a valid token. The npmrc names
+          # the variable, as publish-npm.sh does, so the token is never
+          # written to disk.
+          npmrc=$(mktemp)
+          # shellcheck disable=SC2016  # the literal ${NPM_TOKEN} is the point
+          printf '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n' > "$npmrc"
+          if [ -z "$NPM_TOKEN" ]; then
+            record "NPM_TOKEN" "npm @fstubner" 1 "not configured"
+          elif npm_user=$(NPM_CONFIG_USERCONFIG="$npmrc" npm whoami 2>/dev/null); then
+            record "NPM_TOKEN" "npm @fstubner" 0 "valid, authenticates as $npm_user"
+          else
+            record "NPM_TOKEN" "npm @fstubner" 1 "token rejected by npm whoami"
+          fi
+          rm -f "$npmrc"
+
           summary ""
           if [ "$failures" -gt 0 ]; then
             summary "**$failures credential(s) need attention before publishing.**"
             exit 1
           fi
-          summary "All three credentials are good. Safe to publish."
+          summary "All four credentials are good. Safe to publish."

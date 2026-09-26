@@ -289,32 +289,21 @@ jobs:
         ./scripts/sandbox-smoke.ps1
         ./scripts/sandbox-smoke-egress.ps1
 
-    # The Windows counterpart of the Linux and macOS enforcement steps. It will
-    # skip here: hosted Windows runners refuse to create AppContainer children,
-    # CreateProcess returning "Access is denied" for every executable including
-    # cmd.exe. The step exists so that stops being a standing assumption -- if a
-    # future runner image can host one, this starts asserting on its own rather
-    # than waiting for someone to notice.
+    # The Windows counterpart of the Linux and macOS enforcement steps. Hosted
+    # Windows runners refused to create AppContainer children, CreateProcess
+    # returning "Access is denied" for every executable including cmd.exe, and
+    # this step skipped. Since the breakaway fix of 2026-09-21 (see the probe
+    # step above) they can, and the script asserts here. It still skips on the
+    # two refusals a host is known to give, so a runner image that refuses
+    # again shows up as a skip in this step's log.
     #
-    # Until then Windows enforcement is gated by hand before a release
-    # (CONTRIBUTING.md), which is what the word "measured" in the Windows column
-    # of docs/enforcement-matrix.md refers to.
+    # CONTRIBUTING.md still gates Windows enforcement by hand on a real machine
+    # before a release.
     - name: Windows containment enforcement
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: ./scripts/sandbox-enforcement-windows.ps1
 
-    # The unit-test step above already exercises Landlock, the syscall table and
-    # reaping -- those need no privileges and pass on a hosted runner. The netns
-    # egress test does not: it needs CAP_SYS_ADMIN for unshare and `ip` from
-    # iproute2, so it skipped silently and the one path that proves a contained
-    # process can reach the outside proxy went unverified.
-    # install.sh shipped for months writing only `eval "$(nvx env)"` into the shell
-    # profile, never putting nvx on PATH -- so every new shell printed
-    # "nvx: command not found" and nvx never activated. Nothing tested the
-    # installer, which is why it went unnoticed. Runs on macOS too: that is where
-    # bash is a LOGIN shell and reads .bash_profile rather than .bashrc, the case
-    # the profile-selection logic exists for.
     # The installer's PATH write, against a scratch registry key. That one line
     # already shipped a defect -- it replaced every %VAR% entry with that day's
     # expansion and stored the result as plain text, so nothing expanded again
@@ -363,6 +352,12 @@ jobs:
       if: failure() && matrix.os == 'windows-latest'
       shell: pwsh
       run: ./scripts/check-network-stack.ps1
+    # install.sh shipped for months writing only `eval "$(nvx env)"` into the shell
+    # profile, never putting nvx on PATH -- so every new shell printed
+    # "nvx: command not found" and nvx never activated. Nothing tested the
+    # installer, which is why it went unnoticed. Runs on macOS too: that is where
+    # bash is a LOGIN shell and reads .bash_profile rather than .bashrc, the case
+    # the profile-selection logic exists for.
     - name: Installer shell-profile test
       if: matrix.os != 'windows-latest'
       shell: bash
@@ -373,7 +368,23 @@ jobs:
       if: matrix.os != 'windows-latest'
       shell: bash
       run: sh scripts/test-install-download.sh
+    # The npm wrapper's exit status, against a stub binary.
+    - name: npm wrapper test
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: sh scripts/test-npm-wrapper.sh
+    # The publish scripts' shared checks. They run only during a release, so a
+    # regression in them would otherwise surface on release day.
+    - name: Release script tests
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash
+      run: bash scripts/release/lib_test.sh
 
+    # The unit-test step above already exercises Landlock, the syscall table and
+    # reaping -- those need no privileges and pass on a hosted runner. The netns
+    # egress test does not: it needs CAP_SYS_ADMIN for unshare and `ip` from
+    # iproute2, so it skipped silently and the one path that proves a contained
+    # process can reach the outside proxy went unverified.
     - name: Linux containment tests (privileged)
       if: matrix.os == 'ubuntu-latest'
       shell: bash
@@ -418,10 +429,23 @@ jobs:
         # hardening lets an unprivileged user namespace be created but refuses
         # CAP_NET_ADMIN inside it, so nvx's loopback setup gets EPERM and the
         # sandbox fails closed. Without this both scripts skip themselves, which
-        # is honest but verifies nothing.
-        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
-        ./scripts/sandbox-smoke.sh
-        ./scripts/sandbox-smoke-egress.sh
+        # is honest but verifies nothing. No `|| true`: a sysctl that fails here
+        # is the start of a skip.
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        # Each script skips with exit 0 when a runtime will not install or the
+        # host cannot host the sandbox, which is right on a developer machine
+        # and verifies nothing here. So the step requires the line each prints
+        # only when it ran to the end, as the Docker step below does.
+        ./scripts/sandbox-smoke.sh 2>&1 | tee /tmp/smoke.log
+        if ! grep -q '^Linux sandbox smoke passed\.' /tmp/smoke.log; then
+          echo "::error::the Linux sandbox smoke did not run to completion; it is verifying nothing"
+          exit 1
+        fi
+        ./scripts/sandbox-smoke-egress.sh 2>&1 | tee /tmp/egress.log
+        if ! grep -q '^Egress smoke passed' /tmp/egress.log; then
+          echo "::error::the Linux egress smoke did not run to completion; it is verifying nothing"
+          exit 1
+        fi
 
     # The smoke scripts check that the sandbox runs and that blocked egress
     # fails. This one asserts the filesystem guarantees with absolute paths --
@@ -445,7 +469,7 @@ jobs:
         # fails closed. That is the distribution's hardening, not an nvx bug, and
         # an ephemeral runner is the right place to relax it; a real user on 24.04
         # meets the same wall, which is worth knowing separately.
-        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
         # Unprivileged on purpose: it is the configuration nvx is built for, and
         # the sysctl above is what makes it possible here. Earlier revisions of
         # this step blamed both AppArmor and root-owned files for the runtime
@@ -453,7 +477,15 @@ jobs:
         # nested user namespace, and the uid/gid mapping that goes with one is
         # written through /proc, which the supervisor's own Landlock ruleset does
         # not grant. See applyLinuxNamespaces.
-        ./scripts/sandbox-enforcement-linux.sh
+        #
+        # The full passed line, egress included. The script also passes with
+        # "Egress NOT asserted" when it finds no network namespace, and it skips
+        # with exit 0 when the runtime install fails. Neither is a result here.
+        ./scripts/sandbox-enforcement-linux.sh 2>&1 | tee /tmp/enforcement.log
+        if ! grep -q '^Linux enforcement probe passed: writes contained, reads restricted, egress denied\.' /tmp/enforcement.log; then
+          echo "::error::the Linux enforcement probe skipped some or all of its assertions"
+          exit 1
+        fi
 
     # The docker provider had no coverage at all until this step: no test called
     # its launch function, and nothing here mentioned docker. Its argument list
@@ -518,7 +550,7 @@ jobs:
         cache: false
 
     - name: Run govulncheck
-      uses: golang/govulncheck-action@v1
+      uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
 
     # Pinned by commit, like release.yml's third-party actions: @master ran
     # whatever that branch held on the day, inside a job with this repo's code.

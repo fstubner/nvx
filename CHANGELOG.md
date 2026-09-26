@@ -159,6 +159,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **install.sh refuses a CPU it has no build for.** On armv7l, i686, riscv64
+  or any other CPU it installed the x86_64 binary, which cannot run there. It
+  now stops and names the architecture.
+
+* **install.sh says so when it has no way to check the download.** With
+  neither sha256sum nor shasum installed it reported a checksum mismatch. It
+  now looks for one before downloading and says which to install.
+
+* **install.sh no longer writes lines fish cannot read.** For a fish user it
+  added POSIX lines to `~/.profile`, which fish never reads, and reported the
+  profile as updated. It now prints the `fish_add_path` command to run.
+
+* **The one-line Windows install leaves your PowerShell session as it was.**
+  Run as `irm ... | iex`, install.ps1 left `$ErrorActionPreference = 'Stop'`,
+  a TLS 1.2-only connection setting, and its own variables and functions in
+  the window it was pasted into. It now runs in a scope of its own and puts
+  the TLS setting back.
+
+* **Homebrew and Scoop releases are checked against their build provenance.**
+  Only the npm publish checked that a binary was built by `release.yml`. The
+  Homebrew and Scoop jobs trusted a `.sha256` file from the same release page
+  as the binary, so a binary replaced there together with its checksum would
+  have been published. All three now require the attestation `release.yml`
+  made for the binary.
+
 * **`nvx grants reset --all` works after a grant has been recorded.** It read
   the lock file kept beside each grant record as a record of its own, failed to
   parse it, exited 1 and said to remove permissions with icacls by hand, on

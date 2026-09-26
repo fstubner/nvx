@@ -13,7 +13,9 @@
 # then proves the three fields actually changed.
 #
 # Required environment:
-#   GH_TOKEN - PAT with `repo` scope on fstubner/scoop-bucket.
+#   GH_TOKEN             - PAT with `repo` scope on fstubner/scoop-bucket.
+#   ATTESTATION_GH_TOKEN - token that can read this repo's attestations,
+#                          for verified_sha in lib.sh.
 # Required argument:
 #   $1 - tag, e.g. "v0.6.0".
 
