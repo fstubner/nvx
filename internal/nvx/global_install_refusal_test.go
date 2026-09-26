@@ -35,6 +35,14 @@ func TestGlobalInstallIsDetectedWithoutRunningAnything(t *testing.T) {
 		{"yarn", []string{"global", "add", "typescript"}, true},
 		{"yarn", []string{"global", "remove", "typescript"}, true},
 		{"yarn", []string{"--silent", "global", "add", "typescript"}, true},
+		// npm's --location=global and bun's -g were missed, so they went into
+		// the sandbox instead of being refused up front.
+		{"npm", []string{"install", "--location=global", "typescript"}, true},
+		{"npm", []string{"install", "--location", "global", "typescript"}, true},
+		{"npm", []string{"install", "--location=project", "typescript"}, false},
+		{"bun", []string{"add", "-g", "typescript"}, true},
+		{"bun", []string{"install", "--global", "typescript"}, true},
+		{"bun", []string{"add", "typescript"}, false},
 		// A package literally named "global" is not a global install.
 		{"yarn", []string{"add", "global"}, false},
 		{"npm", []string{"install", "lodash"}, false},

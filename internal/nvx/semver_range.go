@@ -145,10 +145,10 @@ func parseVersionRange(expr string) (versionRange, error) {
 			return versionRange{}, fmt.Errorf("empty alternative in %q", expr)
 		}
 		var group []comparator
-		for _, token := range strings.Fields(alt) {
+		for _, token := range joinBareOperators(strings.Fields(alt)) {
 			cs, err := parseComparator(token)
 			if err != nil {
-				return versionRange{}, err
+				return versionRange{}, fmt.Errorf("cannot read %q in %q: %w", token, expr, err)
 			}
 			group = append(group, cs...)
 		}
@@ -158,6 +158,25 @@ func parseVersionRange(expr string) (versionRange, error) {
 		out.or = append(out.or, group)
 	}
 	return out, nil
+}
+
+// joinBareOperators joins an operator written on its own to the version after
+// it. package.json engines often read ">= 18", which split into ">=" and "18",
+// and ">=" alone failed with "empty version".
+func joinBareOperators(tokens []string) []string {
+	var out []string
+	for i := 0; i < len(tokens); i++ {
+		switch tokens[i] {
+		case ">=", "<=", ">", "<", "=", "^", "~":
+			if i+1 < len(tokens) {
+				out = append(out, tokens[i]+tokens[i+1])
+				i++
+				continue
+			}
+		}
+		out = append(out, tokens[i])
+	}
+	return out
 }
 
 // parseComparator turns one token into the comparators it stands for. A caret,

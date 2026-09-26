@@ -1,11 +1,13 @@
 package nvx
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 )
 
 // SandboxRequest carries everything a FilesystemProvider needs to launch a
@@ -84,6 +86,9 @@ func (nativeFSProvider) Run(req SandboxRequest) int {
 
 type dockerFSProvider struct{}
 
+// dockerInfoTimeout bounds the daemon check in Available.
+const dockerInfoTimeout = 15 * time.Second
+
 func (dockerFSProvider) Name() string { return "docker" }
 func (dockerFSProvider) SupportsNetworkMode(mode string) bool {
 	return providerSupportsNetworkMode("docker", mode)
@@ -92,7 +97,11 @@ func (dockerFSProvider) Available() error {
 	if !commandExists("docker") {
 		return fmt.Errorf("the docker CLI was not found on PATH")
 	}
-	cmd := exec.Command("docker", "info")
+	// Bounded, so a daemon that accepts the connection and never answers
+	// fails this check instead of holding the command with no output.
+	ctx, cancel := context.WithTimeout(context.Background(), dockerInfoTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "info")
 	cmd.Stdout, cmd.Stderr = nil, nil
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("the docker daemon is not responding (is Docker running?)")

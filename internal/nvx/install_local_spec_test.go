@@ -2,6 +2,8 @@ package nvx
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -77,5 +79,72 @@ func TestARegistryNameIsStillVerified(t *testing.T) {
 	}
 	if asked != "@scope/pkg" {
 		t.Fatalf("the registry was asked for %q, want @scope/pkg", asked)
+	}
+}
+
+// `nvx NPM install x` is accepted as npm, so it gets npm's checks. The command
+// was matched case-insensitively and then verified by an exact, lowercase
+// switch, so the install ran with the blocklist never consulted.
+func TestAnUppercaseCommandNameIsStillVerified(t *testing.T) {
+	origResolve := resolveNpmPackageDetailsForVerify
+	resolveNpmPackageDetailsForVerify = func(pkgName, versionQuery string) (string, time.Time, bool, error) {
+		return "1.0.0", time.Time{}, false, nil
+	}
+	t.Cleanup(func() { resolveNpmPackageDetailsForVerify = origResolve })
+	home := tempDir(t)
+	// Isolation off and nothing on PATH, so a regression that skips the checks
+	// fails to find npm and returns, rather than launching a sandbox or a real
+	// install.
+	policy := `{"typosquatting":{"enabled":false},"blocked_packages":["left-pad"],"isolation":{"enabled":false}}`
+	if err := os.WriteFile(filepath.Join(home, "policy.json"), []byte(policy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inProjectDir(t, tempDir(t))
+	t.Setenv("PATH", tempDir(t))
+
+	var code int
+	out := captureStderrHere(t, func() { code = runShim("NPM", []string{"install", "left-pad"}, home) })
+	if code == 0 || !strings.Contains(out, "Blocked by security policy") {
+		t.Fatalf("`NPM install left-pad` exited %d without the blocklist refusing it:\n%s", code, out)
+	}
+}
+
+// An npm alias installs its target, so the target is what gets checked.
+//
+// `myalias@npm:left-pad` was checked as a package called "myalias", so a
+// blocklist entry for left-pad did not stop it. The scoped form,
+// `alias@npm:@scope/pkg`, read as the user/repo shorthand and skipped every
+// check.
+func TestAnNpmAliasIsCheckedUnderItsTarget(t *testing.T) {
+	origResolve := resolveNpmPackageDetailsForVerify
+	resolveNpmPackageDetailsForVerify = func(pkgName, versionQuery string) (string, time.Time, bool, error) {
+		return "1.0.0", time.Time{}, false, nil
+	}
+	t.Cleanup(func() { resolveNpmPackageDetailsForVerify = origResolve })
+	origScan := scanVulnerabilitiesBatchForVerify
+	scanVulnerabilitiesBatchForVerify = func(packages []OSVQuery) (map[string][]OSVVuln, error) { return nil, nil }
+	t.Cleanup(func() { scanVulnerabilitiesBatchForVerify = origScan })
+
+	for _, spec := range []string{"myalias@npm:left-pad", "myalias@npm:left-pad@1.3.0", "@a/b@npm:@evil/pkg@^2"} {
+		t.Run(spec, func(t *testing.T) {
+			home := tempDir(t)
+			policy := `{"typosquatting":{"enabled":false},"blocked_packages":["left-pad","@evil/pkg"]}`
+			if err := os.WriteFile(filepath.Join(home, "policy.json"), []byte(policy), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if code, _ := runVerifyInstall([]string{spec}, home); code == 0 {
+				t.Fatalf("%s installs a blocked package and was allowed", spec)
+			}
+		})
+	}
+
+	for input, want := range map[string][2]string{
+		"myalias@npm:left-pad":       {"left-pad", ""},
+		"myalias@npm:left-pad@1.3.0": {"left-pad", "1.3.0"},
+		"@a/b@npm:@evil/pkg@^2":      {"@evil/pkg", "^2"},
+	} {
+		if name, ver := parsePackageQuery(input); name != want[0] || ver != want[1] {
+			t.Errorf("parsePackageQuery(%q) = (%q, %q), want (%q, %q)", input, name, ver, want[0], want[1])
+		}
 	}
 }

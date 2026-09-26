@@ -6,7 +6,19 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
+
+// truncateRunes shortens s to at most width characters, ending in "…" when it
+// cut something. It counts runes because fmt pads by runes, and slicing bytes
+// could split a multi-byte character in a value such as a non-ASCII path.
+func truncateRunes(s string, width int) string {
+	if width <= 0 || utf8.RuneCountInString(s) <= width {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:width-1]) + "…"
+}
 
 // `nvx policy explain` answers "why is this setting what it is".
 //
@@ -162,8 +174,8 @@ func explainPolicy(nvxHome, cwd string) (policyExplanation, error) {
 		current = attributeChanges(current, policySettingValues(withPolicyDefaults(policy)), "project policy ("+localPath+")")
 	}
 
-	if len(grants.AllowHosts) > 0 {
-		policy.Isolation.Network.AllowHosts = append(append([]string{}, policy.Isolation.Network.AllowHosts...), grants.AllowHosts...)
+	if ledgerHosts := ledgerHostsUnderBaseline(policy, grants.AllowHosts); len(ledgerHosts) > 0 {
+		policy.Isolation.Network.AllowHosts = append(append([]string{}, policy.Isolation.Network.AllowHosts...), ledgerHosts...)
 		current = attributeChanges(current, policySettingValues(withPolicyDefaults(policy)), "approved for this project (nvx grants list)")
 	}
 
@@ -219,8 +231,8 @@ func runPolicyExplain(args []string, nvxHome string) int {
 	}
 	valueWidth := 0
 	for _, row := range exp.Rows {
-		if len(row.Value) > valueWidth {
-			valueWidth = len(row.Value)
+		if n := utf8.RuneCountInString(row.Value); n > valueWidth {
+			valueWidth = n
 		}
 	}
 	// A long list would push the source column off the terminal, and the source
@@ -229,11 +241,7 @@ func runPolicyExplain(args []string, nvxHome string) int {
 		valueWidth = 40
 	}
 	for _, row := range exp.Rows {
-		value := row.Value
-		if len(value) > valueWidth {
-			value = value[:valueWidth-1] + "…"
-		}
-		fmt.Printf("  %-*s  %-*s  %s\n", width, row.Setting, valueWidth, value, row.Source)
+		fmt.Printf("  %-*s  %-*s  %s\n", width, row.Setting, valueWidth, truncateRunes(row.Value, valueWidth), row.Source)
 	}
 	if len(exp.Notes) > 0 {
 		fmt.Println()

@@ -88,24 +88,46 @@ func policyKeyPaths() (known, openToUserKeys map[string]bool) {
 // unknownPolicyKeys returns the key paths in data that Policy has no field for,
 // in a stable order.
 func unknownPolicyKeys(data []byte) []string {
+	unknown, _ := scanPolicyKeys(data)
+	return unknown
+}
+
+// scanPolicyKeys returns the key paths Policy has no field for, and the ones
+// written in a different case from the field they set, mapped to that field.
+//
+// encoding/json matches keys case-insensitively, so `{"Isolation":
+// {"Enabled": false}}` switches containment off. The walk compared exactly and
+// reported `Isolation` as "not an nvx policy setting and is being ignored"
+// about a setting that was in force.
+func scanPolicyKeys(data []byte) (unknown []string, miscased map[string]string) {
 	known, openToUserKeys := policyKeyPaths()
+	byLower := make(map[string]string, len(known))
+	for path := range known {
+		byLower[strings.ToLower(path)] = path
+	}
 
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {
-		return nil // not an object; the real parse reports the error
+		return nil, nil // not an object; the real parse reports the error
 	}
 
-	var unknown []string
-	var walk func(obj map[string]json.RawMessage, prefix string)
-	walk = func(obj map[string]json.RawMessage, prefix string) {
+	miscased = map[string]string{}
+	var walk func(obj map[string]json.RawMessage, prefix, written string)
+	walk = func(obj map[string]json.RawMessage, prefix, written string) {
 		for key, raw := range obj {
-			path := key
+			path, asWritten := key, key
 			if prefix != "" {
 				path = prefix + "." + key
+				asWritten = written + "." + key
 			}
 			if !known[path] {
-				unknown = append(unknown, path)
-				continue // do not descend into something already unrecognised
+				canonical, ok := byLower[strings.ToLower(path)]
+				if !ok {
+					unknown = append(unknown, asWritten)
+					continue // do not descend into something already unrecognised
+				}
+				miscased[asWritten] = canonical
+				path = canonical
 			}
 			if openToUserKeys[path] {
 				// A map: the keys below are the user's own names for things, not
@@ -114,13 +136,13 @@ func unknownPolicyKeys(data []byte) []string {
 			}
 			var child map[string]json.RawMessage
 			if json.Unmarshal(raw, &child) == nil {
-				walk(child, path)
+				walk(child, path, asWritten)
 			}
 		}
 	}
-	walk(root, "")
+	walk(root, "", "")
 	sort.Strings(unknown)
-	return unknown
+	return unknown, miscased
 }
 
 // nearestPolicyKey returns the known key path closest to unknown, or "" if
@@ -193,14 +215,14 @@ var (
 // file, naming the nearest real key when one is close. Each (file, key) is
 // reported at most once per process.
 func warnAboutUnknownPolicyKeys(path string, data []byte) {
-	unknown := unknownPolicyKeys(data)
-	if len(unknown) == 0 {
+	unknown, miscased := scanPolicyKeys(data)
+	if len(unknown) == 0 && len(miscased) == 0 {
 		return
 	}
 	known, _ := policyKeyPaths()
 
 	warnedPolicyKeysMu.Lock()
-	var fresh []string
+	var fresh, freshMiscased []string
 	for _, key := range unknown {
 		id := path + "\x00" + key
 		if warnedPolicyKeys[id] {
@@ -209,8 +231,20 @@ func warnAboutUnknownPolicyKeys(path string, data []byte) {
 		warnedPolicyKeys[id] = true
 		fresh = append(fresh, key)
 	}
+	for key := range miscased {
+		id := path + "\x00" + key
+		if warnedPolicyKeys[id] {
+			continue
+		}
+		warnedPolicyKeys[id] = true
+		freshMiscased = append(freshMiscased, key)
+	}
 	warnedPolicyKeysMu.Unlock()
 
+	sort.Strings(freshMiscased)
+	for _, key := range freshMiscased {
+		LogWarn("%s: %q is applied as %q. Write policy keys in lowercase.", path, key, miscased[key])
+	}
 	if len(fresh) == 0 {
 		return
 	}

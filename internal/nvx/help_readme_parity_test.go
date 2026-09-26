@@ -2,6 +2,7 @@ package nvx
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -121,5 +122,33 @@ func TestNoContainmentFlagIsReadFromTheCommandsOwnArguments(t *testing.T) {
 	if !shouldContain(classInstall, levelStandard, shimOptions{payloadNoSandbox: true}) {
 		t.Error("--no-sandbox among the command's own arguments uncontained an install; that is the " +
 			"bypass this rule exists to refuse")
+	}
+}
+
+// Every filesystem provider nvx accepts is named in the help. The list was
+// written out as (native | docker) and left out sandbox-exec, the macOS one.
+func TestHelpNamesEveryFilesystemProvider(t *testing.T) {
+	help := helpText()
+	for _, name := range strings.Split(supportedProviderNames(), ", ") {
+		if !strings.Contains(help, name) {
+			t.Errorf("nvx help does not name the %s filesystem provider", name)
+		}
+	}
+}
+
+// `nvx <command> --help` answers for every listed command. list-remote has no
+// page of its own, and `nvx list-remote --help` failed with "Unknown option".
+func TestEveryListedCommandAnswersHelp(t *testing.T) {
+	for _, name := range []string{"list-remote", "ls-remote", "list", "grants", "import", "version"} {
+		if commandHelpText(name) == "" && commandSummaryFromHelp(name) == "" {
+			t.Errorf("nvx %s --help has nothing to print", name)
+		}
+	}
+	if got := commandSummaryFromHelp("list-remote"); !strings.Contains(got, "nodejs.org") {
+		t.Errorf("list-remote help does not carry its help-list entry:\n%s", got)
+	}
+	// A wrapped command is not an nvx command: its --help goes to it.
+	if got := commandSummaryFromHelp("npm"); got != "" {
+		t.Errorf("nvx npm --help would print nvx text instead of npm help:\n%s", got)
 	}
 }

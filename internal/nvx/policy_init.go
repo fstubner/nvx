@@ -7,6 +7,25 @@ import (
 	"path/filepath"
 )
 
+// projectPolicyScaffold is what `nvx policy init` writes into a project. It
+// sets nothing, so it leaves the global policy exactly as it was and shows
+// where the two settings a project most often adds go.
+//
+// It used to be the whole DefaultPolicy. Every value in it read as the
+// project's own choice, so under a stricter global policy the file loosened
+// it, and under an enforced one every command was refused. Its default_allow
+// list also replaced the runtime providers' own default hosts, so a contained
+// Bun lost github.com and objects.githubusercontent.com.
+const projectPolicyScaffold = `{
+  "blocked_packages": [],
+  "isolation": {
+    "network": {
+      "allow_hosts": []
+    }
+  }
+}
+`
+
 func runPolicyInit(args []string, nvxHome string) int {
 	global := false
 	project := false
@@ -36,18 +55,17 @@ func runPolicyInit(args []string, nvxHome string) int {
 		project = true
 	}
 
-	policy := DefaultPolicy()
-	// Document isolation.level explicitly in the scaffolded file so it's
-	// discoverable, even though it's the same as the (omitted) zero value.
-	policy.Isolation.Level = "standard"
-	data, err := json.MarshalIndent(policy, "", "  ")
-	if err != nil {
-		LogError("Failed to encode policy: %v", err)
-		return 1
-	}
-	data = append(data, '\n')
-
 	if global {
+		policy := DefaultPolicy()
+		// Document isolation.level explicitly in the scaffolded file so it's
+		// discoverable, even though it's the same as the (omitted) zero value.
+		policy.Isolation.Level = "standard"
+		data, err := json.MarshalIndent(policy, "", "  ")
+		if err != nil {
+			LogError("Failed to encode policy: %v", err)
+			return 1
+		}
+		data = append(data, '\n')
 		path := filepath.Join(nvxHome, "policy.json")
 		if err := writePolicyFile(path, data, force); err != nil {
 			LogError("%v", err)
@@ -62,7 +80,7 @@ func runPolicyInit(args []string, nvxHome string) int {
 			return 1
 		}
 		path := filepath.Join(cwd, ".nvx-policy.json")
-		if err := writePolicyFile(path, data, force); err != nil {
+		if err := writePolicyFile(path, []byte(projectPolicyScaffold), force); err != nil {
 			LogError("%v", err)
 			return 1
 		}

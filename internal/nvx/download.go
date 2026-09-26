@@ -100,12 +100,6 @@ func ComputeSHA256(filePath string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// VerifyNodeChecksum downloads the SHASUMS256.txt for the given Node version,
-// finds the expected SHA-256 for the archive filename, and verifies the downloaded file's hash.
-func VerifyNodeChecksum(version, archivePath, archiveFilename string) error {
-	return VerifyChecksumFromShasums(nodeShasumsURL(version), archivePath, archiveFilename)
-}
-
 // nodeShasumsURL is where nodejs.org publishes the checksums for a release.
 func nodeShasumsURL(version string) string {
 	return fmt.Sprintf("https://nodejs.org/dist/%s/SHASUMS256.txt", version)
@@ -140,34 +134,6 @@ func fetchExpectedShasum(shaUrl, archiveFilename string) (string, error) {
 	return expectedSHA, nil
 }
 
-// VerifyChecksumFromShasums downloads a SHASUMS256.txt-style manifest (lines of
-// "<sha256>  <filename>"), looks up archiveFilename, and verifies archivePath's
-// hash against it. It is fail-closed: a missing entry or mismatch is an error.
-//
-// Verifying by path and then extracting by path is two opens of the file, and
-// what is extracted is whatever it holds at the second one. The installers use
-// extractVerifiedArchive instead, which verifies and extracts the same bytes;
-// this remains for callers that only need the check.
-func VerifyChecksumFromShasums(shaUrl, archivePath, archiveFilename string) error {
-	expectedSHA, err := fetchExpectedShasum(shaUrl, archiveFilename)
-	if err != nil {
-		return err
-	}
-
-	// Compute checksum of downloaded file
-	computedSHA, err := ComputeSHA256(archivePath)
-	if err != nil {
-		return fmt.Errorf("failed to compute SHA-256: %w", err)
-	}
-
-	if !strings.EqualFold(computedSHA, expectedSHA) {
-		return fmt.Errorf("checksum verification failed! Expected: %s, Got: %s", expectedSHA, computedSHA)
-	}
-
-	LogSuccess("Checksum verified successfully.")
-	return nil
-}
-
 // verifyExpectedSHA256 checks archivePath against a known hex SHA-256 (e.g. one
 // carried inline in a release index). Fail-closed on mismatch or empty expected.
 func verifyExpectedSHA256(archivePath, expectedHex string) error {
@@ -189,10 +155,8 @@ func verifyExpectedSHA256(archivePath, expectedHex string) error {
 
 // findShasumEntry extracts the expected hash for filename from checksum-file
 // content. Accepted forms: sha256sum lines ("<hash>  <filename>", with optional
-// "*" binary marker or "./" prefix); PowerShell Get-FileHash output ("Hash : <hex>",
-// as published for Deno's Windows assets, validated against the Path line's base
-// name when present); and — for per-asset sidecar files — a lone 64-char hash
-// when the file contains exactly one entry.
+// "*" binary marker or "./" prefix), and, for per-asset sidecar files, a lone
+// 64-char hash when the file contains exactly one entry.
 func findShasumEntry(content, filename string) string {
 	isHex64 := func(s string) bool {
 		if len(s) != 64 {
@@ -205,14 +169,7 @@ func findShasumEntry(content, filename string) string {
 		}
 		return true
 	}
-	baseName := func(p string) string {
-		if i := strings.LastIndexAny(p, `/\`); i >= 0 {
-			return p[i+1:]
-		}
-		return p
-	}
-
-	var loneHash, kvHash, kvPath string
+	var loneHash string
 	entries := 0
 	for _, line := range strings.Split(content, "\n") {
 		parts := strings.Fields(strings.TrimSpace(line))
@@ -229,22 +186,8 @@ func findShasumEntry(content, filename string) string {
 		if len(parts) == 1 && isHex64(parts[0]) {
 			loneHash = parts[0]
 		}
-		// Get-FileHash key/value lines: "Hash : <hex>", "Path : C:\...\asset.zip"
-		if len(parts) >= 3 && parts[1] == ":" {
-			switch strings.ToLower(parts[0]) {
-			case "hash":
-				if isHex64(parts[2]) {
-					kvHash = parts[2]
-				}
-			case "path":
-				kvPath = parts[len(parts)-1]
-			}
-		}
 	}
 
-	if kvHash != "" && (kvPath == "" || strings.EqualFold(baseName(kvPath), filename)) {
-		return kvHash
-	}
 	// A single-hash file (e.g. <asset>.sha256sum) unambiguously refers to the
 	// asset it was fetched for.
 	if entries == 1 && loneHash != "" {
@@ -306,12 +249,6 @@ func (pw *progressWriter) printProgress() {
 // inside the zip (e.g. node-vX/, bun-<target>/).
 func ExtractZip(zipPath, destDir string) error {
 	return extractZip(zipPath, destDir, true)
-}
-
-// ExtractZipFlat extracts a zip whose members are already at the archive root
-// (e.g. Deno's deno[.exe]), without stripping a leading folder.
-func ExtractZipFlat(zipPath, destDir string) error {
-	return extractZip(zipPath, destDir, false)
 }
 
 func extractZip(zipPath, destDir string, strip bool) error {

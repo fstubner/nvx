@@ -443,3 +443,19 @@ func TestDoctorDiagnosesAPolicyItCannotRead(t *testing.T) {
 		t.Fatalf("did not name the unreadable policy file:\n%s", out)
 	}
 }
+
+// doctor's one-line PATH fix is in the syntax of the shell it runs in. On
+// Windows it was PowerShell even under Git Bash, where `$env:PATH = ...` is not
+// a command.
+func TestDoctorPathFixMatchesTheShell(t *testing.T) {
+	shim := `C:\Users\me\.nvx\bin`
+	if got := shellPathFixLine("windows", "bash", shim); got != `export PATH="/c/Users/me/.nvx/bin:$PATH"` {
+		t.Errorf("Git Bash on Windows got %q", got)
+	}
+	if got := shellPathFixLine("windows", "powershell", shim); !strings.HasPrefix(got, "$env:PATH") {
+		t.Errorf("PowerShell got %q", got)
+	}
+	if got := shellPathFixLine("linux", "bash", "/home/me/.nvx/bin"); got != `export PATH="/home/me/.nvx/bin:$PATH"` {
+		t.Errorf("Linux got %q", got)
+	}
+}

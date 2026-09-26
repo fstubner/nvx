@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -48,7 +49,7 @@ func lookupBinCache(nvxHome, cmdName string) string {
 	if p == "" {
 		return ""
 	}
-	if !cachedPathIsResolvable(p, nvxHome) {
+	if !cachedPathIsResolvable(p, nvxHome) || !cachedNameMatches(cmdName, p) {
 		return ""
 	}
 	if info, err := os.Stat(p); err != nil || info.IsDir() {
@@ -100,6 +101,36 @@ func cachedPathIsResolvable(p, nvxHome string) bool {
 	return false
 }
 
+// cachedNameMatches reports whether p names the file PATH resolution of cmdName
+// could have found: the same base name, with a PATHEXT extension on Windows.
+//
+// cachedPathIsResolvable checks the directory only, so an entry mapping node to
+// any other program in a PATH directory was accepted, and nvx ran that program
+// as node.
+func cachedNameMatches(cmdName, p string) bool {
+	base := filepath.Base(p)
+	if runtime.GOOS != "windows" {
+		return base == cmdName
+	}
+	if strings.EqualFold(base, cmdName) {
+		return true
+	}
+	ext := filepath.Ext(base)
+	if ext == "" || !strings.EqualFold(strings.TrimSuffix(base, ext), cmdName) {
+		return false
+	}
+	pathext := os.Getenv("PATHEXT")
+	if pathext == "" {
+		pathext = ".COM;.EXE;.BAT;.CMD"
+	}
+	for _, e := range strings.Split(pathext, ";") {
+		if strings.EqualFold(strings.TrimSpace(e), ext) {
+			return true
+		}
+	}
+	return false
+}
+
 // storeBinCache records cmdName -> resolvedPath, best-effort. Writes are atomic
 // (temp + rename) so a concurrent shim reading the file never sees a partial
 // write; a lost update just causes a future cache miss.
@@ -124,9 +155,20 @@ func storeBinCache(nvxHome, cmdName, resolvedPath string) {
 	if err != nil {
 		return
 	}
-	tmp := binCachePath(nvxHome) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	// A temp name of its own. With one fixed name for every process, two shims
+	// storing at once wrote the same temp file, and one could rename the other's
+	// half-written bytes into place.
+	f, err := os.CreateTemp(filepath.Dir(binCachePath(nvxHome)), "bin-resolve-*.tmp")
+	if err != nil {
 		return
 	}
-	_ = os.Rename(tmp, binCachePath(nvxHome))
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	if cerr := f.Close(); werr != nil || cerr != nil {
+		_ = os.Remove(tmp)
+		return
+	}
+	if err := os.Rename(tmp, binCachePath(nvxHome)); err != nil {
+		_ = os.Remove(tmp)
+	}
 }

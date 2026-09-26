@@ -33,6 +33,53 @@ func inProjectDir(t *testing.T, dir string) {
 	t.Cleanup(func() { _ = os.Chdir(prev) })
 }
 
+// The question to trust a loosening project policy says what it loosens. It
+// named the file only, so answering it meant opening the file and working out
+// the difference by hand.
+func TestProjectPolicyTrustPromptNamesWhatItLoosens(t *testing.T) {
+	home := tempDir(t)
+	project := tempDir(t)
+	writePolicyFixture(t, project, ".nvx-policy.json", `{"typosquatting": {"enabled": false}}`)
+	inProjectDir(t, project)
+	// Approved through the env var so the prompt text reaches stderr the same
+	// way with or without a terminal.
+	t.Setenv("NVX_TRUST_YES", "1")
+
+	out := captureStderrHere(t, func() {
+		if err := ensureProjectPolicyTrust(home); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "typosquatting.enabled: true -> false") {
+		t.Fatalf("the trust prompt does not say what the file loosens:\n%s", out)
+	}
+}
+
+// Under an enforced global policy, a host in the project's grant ledger does
+// not widen egress past the baseline. The ledger hosts were appended after the
+// enforcement check, so one approval at a prompt outlived the enforcement.
+func TestAnEnforcedBaselineIsNotWidenedByLedgerHosts(t *testing.T) {
+	home := tempDir(t)
+	writePolicyFixture(t, home, "policy.json", `{"enforced": true, "isolation": {"network": {"allow_hosts": ["kept.example:443"]}}}`)
+	inProjectDir(t, tempDir(t))
+	g := loadProjectGrants(home, projectScopeDir())
+	g.AllowHosts = []string{"kept.example:443", "evil.example:443"}
+	g.ProjectPath = projectScopeDir()
+	if err := saveProjectGrants(home, g); err != nil {
+		t.Fatal(err)
+	}
+
+	policy, err := LoadPolicy(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range policy.Isolation.Network.AllowHosts {
+		if h == "evil.example:443" {
+			t.Fatalf("a ledger host widened an enforced baseline: %v", policy.Isolation.Network.AllowHosts)
+		}
+	}
+}
+
 // A project file that loosens an enforced baseline is REFUSED, not ignored.
 //
 // This is the whole point of the setting. Before it existed, MergePolicies took

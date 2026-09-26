@@ -88,6 +88,23 @@ func TestEnsureTrustedToolGrantReturnsTrueWhenAlreadyGranted(t *testing.T) {
 	}
 }
 
+// -y, --agent-mode and NVX_YES do not grant a tool a persistent profile. nvx
+// help says only NVX_TRUST_YES approves trusting a tool, and the grant was
+// asked with the ordinary prompt, which -y approves.
+func TestTrustedToolGrantIsNotApprovedByYes(t *testing.T) {
+	nvxHome := tempDir(t)
+	inProjectDir(t, tempDir(t))
+	t.Setenv("NVX_YES", "1")
+	t.Setenv("NVX_TRUST_YES", "")
+	old := yesFlag
+	yesFlag = true
+	t.Cleanup(func() { yesFlag = old })
+
+	if ensureTrustedToolGrant(nvxHome, "wrangler") {
+		t.Fatal("-y granted a persistent tool profile; only NVX_TRUST_YES may approve a trust prompt")
+	}
+}
+
 func TestEnsureTrustedToolGrantEmptyToolName(t *testing.T) {
 	if ensureTrustedToolGrant(tempDir(t), "") {
 		t.Fatal("empty tool name must never be granted")
@@ -103,7 +120,7 @@ func TestEnsureTrustedToolGrantEmptyNvxHome(t *testing.T) {
 // Note: a save-failure test for ensureTrustedToolGrant (approve, then have
 // saveProjectGrants fail, and confirm the function still returns true) is
 // deliberately omitted. Under `go test` there is no interactive TTY, so
-// PromptYesNo denies before saveProjectGrants is ever reached — there's no
+// PromptTrustBoundary denies before saveProjectGrants is ever reached — there's no
 // way to drive the persist-failure branch without a test-only prompt
 // override, which is more machinery than the assertion is worth. The behavior
 // is covered directly by TestEnsureTrustedToolGrantEmptyNvxHome (guard) and

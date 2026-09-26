@@ -88,11 +88,15 @@ func runGrants(args []string, nvxHome string) int {
 		// `grants list` is a question, and answering it should not rename a file on
 		// disk. Reported by an acceptance pass after `list` renamed a corrupt record.
 		g := projectGrants{ProjectPath: scope, PolicyPins: map[string]string{}}
+		// A record that exists and cannot be opened is said so too. It printed
+		// "(none)" for every kind of grant, which reads as nothing granted.
 		if data, rerr := os.ReadFile(grantsPath(nvxHome, scope)); rerr == nil {
 			if uerr := json.Unmarshal(data, &g); uerr != nil {
 				LogWarn("This project's grant record could not be read, so this list may be incomplete.")
 				g = projectGrants{ProjectPath: scope, PolicyPins: map[string]string{}}
 			}
+		} else if !os.IsNotExist(rerr) {
+			LogWarn("This project's grant record could not be read, so this list may be incomplete: %v", rerr)
 		}
 		fmt.Print(formatProjectGrants(g))
 		return 0

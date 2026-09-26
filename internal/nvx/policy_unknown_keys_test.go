@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -71,6 +72,25 @@ func TestRealPolicyKeysAreNotReportedAsUnknown(t *testing.T) {
 	}`
 	if unknown := unknownPolicyKeys([]byte(body)); len(unknown) != 0 {
 		t.Fatalf("a policy using only real keys reported %v as unknown", unknown)
+	}
+}
+
+// A key in the wrong case is applied, because encoding/json matches keys
+// case-insensitively, so it must not be reported as ignored.
+// `{"Isolation":{"Enabled":false}}` switched containment off while the warning
+// said the key was being ignored.
+func TestAMiscasedKeyIsNotReportedAsIgnored(t *testing.T) {
+	body := []byte(`{"Isolation": {"Enabled": false}}`)
+	var p Policy
+	if err := json.Unmarshal(body, &p); err != nil || p.Isolation.Enabled {
+		t.Fatalf("precondition: the miscased key should apply (err=%v, enabled=%v)", err, p.Isolation.Enabled)
+	}
+	if unknown := unknownPolicyKeys(body); len(unknown) != 0 {
+		t.Fatalf("reported %v as unknown and ignored, but the setting is in force", unknown)
+	}
+	out := captureStderrHere(t, func() { warnAboutUnknownPolicyKeys(t.Name()+".json", body) })
+	if strings.Contains(out, "being ignored") || !strings.Contains(out, `"isolation.enabled"`) {
+		t.Fatalf("the warning should say the key is applied as isolation.enabled:\n%s", out)
 	}
 }
 

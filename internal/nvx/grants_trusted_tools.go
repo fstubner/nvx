@@ -90,7 +90,10 @@ func ensureTrustedToolGrant(nvxHome, toolName string) bool {
 	}
 
 	msg := fmt.Sprintf("Let %q keep a persistent profile for this project so its logins/config survive across runs? (Still sandboxed; your real home is untouched.)", toolName)
-	if !PromptYesNo(msg) {
+	// A trust prompt, so -y, --agent-mode and NVX_YES do not approve it. The
+	// grant persists for every later run, which is what nvx help says only
+	// NVX_TRUST_YES can approve.
+	if !PromptTrustBoundary(msg) {
 		auditLog(nvxHome, "trusted_tool_denied", map[string]string{"tool": toolName, "project": scope})
 		return false
 	}
