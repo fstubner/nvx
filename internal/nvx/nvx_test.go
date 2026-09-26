@@ -275,21 +275,12 @@ func TestGenerateSandboxID(t *testing.T) {
 }
 
 func TestScrubEnvironment(t *testing.T) {
-	// Save original env and set test values
-	origEnv := make([]string, len(os.Environ()))
-	copy(origEnv, os.Environ())
-
-	// Set some sensitive variables
-	os.Setenv("AWS_SECRET_ACCESS_KEY", "supersecret")
-	os.Setenv("GITHUB_TOKEN", "ghp_fake")
-	os.Setenv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
-	os.Setenv("NPM_TOKEN", "npm_fake")
-	defer func() {
-		os.Unsetenv("AWS_SECRET_ACCESS_KEY")
-		os.Unsetenv("GITHUB_TOKEN")
-		os.Unsetenv("SSH_AUTH_SOCK")
-		os.Unsetenv("NPM_TOKEN")
-	}()
+	// Set some sensitive variables. t.Setenv puts back whatever was there, so a
+	// real GITHUB_TOKEN in the environment survives the test.
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "supersecret")
+	t.Setenv("GITHUB_TOKEN", "ghp_fake")
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
+	t.Setenv("NPM_TOKEN", "npm_fake")
 
 	guestHome := filepath.Join(os.TempDir(), "nvx-test-guest")
 	defer os.RemoveAll(guestHome)

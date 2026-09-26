@@ -18,14 +18,15 @@ import "syscall"
 // It also makes the supervisor the reaper of last resort for orphaned
 // descendants; see reapUntilChildExits.
 //
-// One consequence to know about before reading /proc in the supervisor: nothing
-// remounts it, so /proc there is still the host's and shows the PARENT
-// namespace's pids. Any /proc/<pid> path built from a pid the supervisor
-// observes names a different process, or none at all. That is how a denied write
-// to /proc/<child>/uid_map came back as ENOENT and read as a missing runtime for
-// a long time (see applyLinuxNamespaces). Remounting is not available either: a
-// mount here would be the host's, because the supervisor has no mount namespace
-// of its own. Use wait4 and pidfds, not /proc, in this process.
+// One consequence to know about before reading /proc in the supervisor: it
+// starts out as the host's and shows the PARENT namespace's pids. Any
+// /proc/<pid> path built from a pid the supervisor observes then names a
+// different process, or none at all. That is how a denied write to
+// /proc/<child>/uid_map came back as ENOENT and read as a missing runtime for a
+// long time (see applyLinuxNamespaces). mountPrivateProc replaces it with the
+// sandbox's own procfs partway through the supervisor's setup, and only when
+// that mount succeeds, so /proc here depends on when and whether it ran. Use
+// wait4 and pidfds, not /proc, in this process.
 //
 // CLONE_NEWNET is conditional because network.mode=open deliberately keeps host
 // networking, whereas process-tree teardown is always wanted.

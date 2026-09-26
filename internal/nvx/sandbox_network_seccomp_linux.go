@@ -57,9 +57,9 @@ const (
 // applyLinuxNetworkSeccomp installs seccomp filters for network isolation.
 // Loopback-only network namespaces block WAN TCP/UDP; seccomp adds defense in
 // depth by denying inet connect and UDP socket creation in restricted modes.
-// The trim matters as much as the lowercase: the default arm returns nil, which
-// reads to the caller as "filter installed" while nothing was installed. A
-// trailing space on an otherwise valid mode was enough to reach it. See
+// The trim matters as much as the lowercase. A trailing space on an otherwise
+// valid mode once reached a default arm that returned nil, which reads to the
+// caller as "filter installed" while nothing was installed. See
 // networkModeRequiresNamespace, which had the same defect on the same input.
 func applyLinuxNetworkSeccomp(networkMode string) error {
 	filter, wanted := seccompFilterForMode(networkMode)
@@ -79,7 +79,7 @@ func applyLinuxNetworkSeccomp(networkMode string) error {
 // trailing space silently means no filter" was never going to be caught here.
 func seccompFilterForMode(networkMode string) (filter []syscall.SockFilter, wanted bool) {
 	switch strings.ToLower(strings.TrimSpace(networkMode)) {
-	case "open", "":
+	case "open":
 		return nil, false
 	case "offline":
 		return buildOfflineNetworkFilter(), true
@@ -98,7 +98,9 @@ func seccompFilterForMode(networkMode string) (filter []syscall.SockFilter, want
 		// exactly as it is in proxy.
 		return buildProxyNetworkFilter(), true
 	default:
-		return nil, false
+		// An empty or unrecognised mode is proxy, as networkModeRequiresNamespace
+		// and Windows treat it. It installed no filter until 2026-09-26.
+		return buildProxyNetworkFilter(), true
 	}
 }
 

@@ -284,9 +284,8 @@ func acquireRuntimeInstallLock(nvxHome, runtimeName, version string) (func(), er
 	}
 	lockPath := filepath.Join(lockDir, lockName)
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil && clearAbandonedInstallLock(lockPath) {
-		// The previous holder is gone, so the lock was abandoned rather than held.
-		f, err = os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		f, err = stealAbandonedInstallLock(lockDir, lockPath, err)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("install for %s %s is already in progress (lock: %s): %w", runtimeName, version, lockPath, err)
@@ -298,6 +297,34 @@ func acquireRuntimeInstallLock(nvxHome, runtimeName, version string) (func(), er
 	}
 	return release, nil
 }
+
+// stealAbandonedInstallLock takes over a lock whose owner is gone, returning
+// createErr unchanged when it cannot.
+//
+// Reading the owner and removing the file are two steps, so the steal is
+// serialised behind a guard file. Without it two waiters could both read the
+// same dead pid, and the second removed the lock the first had just created,
+// so both went on to extract into the same directory.
+func stealAbandonedInstallLock(lockDir, lockPath string, createErr error) (*os.File, error) {
+	guard, err := os.OpenFile(filepath.Join(lockDir, ".install-lock-steal"), os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return nil, createErr
+	}
+	defer guard.Close()
+	if err := lockFileExclusive(guard); err != nil {
+		return nil, createErr
+	}
+	defer func() { _ = unlockFile(guard) }()
+	if !clearAbandonedInstallLock(lockPath) {
+		return nil, createErr
+	}
+	// The previous holder is gone, so the lock was abandoned rather than held.
+	return os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+}
+
+// installLockBeforeRemove runs between reading an abandoned lock's owner and
+// removing the file. Tests only.
+var installLockBeforeRemove func()
 
 // clearAbandonedInstallLock removes an install lock whose owning process is gone,
 // reporting whether it did.
@@ -325,6 +352,9 @@ func clearAbandonedInstallLock(lockPath string) bool {
 	}
 	if pid == os.Getpid() || processIsRunning(pid) {
 		return false
+	}
+	if installLockBeforeRemove != nil {
+		installLockBeforeRemove()
 	}
 	if err := os.Remove(lockPath); err != nil {
 		return false

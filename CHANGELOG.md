@@ -118,6 +118,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A contained `spawn` keeps the stdin descriptor its caller passed in.** In
+  the Windows sandbox, `spawn(cmd, args, {stdio: [fd, 'pipe', 'pipe']})` closed
+  `fd` once the child started, so a file the caller opened and handed to the
+  child as stdin could not be read again. The sandbox now closes only the
+  descriptors it opened itself, and removes the temp folder behind an empty
+  stdin when the child closes.
+
+* **Two installs that find the same abandoned lock no longer both proceed.**
+  nvx clears an install lock left by a process that has gone. On Linux and
+  macOS two waiters could both read the dead owner, and the second removed the
+  lock the first had just taken, so both extracted into one directory. Clearing
+  a lock is now serialised.
+
+* **On macOS a SIGTERM sent while nvx starts the sandboxed command reaches that
+  command.** nvx installed its signal handler after starting the child, so a
+  signal in between killed nvx and left the child running. The handler is now
+  in place first.
+
+* **A slow disk no longer reads as a stalled download, and a stall can no
+  longer crash nvx.** The stall timer ran between reads too, so time spent
+  writing the archive counted as the network going quiet. If it fired, a read
+  that then returned data re-armed it, and a second firing crashed the process.
+  The timer now runs only while nvx waits for data, and fires its signal once.
+
+* **A version name ending in a dot is refused.** Windows drops trailing dots
+  from a path component, so `v20.` names the `v20` directory and `...` names the
+  versions folder itself. On Windows, listing `a\...` returned the contents of
+  `a`. No real version ends in a dot.
+
+* **A socket path too long for Linux says so.** A deep `NVX_HOME` made the
+  sandbox's egress and `--connect` sockets fail with a bare "bind: invalid
+  argument". nvx now reports the path's length against the 107-byte limit and
+  says to set `NVX_HOME` to a shorter directory, as it already did on Windows.
+
 * **`nvx grants reset --all` works after a grant has been recorded.** It read
   the lock file kept beside each grant record as a record of its own, failed to
   parse it, exited 1 and said to remove permissions with icacls by hand, on

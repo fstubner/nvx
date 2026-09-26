@@ -66,6 +66,19 @@ func TestSeatbeltGrantsLoopbackOnlyWhereTheModeMeansIt(t *testing.T) {
 		}
 	})
 
+	// An empty mode was unrestricted here while Windows treats it as proxy.
+	t.Run("an empty or unknown mode is proxy", func(t *testing.T) {
+		for _, mode := range []string{"", "offlin"} {
+			p := profileFor(mode)
+			if strings.Contains(p, "(allow network*)") || strings.Contains(p, wildcardTCP) {
+				t.Errorf("mode %q is not restricted:\n%s", mode, p)
+			}
+			if !strings.Contains(p, `(allow network-outbound (remote tcp "localhost:8080"))`) {
+				t.Errorf("mode %q should reach the proxy as proxy mode does:\n%s", mode, p)
+			}
+		}
+	})
+
 	// With no proxy port known there is nothing legitimate to reach, and the old
 	// code's wildcard would have quietly opened all of loopback instead.
 	t.Run("proxy with no known port fails closed", func(t *testing.T) {

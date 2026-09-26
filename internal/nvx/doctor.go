@@ -307,6 +307,17 @@ var reportSandboxLaunchFn = reportSandboxLaunch
 // the machine's real ACLs and so cannot be driven from a test either.
 var reportSetupGrantsFn = reportSetupGrants
 
+// doctorFixRequested reports whether `nvx doctor` was given --fix among args,
+// the arguments after "doctor".
+func doctorFixRequested(args []string) bool {
+	for _, a := range args {
+		if a == "--fix" {
+			return true
+		}
+	}
+	return false
+}
+
 func runDoctor(nvxHome string, fix bool) int {
 	// Diagnose BEFORE writing anything.
 	//

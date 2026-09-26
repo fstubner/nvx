@@ -34,15 +34,16 @@ func TestAPolicyFileWithAByteOrderMarkLoads(t *testing.T) {
 		t.Fatal("the policy parsed but its settings were lost")
 	}
 
-	// The bytes handed back are what pins a trusted project policy and what
-	// field-presence detection reads. A mark left on either would put the
-	// failure one layer further in rather than removing it: EnabledSet is set
-	// by re-parsing these bytes, and it decides whether the project's setting
-	// overrides the global one at all.
+	// The bytes handed back are what field-presence detection reads. A mark
+	// left on them would put the failure one layer further in rather than
+	// removing it: EnabledSet is set by re-parsing these bytes, and it decides
+	// whether the project's setting overrides the global one at all. The trust
+	// pin is not taken over these bytes. It hashes the raw file, mark included
+	// (see TestAByteOrderMarkParsesAndStillChangesThePin).
 	if !lp.Isolation.EnabledSet {
 		t.Fatal("the setting was not marked as present, so it would not override the global policy")
 	}
 	if len(data) > 0 && data[0] == 0xEF {
-		t.Fatal("the mark survived into the bytes used for the trust pin")
+		t.Fatal("the mark survived into the bytes field-presence detection reads")
 	}
 }

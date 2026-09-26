@@ -14,6 +14,9 @@ import (
 // own after nvx is asked to terminate, before it is killed outright.
 const childTerminationGrace = 5 * time.Second
 
+// beforeChildStart runs just before the child is started. Tests only.
+var beforeChildStart func()
+
 // runChildForwardingSignals starts cmd, forwards interrupt and terminate to it,
 // and waits. Its return is exactly what cmd.Run would have returned.
 //
@@ -38,7 +41,17 @@ const childTerminationGrace = 5 * time.Second
 // running would be wrong. Terminate does escalate, because that one does mean
 // exit.
 func runChildForwardingSignals(cmd *exec.Cmd) error {
+	// Before Start, so a signal that lands while the child is starting waits in
+	// the channel and is forwarded once it runs. Registered after Start, a
+	// SIGTERM in between took the default action and killed nvx, which orphaned
+	// the child this function exists to stop.
+	sigs := make(chan os.Signal, 4)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	if beforeChildStart != nil {
+		beforeChildStart()
+	}
 	if err := cmd.Start(); err != nil {
+		signal.Stop(sigs)
 		return err
 	}
 	// Read once, here, and hand the value to the watcher. cmd.Process is written
@@ -46,8 +59,6 @@ func runChildForwardingSignals(cmd *exec.Cmd) error {
 	// function -- caught by the race detector, and a real one: the watcher can
 	// observe the field before Start has finished writing it.
 	proc := cmd.Process
-	sigs := make(chan os.Signal, 4)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	done := make(chan struct{})
 	go func() {
 		for {
