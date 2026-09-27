@@ -15,10 +15,10 @@ import (
 
 // An MCP server must be able to complete its handshake while contained.
 //
-// This is the claim `docs/superpowers/specs/2026-08-20-mcp-server-containment-design.md`
-// rests on, and it was measured once by hand against a real server. PRODUCT.md's
-// honesty condition says a containment claim is either backed by a test that fails
-// when it stops holding, or listed as a limitation -- so this is that test.
+// That claim was measured once by hand against a real server before this test
+// existed. PRODUCT.md's honesty condition says a containment claim is either
+// backed by a test that fails when it stops holding, or listed as a
+// limitation -- so this is that test.
 //
 // What it verifies, stated narrowly because the wider claim was checked and did
 // not hold: a contained server completes a real handshake end to end, through the
