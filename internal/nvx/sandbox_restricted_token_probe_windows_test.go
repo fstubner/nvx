@@ -15,13 +15,12 @@ import (
 
 // Does a Win32 restricted token restrict the network? Measured, not assumed.
 //
-// `IMPLEMENTATION_PLAN.md` proposes replacing the AppContainer sandbox with
+// A proposal was to replace the AppContainer sandbox with
 // restricted tokens to fix named-pipe streaming and inbound dev-server loopback.
-// `docs/plan-review-2026-08-21.md` argues the trade removes OS-enforced egress,
-// because AppContainer's guarantee comes from Windows filtering by package SID
-// and restricted tokens gate access checks on securable objects instead -- and
-// then flags that as the one load-bearing claim in the review that was reasoned
-// from mechanism rather than measured. This measures it.
+// That trade would remove OS-enforced egress control: AppContainer's guarantee
+// comes from Windows filtering by package SID, while restricted tokens gate
+// access checks on securable objects instead. That claim was reasoned from
+// mechanism rather than measured. This measures it.
 //
 // Baseline for comparison, already measured elsewhere in this suite: inside an
 // AppContainer with no network capability, direct TCP gives EACCES and DNS gives
