@@ -15,7 +15,7 @@ import (
 
 // Does a Win32 restricted token restrict the network? Measured, not assumed.
 //
-// `IMPLEMENTATION_PLAN.md` proposes replacing the AppContainer sandbox with
+// A proposal was to replace the AppContainer sandbox with
 // restricted tokens to fix named-pipe streaming and inbound dev-server loopback.
 // That trade would remove OS-enforced egress control: AppContainer's guarantee
 // comes from Windows filtering by package SID, while restricted tokens gate
