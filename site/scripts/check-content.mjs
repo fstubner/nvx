@@ -173,8 +173,8 @@ const CHANGELOG_CANDIDATES = ['CHANGELOG.md', '../CHANGELOG.md'].filter(exists);
 for (const file of CHANGELOG_CANDIDATES) {
   const body = read(file);
   // The stub's own lines only. SAMPLE_STRINGS also holds generic words a
-  // real changelog uses: nvx's names `some-tool` in a usage example, and
-  // matching the whole list called its changelog the stub.
+  // real changelog uses, such as `some-tool` in a usage example, and
+  // matching the whole list called a real product's changelog the stub.
   if (CHANGELOG_STUB_STRINGS.some((sample) => body.includes(sample))) {
     note(
       file,
