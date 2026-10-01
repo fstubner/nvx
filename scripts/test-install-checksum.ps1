@@ -184,4 +184,7 @@ if ($failures -gt 0) {
     Write-Error "$failures installer checksum check(s) failed"
     exit 1
 }
+# The stub gh above leaves $LASTEXITCODE at 1 after the failing case, and a runner
+# that calls this script with `pwsh -command` exits with that value.
+$global:LASTEXITCODE = 0
 Write-Host "Installer checksum checks passed."
