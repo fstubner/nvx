@@ -1128,6 +1128,7 @@ func TestDefaultShellDetectsGitBashOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("shell detection only branches on Windows")
 	}
+	withParentShell(t, "") // these cases are the fallback, so no parent may answer first
 	cases := []struct {
 		name    string
 		msystem string

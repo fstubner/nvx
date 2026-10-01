@@ -185,4 +185,39 @@ else
 fi
 rm -rf "$HOME_DIR"; echo
 
+# fish gets its own conf.d file, not the POSIX lines in ~/.profile that it
+# cannot run. Written once, in fish syntax, honouring XDG_CONFIG_HOME.
+echo "=== fish ==="
+HOME_DIR="$(mktemp -d)"; export HOME="$HOME_DIR"
+( eval "$(extract_setup)"; setup_fish; setup_fish ) >/dev/null 2>&1
+F="$HOME_DIR/.config/fish/conf.d/nvx.fish"
+if [ -f "$F" ] && grep -Fq 'nvx env --shell=fish | source' "$F"; then
+    echo "ok: conf.d/nvx.fish holds the fish integration"
+else
+    echo "FAIL: no fish integration at $F"; fail=1
+fi
+if [ "$(grep -Fc 'nvx env' "$F" 2>/dev/null || true)" = "1" ]; then
+    echo "ok: written once across two runs"
+else
+    echo "FAIL: written more than once"; fail=1
+fi
+if [ -e "$HOME_DIR/.profile" ] || grep -Fq 'export PATH' "$F" 2>/dev/null; then
+    echo "FAIL: POSIX syntax reached fish or ~/.profile"; fail=1
+else
+    echo "ok: no POSIX syntax written"
+fi
+XDG="$(mktemp -d)"
+( export XDG_CONFIG_HOME="$XDG"; eval "$(extract_setup)"; setup_fish ) >/dev/null 2>&1
+if [ -f "$XDG/fish/conf.d/nvx.fish" ]; then
+    echo "ok: XDG_CONFIG_HOME is honoured"
+else
+    echo "FAIL: XDG_CONFIG_HOME ignored"; fail=1
+fi
+if command -v fish >/dev/null 2>&1; then
+    fish --no-execute "$F" && echo "ok: fish parses the file" || { echo "FAIL: fish rejects the file"; fail=1; }
+else
+    echo "skip: fish is not installed here, so the file was not parsed by fish"
+fi
+rm -rf "$HOME_DIR" "$XDG"; echo
+
 if [ "$fail" = "0" ]; then echo "ALL CHECKS PASSED"; else echo "SOME CHECKS FAILED"; exit 1; fi

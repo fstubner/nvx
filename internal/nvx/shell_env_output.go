@@ -57,6 +57,12 @@ func shellIntegrationHint(shell string) string {
 		return `Add to $PROFILE:   nvx env --shell=powershell | Out-String | Invoke-Expression`
 	case "zsh":
 		return `Add to ~/.zshrc:   eval "$(nvx env --shell=zsh)"`
+	case "fish":
+		return `Add to ~/.config/fish/config.fish:   nvx env --shell=fish | source`
+	case "cmd":
+		// No startup file nvx can write to: cmd's AutoRun registry key would run
+		// on every cmd.exe on the machine, scripts included.
+		return `cmd.exe has no profile to load it from. With ~\.nvx\bin on PATH the shims follow each project's version file`
 	default:
 		return `Add to ~/.bashrc:  eval "$(nvx env --shell=bash)"`
 	}
@@ -65,8 +71,15 @@ func shellIntegrationHint(shell string) string {
 // evalHint is the one-shot equivalent, for someone who wants this shell
 // switched now and will decide about the profile later.
 func evalHint(shell, version string) string {
-	if shell == "powershell" {
+	switch shell {
+	case "powershell":
 		return "nvx use " + version + " | Out-String | Invoke-Expression"
+	case "fish":
+		return "nvx use " + version + " | source"
+	case "cmd":
+		// --shell=cmd is explicit because the for loop's own cmd.exe is the parent
+		// when nvx runs, and the output is meant for the window that started it.
+		return `FOR /f "tokens=*" %i IN ('nvx use ` + version + ` --shell=cmd') DO %i`
 	}
 	return `eval "$(nvx use ` + version + `)"`
 }

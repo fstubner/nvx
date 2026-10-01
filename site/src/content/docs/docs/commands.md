@@ -33,6 +33,31 @@ terminal, an IDE task, a git hook or CI. The first of these that applies wins:
    default and prints the `nvx install` command that adds it.
 4. The global default from `nvx default`.
 
+### Shells
+
+`nvx use` and the switch on `cd` work in PowerShell, bash, zsh and fish. Each
+loads the integration from `nvx env --shell=<shell>`. The installers add that
+line to your profile. For fish it goes in `~/.config/fish/conf.d/nvx.fish`.
+`nvx use` picks the syntax of the shell it was run from. `--shell=powershell`,
+`--shell=bash`, `--shell=zsh`, `--shell=fish` and `--shell=cmd` name one
+outright.
+
+cmd.exe cannot evaluate a program's output, so it has no integration and no
+profile to put one in. The shims still run each project's pinned version there,
+and `nvx default <version>` sets the version new windows start on. To switch
+one window by hand, run this at the prompt:
+
+```bat
+FOR /f "tokens=*" %i IN ('nvx use 22 --shell=cmd') DO %i
+```
+
+In a `.bat` file write `%%i` for `%i`. `nvx env --shell=cmd` prints the line that
+puts the shim directory first on `PATH`, and it is read the same way:
+
+```bat
+FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i
+```
+
 ## Running things
 
 <div data-ui-table="row-headers"></div>
@@ -55,7 +80,7 @@ terminal, an IDE task, a git hook or CI. The first of these that applies wins:
 | `nvx policy init` | Write a global or project policy file. |
 | `nvx audit` | What nvx recorded: blocked hosts, pre-install checks that were approved or refused and how they were answered (including approvals by `-y`, `--agent-mode` and `NVX_YES`), and runs when `NVX_TRACE=1`. |
 | `nvx grants` | Filesystem grants the sandbox holds, and which project each belongs to. |
-| `nvx env` | Print the shell integration snippet. |
+| `nvx env` | Print the shell integration snippet. `--shell=<name>` picks the syntax: powershell, bash, zsh, fish or cmd. |
 | `nvx report` | A diagnostic bundle to attach to a bug report. |
 
 ## Policy files
@@ -97,7 +122,7 @@ Commands:
   default <[rt@]version>   Set the global default for a runtime (creates a link)
   list, ls                 List installed runtimes and versions
   list-remote, ls-remote   List Node.js versions on nodejs.org or NVX_NODE_MIRROR
-  env [--shell=<type>]     Print shell integration script (powershell, bash, zsh)
+  env [--shell=<type>]     Print shell integration script (powershell, bash, zsh, fish, cmd)
   auto [--shell=<type>]    Auto-switch based on .nvmrc / .node-version /
                            .bun-version / package.json engines
   import [nvm|fnm|volta]   Import Node.js versions already installed via nvm, fnm
@@ -162,7 +187,7 @@ Passed to the wrapped command only, not before it:
                            not `nvx --filesystem-provider=… npm`
 
 Options:
-  --shell=<type>           Shell syntax to emit: powershell, bash, zsh
+  --shell=<type>           Shell syntax to emit: powershell, bash, zsh, fish, cmd
   -y, --yes                Auto-approve all prompts. Each pre-install check approved
                            this way is printed and recorded in the audit log
   -q, --quiet              Suppress success/info messages (errors and warnings

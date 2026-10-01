@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **fish and cmd.exe are supported shells.** `nvx env --shell=fish` prints a
+  PATH setup, an `nvx` function that evaluates `use` and `auto`, and a hook on
+  every directory change that also runs once at load, as the zsh one does.
+  `nvx use` prints fish syntax when it is run from fish. `install.sh` writes
+  `~/.config/fish/conf.d/nvx.fish` for fish, where it used to print a manual
+  `fish_add_path` command. `nvx env --shell=cmd` prints a `set "PATH=..."` line
+  that cmd reads with `FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i`.
+  cmd.exe cannot evaluate a program's output, so there is no cmd integration
+  and no AutoRun hook. The shims already run each project's pinned version
+  there.
+
 * **`NVX_NODE_MIRROR` fetches Node.js from a mirror.** nodejs.org was
   hard-coded, so a network that reaches it only through an internal mirror
   could not install Node.js. The release index, the archives and
@@ -199,6 +210,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   docker's. The native providers are unaffected.
 
 ### Fixed
+
+* **`nvx use` in cmd.exe no longer prints bash or PowerShell syntax.** Run from
+  a cmd window opened out of Git Bash it printed `export PATH='/c/...'` lines
+  and told you to add a line to `~/.bashrc`, because the `MSYSTEM` variable
+  Git Bash sets is inherited. In any other cmd window it printed PowerShell
+  syntax. nvx now asks which process started it and finds cmd.exe. It says that
+  cmd cannot be switched by a program, that the shims already follow the
+  project's version file, that `nvx default <version>` sets the version for new
+  windows, and gives the one command that switches only that window. The same
+  check makes `nvx env` and `nvx doctor` use cmd syntax there. A PowerShell,
+  bash, zsh or fish parent is recognised the same way.
 
 * **Packages from a private registry are now checked on that registry.** The
   pre-install checks asked registry.npmjs.org about every package. A package

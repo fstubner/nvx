@@ -19,9 +19,17 @@ Read a script before piping it to a shell. Each creates `~/.nvx` and puts a
 single binary in `~/.nvx/bin`. `install.sh` then adds a three-line block to your
 shell profile: a comment, a line putting `~/.nvx/bin` on `PATH`, and
 `eval "$(nvx env)"`. For bash it writes the block to `~/.bashrc` and to your
-login profile, `~/.zshrc` for zsh, and `~/.profile` otherwise. `install.ps1`
-adds `~/.nvx/bin` to your user `PATH` and one integration line, with a comment
-above it, to your PowerShell `$PROFILE`.
+login profile, `~/.zshrc` for zsh, and `~/.profile` otherwise. For fish it
+writes its own file, `~/.config/fish/conf.d/nvx.fish`, in fish syntax, and
+touches nothing else. `install.ps1` adds `~/.nvx/bin` to your user `PATH` and
+one integration line, with a comment above it, to your PowerShell `$PROFILE`.
+
+cmd.exe has no profile, so nothing is written for it. With `~/.nvx/bin` on your
+user `PATH` the shims run each project's pinned version in a cmd window.
+`nvx use` cannot switch a cmd window by itself, and says so. `nvx default
+<version>` sets the version new windows start on, and
+[Commands](/docs/commands/#shells) has the one-line command that switches a
+single window.
 
 ## Prebuilt binaries
 

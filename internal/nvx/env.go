@@ -1100,7 +1100,7 @@ func ToBashPath(winPath string) string {
 
 // FormatPathForShell formats the PATH string for the specific shell
 func FormatPathForShell(shell, rawPath string) string {
-	if shell == "bash" || shell == "zsh" {
+	if shell == "bash" || shell == "zsh" || shell == "fish" {
 		if runtime.GOOS == "windows" {
 			parts := filepath.SplitList(rawPath)
 			var bashParts []string
@@ -1116,10 +1116,47 @@ func FormatPathForShell(shell, rawPath string) string {
 }
 
 func shellEnvAssignment(shell, key, value string) string {
-	if shell == "bash" || shell == "zsh" {
+	switch shell {
+	case "bash", "zsh":
 		return "export " + key + "=" + quotePOSIXShell(value) + "\n"
+	case "fish":
+		// PATH is a list in fish. Handed one colon-joined string it is split
+		// anyway, but a list says what is meant and survives a fish that does not.
+		if key == "PATH" {
+			parts := strings.Split(value, ":")
+			for i, p := range parts {
+				parts[i] = quoteFish(p)
+			}
+			return "set -gx PATH " + strings.Join(parts, " ") + "\n"
+		}
+		return "set -gx " + key + " " + quoteFish(value) + "\n"
+	case "cmd":
+		return cmdSetLine(key, value)
 	}
 	return "$env:" + key + " = " + quotePowerShell(value) + "\n"
+}
+
+// quoteFish single-quotes value for fish, where only \ and ' are special inside
+// single quotes.
+func quoteFish(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	return "'" + strings.ReplaceAll(value, "'", `\'`) + "'"
+}
+
+// cmdSetLine renders `set "KEY=value"`, the form that survives spaces, & ( ) and
+// ^ in a value. It is written to be run by `FOR /f ... DO %i`, which takes the
+// line literally, so a % is left as it is. Measured 2026-10-01 in cmd.exe: with
+// `DO CALL %i` a doubled %% stayed doubled and a pair such as %x% was expanded
+// as a variable, so CALL is not used.
+//
+// A double quote or a line break cannot be carried by this form, and Windows
+// paths hold neither. A value with one is skipped with a `rem` line, which
+// is a no-op when run, rather than emitted half-quoted.
+func cmdSetLine(key, value string) string {
+	if strings.ContainsAny(value, "\"\r\n") {
+		return "rem nvx: " + key + " was not set because its value cannot be quoted for cmd.exe\n"
+	}
+	return `set "` + key + "=" + value + "\"\n"
 }
 
 func quotePOSIXShell(value string) string {
