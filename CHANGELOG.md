@@ -159,6 +159,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **More package-manager commands that run dependency code are contained.**
+  nvx contains a package-manager command when it recognises the verb, and
+  several verbs that run dependency install scripts ran uncontained with no
+  pre-install checks. `bun pm trust` and `pnpm approve-builds` run the scripts
+  the install held back. `npm uninstall`, `npm prune`, `pnpm remove`, `pnpm
+  fetch` and `bun remove` re-install whatever the lockfile lists that is
+  missing. `npm link <package>` and `bun link <package>` install as well, and
+  `npm pack` of a git dependency runs its prepare script. These verbs and their
+  aliases in npm, pnpm, yarn and bun are now contained. `corepack` is now
+  wrapped too, and `corepack pnpm add x` or `node "$npm_execpath" install x`
+  is judged as the package-manager command it runs. `npm link`, `pnpm
+  self-update` and `pnpm env use` write outside the project, so a contained run
+  of one is refused before it starts and names the `--no-sandbox` command to use
+  instead.
 * **Killing nvx on Linux now stops the contained process.** The sandbox
   supervisor was started with no parent-death signal and no signal forwarding, so
   `kill` or `kill -9` on nvx left the contained process running, and the next nvx
