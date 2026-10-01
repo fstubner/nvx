@@ -328,9 +328,18 @@ func allowKeysFor(hp hostPort) []string {
 // already decided, and telling them how to undo it is noise.
 func (p *EgressProxy) explainHowToAllowOnce(key string) {
 	p.denyHintOnce.Do(func() {
-		LogInfo("If that is meant, add %q to isolation.network.allow_hosts in .nvx-policy.json. "+
-			"Adding one counts as loosening, so a project file naming it needs approval.", key)
+		// A refusal detail rather than LogInfo: -q and --agent-mode hide LogInfo,
+		// and the callers that run with them are the ones that cannot ask.
+		LogRefusalDetail("%s", egressAllowHostRemedy(key))
 	})
+}
+
+// egressAllowHostRemedy is the narrowest way to let one host through: the
+// policy line itself, for the host that was refused.
+func egressAllowHostRemedy(key string) string {
+	return fmt.Sprintf("If that is meant, add %q to isolation.network.allow_hosts, for example "+
+		`{"isolation":{"network":{"allow_hosts":[%q]}}}`+
+		". Adding one counts as loosening, so a project .nvx-policy.json naming it needs approval, and ~/.nvx/policy.json does not.", key, key)
 }
 
 func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
@@ -457,7 +466,7 @@ func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
 	p.prompted[key] = true
 
 	msg := fmt.Sprintf("Allow outbound connection to %s for the rest of this run?", key)
-	if !PromptTrustBoundary(msg) {
+	if !promptTrustBoundaryWithRemedy(msg, egressAllowHostRemedy(key)) {
 		LogWarn("Blocked egress: %s", key)
 		auditLog(p.nvxHome, "egress_deny", map[string]string{"host": key})
 		return false

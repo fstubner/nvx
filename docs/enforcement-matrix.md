@@ -408,6 +408,15 @@ whose uid/gid mapping is written through `/proc`, which its own Landlock ruleset
 does not grant. Both smoke scripts were also launching their probes uncontained.
 The rows above were not wrong about the design; nothing was checking them.
 
+On Linux a contained process sees only the paths it is granted, in a root of its
+own. Landlock below ABI v9 does not restrict `connect()` to a UNIX socket by path.
+Measured on WSL2 Ubuntu 24.04, kernel 6.18, before the change, a contained
+process got HTTP 200 from `/var/run/docker.sock` while its writes outside the
+project were denied. A socket inside a granted path stays reachable, which means
+the project, the guest home, and below ABI v9 also the system and runtime
+directories and any `allow_read_exec` root. In `network.mode: open` the host
+resolver sockets in `/run/systemd/resolve` and `/run/nscd` stay visible too.
+
 ⁹ **Two things about Windows containment that surprise people, both measured.**
 
 **An AppContainer shares the host's network stack.** It is not a Linux network
