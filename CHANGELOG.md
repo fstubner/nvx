@@ -88,6 +88,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **The release workflow Authenticode-signs `nvx.exe`**, with the Certum
+  certificate netscli uses, before any checksum, attestation or SBOM is made
+  over it. Signing runs in its own job, which holds the Certum credentials and
+  receives only `nvx.exe`, and has no write access to the release. The workflow
+  can be run by hand to build, sign and verify without publishing anything.
+
 * **The README is a short front page, and the reference moved to the docs
   site.** Containment, policy, known limitations and the FAQ are now docs pages,
   and the full `nvx help` reference is on the Commands page. The tests that held
