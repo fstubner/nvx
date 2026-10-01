@@ -174,6 +174,8 @@ func TestTheShimRunsTheDefaultWhenThePinIsNotInstalled(t *testing.T) {
 	proj := tempDir(t)
 	writeNvmrc(t, proj, "18")
 	inProjectDir(t, proj)
+	// The fix is printed as an info line, which an earlier test's -q can hide.
+	notQuiet(t)
 
 	out, errOut := runNodeThroughShim(t, home)
 	if !strings.Contains(out, "v22.23.3") {
