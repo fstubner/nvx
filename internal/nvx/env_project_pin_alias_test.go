@@ -63,7 +63,7 @@ func TestAnLTSAliasInNvmrcIsSatisfiedByTheMatchingVersion(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := captureStderrHere(t, func() {
-			warnIfProjectPinsAnotherVersion(nvxHome, node, "v22.11.0", running)
+			warnIfProjectPinsAnotherVersion(nvxHome, node, projectPinFor(node), "v22.11.0", running)
 		})
 		if warned := strings.TrimSpace(got) != ""; warned != tc.wantWarn {
 			t.Errorf(".nvmrc %q running v22.11.0: warned=%v, want %v\n%s", tc.nvmrc, warned, tc.wantWarn, got)
@@ -79,7 +79,7 @@ func TestAnLTSAliasInNvmrcIsSatisfiedByTheMatchingVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := captureStderrHere(t, func() {
-		warnIfProjectPinsAnotherVersion(nvxHome, node, "v20.18.0", running)
+		warnIfProjectPinsAnotherVersion(nvxHome, node, projectPinFor(node), "v20.18.0", running)
 	}); strings.TrimSpace(got) == "" {
 		t.Error("lts/* is v22.11.0 here and v20.18.0 ran, with no warning")
 	}

@@ -8,7 +8,8 @@ nvx does two jobs with one binary.
 **It manages runtimes.** Install, switch and pin Node.js and Bun per project, and
 switch automatically on `cd` from a `.nvmrc`, `.node-version` or `package.json`.
 Switching is scoped to the shell you run it in, so another terminal is unaffected
-until it reads the same pin.
+until it reads the same pin. The shims read the pin too, so an IDE task, a git
+hook or CI runs the project's version without any shell setup.
 
 **It contains what those runtimes install.** `npm install` executes code from
 strangers with your credentials within reach. nvx runs it inside the platform's

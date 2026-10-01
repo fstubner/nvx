@@ -18,6 +18,21 @@ Run `nvx help <command>` for any of these.
 | `nvx uninstall <version>` | Remove an installed version. |
 | `nvx auto` | Switch to the version this directory pins. |
 
+### Which version a command runs
+
+A command run through the shims (`node`, `npm`, `npx`, `pnpm`, `yarn`,
+`corepack`, `bun`, `bunx`) picks its runtime version the same way in a
+terminal, an IDE task, a git hook or CI. The first of these that applies wins:
+
+1. Inside the sandbox, the policy's `runtime.versions` pin.
+2. The version this shell has active from `nvx use` or the shell integration.
+3. The version the project asks for in `.nvmrc`, `.node-version`,
+   `.bun-version` or `package.json`, read from the current directory or the
+   nearest one above it, up to your home directory. It has to be installed. The
+   shim never downloads anything. When the version is missing it runs the
+   default and prints the `nvx install` command that adds it.
+4. The global default from `nvx default`.
+
 ## Running things
 
 <div data-ui-table="row-headers"></div>

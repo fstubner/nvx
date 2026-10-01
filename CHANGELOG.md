@@ -88,6 +88,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **The shims run the version the project pins, with or without the shell
+  integration.** In a project whose `.nvmrc` said 20.11, with 22 as the
+  default, `node --version` through the shim printed v22.23.3 and a warning.
+  Only a shell with the integration loaded switched, so IDE tasks, git hooks,
+  cron, CI and editors running `npm run` all got the default. `node`, `npm`,
+  `npx`, `pnpm`, `yarn`, `corepack`, `bun` and `bunx` now read `.nvmrc`,
+  `.node-version`, `.bun-version` and `package.json` the way `nvx auto` does
+  and run the installed version that matches. A version this shell already has
+  active from `nvx use` still wins. A pinned version that is not installed
+  still runs the default, and the warning now names the `nvx install` command
+  that fixes it. Contained runs pick the same version, with the policy's
+  `runtime.versions` ahead of the file. The search for a version file now stops
+  at your home directory.
+
 * **The installers check the download's build attestation when `gh` is present.**
   `install.sh` and `install.ps1` used to compare the download only with the
   `.sha256` file from the same release, which a replaced release could replace
