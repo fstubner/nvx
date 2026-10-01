@@ -188,6 +188,8 @@ rm -rf "$HOME_DIR"; echo
 # fish gets its own conf.d file, not the POSIX lines in ~/.profile that it
 # cannot run. Written once, in fish syntax, honouring XDG_CONFIG_HOME.
 echo "=== fish ==="
+# CI runners set XDG_CONFIG_HOME, which would move the file out of the scratch HOME.
+unset XDG_CONFIG_HOME
 HOME_DIR="$(mktemp -d)"; export HOME="$HOME_DIR"
 ( eval "$(extract_setup)"; setup_fish; setup_fish ) >/dev/null 2>&1
 F="$HOME_DIR/.config/fish/conf.d/nvx.fish"

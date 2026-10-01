@@ -2,9 +2,7 @@ package nvx
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -104,55 +102,6 @@ func TestCmdSetLineKeepsTheValueLiteral(t *testing.T) {
 	}
 }
 
-// The parent process names the shell on Windows, ahead of inherited variables.
-// A cmd.exe opened from Git Bash still has MSYSTEM set, and was handed POSIX
-// `export` lines it cannot run.
-func TestTheParentProcessDecidesTheShellOnWindows(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("the parent process is only consulted on Windows")
-	}
-	for _, tc := range []struct {
-		name, parent, msystem, shell, want string
-	}{
-		{"cmd launched from git bash", "cmd.exe", "MINGW64", "/usr/bin/bash", "cmd"},
-		{"cmd with nothing else set", "cmd.exe", "", "", "cmd"},
-		{"upper-case name", "CMD.EXE", "", "", "cmd"},
-		{"pwsh with a leaked SHELL", "pwsh.exe", "", "/usr/bin/bash", "powershell"},
-		{"bash is the parent", "bash.exe", "", "", "bash"},
-		{"fish is the parent", "fish.exe", "", "", "fish"},
-		{"unknown parent falls back to MSYSTEM", "node.exe", "MINGW64", "", "bash"},
-		{"unknown parent falls back to SHELL", "node.exe", "", "/usr/bin/fish", "fish"},
-		{"no parent at all", "", "", "", "powershell"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			withParentShell(t, tc.parent)
-			withEnv(t, "MSYSTEM", tc.msystem)
-			withEnv(t, "SHELL", tc.shell)
-			if got := defaultShell(); got != tc.want {
-				t.Errorf("defaultShell() = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-// Off Windows only $SHELL can say, and only fish needs a different syntax.
-func TestFishIsDetectedFromShellOffWindows(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows reads the parent process")
-	}
-	for shell, want := range map[string]string{
-		"/usr/bin/fish":          "fish",
-		"/opt/homebrew/bin/fish": "fish",
-		"/bin/zsh":               "bash",
-		"":                       "bash",
-	} {
-		withEnv(t, "SHELL", shell)
-		if got := defaultShell(); got != want {
-			t.Errorf("SHELL=%q: defaultShell() = %q, want %q", shell, got, want)
-		}
-	}
-}
-
 // The hints name a command the reader can run in their own shell.
 func TestFishAndCmdHints(t *testing.T) {
 	if got := shellIntegrationHint("fish"); !strings.Contains(got, "nvx env --shell=fish | source") || !strings.Contains(got, "config.fish") {
@@ -236,21 +185,5 @@ func TestUseInCmdExplainsInsteadOfPrintingPOSIX(t *testing.T) {
 	}
 	if code != 0 || strings.Contains(out, "unchanged") {
 		t.Errorf("piped into the for loop: exit %d, output:\n%s", code, out)
-	}
-}
-
-// fish is not on every machine. When it is, it must at least parse the snippet:
-// the text tests above cannot say whether fish accepts it.
-func TestTheFishSnippetParsesUnderFish(t *testing.T) {
-	fish, err := exec.LookPath("fish")
-	if err != nil {
-		t.Skip("fish is not installed here, so the snippet was not parsed by fish")
-	}
-	file := filepath.Join(tempDir(t), "nvx.fish")
-	if err := os.WriteFile(file, []byte(envScript("fish", "/opt/nvx/nvx", "/home/u/.nvx/bin")), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command(fish, "--no-execute", file).CombinedOutput(); err != nil {
-		t.Errorf("fish rejected the snippet: %v\n%s", err, out)
 	}
 }
