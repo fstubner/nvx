@@ -71,6 +71,11 @@ printf 'SECRET-CONTENT-DO-NOT-LEAK\n' > "$SECRET"
 FORBIDDEN_WRITE="$OUTSIDE/should-not-exist"
 
 cd "$PROJ"
+# Repository metadata. git runs uncontained, so a contained process must not be
+# able to write it, while reading it still works.
+mkdir -p .git/hooks
+GIT_CONFIG_BODY="$(printf '[core]\n\trepositoryformatversion = 0')"
+printf '%s\n' "$GIT_CONFIG_BODY" > .git/config
 cat > .nvx-policy.json <<'POLICY'
 {
   "isolation": {
@@ -105,6 +110,24 @@ catch (e) { out.push('WRITE_OUTSIDE=DENIED'); }
 // enforcement.
 try { fs.writeFileSync('inside.txt', 'ok'); out.push('WRITE_INSIDE=ALLOWED'); }
 catch (e) { out.push('WRITE_INSIDE=DENIED'); }
+
+// Must be DENIED: the project's .git is read-only to a contained process. A
+// hook or a config entry written there runs as the user on the next commit.
+try { fs.writeFileSync('.git/hooks/pre-commit', '#!/bin/sh\n'); out.push('GIT_HOOK_WRITE=ALLOWED'); }
+catch (e) { out.push('GIT_HOOK_WRITE=DENIED'); }
+try { fs.appendFileSync('.git/config', '[core]\n\thooksPath = elsewhere\n'); out.push('GIT_CONFIG_WRITE=ALLOWED'); }
+catch (e) { out.push('GIT_CONFIG_WRITE=DENIED'); }
+
+// Must be ALLOWED: reading .git, and the files an install writes. Without these
+// a profile that denied the whole project would pass the two checks above.
+try { fs.readFileSync('.git/config', 'utf8'); out.push('GIT_READ=ALLOWED'); }
+catch (e) { out.push('GIT_READ=DENIED'); }
+try {
+  fs.writeFileSync('package.json', '{"name":"probe"}\n');
+  fs.mkdirSync('node_modules/dep', { recursive: true });
+  fs.writeFileSync('node_modules/dep/index.js', 'module.exports = 1;\n');
+  out.push('INSTALL_WRITE=ALLOWED');
+} catch (e) { out.push('INSTALL_WRITE=DENIED'); }
 
 // Documented as ALLOWED on macOS. Asserted so a change in either direction is
 // caught rather than silently diverging from four documents.
@@ -184,6 +207,20 @@ expect "WRITE_OUTSIDE=DENIED" "a contained process wrote outside the project; wr
 expect "WRITE_INSIDE=ALLOWED" "a contained process could not write its own project, so the sandbox is broken rather than strict, and every denial above proves nothing"
 expect "EGRESS=DENIED"        "a contained process reached a host with an empty allowlist; egress control is the other guarantee macOS makes"
 expect "UDP_EGRESS=DENIED"    "a contained process sent a UDP packet to an external host; the profile is (deny default) and that must cover UDP as well as TCP"
+expect "GIT_HOOK_WRITE=DENIED"   "a contained process created a git hook; .git must be read-only inside the project"
+expect "GIT_CONFIG_WRITE=DENIED" "a contained process wrote .git/config; .git must be read-only inside the project"
+expect "GIT_READ=ALLOWED"        "a contained process could not read .git/config; npm and install scripts read it"
+expect "INSTALL_WRITE=ALLOWED"   "a contained process could not write package.json or node_modules, so the .git checks above prove nothing"
+
+# On disk, outside the sandbox: nothing reported as denied landed anyway.
+if [[ -e .git/hooks/pre-commit ]]; then
+  echo "FAIL: .git/hooks/pre-commit exists; a contained process created a git hook." >&2
+  fail=1
+fi
+if [[ "$(cat .git/config)" != "$GIT_CONFIG_BODY" ]]; then
+  echo "FAIL: .git/config changed; a contained process wrote it." >&2
+  fail=1
+fi
 
 # The documented weakness. A change here is not necessarily a regression -- it
 # may be an improvement -- but it must not go unnoticed, because four documents

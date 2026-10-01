@@ -1,6 +1,10 @@
 package nvx
 
-import "os"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+)
 
 // sandboxWritableRoots declares what a contained process may write.
 //
@@ -43,6 +47,65 @@ func sandboxWritableRoots(guestHome, workDir string) []string {
 		roots = append(roots, workDir)
 	}
 	return roots
+}
+
+// gitMetadataPaths returns the repository metadata inside workDir that a
+// contained process may read but never write: workDir/.git, and, where that is
+// a file naming the real git directory (a linked worktree, a submodule, a
+// --separate-git-dir checkout), that directory too when it lies inside workDir.
+// Paths that do not exist are left out.
+//
+// The working directory is a writable root, and git never runs contained. A
+// contained install that writes .git/hooks/pre-commit, or core.hooksPath or
+// core.fsmonitor into .git/config, has that code run as the user, uncontained,
+// on the next `git commit` or `git status`. Reproduced on Windows and Linux
+// before this existed, at isolation level strict as well. Each platform
+// subtracts these paths from the writable root its own way: a read-only bind
+// mount on Linux, a later deny rule in the Seatbelt profile, a deny entry for
+// the project's capability on Windows.
+//
+// The .git file itself is included, because rewriting it to name a git
+// directory the contained process controls has the same effect.
+func gitMetadataPaths(workDir string) []string {
+	if workDir == "" {
+		return nil
+	}
+	dotGit := filepath.Join(workDir, ".git")
+	info, err := os.Stat(dotGit)
+	if err != nil {
+		return nil
+	}
+	paths := []string{dotGit}
+	if info.Mode().IsRegular() {
+		if gitDir := gitDirFromFile(dotGit); gitDir != "" && dirWithin(gitDir, workDir) && !dirsEqual(gitDir, workDir) {
+			if _, err := os.Stat(gitDir); err == nil {
+				paths = append(paths, gitDir)
+			}
+		}
+	}
+	return paths
+}
+
+// gitDirFromFile reads the "gitdir: <path>" line git writes into a .git file,
+// and returns that path made absolute against the file's directory.
+func gitDirFromFile(dotGitFile string) string {
+	data, err := os.ReadFile(dotGitFile)
+	if err != nil {
+		return ""
+	}
+	line, _, _ := strings.Cut(string(data), "\n")
+	rest, ok := strings.CutPrefix(strings.TrimSpace(line), "gitdir:")
+	if !ok {
+		return ""
+	}
+	dir := strings.TrimSpace(rest)
+	if dir == "" {
+		return ""
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(filepath.Dir(dotGitFile), dir)
+	}
+	return filepath.Clean(dir)
 }
 
 // workDirReachesControlPlane reports whether granting workDir would also grant

@@ -97,6 +97,16 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	// (its ACL write propagates over the whole profile tree) and already grants ALL
 	// APPLICATION PACKAGES for stat/traverse. Sandbox writes go to the guest home
 	// regardless, so a failed workdir grant should not abort the run.
+	// The repository's git metadata is made read-only to this project's
+	// capability before the working directory is granted, and a failure stops
+	// the launch: a run that may write .git can leave code that git later runs
+	// as the user. See gitMetadataPaths and restrictGitMetadataToReadOnly.
+	if workDir != "" && !isProfileRoot(workDir) && !workDirReachesControlPlane(nvxHome, workDir) {
+		if err := restrictGitMetadataToReadOnly(capSID, workDir); err != nil {
+			return nil, "", fmt.Errorf("make this repository's .git read-only for the sandbox: %w", err)
+		}
+	}
+
 	if workDir != "" && !isProfileRoot(workDir) && workDirReachesControlPlane(nvxHome, workDir) {
 		// Above the profile or inside ~/.nvx: granting it would grant nvx's own
 		// settings or the whole profile. See workDirReachesControlPlane.

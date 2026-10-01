@@ -199,6 +199,15 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 		fmt.Fprintf(&b, "  (subpath %q)\n", root)
 	}
 	b.WriteString(")\n")
+	// The repository's git metadata stays read-only inside the writable roots;
+	// see gitMetadataPaths. Seatbelt lets a later rule override an earlier one,
+	// so these come after the allow. Each path is named as given and as resolved,
+	// because Seatbelt matches the resolved path: a project under /var/folders is
+	// really under /private/var/folders, and a deny naming only the first would
+	// match nothing.
+	for _, p := range seatbeltDenyWritePaths(gitMetadataPaths(workDir)) {
+		fmt.Fprintf(&b, "(deny file-write* (subpath %q))\n", p)
+	}
 
 	// Trimmed, like every other reader of this field (policy.go, egress_proxy.go,
 	// sandbox_native_windows.go, fs_provider.go). Without it a policy carrying
@@ -263,4 +272,17 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	}
 
 	return b.String()
+}
+
+// seatbeltDenyWritePaths returns each path and, where it differs, the path
+// with symbolic links resolved.
+func seatbeltDenyWritePaths(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		out = append(out, p)
+		if resolved, err := filepath.EvalSymlinks(p); err == nil && resolved != p {
+			out = append(out, resolved)
+		}
+	}
+	return dedupeStrings(out)
 }

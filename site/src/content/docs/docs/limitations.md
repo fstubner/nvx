@@ -14,9 +14,12 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
 - **Your own code is not contained by default.** `npm run build`, `npm test` and
   `node` run uncontained at the `standard` level, so a compromised dependency your
   own code imports is not sandboxed. A contained install can therefore influence a
-  later uncontained command, because `node_modules/.bin` is writable by design.
-  `isolation.level: strict` contains them, at the cost of breaking anything that
-  needs unrestricted filesystem or network access.
+  later uncontained command, because the project's own files are writable by
+  design: `package.json` and its scripts, `node_modules`, lockfiles, build config,
+  and hook folders kept in the project such as `.husky`. The one exception is
+  `.git`, which contained runs can read and cannot write.
+  `isolation.level: strict` contains those commands, at the cost of breaking
+  anything that needs unrestricted filesystem or network access.
 - **A `.env` inside the project is readable by a contained install.** The project
   directory has to be readable for the install to work, and `.env` lives in it.
   Environment *variables* are scrubbed; a file is a file.
@@ -46,22 +49,16 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
 
 ## What surprises people
 
-- **On Ubuntu 23.10 and later, the Linux sandbox may refuse to start.** Ubuntu
-  restricts the user namespaces the sandbox is built on, through the setting
-  `kernel.apparmor_restrict_unprivileged_userns`. Contained commands then fail
-  with "Operation not permitted", and nvx does not run them uncontained instead.
-  `nvx doctor` starts a contained process and names this setting when it is the
-  cause. You have two ways forward. `sudo sysctl -w
-  kernel.apparmor_restrict_unprivileged_userns=0` turns the restriction off for
-  every program on the machine. Or set `isolation.network.mode` to `open`, which
-  gives up the network namespace, so contained code shares your network and the
-  egress allowlist is not enforced. `nvx doctor` says whether `open` starts on
-  your machine.
 - **A contained command started in your home directory, or above it, starts in
   the sandbox's home instead.** The working directory is writable inside the
   sandbox, and granting your home would grant everything in it, `~/.nvx` and
   your shell profile included. nvx says so when it happens. Run the command from
   a project folder to work on files there.
+- **Git hook installers cannot set themselves up during a contained install.**
+  husky's `prepare` script, simple-git-hooks and lefthook write to `.git`
+  (`.git/config` or `.git/hooks`), which a contained install cannot write, so
+  their setup step fails there. Run it yourself afterwards, for example
+  `npx husky`, or run the install with `nvx --no-sandbox`.
 - **A stray `package.json` above your projects merges them into one sandbox
   scope.** `nvx doctor` reports it when the manifest sits in your home directory
   or at a volume root.
