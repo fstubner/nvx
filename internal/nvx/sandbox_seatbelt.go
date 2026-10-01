@@ -189,7 +189,8 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	// Cryptexes firmlink on Apple Silicon) and are impractical to enumerate
 	// reliably. nvx's enforced guarantees are filesystem-WRITE containment and
 	// egress control, both kept strict below; environment secrets are separately
-	// scrubbed and $HOME is redirected to an ephemeral guest profile.
+	// scrubbed and $HOME is redirected to an ephemeral guest profile. The user's
+	// credential stores are carved back out further down.
 	b.WriteString("(allow file-read*)\n")
 	b.WriteString("(allow file-write*\n")
 	for _, root := range dedupeStrings(writeRoots) {
@@ -199,6 +200,21 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 		fmt.Fprintf(&b, "  (subpath %q)\n", root)
 	}
 	b.WriteString(")\n")
+	// The repository's git metadata stays read-only inside the writable roots;
+	// see gitMetadataPaths. Seatbelt lets a later rule override an earlier one,
+	// so these come after the allow. Each path is named as given and as resolved,
+	// because Seatbelt matches the resolved path: a project under /var/folders is
+	// really under /private/var/folders, and a deny naming only the first would
+	// match nothing.
+	for _, p := range seatbeltPathForms(gitMetadataPaths(workDir)) {
+		fmt.Fprintf(&b, "(deny file-write* (subpath %q))\n", p)
+	}
+	// The user's credential stores are unreadable, as they are on Windows and
+	// Linux. These come after the blanket file-read* allow so they win.
+	home, _ := os.UserHomeDir()
+	for _, rule := range seatbeltCredentialReadDenies(home) {
+		b.WriteString(rule + "\n")
+	}
 
 	// Trimmed, like every other reader of this field (policy.go, egress_proxy.go,
 	// sandbox_native_windows.go, fs_provider.go). Without it a policy carrying
@@ -263,4 +279,66 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	}
 
 	return b.String()
+}
+
+// Registry tokens, keys and cloud credentials, relative to the real home.
+// Files are denied as literals and directories as subpaths. pnpm keeps its rc
+// under Library/Preferences on macOS and under .config elsewhere. None of these
+// is on the dynamic linker's path, and the guest home a contained process gets
+// as $HOME has none of them, so contained npm reads no user .npmrc either way.
+var (
+	credentialStoreFiles = []string{
+		".npmrc", ".yarnrc", ".yarnrc.yml", ".config/pnpm/rc",
+		"Library/Preferences/pnpm/rc", ".bunfig.toml", ".docker/config.json",
+		".netrc", ".git-credentials",
+	}
+	credentialStoreDirs = []string{
+		".ssh", ".aws", ".gnupg", ".config/gh", ".kube", ".config/gcloud",
+		".azure", "Library/Keychains",
+	}
+)
+
+// seatbeltCredentialReadDenies returns the profile rules that deny reading the
+// credential stores under home. Each path is named under home as given and
+// under home with symbolic links resolved, so a store that does not exist yet
+// is still matched when home itself is a link. seatbeltPathForms adds the
+// resolved form of a store that is itself a link. A deny on an absent path
+// matches nothing and costs nothing.
+func seatbeltCredentialReadDenies(home string) []string {
+	if home == "" {
+		return nil
+	}
+	homes := []string{home}
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		homes = append(homes, resolved)
+	}
+	var rules []string
+	for _, group := range []struct {
+		filter string
+		rels   []string
+	}{{"literal", credentialStoreFiles}, {"subpath", credentialStoreDirs}} {
+		var paths []string
+		for _, h := range dedupeStrings(homes) {
+			for _, rel := range group.rels {
+				paths = append(paths, filepath.Join(h, filepath.FromSlash(rel)))
+			}
+		}
+		for _, p := range seatbeltPathForms(paths) {
+			rules = append(rules, fmt.Sprintf("(deny file-read* (%s %q))", group.filter, p))
+		}
+	}
+	return rules
+}
+
+// seatbeltPathForms returns each path and, where it differs, the path with
+// symbolic links resolved. Seatbelt matches the resolved path.
+func seatbeltPathForms(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		out = append(out, p)
+		if resolved, err := filepath.EvalSymlinks(p); err == nil && resolved != p {
+			out = append(out, resolved)
+		}
+	}
+	return dedupeStrings(out)
 }

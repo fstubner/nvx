@@ -42,7 +42,8 @@ whether the kernel honours it is not.
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
 | Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |
-| Host filesystem read restricted | Yes⁴ | Yes⁸ | No² (confirmed⁵) |
+| Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: credential stores denied, other reads allowed⁵ |
+| Project `.git` read-only, rest of project writable | Yes¹⁴ | Yes¹⁴ | Yes¹⁴ |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
 | Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |
@@ -61,6 +62,18 @@ reliably; a strict read allowlist breaks process launch. Write containment and
 egress control remain enforced, and environment secrets are scrubbed with `$HOME`
 redirected to an ephemeral guest profile.
 
+The user's credential stores are the exception. After the blanket read allow, the
+profile denies reads of `~/.npmrc`, `~/.yarnrc`, `~/.yarnrc.yml`,
+`~/.config/pnpm/rc`, `~/Library/Preferences/pnpm/rc`, `~/.bunfig.toml`,
+`~/.docker/config.json`, `~/.netrc` and `~/.git-credentials`, and of everything
+under `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.kube`,
+`~/.config/gcloud`, `~/.azure` and `~/Library/Keychains`. `~` is the real home,
+and each path is also named with symbolic links resolved, because Seatbelt
+matches the resolved path. None of these is on the dynamic linker's path. Until
+2026-10-01 the profile denied none of them. Every other file outside the project
+stays readable, other projects included, and so does a credential kept anywhere
+the list does not name.
+
 Writes are contained, with named exceptions: the profile grants write access to
 `/dev`, `/private/tmp`, `/private/var/tmp` and `/private/var/folders` so a
 contained process has somewhere to put temporary files. "Writes cannot leave the
@@ -74,11 +87,11 @@ the profile working as designed.
 say it did** -- it claimed "the sensitive material is still protected", which is
 true of writes and false of reads. `$HOME` decides where `~` expands to; it does
 not stop anything opening `/Users/<you>/.ssh/id_rsa` by absolute path, and a
-postinstall script looking for credentials does not need `~` to find them. On
-macOS, credential *reads* are not contained. Say so rather than reasoning around
-it: the write and egress guarantees are real and the read guarantee is absent,
-which is a narrower product than the same sentence describes on Windows and
-Linux.
+postinstall script looking for credentials does not need `~` to find them. That
+is why the credential stores above are denied by path. On macOS, reads outside
+them are not contained. The write and egress guarantees are real and the read
+guarantee covers only the listed stores, which is a narrower product than the
+same sentence describes on Windows and Linux.
 
 ¹ On macOS, egress is gated by the loopback proxy and OS network rules. Linux
 additionally removes all non-loopback interfaces (network namespace), so DNS to
@@ -102,6 +115,12 @@ satisfied by a sandbox that had failed to start, and requiring something to
 *succeed* is the only thing that tells enforcement from breakage. `CONNECT=200`
 is the one that closed the largest gap here — until 2026-08-24 the whole script
 ran with an empty allowlist and could only ever observe refusals.
+
+The script's third phase starts nvx with `HOME` set to a throwaway directory
+holding a planted `.npmrc` and `.ssh/id_test`. A contained read of each must be
+refused by the OS, while a project file and node's own binary must still read,
+each checked by exit code. Contained `npm config get registry` must succeed with
+that `.npmrc` present and must not report the registry planted in it.
 
 `READ_OUTSIDE=ALLOWED` pins the documented weakness in ² deliberately. If the
 profile is ever tightened this fails, which forces the docs site's limitations
@@ -740,6 +759,33 @@ here would equally be what a sandbox with an accidental route out looks like. Wi
 (`TestWindowsLoopbackModeRelaysAndHoldsNoCapability`) and no end-to-end run, which
 is the same standing as every other Windows row here: hosted runners refuse to
 create AppContainer children.
+
+¹⁴ **The project's `.git` is read-only to contained runs.**
+
+The working directory is a writable root on every platform, and git never runs
+contained. Until 2026-10-01 a contained install could write `.git/hooks` or
+`.git/config`, and the next `git commit` ran what it left there as the user.
+Now each platform takes `.git` back out of the writable root, along with the git
+directory a `.git` file names when that lies inside the project:
+
+- **Linux**: the supervisor bind-mounts it read-only in its private mount
+  namespace before Landlock applies, and drops `CAP_SYS_ADMIN` from the target
+  so the mount cannot be changed back. `TestGitMetadataReadOnly*` in the
+  privileged CI step.
+- **macOS**: a `(deny file-write* ...)` rule after the profile's allow.
+  `scripts/sandbox-enforcement-macos.sh` asserts it on the macOS runner, with
+  writes to `package.json` and `node_modules` as the positive control.
+- **Windows**: a deny entry for the project's capability did not hold. Measured
+  2026-10-01 with the deny first in `.git`'s list, a contained process still
+  created a hook, rewrote `config` and renamed `.git`. So `.git` stops inheriting
+  from the project, keeps every other entry it had, and gives the capability read
+  and execute only. `TestSandboxCannotWriteGitMetadata` and
+  `TestSandboxCannotWriteGitMetadataFromSubdirectory` (NVX_PROBE=1).
+
+Everything else in the project stays writable, because an install writes it:
+`package.json`, `node_modules`, lockfiles and build output. That is why a
+contained install can still affect `npm test` or `npm run build` run later at the
+`standard` level.
 
 ## Measured costs and platform floors
 

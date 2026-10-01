@@ -51,15 +51,15 @@ jobs:
 
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
       with:
         go-version: ${{ matrix.go }}
 
     - name: Set up Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
         # 24, not 20, because scripts/sandbox-smoke-egress.ps1 needs
         # --use-env-proxy to exist: Node core ignores HTTP_PROXY without it, so on
@@ -406,9 +406,11 @@ jobs:
         # user namespace, so the private /proc the Bun fix depends on cannot be
         # mounted. Leaving it out of this filter would mean it runs nowhere -- the
         # exact shape of the drift that once left 31 of 41 probes matching nothing.
+        # TestGitMetadata... skips unprivileged for the same reason: it needs the
+        # mount namespace that makes .git read-only.
         # The same prefix selects TestContainedProcessCannotReachHostUnixSockets,
         # which runs the real supervisor and so needs root here for the same reason.
-        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone|TestContainedProcess|TestNvxTermination' ./internal/nvx 2>&1 | tee /tmp/priv.log
+        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone|TestContainedProcess|TestNvxTermination|TestGitMetadata' ./internal/nvx 2>&1 | tee /tmp/priv.log
         # A failure, not a warning. This said "it is verifying nothing" and then
         # let the job go green, so the condition it names could persist
         # indefinitely -- which is what happened on Linux before 2026-08-23, when
@@ -551,10 +553,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
       with:
         go-version: '1.26.6'
         cache: false

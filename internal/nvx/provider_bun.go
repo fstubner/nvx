@@ -408,6 +408,9 @@ func bunPlatform() (osName string, arch string, err error) {
 }
 
 func (b BunProvider) Install(version string, nvxHome string) error {
+	if err := refuseGlibcBuildOnMusl(); err != nil {
+		return err
+	}
 	resolvedVer, err := b.resolveInstallVersion(version, nvxHome)
 	if err != nil {
 		return err
@@ -422,6 +425,7 @@ func (b BunProvider) Install(version string, nvxHome string) error {
 		return nil
 	}
 
+	sweepAbandonedInstalls(nvxHome)
 	release, err := acquireRuntimeInstallLock(nvxHome, "bun", resolvedVer)
 	if err != nil {
 		return err
@@ -443,7 +447,9 @@ func (b BunProvider) Install(version string, nvxHome string) error {
 
 	// Named by version as well as platform, so two versions installing at once
 	// do not write the same file. The install lock is per version.
-	tempFile := filepath.Join(GetDownloadsDir(), fmt.Sprintf("bun-%s-%s-%s.zip", resolvedVer, osName, arch))
+	// The pid in the name lets a later sweep tell a killed install's download
+	// from one still in progress.
+	tempFile := filepath.Join(GetDownloadsDir(), fmt.Sprintf("bun-%s-%s-%s.zip.tmp.%d", resolvedVer, osName, arch, os.Getpid()))
 	LogInfo("Installing Bun %s (%s-%s)", resolvedVer, osName, arch)
 	LogInfo("URL: %s", url)
 

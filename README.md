@@ -17,8 +17,8 @@
 When a coding agent runs `npm install`, it executes code from strangers with your
 credentials within reach. nvx puts that command inside an OS sandbox with a
 throwaway `HOME`, writes confined to the project, and an allowlist for anything it
-tries to reach over the network. On Windows and Linux it cannot read `~/.ssh` or
-`~/.npmrc` either. On macOS reads are not contained, and the
+tries to reach over the network. It cannot read `~/.ssh` or `~/.npmrc` either.
+On macOS other reads are not contained, and the
 [known limitations](https://nvx.run/docs/limitations/) say so plainly.
 
 **You do not change how you run anything.** nvx installs shims on `PATH`, so
@@ -55,6 +55,10 @@ curl -fsSL https://nvx.run/install.sh | sh
 
 Prebuilt binaries, building from source and what the installer changes are in the
 **[install guide](https://nvx.run/docs/install/)**.
+
+To check a downloaded release asset, run
+`gh attestation verify <file> --repo fstubner/nvx` and compare the `.sha256` file
+beside it. The install guide has the steps for each platform.
 
 ## Usage
 

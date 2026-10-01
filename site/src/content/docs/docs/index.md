@@ -54,9 +54,10 @@ None of them certifies a package, which is why containment is the backstop.
   and `node` run uncontained at the `standard` isolation level, because that is
   code you wrote. `strict` extends containment to them, at the cost of breaking
   anything that needs unrestricted filesystem or network access.
-- **It does not contain reads on macOS.** Write containment and egress control
-  apply there; credential reads do not, because the dynamic linker must read
-  system libraries whose locations vary by macOS version.
+- **It does not contain every read on macOS.** Write containment and egress
+  control apply there, and the credential stores are denied by path. Other reads
+  are allowed, because the dynamic linker must read system libraries whose
+  locations vary by macOS version.
 
 :::caution[Read the enforcement matrix before relying on any of this]
 Guarantees differ by platform, and some rows are measured while others are read

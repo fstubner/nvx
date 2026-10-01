@@ -78,7 +78,7 @@ func ResolveVersion(query string, releases []Release) (Release, error) {
 	}
 
 	query = strings.TrimSpace(strings.ToLower(query))
-	if query == "latest" || query == "current" {
+	if isLatestAlias(query) {
 		return releases[0], nil
 	}
 
@@ -306,20 +306,34 @@ func acquireRuntimeInstallLock(nvxHome, runtimeName, version string) (func(), er
 // same dead pid, and the second removed the lock the first had just created,
 // so both went on to extract into the same directory.
 func stealAbandonedInstallLock(lockDir, lockPath string, createErr error) (*os.File, error) {
+	var f *os.File
+	var openErr error
+	cleared := false
+	if !underStealGuard(lockDir, func() {
+		if cleared = clearAbandonedInstallLock(lockPath); cleared {
+			// The previous holder is gone, so the lock was abandoned rather than held.
+			f, openErr = os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		}
+	}) || !cleared {
+		return nil, createErr
+	}
+	return f, openErr
+}
+
+// underStealGuard runs fn while holding the guard file that serialises removing
+// abandoned install locks, reporting whether it could take the guard.
+func underStealGuard(lockDir string, fn func()) bool {
 	guard, err := os.OpenFile(filepath.Join(lockDir, ".install-lock-steal"), os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
-		return nil, createErr
+		return false
 	}
 	defer guard.Close()
 	if err := lockFileExclusive(guard); err != nil {
-		return nil, createErr
+		return false
 	}
 	defer func() { _ = unlockFile(guard) }()
-	if !clearAbandonedInstallLock(lockPath) {
-		return nil, createErr
-	}
-	// The previous holder is gone, so the lock was abandoned rather than held.
-	return os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	fn()
+	return true
 }
 
 // installLockBeforeRemove runs between reading an abandoned lock's owner and
@@ -378,6 +392,9 @@ func installLockFileName(version string) (string, error) {
 }
 
 func (n NodeProvider) Install(version string, nvxHome string) error {
+	if err := refuseGlibcBuildOnMusl(); err != nil {
+		return err
+	}
 	releases, err := FetchReleases()
 	if err != nil {
 		return err
@@ -400,6 +417,7 @@ func (n NodeProvider) Install(version string, nvxHome string) error {
 		LogSuccess("Node.js %s is already installed.", resolvedVer)
 		return nil
 	}
+	sweepAbandonedInstalls(nvxHome)
 	releaseLock, err := acquireInstallLock(nvxHome, resolvedVer)
 	if err != nil {
 		return err
@@ -413,7 +431,9 @@ func (n NodeProvider) Install(version string, nvxHome string) error {
 	arch := GetArch()
 	archiveFilename := fmt.Sprintf("node-%s-%s-%s.%s", resolvedVer, getOS(), arch, getExtension())
 	url := fmt.Sprintf("https://nodejs.org/dist/%s/%s", resolvedVer, archiveFilename)
-	tempFile := filepath.Join(GetDownloadsDir(), archiveFilename)
+	// The pid in the name is what lets a later sweep tell a download whose
+	// install was killed from one still in progress.
+	tempFile := filepath.Join(GetDownloadsDir(), fmt.Sprintf("%s.tmp.%d", archiveFilename, os.Getpid()))
 	extractDir := destDir + fmt.Sprintf(".tmp.%d", os.Getpid())
 
 	LogInfo("Installing Node.js %s (%s)", resolvedVer, arch)

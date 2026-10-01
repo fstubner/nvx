@@ -446,10 +446,20 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	// Bun cannot run a script or an install without /proc; the grant below is
 	// made only if this succeeds, because the alternative is granting the host's
 	// -- see mountPrivateProc.
-	privateProc := true
-	if err := mountPrivateProc(); err != nil {
-		privateProc = false
-		LogWarn("Could not give the sandbox its own /proc (%v); it stays denied, and a runtime that reads it (Bun) will not run contained.", err)
+	mountNSErr := enterPrivateMountNamespace()
+	privateProc := mountNSErr == nil
+	if privateProc {
+		if err := mountProc(); err != nil {
+			privateProc = false
+			LogWarn("Could not give the sandbox its own /proc (%v); it stays denied, and a runtime that reads it (Bun) will not run contained.", err)
+		}
+	} else {
+		LogWarn("Could not give the sandbox its own /proc (%v); it stays denied, and a runtime that reads it (Bun) will not run contained.", mountNSErr)
+	}
+	// The repository's git metadata, read-only, before Landlock refuses mounts.
+	if err := mountGitMetadataReadOnly(workDir, mountNSErr); err != nil {
+		LogError("Could not make this repository's .git read-only for the sandbox (fail-closed): %v", err)
+		return 1
 	}
 	// The filesystem view, before Landlock for the same reason as /proc. Fail
 	// closed. Without it, every UNIX socket on the host is one connect() away on

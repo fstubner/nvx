@@ -115,7 +115,8 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   permitted to write its own project — the last of those being what distinguishes
   enforcement from a sandbox that has simply failed to start.
 
-  What macOS does not do is contain reads; see the entry below. Since 2026-08-24 a
+  What macOS does not do is contain reads outside the credential stores. See the
+  entry below. Since 2026-08-24 a
   macOS runner also confirms that an allowlisted host completes through the proxy,
   that UDP is refused, and that nvx fails closed without `sandbox-exec`. One cell
   stays unclaimed: which layer refuses the outbound connection the probe observes
@@ -198,9 +199,11 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
   directory has to be readable for an install to work, and `.env` lives in it.
   Environment *variables* are scrubbed; a file is a file. Secrets outside the
   project — `~/.ssh`, `~/.aws`, `~/.npmrc` — stay unreachable on Windows and
-  Linux. **On macOS they do not**: the Seatbelt profile allows filesystem reads
-  (see `docs/enforcement-matrix.md` note 2), so macOS contains writes and egress
-  but not credential reads.
+  Linux. On macOS the Seatbelt profile allows filesystem reads and denies the
+  credential stores by path (see `docs/enforcement-matrix.md` note 2). Those
+  three, the other registry and cloud credential files listed there, and the
+  keychains cannot be read. **Other files outside the project can**, other
+  projects included.
 - **Your home directory's names are visible on Windows, contents are not.**
   A contained process can list your profile directory — enough to learn which
   credential stores exist — because it carries an ACE Windows ships for all

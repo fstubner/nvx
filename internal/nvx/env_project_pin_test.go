@@ -160,7 +160,7 @@ func TestVersionSatisfiesAcceptsTheRangesProjectsWrite(t *testing.T) {
 		{"v22.23.2", "^20", false},
 		{"v22.23.2", ">=23", false},
 	} {
-		if got := versionSatisfies(tc.running, tc.want); got != tc.ok {
+		if got := versionSatisfies(tempDir(t), tc.running, tc.want); got != tc.ok {
 			t.Errorf("versionSatisfies(%q, %q) = %v, want %v", tc.running, tc.want, got, tc.ok)
 		}
 	}

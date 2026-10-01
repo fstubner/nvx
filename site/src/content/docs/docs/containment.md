@@ -5,7 +5,7 @@ description: What a contained command can and cannot reach on each platform, and
 
 ## Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `corepack`, `bun` and `bunx` are all intercepted**, and the ones that execute code you did not write (package installs and `npx`-style tool runners) are sandboxed. A package manager started through `corepack`, or by running its own entry script with `node`, is judged as that package manager. **On Windows, `npm`, `npx` and `yarn` run inside the sandbox. `pnpm` runs for a first install only, and `bun` does not run, see [Known limitations](/docs/limitations/).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level; `isolation.level: strict` extends containment to it. There is no separate sandbox subcommand. Run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx` are all intercepted**, and the ones that execute code you did not write (package installs and `npx`-style tool runners) are sandboxed. **On Windows, `npm`, `npx` and `yarn` run inside the sandbox. `pnpm` runs for a first install only, and `bun` does not run, see [Known limitations](/docs/limitations/).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level; `isolation.level: strict` extends containment to it. There is no separate sandbox subcommand. Run commands normally:
 
 ```bash
 npm install
@@ -24,6 +24,7 @@ The shims live in `~/.nvx/project-bin/<project hash>`, not inside the project, a
 When running in the sandbox:
 * Environment secrets (e.g. `AWS_*`, `GITHUB_*`, `SSH_*`) are scrubbed.
 * Home and temp paths are virtualized to an ephemeral guest profile.
+* **Writes** go to the guest profile and the project directory. The project's `.git` is the exception. A contained command can read it and cannot write it, because git runs outside the sandbox and would run a hook or config entry left there as you. Everything else in the project stays writable, `package.json`, `node_modules` and lockfiles included, because an install has to write them.
 * **Filesystem** (`isolation.filesystem`): Windows AppContainer; Linux Landlock + namespaces; macOS Seatbelt.
 * **Network** (`isolation.network.mode: proxy`): egress via loopback proxy with allowlist. An unknown host is asked about at an interactive terminal and refused when nobody can answer. Only `NVX_TRUST_YES=true` approves one without asking. `-y`, `--agent-mode` and `NVX_YES` do not.
 
@@ -44,7 +45,8 @@ system.
 |-----------|------------------|----------------|----------------|
 | Host profile write blocked | Yes — measured | Yes — CI (Landlock) | Yes — CI (Seatbelt) |
 | Workdir write allowed | Yes — measured | Yes — CI | Yes — CI |
-| Host profile read blocked | Yes — measured | Yes — CI (Landlock allowlist) | **No** — CI confirms reads are allowed |
+| Project `.git` write blocked, read allowed | Yes — measured | Yes — CI (read-only bind mount) | Yes — CI (Seatbelt deny rule) |
+| Host profile read blocked | Yes — measured | Yes — CI (Landlock allowlist) | **Partial**. CI confirms credential stores are denied and other reads are allowed |
 | Egress blocked when not allowlisted | Yes — measured\* | Yes — CI | Yes — CI |
 | Allowlisted host reachable through the proxy | Yes — measured (AppContainer + parent proxy over a UNIX socket) | Yes — CI (loopback-only netns + parent proxy over a UNIX socket) | Yes — CI (Seatbelt + loopback proxy) |
 | Raw TCP/UDP bypass blocked at OS | Yes — measured (no network capability granted) | Yes — CI (netns + seccomp UDP deny) | Yes — CI (TCP and UDP; which layer refuses TCP is untested) |

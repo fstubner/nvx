@@ -104,6 +104,28 @@ else
         echo "Error: Checksum file not available. Refusing to install without verification." >&2
         exit 1
     fi
+
+    # Second, optional check. The .sha256 file comes from the same release as
+    # the binary, so it cannot tell a replaced release from a real one. The
+    # build attestation is signed by release.yml and checked against GitHub.
+    # It needs gh 2.49 or newer (the attestation command) and a signed-in gh,
+    # so a gh that cannot run it skips the check instead of failing the install.
+    VERIFY_HINT="gh attestation verify $BIN_DIR/nvx --repo fstubner/nvx"
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "Provenance check skipped: gh is not installed. To run it later: $VERIFY_HINT"
+    elif ! gh attestation verify --help >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
+        echo "Provenance check skipped: gh is too old or not signed in. To run it later: $VERIFY_HINT"
+    else
+        echo "Verifying build provenance..."
+        if PROVENANCE_OUT=$(gh attestation verify "$DOWNLOAD_PATH" --repo fstubner/nvx 2>&1); then
+            echo "Build provenance verified."
+        else
+            rm -f "$DOWNLOAD_PATH"
+            printf '%s\n' "$PROVENANCE_OUT" >&2
+            echo "Error: Provenance verification failed! nvx was not changed." >&2
+            exit 1
+        fi
+    fi
     mv -f "$DOWNLOAD_PATH" "$BIN_DIR/nvx"
 fi
 

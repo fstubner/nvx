@@ -16,13 +16,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Full history, so the check that the tag is on main can walk it.
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.26.6'
           # The default cache restores a module and build cache written by a
@@ -151,8 +151,8 @@ jobs:
       # These two are pinned by commit SHA rather than by tag, like the
       # provenance step above. A tag can be moved. These actions handle release
       # artifacts, and a security tool should not let a third party silently
-      # change what runs over its own binaries. Only checkout and setup-go
-      # still use tags.
+      # change what runs over its own binaries. Checkout and setup-go are
+      # pinned the same way, and Dependabot refreshes the pins.
       - name: Generate SBOM
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:

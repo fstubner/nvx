@@ -98,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependencies are now checked, `enforce_ignore_scripts` refuses a dependency
   with install scripts, and a dependency inside the release-age window prompts,
   where before only the packages you named did.
+* **The installers check the download's build attestation when `gh` is present.**
+  `install.sh` and `install.ps1` used to compare the download only with the
+  `.sha256` file from the same release, which a replaced release could replace
+  as well. When the GitHub CLI is installed, signed in and 2.49 or newer, they
+  now also run `gh attestation verify` against `fstubner/nvx` and stop without
+  changing nvx if it fails. Without a usable `gh` they print one line saying the
+  check was skipped and the command to run. The checksum check is unchanged.
+  The install guide now shows how to verify a downloaded asset by hand.
 
 * **The README is a short front page, and the reference moved to the docs
   site.** Containment, policy, known limitations and the FAQ are now docs pages,
@@ -224,6 +232,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   about like a failed registry lookup, and refused when nobody is there to
   answer.
 
+* **On macOS a contained install can no longer read your credential files.**
+  The macOS sandbox allows filesystem reads so programs can load system
+  libraries, and that included `~/.npmrc`, `~/.ssh`, `~/.aws` and the other
+  places registry tokens, keys and cloud credentials live. Windows and Linux
+  already kept them out of reach. The macOS sandbox now refuses reads of the
+  npm, yarn, pnpm and bun config files, `~/.docker/config.json`, `~/.netrc`,
+  `~/.git-credentials`, and everything under `~/.ssh`, `~/.aws`, `~/.gnupg`,
+  `~/.config/gh`, `~/.kube`, `~/.config/gcloud`, `~/.azure` and
+  `~/Library/Keychains`. Other files outside the project stay readable on macOS.
+* **A contained install can no longer write the project's `.git`.** The project
+  directory was writable as a whole, `.git` included, and git runs outside the
+  sandbox. So a hook or a `.git/config` entry written by an install ran as you on
+  the next `git commit` or `git status`, at the `strict` level too. `.git` is now
+  read-only to contained runs on Linux, macOS and Windows, and so is the git
+  directory a `.git` file names inside the project. Reads still work. A run that
+  cannot protect `.git` refuses to start. Hook installers that run during an
+  install (husky's `prepare`, simple-git-hooks, lefthook) can no longer set
+  themselves up inside the sandbox, so run them yourself afterwards. On Windows
+  `.git` stops inheriting permission changes from the project folder.
 * **More package-manager commands that run dependency code are contained.**
   nvx contains a package-manager command when it recognises the verb, and
   several verbs that run dependency install scripts ran uncontained with no
@@ -266,6 +293,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it. nvx's own proxy and `--connect` sockets live in the sandbox's home and keep
   working. On kernels with Landlock ABI v9, sockets in the system and runtime
   directories are refused as well.
+
+* **The first `nvx install` now becomes the default version.** With no default
+  set, `node` ran an unrelated system node or failed with "Could not find real
+  executable for node" and no hint. The first version installed for a runtime is
+  now its default. Installing a version that is not the default says how to switch to it, with `nvx use
+  <version>` for this shell and `nvx default <version>` for new shells.
+  `nvx doctor` also exits non-zero when no runtime is available behind `node`,
+  `npm` or `npx`, where it used to report that nvx was intercepting correctly.
+
+* **zsh switches version as soon as a terminal opens inside a project.** The zsh
+  hook only ran on a directory change, so the project's version applied after the
+  first `cd`. The integration now runs the hook once when it loads, which matches
+  bash.
+
+* **A `.nvmrc` with `lts/*` or `lts/<codename>` no longer prints a false "shell
+  integration is not active" warning.** Every `node`, `npm` and `npm run` in such
+  a project warned, even with the right version running. The aliases are now
+  resolved against the installed versions, so a pin that is satisfied gives no
+  warning.
+
+* **`nvx install` and `nvx use` with no version read the project's version file.**
+  They answered "Please specify a version" in a directory whose `.nvmrc` named one.
+  They now read `.nvmrc`, `.node-version`, `.bun-version` and `package.json`
+  the way `nvx auto` does. `node` and `stable` now mean the newest version, as in
+  nvm, and `nvx use iron` accepts an LTS codename for an installed version. When
+  a `.tool-versions` file or `devEngines.runtime` is present, nvx says it does not
+  read it.
+
+* **`nvx default` no longer says to add the `current` link to PATH.** Only the
+  shim directory belongs on PATH, and a runtime directory ahead of it is what
+  `nvx doctor` reports as shadowing the shims.
+
+* **`nvx cleanup` and `nvx install` remove what an interrupted install left.**
+  A killed install left a `.tmp.<pid>` staging directory, its download and a lock,
+  and nothing removed them. Both commands now remove staging directories and
+  downloads whose process is gone, and locks nvx can prove are abandoned. Anything
+  whose process is still running, or whose owner cannot be read, stays.
+
+* **nvx refuses to install the glibc build on Alpine.** On a musl system the
+  install reported success and `node` then failed with `fork/exec ... no such file
+  or directory`. The install now stops and says the system uses musl and that nvx
+  has no musl build. nvx does not download musl builds.
+
+* **Colour codes and the download bar stay out of pipes and logs.** Output is
+  plain when it is not a terminal, and `NO_COLOR` is honoured. A download that is
+  not on a terminal prints a line per tenth of the file instead of a bar redrawn
+  with carriage returns. The text of the messages is unchanged.
+
 * **`-y`, `--agent-mode` and `NVX_YES` no longer approve pre-install checks
   silently.** The typosquat, release-age, install-script, known-advisory and
   "could not check" prompts were answered with no output and no audit record, so

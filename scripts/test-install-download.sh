@@ -57,6 +57,27 @@ exec "$(command -v uname)" "\$@"
 STUB
 chmod +x "$WORK/stub/uname"
 
+# The stub gh answers like gh 2.49 or newer. It logs each call to $GH_LOG, and
+# GH_FAIL=1 makes `attestation verify` fail, GH_OLD=1 makes it an unknown
+# command (as in gh before 2.49), GH_NOAUTH=1 makes `auth status` fail. It sits
+# in its own directory so a case can leave it off PATH.
+mkdir -p "$WORK/ghstub"
+cat > "$WORK/ghstub/gh" <<'STUB'
+#!/bin/sh
+echo "$*" >> "$GH_LOG"
+case "$1 $2" in
+    "auth status") [ -z "${GH_NOAUTH:-}" ]; exit $? ;;
+    "attestation verify")
+        [ -z "${GH_OLD:-}" ] || exit 1
+        case " $* " in *" --help "*) exit 0 ;; esac
+        if [ -n "${GH_FAIL:-}" ]; then echo "stub gh: no attestation found" >&2; exit 1; fi
+        exit 0 ;;
+esac
+exit 1
+STUB
+chmod +x "$WORK/ghstub/gh"
+export GH_LOG="$WORK/gh.log"
+
 # A PATH with the tools install.sh uses and no sha256sum or shasum. Wrappers
 # rather than links, so each tool still finds its own libraries.
 NOHASH="$WORK/nohash"
@@ -64,6 +85,18 @@ mkdir -p "$NOHASH"
 for tool in sh mkdir uname tr rm awk mv chmod cp cat grep touch basename; do
     printf '#!/bin/sh\nexec "%s" "$@"\n' "$(command -v "$tool")" > "$NOHASH/$tool"
     chmod +x "$NOHASH/$tool"
+done
+
+# The same, with a hashing tool and no gh. The real PATH cannot be used for
+# this, because a machine running the test may well have gh installed.
+NOGH="$WORK/nogh"
+mkdir -p "$NOGH"
+for tool in sh mkdir uname tr rm awk mv chmod cp cat grep touch basename sha256sum shasum; do
+    command -v "$tool" >/dev/null 2>&1 || continue
+    printf '#!/bin/sh
+exec "%s" "$@"
+' "$(command -v "$tool")" > "$NOGH/$tool"
+    chmod +x "$NOGH/$tool"
 done
 
 # run <case name> [env assignments...]: a fresh HOME holding a previous nvx.
@@ -74,7 +107,8 @@ run() {
     mkdir -p "$HOME/.nvx/bin"
     printf 'PREVIOUS' > "$HOME/.nvx/bin/nvx"
     tr -d '\r' < "$ROOT/install.sh" > "$WORK/install.sh"
-    if env PATH="$WORK/stub:$PATH" SHELL=/bin/sh "$@" sh "$WORK/install.sh" > "$WORK/out-$name" 2>&1; then
+    : > "$GH_LOG"
+    if env PATH="$WORK/stub:$WORK/ghstub:$PATH" SHELL=/bin/sh "$@" sh "$WORK/install.sh" > "$WORK/out-$name" 2>&1; then
         status=0
     else
         status=1
@@ -114,6 +148,44 @@ check "succeeds" "$status"
 
 # The three cases below put the checksum back, so each one fails, if it does,
 # for the reason it names.
+echo "$(sha "$SERVE/bin")  nvx" > "$SERVE/sums"
+
+echo "Build provenance is checked with gh when gh can do it:"
+run prov-pass
+check "succeeds" "$status"
+grep -q "attestation verify .*nvx.download --repo fstubner/nvx" "$GH_LOG"; check "gh checked the download against fstubner/nvx" $?
+grep -q "Build provenance verified" "$WORK/out-prov-pass"; check "says it was verified" $?
+[ "$(cat "$HOME/.nvx/bin/nvx")" = "NEW" ]; check "nvx is the new binary" $?
+
+echo "A provenance failure is refused and leaves the previous nvx:"
+run prov-fail GH_FAIL=1
+[ "$status" -ne 0 ]; check "fails" $?
+grep -q "Provenance verification failed" "$WORK/out-prov-fail"; check "says provenance failed" $?
+grep -q "no attestation found" "$WORK/out-prov-fail"; check "shows gh's own message" $?
+[ "$(cat "$HOME/.nvx/bin/nvx")" = "PREVIOUS" ]; check "previous nvx untouched" $?
+[ ! -e "$HOME/.nvx/bin/nvx.download" ]; check "download removed" $?
+
+echo "Without gh the check is skipped, with one line saying how to run it:"
+run prov-nogh PATH="$WORK/stub:$NOGH"
+check "succeeds" "$status"
+[ "$(grep -c "Provenance check skipped" "$WORK/out-prov-nogh")" -eq 1 ]; check "one skip line" $?
+grep -q "gh attestation verify .* --repo fstubner/nvx" "$WORK/out-prov-nogh"; check "gives the command" $?
+[ "$(cat "$HOME/.nvx/bin/nvx")" = "NEW" ]; check "nvx is the new binary" $?
+
+echo "A gh that is too old, or not signed in, skips rather than fails the install:"
+run prov-old GH_OLD=1
+check "old gh succeeds" "$status"
+grep -q "Provenance check skipped" "$WORK/out-prov-old"; check "old gh says it skipped" $?
+run prov-noauth GH_NOAUTH=1
+check "signed-out gh succeeds" "$status"
+grep -q "Provenance check skipped" "$WORK/out-prov-noauth"; check "signed-out gh says it skipped" $?
+! grep -q "attestation verify .*nvx.download" "$GH_LOG"; check "signed-out gh was not asked to verify" $?
+
+echo "A checksum mismatch still fails before gh is asked:"
+echo "0000000000000000000000000000000000000000000000000000000000000000  nvx" > "$SERVE/sums"
+run prov-mismatch
+[ "$status" -ne 0 ]; check "fails" $?
+! grep -q "nvx.download" "$GH_LOG"; check "gh was not asked to verify" $?
 echo "$(sha "$SERVE/bin")  nvx" > "$SERVE/sums"
 
 echo "An unsupported CPU is refused rather than given the amd64 binary:"
