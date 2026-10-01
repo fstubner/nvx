@@ -39,7 +39,10 @@ func resolvePinnedCommandPath(command string, nvxHome string, pinnedVer string, 
 }
 
 func (n NodeProvider) ShimCommands() []string {
-	return []string{"node", "npm", "npx", "yarn", "pnpm"}
+	// corepack runs pnpm and yarn inside its own node process, so nothing it
+	// runs comes back through a shim. Unwrapped, `corepack pnpm add x` was an
+	// install nvx never saw.
+	return []string{"node", "npm", "npx", "yarn", "pnpm", "corepack"}
 }
 
 func (n NodeProvider) SandboxImage(version string) string {
@@ -86,10 +89,12 @@ func (n NodeProvider) ResolveBinary(cmd string, nvxHome string, pinnedVer string
 			binaryPath = filepath.Join(versionDir, "npm.cmd")
 		case "npx":
 			binaryPath = filepath.Join(versionDir, "npx.cmd")
+		case "corepack":
+			binaryPath = filepath.Join(versionDir, "corepack.cmd")
 		}
 	} else {
 		switch cmd {
-		case "node", "npm", "npx":
+		case "node", "npm", "npx", "corepack":
 			binaryPath = filepath.Join(versionDir, "bin", cmd)
 		}
 	}

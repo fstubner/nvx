@@ -62,6 +62,16 @@ func nonRegistrySpecKind(spec string) string {
 	return ""
 }
 
+// isRemoteSourceSpec reports a spec npm fetches from somewhere other than the
+// registry or the local disk: a URL, a git URL or a hosted-repository shorthand.
+func isRemoteSourceSpec(spec string) bool {
+	switch nonRegistrySpecKind(spec) {
+	case "a URL", "a git URL", "a hosted-repository spec":
+		return true
+	}
+	return false
+}
+
 func isASCIILetter(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }

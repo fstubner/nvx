@@ -38,7 +38,7 @@ var nodeSandboxPreserveFlags = []string{"--preserve-symlinks-main", "--preserve-
 // container.
 func rewriteWindowsNodeCommand(cmdPath string, args []string, nodeExeFallback string) (string, []string) {
 	switch strings.ToLower(filepath.Base(cmdPath)) {
-	case "npm.cmd", "npx.cmd":
+	case "npm.cmd", "npx.cmd", "corepack.cmd":
 		nodeExe, cliPath, ok := windowsNpmCliLaunch(cmdPath, nodeExeFallback)
 		if !ok {
 			return cmdPath, args
