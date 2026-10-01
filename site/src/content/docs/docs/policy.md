@@ -63,7 +63,7 @@ trust boundary ignore `-y`/`NVX_YES` entirely (see [Commands](/docs/commands/#po
 Policies cascade: the global policy applies everywhere, and local policy files merge over it as you get closer to the working directory (the nearest policy wins on conflicting settings; blocklists and trusted packages are unioned).
 
 ## Reference
-* **`enforce_ignore_scripts`**: When `true`, this forces npm/yarn/pnpm to install packages with `--ignore-scripts`. This blocks execution of hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine.
+* **`enforce_ignore_scripts`**: When `true`, nvx refuses to install a package that has hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine. The refusal comes before the package manager starts, so passing `--ignore-scripts` yourself does not change it. Name the package in `install_scripts.trusted_packages` to let it through.
 * **Per-check exemptions.** Every install-time check applies to every package
   until a policy names an exception, and each list waives only its own check —
   naming a package in one never affects another. Adding an entry to any of them is
@@ -88,6 +88,14 @@ Policies cascade: the global policy applies everywhere, and local policy files m
     could not rate stops the install at every floor — the rating comes from a
     network lookup, so a failed one must never be why a finding slipped under the
     line — and an unrecognised value is no floor at all, reported at load time.
+* **What the audit log holds for these checks.** Every check above that would
+  have prompted is written to `~/.nvx/audit.log`, whether a person answered it,
+  `-y`, `--agent-mode` or `NVX_YES` approved it without asking, or nobody was there
+  and it was refused. `nvx audit` shows these as `check_approved` and
+  `check_refused`, with the check, the package and who answered. They are written
+  whatever `NVX_TRACE` says, and an approval nobody was asked about also prints one
+  line to stderr. A refusal prints the policy line that settles that one check,
+  and names `-y` and `NVX_YES` last, because they approve every check in the run.
 * **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary). See the [enforcement matrix](https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md) for exact guarantees.
   - `native` (default): AppContainer (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Zero-config, fail-closed.
   - `docker`: runs in a container (hardened; `offline`/`loopback` enforced via `--network none`). Requires Docker running. Does not carry `--connect`, and says so when asked: the relay needs a process of nvx's inside the sandbox, and this provider launches the target command as the container's only process.

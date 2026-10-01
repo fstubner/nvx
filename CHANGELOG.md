@@ -159,6 +159,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`-y`, `--agent-mode` and `NVX_YES` no longer approve pre-install checks
+  silently.** The typosquat, release-age, install-script, known-advisory and
+  "could not check" prompts were answered with no output and no audit record, so
+  `nvx audit` read "No audit records yet" after an install that had gone past all
+  of them. Every one of these checks now writes a `check_approved` or
+  `check_refused` record, however it was answered and whatever `NVX_TRACE` says.
+  An approval nobody was asked about also prints one line to stderr that names it.
+
+  A refusal now names the narrowest fix first, as the exact policy line to add,
+  and mentions `-y` and `NVX_YES` last. That covers `typosquatting.trusted_packages`,
+  `release_age.trusted_packages`, `install_scripts.trusted_packages`,
+  `vulnerabilities.allowed_advisories` and `min_severity`, and
+  `isolation.network.allow_hosts` for a refused host. The `enforce_ignore_scripts`
+  refusal used to say to run with `--ignore-scripts`, which does not get past it,
+  and now says what does. The reply sent to an MCP client and SECURITY.md follow
+  the same order.
+
+  A failed weekly-download lookup (a 429, a proxy block, no network) used to fall
+  back to name similarity without saying so. The prompt now says the lookup failed
+  and that the result is a name-similarity guess. A name on nvx's popular-package
+  list is warned about instead of flagged. A name on no list is checked as before.
+
 * **Cleanup no longer removes a running session's files on Windows.** A session
   whose owning process nvx could not open, such as an elevated one, was read as
   finished, and its home could be deleted while it ran. A trusted tool's
