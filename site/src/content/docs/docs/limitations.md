@@ -41,6 +41,27 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   checked against `blocked_packages` by the name they install under. The
   typosquat, advisory and release-age checks look a package up in the registry,
   and these are not in it.
+- **Packages from a registry other than the public one get no typosquat or
+  advisory check.** Both ask a public service about a package by name, so nvx
+  does not send them a private name. A registry that proxies the public one,
+  such as an Artifactory or Nexus virtual repository, counts as another
+  registry, so these two checks do not run for anything it serves. The
+  blocklist, release-age, install-script and lockfile checks still run against
+  that registry's metadata. Each run that skips them says so once.
+- **A contained npm reads only the project's `.npmrc`.** It gets a fresh home
+  and none of your `npm_config_*` variables, so a registry or scope set in
+  `~/.npmrc` does not apply inside the sandbox, and nvx checks those packages
+  against the registry the contained npm will actually use. Put the registry in
+  the project's `.npmrc` and its host in `isolation.network.allow_hosts`. Your
+  `_authToken` never reaches the sandbox either, so a registry that needs one
+  for downloads cannot serve a contained install. nvx reads registries from `.npmrc`
+  only, so yarn's `.yarnrc.yml` and bun's `bunfig.toml` settings do not change
+  where the checks look.
+- **Only an `http://` upstream proxy is used.** An `https://` or `socks5://`
+  value in `HTTPS_PROXY` is ignored with a warning, and contained connections
+  are then made directly. Behind a proxy, a host nvx's own resolver cannot look
+  up is still reachable when the allowlist names it, but it cannot be approved
+  at the prompt.
 - **On Windows, a loopback exemption left by an `nvx setup` older than 0.5.0
   opens every service on 127.0.0.1** to contained code, whatever the allowlist
   says. Newer versions never add one. Removing it needs an Administrator

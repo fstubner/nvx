@@ -708,7 +708,7 @@ Commands:
   use <[rt@]version>       Switch the current terminal session to a runtime version
   default <[rt@]version>   Set the global default for a runtime (creates a link)
   list, ls                 List installed runtimes and versions
-  list-remote, ls-remote   List available Node.js versions from nodejs.org
+  list-remote, ls-remote   List Node.js versions on nodejs.org or NVX_NODE_MIRROR
   env [--shell=<type>]     Print shell integration script (powershell, bash, zsh)
   auto [--shell=<type>]    Auto-switch runtimes from .nvmrc / .node-version /
                            .bun-version / package.json
@@ -783,7 +783,14 @@ Environment:
                          host, trusting a tool or a project policy. -y and
                          --agent-mode deliberately do not
   NVX_HOME=<dir>         Use a different nvx home instead of ~/.nvx
-  NO_COLOR=1             No colour codes in output. They are also left out
+  NVX_NODE_MIRROR=<url>  Fetch Node.js from this mirror instead of
+                         https://nodejs.org/dist. NVM_NODEJS_ORG_MIRROR and
+                         FNM_NODE_DIST_MIRROR are read too. A mirror is
+                         trusted as nodejs.org is
+  HTTPS_PROXY=<url>      Your own proxy. Contained connections the allowlist
+                         permits go through it (or HTTP_PROXY), apart from
+                         NO_PROXY hosts
+  NO_COLOR=1           No colour codes in output. They are also left out
                          whenever the output is not a terminal
 
 Examples:
@@ -1245,7 +1252,7 @@ func runListRemote(query string) {
 		}
 	}
 
-	LogInfo("Fetching remote release list from nodejs.org...")
+	LogInfo("Fetching remote release list from %s...", nodeDistBase())
 	releases, err := FetchReleases()
 	if err != nil {
 		LogError("Error fetching releases: %v", err)
@@ -1946,16 +1953,25 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 }
 
 // runVerifyTargets is runVerifyInstall over targets, which can carry what a
-// lockfile says about each package.
+// lockfile says about each package. It reads the registries an npm run outside
+// the sandbox would use.
 func runVerifyTargets(targets []verifyTarget, nvxHome string) (int, string) {
+	return runVerifyTargetsWith(targets, nvxHome, loadNpmRegistryConfig(projectManifestDir(), false))
+}
+
+// runVerifyTargetsWith runs the checks with each package looked up on the
+// registry regs names for it.
+func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegistryConfig) (int, string) {
 	policy, err := LoadPolicy(nvxHome)
 	if err != nil {
 		LogError("Failed to load security policy: %v", err)
 		return 1, "its security policy could not be read"
 	}
 
+	setCheckRegistries(regs)
 	popularList := LoadPopularPackages(nvxHome)
 	var osvQueries []OSVQuery
+	reportPublicOnlyChecksSkipped(nvxHome, targets, regs)
 	details := prefetchVerifyDetails(targets)
 
 	for _, t := range targets {
@@ -1987,8 +2003,13 @@ func runVerifyTargets(targets []verifyTarget, nvxHome string) (int, string) {
 			return 1, blockedReason
 		}
 
+		// The download counts and OSV describe the public registry, and both
+		// are asked by package name. A package from another registry is not the
+		// one they describe, and its name is not sent to them.
+		public := isPublicNpmRegistry(regs.registryFor(pkgName))
+
 		// 2. Typosquatting Check
-		if policy.Typosquatting.Enabled && !policy.IsTrustedPackage(pkgName) {
+		if public && policy.Typosquatting.Enabled && !policy.IsTrustedPackage(pkgName) {
 			maxDist := policy.Typosquatting.MaxDistance
 			if maxDist <= 0 {
 				maxDist = 2
@@ -2135,10 +2156,12 @@ func runVerifyTargets(targets []verifyTarget, nvxHome string) (int, string) {
 			}
 		}
 
-		osvQueries = append(osvQueries, OSVQuery{
-			Package: OSVPackage{Name: pkgName, Ecosystem: "npm"},
-			Version: resolvedVer,
-		})
+		if public {
+			osvQueries = append(osvQueries, OSVQuery{
+				Package: OSVPackage{Name: pkgName, Ecosystem: "npm"},
+				Version: resolvedVer,
+			})
+		}
 	}
 
 	// 5. Batch Vulnerability Scan (CVEs / OSV database)

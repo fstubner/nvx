@@ -72,6 +72,25 @@ and run scripts. Its defenses are layered:
    there, and pnpm, yarn and bun lockfiles are not read. A package from git, a
    URL or a local path is checked against `blocked_packages` by the name it
    installs under, and skips the other checks.
+
+   nvx makes the lookups itself, outside the sandbox. These are the hosts it
+   contacts for them.
+
+   - The registry npm will fetch each package from, read from `.npmrc` and
+     `npm_config_*` as npm reads them. For a contained install that is the
+     project's `.npmrc` only, because the contained npm reads nothing else.
+   - `api.npmjs.org` for weekly download counts, when a public-registry
+     package's name is close to a popular one.
+   - `api.osv.dev` for advisories on public-registry packages.
+   - `cdn.jsdelivr.net` for the popular-package list, once the cached copy is
+     7 days old.
+
+   A package from any registry other than `registry.npmjs.org` is
+   never sent to `api.npmjs.org` or `api.osv.dev`, and skips the typosquat and
+   advisory checks. The run says so in one line and the audit log records
+   `check_skipped`. When `.npmrc` holds an `_authToken` for a package's
+   registry, nvx sends it with that metadata request and nowhere else. It is
+   not put in the sandbox's environment or written to any log.
 3. **Process isolation** — commands that fetch or execute package-authored code
    run inside an OS-native sandbox (Windows AppContainer, Linux Landlock +
    network namespace + seccomp, macOS Seatbelt) with a scrubbed environment and
@@ -87,7 +106,11 @@ and run scripts. Its defenses are layered:
    distinction until 0.5.6, which was less careful than README on the same point.
 4. **Egress control** — outbound network access is mediated by a loopback
    allowlist proxy; unknown hosts are denied or prompted (fail-closed when
-   non-interactive).
+   non-interactive). When nvx's own environment sets `HTTPS_PROXY` or
+   `HTTP_PROXY`, an allowed connection is forwarded through that proxy, with
+   `NO_PROXY` and loopback destinations dialled directly. The allowlist decides
+   before anything is forwarded. The upstream proxy resolves the name itself,
+   so nvx's link-local check covers only what nvx's own resolver returned.
 
 **Design stance:** security-relevant failures **fail closed**. If a sandbox
 primitive is unavailable or a policy cannot be parsed, nvx refuses to run the
@@ -100,7 +123,10 @@ These are deliberate, documented trade-offs — not undisclosed weaknesses:
 - **Same-origin checksums.** Runtime archives and their `SHASUMS256.txt` are
   fetched from the same publisher over HTTPS. This detects corruption and
   tampering in transit but is not an independent second-channel signature
-  (e.g. GPG). Independent signature verification is on the roadmap.
+  (e.g. GPG). Independent signature verification is on the roadmap. With
+  `NVX_NODE_MIRROR` (or `NVM_NODEJS_ORG_MIRROR`, `FNM_NODE_DIST_MIRROR`) set,
+  the archives and checksums both come from that mirror, so the mirror is
+  trusted exactly as nodejs.org is.
 - **Network enforcement is weakest on macOS.** On Linux a loopback-only network
   namespace plus seccomp genuinely block raw sockets and non-proxied DNS; on
   Windows the AppContainer holds no network capability, so the OS refuses direct

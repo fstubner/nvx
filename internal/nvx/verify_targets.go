@@ -115,7 +115,10 @@ func verifyBeforeRun(req verifyRequest) (int, string, string) {
 	if len(targets) == 0 {
 		return 0, "", ""
 	}
-	code, reason := runVerifyTargets(targets, req.nvxHome)
+	// The registries this command's own npm will read: a contained npm sees
+	// the project's .npmrc only. See npm_registry.go.
+	regs := loadNpmRegistryConfig(projectManifestDir(), req.contain)
+	code, reason := runVerifyTargetsWith(targets, req.nvxHome, regs)
 	return code, reason, targets[0].spec
 }
 
