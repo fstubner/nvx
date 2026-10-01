@@ -2,7 +2,10 @@
 
 package nvx
 
-import "os/exec"
+import (
+	"os/exec"
+	"sync/atomic"
+)
 
 // runDirectChild runs an uncontained runtime to completion.
 //
@@ -12,13 +15,21 @@ import "os/exec"
 // also covers nvx being killed outright, which is how the leak it fixes was
 // actually produced: nvx was gone a second after its client, before the
 // watchdog's first poll, and the child ran on for ever.
+//
+// The tree is reaped only when nvx ended the command. A command that exits on
+// its own keeps whatever it deliberately left running, as it would without nvx.
 func runDirectChild(cmd *exec.Cmd) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	defer superviseDirectChild(cmd.Process.Pid)()
+	var ended atomic.Bool
+	finish := superviseDirectChild(cmd.Process.Pid)
+	defer func() { finish(ended.Load()) }()
 
-	setActiveChildKiller(func() { _ = cmd.Process.Kill() })
+	setActiveChildKiller(func() {
+		ended.Store(true)
+		_ = cmd.Process.Kill()
+	})
 	defer setActiveChildKiller(nil)
 
 	return cmd.Wait()
