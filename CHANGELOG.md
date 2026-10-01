@@ -159,6 +159,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **On Linux, a contained process can no longer reach the host's UNIX sockets.**
+  Landlock below ABI v9 does not restrict connecting to a UNIX socket by path, so
+  a contained process could open `/var/run/docker.sock` or any other socket on
+  the machine while its writes stayed blocked. The sandbox now sees only the
+  directories it is granted, and every other path on the host is absent from
+  it. nvx's own proxy and `--connect` sockets live in the sandbox's home and keep
+  working. On kernels with Landlock ABI v9, sockets in the system and runtime
+  directories are refused as well.
 * **`-y`, `--agent-mode` and `NVX_YES` no longer approve pre-install checks
   silently.** The typosquat, release-age, install-script, known-advisory and
   "could not check" prompts were answered with no output and no audit record, so
