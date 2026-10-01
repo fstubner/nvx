@@ -271,10 +271,30 @@ var weeklyDownloads = GetWeeklyDownloads
 
 // CheckTyposquattingAuthority dynamically compares weekly downloads to detect typosquatting threats
 func CheckTyposquattingAuthority(pkgName string, popularList []string, maxDist int) string {
+	return assessTyposquat(pkgName, popularList, maxDist).suspect
+}
+
+// typosquatVerdict is what assessTyposquat found, with the evidence the prompt
+// shows. lookupErr is set when the verdict rests on name similarity alone
+// because a weekly-download lookup failed.
+type typosquatVerdict struct {
+	suspect          string
+	pkgDownloads     int
+	suspectDownloads int
+	lookupErr        error
+}
+
+// assessTyposquat is CheckTyposquattingAuthority with the evidence kept.
+//
+// The download lookup used to fail into a bare "flag on name similarity", and
+// the prompt that followed said nothing about it. A 429, a proxy block or no
+// network at all therefore looked the same as a measured squat, and a
+// legitimate package was reported as one with no way to tell why.
+func assessTyposquat(pkgName string, popularList []string, maxDist int) typosquatVerdict {
 	pkgName = strings.ToLower(strings.TrimSpace(pkgName))
 	for _, popular := range popularList {
 		if pkgName == popular {
-			return "" // exact match is always authoritative
+			return typosquatVerdict{} // exact match is always authoritative
 		}
 	}
 
@@ -308,14 +328,37 @@ func CheckTyposquattingAuthority(pkgName string, popularList []string, maxDist i
 			// Authority threshold: if the target is high-popularity
 			// AND it has more than 100x the weekly downloads of the installed package, it's a typosquat
 			if suspectDownloads > popularityFloor && suspectDownloads > 100*pkgDownloads {
-				return popular
+				return typosquatVerdict{suspect: popular, pkgDownloads: pkgDownloads, suspectDownloads: suspectDownloads}
 			}
 		} else {
-			// Fallback if offline/API fails: flag on name similarity
-			return popular
+			lookupErr := errPkg
+			if lookupErr == nil {
+				lookupErr = errSus
+			}
+			// A name on nvx's own popular list is established by construction.
+			// When the fetched list replaced the embedded one, a name only the
+			// embedded list holds (`redis` beside a fetched `ioredis`) reached
+			// this fallback and was called a squat of its neighbour because a
+			// request failed. Warn and move on; the names no list holds keep the
+			// strict result below.
+			if inEmbeddedPopularList(pkgName) {
+				LogWarn("Could not look up weekly downloads (%v), so the typosquat check for %s rests on name similarity alone. It is on nvx's popular-package list, so it is not being flagged.", lookupErr, pkgName)
+				continue
+			}
+			// Fallback if offline/API fails: flag on name similarity, and say so.
+			return typosquatVerdict{suspect: popular, lookupErr: lookupErr}
 		}
 	}
-	return ""
+	return typosquatVerdict{}
+}
+
+func inEmbeddedPopularList(name string) bool {
+	for _, popular := range EmbeddedPopularPackages {
+		if name == popular {
+			return true
+		}
+	}
+	return false
 }
 
 // popularityFloor is the weekly-download count above which a package is treated
