@@ -100,7 +100,7 @@ func TestRelayDoesNotExposeHostLoopbackServices(t *testing.T) {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
-	sock := windowsEgressSocketPath(guestHome)
+	sock := windowsEgressSocketPath(guestHomeSocketPrefix(guestHome))
 	if err := proxy.ListenUnix(sock); err != nil {
 		// GitHub-hosted Windows runners cannot create AF_UNIX sockets at all
 		// ("An operation was attempted on something that is not a socket"). That

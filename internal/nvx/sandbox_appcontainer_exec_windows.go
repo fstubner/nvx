@@ -242,14 +242,18 @@ func runAppContainerExecChild(a supervisorExecArgs) int {
 	relayCtx, cancelRelay := context.WithCancel(context.Background())
 	defer cancelRelay()
 
+	sockets := a.SocketPrefix
+	if sockets == "" {
+		sockets = guestHomeSocketPrefix(a.GuestHome)
+	}
 	// Publish any exposed ports before the target starts, so a dev server that
 	// prints its URL immediately is reachable by the time anyone reads it.
 	for _, port := range a.ExposePorts {
-		startExposeTunnels(relayCtx, a.GuestHome, port)
+		startExposeTunnels(relayCtx, sockets, port)
 	}
 	// And the way out to the host services this run was granted.
 	for _, m := range a.ConnectPorts {
-		if _, err := startConnectListeners(relayCtx, a.GuestHome, m); err != nil {
+		if _, err := startConnectListeners(relayCtx, sockets, m); err != nil {
 			// Fail closed: the target would otherwise start believing it can reach
 			// a service it cannot, and fail somewhere less legible.
 			LogError("Could not open the path to 127.0.0.1:%d inside the sandbox: %v", m.Host, err)
