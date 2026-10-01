@@ -1042,10 +1042,8 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 // another runtime version, which only the command itself should do.
 func directCommand(cmdName string, args []string, nvxHome string, warnPin bool) (*exec.Cmd, error) {
 	rt := runtimeForShim(cmdName)
-	activeVer := getActiveShellVersionFor(nvxHome, rt.Name())
-	if activeVer == "" {
-		activeVer = getGlobalDefaultVersionFor(nvxHome, rt.Name())
-	}
+	pin := projectPinFor(rt)
+	activeVer := sessionRuntimeVersion(nvxHome, rt, pin)
 
 	binaryPath := resolvePinnedCommandPath(cmdName, nvxHome, activeVer, rt)
 	if binaryPath == "" {
@@ -1062,7 +1060,7 @@ func directCommand(cmdName string, args []string, nvxHome string, warnPin bool) 
 	}
 	binaryPath = preferWindowsRuntimeExe(binaryPath)
 	if warnPin {
-		warnIfProjectPinsAnotherVersion(nvxHome, rt, activeVer, binaryPath)
+		warnIfProjectPinsAnotherVersion(nvxHome, rt, pin, activeVer, binaryPath)
 	}
 
 	// Windows: launch npm/npx as node.exe rather than through cmd.exe, and let
@@ -1183,7 +1181,8 @@ func firstVersionLine(content []byte) string {
 	return ""
 }
 
-// DetectVersionConfig scans the current directory and ascends to root looking for Node version indicators
+// DetectVersionConfig scans the current directory and ascends to the root, or
+// to the user's home when it starts below it, looking for Node version indicators.
 func DetectVersionConfig(startDir string) (version string, sourceFile string, err error) {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
@@ -1223,11 +1222,9 @@ func DetectVersionConfig(startDir string) (version string, sourceFile string, er
 			}
 		}
 
-		parent := filepath.Dir(dir)
-		if parent == dir {
+		if dir = nextVersionSearchDir(dir); dir == "" {
 			break
 		}
-		dir = parent
 	}
 
 	return "", "", nil
@@ -1422,46 +1419,38 @@ func copyWholeFile(src, dst string) error {
 // warnIfProjectPinsAnotherVersion says so when the project declares a runtime
 // version and the command is about to run a different one.
 //
-// nvx switches versions through the shell integration: the hook sets PATH on
-// `cd`, and the shim then runs whatever that made active. Without the hook
-// loaded there is nothing to switch, so the shim resolves the global default
-// or, failing that, whatever `node` is on PATH -- which may be any version at
-// all.
+// The shim runs the project's pinned version when it is installed (see
+// sessionRuntimeVersion), so this is left with two cases. The pin is not
+// installed and the default ran, which `nvx install` fixes. Or this shell has
+// another version active, which `nvx use` put there and someone meant, so it is
+// stated and left alone.
 //
-// An acceptance pass found the consequence on 2026-09-03: in a project whose
+// An acceptance pass found the cost of silence on 2026-09-03: in a project whose
 // .nvmrc pinned 22, with only v22.23.2 installed, `nvx node -v` ran an ambient
-// v24.14.1 and said nothing. `nvx use` already warns loudly when its output is
-// not evaluated; the shim, which is what people actually run all day, did not.
-// For a version manager, silently running the version the project pinned
-// AGAINST is the core job going wrong.
-//
-// A warning and not a switch, deliberately. Which version wins when a shell
-// says one thing and a file says another is a real decision -- someone who ran
-// `nvx use 24` in this shell meant it -- and quietly overriding them would be a
-// different bug of the same kind. This states the disagreement and leaves it
-// to the person.
-func warnIfProjectPinsAnotherVersion(nvxHome string, rt RuntimeProvider, activeVer, binaryPath string) {
+// v24.14.1 and said nothing. For a version manager, silently running the
+// version the project pinned AGAINST is the core job going wrong.
+func warnIfProjectPinsAnotherVersion(nvxHome string, rt RuntimeProvider, pin projectPin, activeVer, binaryPath string) {
 	// Node only: .nvmrc and friends name Node versions, and a bun run has no
 	// business being judged against them.
-	if rt == nil || rt.Name() != "node" || binaryPath == "" {
+	if rt == nil || rt.Name() != "node" || binaryPath == "" || pin.query == "" {
 		return
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-	want, source, err := DetectVersionConfig(cwd)
-	if err != nil || want == "" {
-		return
-	}
+	want := pin.query
 	running := runtimeVersionOfBinary(nvxHome, binaryPath, activeVer)
 	if running == "" || versionSatisfies(nvxHome, running, want) {
 		return
 	}
-	LogWarn("%s asks for %s %s, but this command is running %s.",
-		filepath.Base(source), rt.Name(), want, running)
-	LogInfo("nvx switches versions through the shell integration, which is not active here. " +
-		"Load it (see 'nvx env'), or run 'nvx use " + want + "' in this shell.")
+	file := filepath.Base(pin.source)
+	LogWarn("%s asks for %s %s, but this command is running %s.", file, rt.Name(), want, running)
+	_, err := resolveLocalVersion(rt, want, nvxHome)
+	switch {
+	case err == nil:
+		LogInfo("This shell has %s active. Run 'nvx use' to switch it to the version %s asks for.", running, file)
+	case isUnsupportedRange(err):
+		LogInfo("nvx cannot read that version: %v", err)
+	default:
+		LogInfo("%s %s is not installed. Run 'nvx install %s' and the next run uses it.", runtimeDisplayName(rt.Name()), want, want)
+	}
 }
 
 // runtimeVersionOfBinary names the version a resolved runtime binary belongs

@@ -325,11 +325,9 @@ func (b BunProvider) DetectConfig(dir string) (version string, sourceFile string
 			}
 		}
 
-		parent := filepath.Dir(d)
-		if parent == d {
+		if d = nextVersionSearchDir(d); d == "" {
 			break
 		}
-		d = parent
 	}
 	return "", "", nil
 }

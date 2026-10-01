@@ -84,7 +84,7 @@ func TestTheShimSaysWhenTheProjectAsksForAnotherVersion(t *testing.T) {
 
 	node := runtimeForShim("node")
 	got := captureStderrHere(t, func() {
-		warnIfProjectPinsAnotherVersion(nvxHome, node, "v22.23.2", running)
+		warnIfProjectPinsAnotherVersion(nvxHome, node, projectPinFor(node), "v22.23.2", running)
 	})
 	if !strings.Contains(got, ".nvmrc") || !strings.Contains(got, "20") {
 		t.Errorf("the project asked for 20 and v22.23.2 ran; nvx said nothing useful:\n%s", got)
@@ -99,7 +99,7 @@ func TestTheShimSaysWhenTheProjectAsksForAnotherVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if quiet := captureStderrHere(t, func() {
-		warnIfProjectPinsAnotherVersion(nvxHome, node, "v22.23.2", running)
+		warnIfProjectPinsAnotherVersion(nvxHome, node, projectPinFor(node), "v22.23.2", running)
 	}); strings.TrimSpace(quiet) != "" {
 		t.Errorf("a project pinned to 22 running v22.23.2 produced output:\n%s", quiet)
 	}
@@ -109,7 +109,7 @@ func TestTheShimSaysWhenTheProjectAsksForAnotherVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if quiet := captureStderrHere(t, func() {
-		warnIfProjectPinsAnotherVersion(nvxHome, node, "v22.23.2", running)
+		warnIfProjectPinsAnotherVersion(nvxHome, node, projectPinFor(node), "v22.23.2", running)
 	}); strings.TrimSpace(quiet) != "" {
 		t.Errorf("a project declaring no version produced output:\n%s", quiet)
 	}
@@ -137,7 +137,7 @@ func TestThePinWarningDoesNotReadAPackageManagersVersion(t *testing.T) {
 	}
 
 	got := captureStderrHere(t, func() {
-		warnIfProjectPinsAnotherVersion(nvxHome, runtimeForShim("npm"), "", npm)
+		warnIfProjectPinsAnotherVersion(nvxHome, runtimeForShim("npm"), projectPinFor(runtimeForShim("npm")), "", npm)
 	})
 	if strings.Contains(got, "10.9.2") {
 		t.Fatalf("npm's own version was reported as the node version:\n%s", got)

@@ -64,10 +64,7 @@ func rewriteWindowsNodeCommand(cmdPath string, args []string, nodeExeFallback st
 // rewrite simply declines rather than guessing.
 func resolveSandboxNodeExe(nvxHome string) string {
 	rt := runtimeForShim("node")
-	ver := getActiveShellVersionFor(nvxHome, rt.Name())
-	if ver == "" {
-		ver = getGlobalDefaultVersionFor(nvxHome, rt.Name())
-	}
+	ver := sessionRuntimeVersion(nvxHome, rt, projectPinFor(rt))
 	if ver == "" {
 		return ""
 	}

@@ -127,10 +127,9 @@ func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
 		}
 	}
 
-	activeVer := getActiveShellVersionFor(config.NvxHome, rt.Name())
-	if activeVer == "" {
-		activeVer = getGlobalDefaultVersionFor(config.NvxHome, rt.Name())
-	}
+	// Without a policy pin, the version the uncontained shim would run here,
+	// so containing a command never changes which runtime it gets.
+	activeVer := sessionRuntimeVersion(config.NvxHome, rt, projectPinFor(rt))
 	if p := resolvePinnedCommandPath(config.Command, config.NvxHome, activeVer, rt); p != "" {
 		return preferWindowsRuntimeExe(p)
 	}

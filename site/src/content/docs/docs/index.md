@@ -8,7 +8,8 @@ nvx does two jobs with one binary.
 **It manages runtimes.** Install, switch and pin Node.js and Bun per project, and
 switch automatically on `cd` from a `.nvmrc`, `.node-version` or `package.json`.
 Switching is scoped to the shell you run it in, so another terminal is unaffected
-until it reads the same pin.
+until it reads the same pin. The shims read the pin too, so an IDE task, a git
+hook or CI runs the project's version without any shell setup.
 
 **It contains what those runtimes install.** `npm install` executes code from
 strangers with your credentials within reach. nvx runs it inside the platform's
@@ -54,10 +55,9 @@ None of them certifies a package, which is why containment is the backstop.
   and `node` run uncontained at the `standard` isolation level, because that is
   code you wrote. `strict` extends containment to them, at the cost of breaking
   anything that needs unrestricted filesystem or network access.
-- **It does not contain every read on macOS.** Write containment and egress
-  control apply there, and the credential stores are denied by path. Other reads
-  are allowed, because the dynamic linker must read system libraries whose
-  locations vary by macOS version.
+- **It does not contain reads on macOS.** Write containment and egress control
+  apply there; credential reads do not, because the dynamic linker must read
+  system libraries whose locations vary by macOS version.
 
 :::caution[Read the enforcement matrix before relying on any of this]
 Guarantees differ by platform, and some rows are measured while others are read

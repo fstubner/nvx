@@ -78,8 +78,8 @@ go build -o nvx ./cmd/nvx
 
 - Puts `~/.nvx/bin` at the front of your user `PATH`.
 - Adds the shell integration line to your profile. That line is what makes
-  `nvx use` affect your shell and what switches runtimes on `cd`; without it
-  nvx still installs runtimes, but switching does nothing.
+  `nvx use` affect your shell and what switches `PATH` on `cd`. Without it the
+  shims still run the version each project pins, and `nvx use` does nothing.
 - On Windows, **asks before changing your PowerShell execution policy.**
   Declining still installs nvx — the shell integration then needs
   `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` before a profile can

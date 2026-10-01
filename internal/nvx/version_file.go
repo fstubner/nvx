@@ -61,10 +61,25 @@ func noteIgnoredVersionFiles(cwd string) {
 				LogInfo("Found devEngines.runtime in %s, which nvx does not read. nvx reads .nvmrc, .node-version, .bun-version and package.json engines.", pkg)
 			}
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
+		if dir = nextVersionSearchDir(dir); dir == "" {
 			return
 		}
-		dir = parent
 	}
+}
+
+// nextVersionSearchDir is the directory to look in after dir when searching
+// upward for a version file, or "" when the search ends: at the filesystem root
+// or after the user's home directory. A file above home belongs to no project of
+// this user's, and the shim does this search on every run.
+func nextVersionSearchDir(dir string) string {
+	parent := filepath.Dir(dir)
+	if parent == dir {
+		return ""
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rel, err := filepath.Rel(home, dir); err == nil && rel == "." {
+			return ""
+		}
+	}
+	return parent
 }

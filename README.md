@@ -27,8 +27,8 @@ write. Other sandboxes need `theirtool run -- npm install`, and an agent will no
 remember to type it.
 
 It is also a Node.js and Bun version manager, because it has to be. The shims that
-intercept the toolchain are the same ones that switch runtimes on `cd`. If you use
-nvm, fnm or volta today, nvx replaces them.
+intercept the toolchain also run the version each project pins, in a terminal, an
+IDE task, a git hook or CI. If you use nvm, fnm or volta today, nvx replaces them.
 
 ## Why this exists
 

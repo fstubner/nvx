@@ -34,6 +34,13 @@ func TestMain(m *testing.M) {
 		fmt.Print(out)
 		os.Exit(0)
 	}
+	// A test that installs this binary as a stand-in runtime asks it to print
+	// the path it was started from. That path names the version the shim chose.
+	if os.Getenv("NVX_TEST_FAKE_RUNTIME") == "1" {
+		exe, _ := os.Executable()
+		fmt.Println(exe)
+		os.Exit(0)
+	}
 	// One early, legible failure instead of four late confusing ones when
 	// NVX_HOME cannot hold an AF_UNIX socket. See probeSocketHeadroomProblem.
 	//
