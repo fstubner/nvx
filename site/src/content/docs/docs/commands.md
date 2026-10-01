@@ -11,9 +11,9 @@ Run `nvx help <command>` for any of these.
 
 | Command | What it does |
 | --- | --- |
-| `nvx install <version>` | Install a Node.js or Bun version. Accepts `22`, `lts`, `latest`, a range, or whatever a `.nvmrc` says. |
-| `nvx use <version>` | Switch this shell to a version. |
-| `nvx default <version>` | Set the version new shells start on. |
+| `nvx install <version>` | Install a Node.js or Bun version. Accepts `22`, `lts`, `latest`, a range, or whatever a `.nvmrc` says. With no version it installs what the project's `.nvmrc`, `.node-version` or `package.json` asks for. The first version you install becomes the default. |
+| `nvx use <version>` | Switch this shell to a version. With no version it switches to the one the project asks for. Aliases such as `lts/*`, `lts/iron`, `node` and `stable` work in a `.nvmrc` and on the command line. |
+| `nvx default <version>` | Set the version new shells start on. Only the shim directory needs to be on `PATH`. |
 | `nvx list` | Installed versions. `nvx list-remote` lists what is available. |
 | `nvx uninstall <version>` | Remove an installed version. |
 | `nvx auto` | Switch to the version this directory pins. |
@@ -164,6 +164,8 @@ Options:
                            egress host, trusting a tool or a project policy.
                            -y and --agent-mode deliberately do not
   NVX_HOME=<dir>           (env) Use a different nvx home instead of ~/.nvx
+  NO_COLOR=1               (env) No colour codes in output. They are also left
+                           out whenever the output is not a terminal
 ```
 
 ## Exit codes

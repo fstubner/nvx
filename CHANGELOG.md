@@ -220,6 +220,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it. nvx's own proxy and `--connect` sockets live in the sandbox's home and keep
   working. On kernels with Landlock ABI v9, sockets in the system and runtime
   directories are refused as well.
+
+* **The first `nvx install` now becomes the default version.** With no default
+  set, `node` ran an unrelated system node or failed with "Could not find real
+  executable for node" and no hint. The first version installed for a runtime is
+  now its default. Installing a version that is not the default says how to switch to it, with `nvx use
+  <version>` for this shell and `nvx default <version>` for new shells.
+  `nvx doctor` also exits non-zero when no runtime is available behind `node`,
+  `npm` or `npx`, where it used to report that nvx was intercepting correctly.
+
+* **zsh switches version as soon as a terminal opens inside a project.** The zsh
+  hook only ran on a directory change, so the project's version applied after the
+  first `cd`. The integration now runs the hook once when it loads, which matches
+  bash.
+
+* **A `.nvmrc` with `lts/*` or `lts/<codename>` no longer prints a false "shell
+  integration is not active" warning.** Every `node`, `npm` and `npm run` in such
+  a project warned, even with the right version running. The aliases are now
+  resolved against the installed versions, so a pin that is satisfied gives no
+  warning.
+
+* **`nvx install` and `nvx use` with no version read the project's version file.**
+  They answered "Please specify a version" in a directory whose `.nvmrc` named one.
+  They now read `.nvmrc`, `.node-version`, `.bun-version` and `package.json`
+  the way `nvx auto` does. `node` and `stable` now mean the newest version, as in
+  nvm, and `nvx use iron` accepts an LTS codename for an installed version. When
+  a `.tool-versions` file or `devEngines.runtime` is present, nvx says it does not
+  read it.
+
+* **`nvx default` no longer says to add the `current` link to PATH.** Only the
+  shim directory belongs on PATH, and a runtime directory ahead of it is what
+  `nvx doctor` reports as shadowing the shims.
+
+* **`nvx cleanup` and `nvx install` remove what an interrupted install left.**
+  A killed install left a `.tmp.<pid>` staging directory, its download and a lock,
+  and nothing removed them. Both commands now remove staging directories and
+  downloads whose process is gone, and locks nvx can prove are abandoned. Anything
+  whose process is still running, or whose owner cannot be read, stays.
+
+* **nvx refuses to install the glibc build on Alpine.** On a musl system the
+  install reported success and `node` then failed with `fork/exec ... no such file
+  or directory`. The install now stops and says the system uses musl and that nvx
+  has no musl build. nvx does not download musl builds.
+
+* **Colour codes and the download bar stay out of pipes and logs.** Output is
+  plain when it is not a terminal, and `NO_COLOR` is honoured. A download that is
+  not on a terminal prints a line per tenth of the file instead of a bar redrawn
+  with carriage returns. The text of the messages is unchanged.
+
 * **`-y`, `--agent-mode` and `NVX_YES` no longer approve pre-install checks
   silently.** The typosquat, release-age, install-script, known-advisory and
   "could not check" prompts were answered with no output and no audit record, so
