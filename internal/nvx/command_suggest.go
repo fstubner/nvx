@@ -131,8 +131,9 @@ func quickstartText() string {
 }
 
 // quickstartTextFor is quickstartText for one platform. The containment line
-// differs because macOS Seatbelt does not contain reads (docs/enforcement-matrix.md,
-// note 2), so "no access to your keys" was false there.
+// differs because macOS Seatbelt does not contain reads outside the credential
+// stores (docs/enforcement-matrix.md, note 2), so "no access to your keys or
+// other projects" was false there.
 func quickstartTextFor(goos string) string {
 	contained := "Runs contained: no access to your keys or other projects"
 	if goos == "darwin" {

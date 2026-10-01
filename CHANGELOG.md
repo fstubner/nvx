@@ -102,6 +102,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `runtime.versions` ahead of the file. The search for a version file now stops
   at your home directory.
 
+* **An npm install that brings in new packages now runs npm twice.** The first
+  run only resolves versions, so that each package can be checked before the
+  second run installs it. Measured 2026-10-01 on Windows, five runs each with
+  a 5-dependency project and no lockfile, `nvx npm install` took 5283 to 5573
+  ms, and 9950 ms on the first run. Without the resolution step it took 3064
+  to 3219 ms. `npm ci` and an
+  `npm install` whose lockfile matches `package.json` skip it. Because
+  dependencies are now checked, `enforce_ignore_scripts` refuses a dependency
+  with install scripts, and a dependency inside the release-age window prompts,
+  where before only the packages you named did.
 * **The installers check the download's build attestation when `gh` is present.**
   `install.sh` and `install.ps1` used to compare the download only with the
   `.sha256` file from the same release, which a replaced release could replace
@@ -182,6 +192,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The pre-install checks now run on every package an npm install brings in.**
+  They ran on the packages named on the command line, so `npm install tsx`
+  installed esbuild and ran its postinstall with no prompt, while `npm install
+  esbuild` asked first. Its release age was never looked at either. For `npm
+  install`, `npm update` and `npm dedupe`, nvx now runs npm's own resolver
+  first with `--package-lock-only --ignore-scripts`, contained like the
+  install, on a scratch copy of `package.json` and the lockfile. Every package
+  in the tree it writes gets the blocklist, typosquat, release-age,
+  install-script and advisory checks, with the same prompts as a package you
+  named, apart from those already installed at the same version. A failed resolution is asked about like a failed registry lookup, and
+  refused when nobody is there to answer. Projects with npm workspaces or a
+  dependency on a local folder are not resolved, and the run says so.
+
+* **A lockfile entry must now match the registry's record of its name and
+  version.** The checks read each entry's name and version and never its
+  `resolved` URL or `integrity` hash, which are what npm installs from. An
+  entry named left-pad@1.3.0 that pointed at the is-number tarball was checked
+  as left-pad and installed is-number. An entry's hash must now equal the
+  registry's hash for that name and version, or its URL must be the registry's
+  tarball when it has no hash. One that does not is refused. Entries from git, a
+  local path, or a URL the dependency asked for are reported as not
+  registry-checked.
+
+* **Without a lockfile, the checks read the version `package.json` declares.**
+  They read only the names, so esbuild pinned at 0.20.0 was checked as 0.28.2,
+  the newest release. A `file:`, `link:` or `workspace:` dependency was looked
+  up in the registry by name, so a local `evil-pkg` was flagged for an
+  unrelated registry package of that name. Each dependency is now checked at
+  its declared version or range, and local and workspace dependencies are not
+  looked up.
+
+* **`npm update`, `npm dedupe`, `npm rebuild`, `npm exec`, `npm create`, `npm
+  init <initializer>`, `pnpm dlx`, `yarn dlx` and `bun x` now get the
+  pre-install checks.** They were contained and checked nothing. `npm update`
+  and `npm dedupe` are resolved by npm as above. rebuild checks what the lockfile says
+  is installed. The runners check the package they run, as `npx` does, and
+  `create foo` checks `create-foo`. pnpm, yarn and bun update, upgrade, dedupe
+  and rebuild check the packages they name, or the project's declared
+  dependencies.
+
+* **`blocked_packages` now applies to packages that do not come from the
+  registry.** `left-pad@github:user/repo`, `left-pad@https://...` and a
+  registry tarball URL for left-pad all install left-pad, and none was compared
+  with the list. The name a spec installs under is now checked, from the
+  command line, from `package.json` and from the lockfile.
+
+* **An unreadable lockfile no longer sends the checks to `package.json`.** When
+  `package-lock.json` could not be parsed, nvx checked the newest version of
+  each name in `package.json` instead, and refused versions nobody was
+  installing. That is how `npm ci` in a docs site was stopped over
+  @astrojs/starlight 0.42.5 while its lockfile pinned 0.42.1. It is now asked
+  about like a failed registry lookup, and refused when nobody is there to
+  answer.
+
+* **On macOS a contained install can no longer read your credential files.**
+  The macOS sandbox allows filesystem reads so programs can load system
+  libraries, and that included `~/.npmrc`, `~/.ssh`, `~/.aws` and the other
+  places registry tokens, keys and cloud credentials live. Windows and Linux
+  already kept them out of reach. The macOS sandbox now refuses reads of the
+  npm, yarn, pnpm and bun config files, `~/.docker/config.json`, `~/.netrc`,
+  `~/.git-credentials`, and everything under `~/.ssh`, `~/.aws`, `~/.gnupg`,
+  `~/.config/gh`, `~/.kube`, `~/.config/gcloud`, `~/.azure` and
+  `~/Library/Keychains`. Other files outside the project stay readable on macOS.
 * **A contained install can no longer write the project's `.git`.** The project
   directory was writable as a whole, `.git` included, and git runs outside the
   sandbox. So a hook or a `.git/config` entry written by an install ran as you on
