@@ -51,13 +51,13 @@ jobs:
         shell: bash
         working-directory: site
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # check:changelog compares dated headings against tags; with the
           # default depth there are none and a dated-but-untagged version
           # cannot be caught.
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: site/.nvmrc
           # No `cache: npm` here. It was left off for the template's

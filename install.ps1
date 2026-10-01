@@ -117,6 +117,42 @@ function Test-NvxAffirmative {
     return $Answer -match '^\s*(y|yes)\s*$'
 }
 
+# Optional second check on a downloaded binary. The .sha256 file comes from the
+# same release as the binary, so it cannot tell a replaced release from a real
+# one. The build attestation is signed by release.yml and checked against
+# GitHub. It needs gh 2.49 or newer (the attestation command) and a signed-in
+# gh, so a gh that cannot run it skips the check instead of failing the install.
+# A gh that runs it and reports a failure throws.
+function Test-NvxProvenance {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$InstalledPath
+    )
+    $hint = "gh attestation verify $InstalledPath --repo fstubner/nvx"
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        Write-Host "Provenance check skipped: gh is not installed. To run it later: $hint"
+        return
+    }
+    # gh writes progress to stderr, which Stop turns into a terminating error.
+    $ErrorActionPreference = 'Continue'
+    & gh attestation verify --help *> $null
+    $canVerify = ($LASTEXITCODE -eq 0)
+    if ($canVerify) {
+        & gh auth status *> $null
+        $canVerify = ($LASTEXITCODE -eq 0)
+    }
+    if (-not $canVerify) {
+        Write-Host "Provenance check skipped: gh is too old or not signed in. To run it later: $hint"
+        return
+    }
+    Write-Host "Verifying build provenance..."
+    $output = & gh attestation verify $Path --repo fstubner/nvx 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        throw "Provenance verification failed: $($output.Trim())"
+    }
+    Write-Host "Build provenance verified."
+}
+
 # Verifies a downloaded nvx.exe against its published SHA-256 and moves it into
 # place, or throws and leaves Destination as it was.
 #
@@ -150,6 +186,7 @@ function Install-NvxDownloadedBinary {
         } else {
             throw "Checksum file not available. Refusing to install without verification."
         }
+        Test-NvxProvenance -Path $DownloadPath -InstalledPath $Destination
         Move-Item -Path $DownloadPath -Destination $Destination -Force
     } finally {
         Remove-Item $DownloadPath, $ChecksumPath -Force -ErrorAction SilentlyContinue
