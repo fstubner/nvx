@@ -243,7 +243,11 @@ func TestResolutionLeavesTheProjectAlone(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(w.project, "package-lock.json")); err == nil {
 		t.Errorf("a package-lock.json appeared in the project")
 	}
-	if !dirsEqual(w.workDirs[0], w.project) {
+	// Both sides with links resolved: on macOS the temp dir is under /var, a
+	// link to /private/var, and the launch reports the resolved form.
+	gotDir, _ := filepath.EvalSymlinks(w.workDirs[0])
+	wantDir, _ := filepath.EvalSymlinks(w.project)
+	if !dirsEqual(gotDir, wantDir) {
 		t.Errorf("resolution ran in %s, want the project %s", w.workDirs[0], w.project)
 	}
 	if left, _ := filepath.Glob(filepath.Join(w.project, "node_modules", ".cache", "nvx-resolve-*")); len(left) > 0 {
