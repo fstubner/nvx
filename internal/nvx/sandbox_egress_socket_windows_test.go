@@ -37,7 +37,7 @@ func TestEgressSocketPathFitsAtTheAFUnixLimit(t *testing.T) {
 func TestDefaultGuestHomeLeavesRoomForTheSocket(t *testing.T) {
 	// getSandboxHomeDir + a 16-hex session id, under a plausible profile path.
 	guestHome := filepath.Join(`C:\Users\some-fairly-long-username\.nvx`, "sandbox_home", "0123456789abcdef")
-	sock := windowsEgressSocketPath(guestHome)
+	sock := windowsEgressSocketPath(guestHomeSocketPrefix(guestHome))
 	if !egressSocketPathFits(sock) {
 		t.Errorf("a default guest home already overflows the AF_UNIX limit at %d bytes (%s); "+
 			"proxied runs would fail closed for ordinary users", len(sock), sock)
@@ -67,5 +67,55 @@ func TestWindowsEgressNeedsRelayCoversEveryMode(t *testing.T) {
 		if !windowsEgressNeedsRelay(mode) {
 			t.Errorf("mode %q must use the relay; anything unrecognised has to fail towards enforcement", mode)
 		}
+	}
+}
+
+// TestALongNvxHomeMovesTheSocketsToTheAppContainerFolder pins where a session's
+// sockets go. A 132-character NVX_HOME is the length measured refusing on
+// 2026-10-01, and 65 the longest measured working in the guest home that day.
+func TestALongNvxHomeMovesTheSocketsToTheAppContainerFolder(t *testing.T) {
+	const container = `C:\Users\felix\AppData\Local\Packages\nvx.sandbox.0123456789abcdef\AC`
+	guestUnder := func(nvxHome string) string {
+		return filepath.Join(getSandboxHomeDir(nvxHome), "0123456789abcdef")
+	}
+	home := func(n int) string { return `C:\` + strings.Repeat("h", n-3) }
+	egressOnly := NetworkLaunchContext{egress: &EgressProxy{}}
+	withConnect := NetworkLaunchContext{egress: &EgressProxy{}, ConnectPorts: []connectMapping{{Host: 65535}}}
+
+	// Short enough: the guest home, as before.
+	guest := guestUnder(home(65))
+	if got := windowsSocketPrefix(guest, container, egressOnly); got != guest+`\` {
+		t.Errorf("a 65-character NVX_HOME moved the sockets to %q; they fit in the guest home", got)
+	}
+	// Only the sockets this session binds count. A tunnel socket has the longest
+	// name, so the same NVX_HOME moves when one is asked for.
+	if got := windowsSocketPrefix(guest, container, withConnect); got == guest+`\` {
+		t.Errorf("a tunnel socket that does not fit in the guest home was left there")
+	}
+
+	// Too long: the AppContainer's folder, tagged with the session.
+	guest = guestUnder(home(132))
+	got := windowsSocketPrefix(guest, container, egressOnly)
+	if want := container + `\01234567-`; got != want {
+		t.Fatalf("a 132-character NVX_HOME put the sockets at %q, want %q", got, want)
+	}
+	if err := windowsSocketRoomError(windowsSocketPrefix(guest, container, withConnect), home(132), guest, withConnect); err != nil {
+		t.Errorf("the sockets in the AppContainer folder were refused: %v", err)
+	}
+
+	// No AppContainer folder: the guest home, and a refusal that names the
+	// longest NVX_HOME that works.
+	if got := windowsSocketPrefix(guest, "", egressOnly); got != guest+`\` {
+		t.Errorf("with no AppContainer folder the sockets went to %q", got)
+	}
+	err := windowsSocketRoomError(guest+`\`, home(132), guest, egressOnly)
+	if err == nil || !strings.Contains(err.Error(), "at most 65 characters (it is 132)") {
+		t.Errorf("the refusal does not name the measured limit: %v", err)
+	}
+
+	// An AppContainer folder too long to help changes nothing.
+	long := `C:\Users\` + strings.Repeat("u", 80) + `\AppData\Local\Packages\nvx.sandbox.0123456789abcdef\AC`
+	if got := windowsSocketPrefix(guest, long, egressOnly); got != guest+`\` {
+		t.Errorf("the sockets went to %q, which does not hold them either", got)
 	}
 }

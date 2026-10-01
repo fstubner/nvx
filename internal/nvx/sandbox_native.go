@@ -76,9 +76,10 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 	// elsewhere.
 	if err := prepareEgressSocket(egress, guestHome, &netCtx); err != nil {
 		// "namespace isolation" until 2026-09-03, which named the Linux mechanism
-		// on every platform. The one failure a person actually meets here is a
-		// Windows one -- an NVX_HOME too long for an AF_UNIX path -- and it arrived
-		// under a heading describing something Windows does not do.
+		// on every platform. The failure a person met here was a Windows one --
+		// an NVX_HOME too long for an AF_UNIX path -- and it arrived under a
+		// heading describing something Windows does not do. Windows binds its
+		// socket in platformLaunchNative now. See windowsSocketPrefix.
 		LogError("Could not put the egress proxy where the sandbox can reach it: %v", err)
 		return sandboxDidNotStart(config, "the egress proxy could not be reached from the sandbox", exitRefused)
 	}
@@ -158,6 +159,9 @@ type supervisorExecArgs struct {
 	NetworkMode  string
 	ShimCommand  string
 	EgressSocket string
+	// SocketPrefix is how the paths of the tunnel sockets start, given as
+	// --socket-prefix. Windows only; see windowsSocketPrefix.
+	SocketPrefix string
 	// ExposePorts are ports inside the sandbox that the parent is publishing on
 	// the host's loopback, given as --expose=<port> and repeatable. Windows
 	// refuses connections INTO an AppContainer, so reaching them is a reverse
@@ -194,6 +198,8 @@ func parseSupervisorExecArgs(argv []string) (supervisorExecArgs, bool) {
 			a.ShimCommand = strings.TrimPrefix(arg, "--command=")
 		case strings.HasPrefix(arg, "--egress-socket="):
 			a.EgressSocket = strings.TrimPrefix(arg, "--egress-socket=")
+		case strings.HasPrefix(arg, "--socket-prefix="):
+			a.SocketPrefix = strings.TrimPrefix(arg, "--socket-prefix=")
 		case strings.HasPrefix(arg, "--connect="):
 			if m, err := parseConnectSpec(strings.TrimPrefix(arg, "--connect=")); err == nil && m.Inside != 0 {
 				a.ConnectPorts = append(a.ConnectPorts, m)

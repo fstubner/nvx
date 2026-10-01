@@ -317,6 +317,22 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1, refusedToStart("the sandbox temp directory could not be created")
 	}
 
+	// The sockets the sandbox reaches nvx through. Chosen after the profile is
+	// registered, because the place they go when NVX_HOME is long is the folder
+	// Windows creates with it. See windowsSocketPrefix.
+	sockets := windowsSocketPrefix(guestHome, appContainerFolder(pkgName), netCtx)
+	if sockets != guestHomeSocketPrefix(guestHome) {
+		LogDetail("NVX_HOME is too long to hold the sandbox's sockets, so they are in %s", filepath.Dir(sockets))
+	}
+	if err := windowsSocketRoomError(sockets, config.NvxHome, guestHome, netCtx); err != nil {
+		LogError("Could not place the sockets the sandbox reaches nvx through: %v", err)
+		return 1, refusedToStart("the sandbox's sockets do not fit the AF_UNIX path limit")
+	}
+	if err := bindWindowsEgressSocket(&netCtx, sockets); err != nil {
+		LogError("Could not put the egress proxy where the sandbox can reach it: %v", err)
+		return 1, refusedToStart("the egress proxy could not be reached from the sandbox")
+	}
+
 	// Package-manager workflows used to require the elevated `nvx setup` grants,
 	// because node resolved its entry point by realpath'ing up to the drive root
 	// -- a stat an AppContainer cannot do there. NODE_OPTIONS now carries
@@ -402,7 +418,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	exposeCtx, cancelExpose := context.WithCancel(context.Background())
 	defer cancelExpose()
 	for _, m := range netCtx.ExposePorts {
-		e, perr := publishExposedPort(exposeCtx, guestHome, m)
+		e, perr := publishExposedPort(exposeCtx, sockets, m)
 		if perr != nil {
 			LogError("Could not publish port %d from the sandbox: %v", m.Container, perr)
 			return 1, refusedToStart("a port could not be published from the sandbox")
@@ -418,7 +434,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// the in-sandbox port, so the supervisor is told both numbers rather than
 	// deciding either -- the contained side never chooses where it can dial.
 	for i, m := range netCtx.ConnectPorts {
-		c, cerr := openConnectPort(exposeCtx, config.NvxHome, guestHome, m)
+		c, cerr := openConnectPort(exposeCtx, config.NvxHome, sockets, m)
 		if cerr != nil {
 			LogError("Could not open a path to 127.0.0.1:%d for the sandbox: %v", m.Host, cerr)
 			return 1, refusedToStart("a path to a host service could not be opened")
@@ -439,7 +455,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 
 	if useRelay || len(netCtx.ExposePorts) > 0 || len(netCtx.ConnectPorts) > 0 {
 		cmdPath, launchArgs, err = wrapWithEgressSupervisor(
-			sid, config.NvxHome, guestHome, launchDir, netCtx, cmdPath, launchArgs,
+			sid, config.NvxHome, guestHome, sockets, launchDir, netCtx, cmdPath, launchArgs,
 		)
 		if err != nil {
 			// Fail closed: falling back to a direct connection would silently
@@ -554,7 +570,7 @@ func windowsSandboxNetwork(mode string) (capabilitySIDs []string, useRelay bool)
 // supervisor, which hosts the egress relay and then spawns the real target. It
 // returns the supervisor's path and argument list.
 func wrapWithEgressSupervisor(
-	sid uintptr, nvxHome, guestHome, workDir string,
+	sid uintptr, nvxHome, guestHome, sockets, workDir string,
 	netCtx NetworkLaunchContext, cmdPath string, args []string,
 ) (string, []string, error) {
 	// The egress socket is required only when the relay is the reason we are here.
@@ -579,6 +595,7 @@ func wrapWithEgressSupervisor(
 		"--nvx-home=" + nvxHome,
 		"--network-mode=" + netCtx.Mode,
 		"--egress-socket=" + netCtx.EgressSocketPath,
+		"--socket-prefix=" + sockets,
 	}
 	// Only the container port crosses: inside the sandbox the host mapping is
 	// meaningless, and the tunnel socket is named by the container port.

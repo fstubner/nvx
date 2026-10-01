@@ -112,7 +112,7 @@ func TestAppContainerReachesOnlyAllowlistedHostsThroughTheRelay(t *testing.T) {
 		t.Fatalf("filesystem prep: %v", err)
 	}
 
-	sock := windowsEgressSocketPath(guestHome)
+	sock := windowsEgressSocketPath(guestHomeSocketPrefix(guestHome))
 	if !egressSocketPathFits(sock) {
 		t.Fatalf("socket path is %d bytes, over the AF_UNIX limit: %s", len(sock), sock)
 	}

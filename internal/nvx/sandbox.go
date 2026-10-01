@@ -414,6 +414,11 @@ type NetworkLaunchContext struct {
 	// A netns has no route to any allowlisted host, so the proxy must stay
 	// outside it; a UNIX socket is how the contained side still reaches it.
 	EgressSocketPath string
+	// egress is the proxy still to be put on that socket. Windows binds it in
+	// platformLaunchNative rather than in prepareEgressSocket, because where the
+	// socket goes can depend on a folder that only exists once the
+	// AppContainer profile does. See windowsSocketPrefix.
+	egress *EgressProxy
 	// ExposePorts maps ports inside the sandbox to ports on the host's loopback
 	// (isolation.network.expose_ports, or --expose). Windows only: it exists
 	// because Windows refuses connections INTO an AppContainer, which Linux and
