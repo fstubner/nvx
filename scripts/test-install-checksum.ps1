@@ -154,7 +154,7 @@ try {
     try { RunOut } finally { $env:PATH = $realPath; Set-Item function:gh $stub }
     Check "accepted" $ghOk
     Check "one skip line" (@($ghOut -split "`n" | Where-Object { $_ -match 'Provenance check skipped' }).Count -eq 1)
-    Check "gives the command" ($ghOut -match 'gh attestation verify .* --repo fstubner/nvx')
+    Check "gives the command" (($ghOut -replace '\s+', ' ') -match 'gh attestation verify .* --repo fstubner/nvx')
     Check "destination is the new binary" ((Get-Content $dest -Raw) -eq 'GOOD')
 
     Write-Host "A gh that is too old, or not signed in, skips rather than fails the install:"
