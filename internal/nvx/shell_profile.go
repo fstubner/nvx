@@ -30,6 +30,12 @@ func integrationLineFor(shell string) string {
 		return `nvx env --shell=powershell | Out-String | Invoke-Expression`
 	case "zsh":
 		return `eval "$(nvx env --shell=zsh)"`
+	case "fish":
+		return `nvx env --shell=fish | source`
+	case "cmd":
+		// Not a profile line. cmd.exe has no profile, and this is the form a
+		// person types to switch one window. See evalHint.
+		return `FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i`
 	default:
 		return `eval "$(nvx env --shell=bash)"`
 	}
@@ -71,6 +77,16 @@ func profilePathFor(shell string) string {
 		return ""
 	case "zsh":
 		return filepath.Join(home, ".zshrc")
+	case "fish":
+		// conf.d is read at every fish start and is nvx's own file, so nothing the
+		// user wrote in config.fish is edited.
+		config := os.Getenv("XDG_CONFIG_HOME")
+		if config == "" {
+			config = filepath.Join(home, ".config")
+		}
+		return filepath.Join(config, "fish", "conf.d", "nvx.fish")
+	case "cmd":
+		return "" // cmd.exe has no startup file nvx writes to
 	default:
 		return filepath.Join(home, ".bashrc")
 	}
@@ -153,6 +169,15 @@ func addIntegrationToProfileImpl(path, shell string) error {
 // let someone believe the whole thing worked.
 func reportShellIntegration(fix bool) {
 	shell := defaultShell()
+	if shell == "cmd" {
+		// Not a failure and nothing to fix: cmd.exe has no profile, so there is
+		// no integration to be missing. Saying "could not find this shell's
+		// profile" would send someone looking for a file that does not exist.
+		LogInfo("cmd.exe cannot load shell integration, so 'nvx use' cannot switch a cmd window by itself.")
+		LogInfo("Shims already use the version your project's .nvmrc or package.json asks for, and 'nvx default <version>' sets the version for new windows.")
+		LogInfo("To switch only this window:  %s", evalHint(shell, "<version>"))
+		return
+	}
 	loadedHere := os.Getenv("NVX_SHELL_INTEGRATION") != ""
 	profile := profilePathFor(shell)
 	inProfile := profileLoadsIntegration(profile)

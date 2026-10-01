@@ -108,7 +108,7 @@ run() {
     printf 'PREVIOUS' > "$HOME/.nvx/bin/nvx"
     tr -d '\r' < "$ROOT/install.sh" > "$WORK/install.sh"
     : > "$GH_LOG"
-    if env PATH="$WORK/stub:$WORK/ghstub:$PATH" SHELL=/bin/sh "$@" sh "$WORK/install.sh" > "$WORK/out-$name" 2>&1; then
+    if env PATH="$WORK/stub:$WORK/ghstub:$PATH" SHELL=/bin/sh XDG_CONFIG_HOME= "$@" sh "$WORK/install.sh" > "$WORK/out-$name" 2>&1; then
         status=0
     else
         status=1
@@ -201,11 +201,12 @@ grep -q "sha256sum" "$WORK/out-nohash"; check "names the missing tool" $?
 ! grep -q "Checksum verification failed" "$WORK/out-nohash"; check "does not claim a mismatch" $?
 [ "$(cat "$HOME/.nvx/bin/nvx")" = "PREVIOUS" ]; check "previous nvx untouched" $?
 
-echo "fish gets the manual step, and no POSIX line in a file it never reads:"
+echo "fish gets its own conf.d file, and no POSIX line in a file it never reads:"
 run fish SHELL=/usr/bin/fish
 check "succeeds" "$status"
 [ ! -e "$HOME/.profile" ]; check "no ~/.profile written" $?
-grep -q "fish_add_path" "$WORK/out-fish"; check "prints the fish step" $?
+grep -Fq "nvx env --shell=fish | source" "$HOME/.config/fish/conf.d/nvx.fish"; check "writes the fish integration to conf.d" $?
+grep -q "source .*nvx.fish" "$WORK/out-fish"; check "prints how to load it in this shell" $?
 ! grep -q "profile has been updated" "$WORK/out-fish"; check "does not claim a profile was updated" $?
 
 if [ "$fail" -ne 0 ]; then

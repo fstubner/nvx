@@ -227,6 +227,28 @@ setup_profile() {
     printf '\n%s\n%s\n%s\n' "$MARKER_LINE" "$PATH_LINE" "$INTEGRATION_LINE" >> "$PROFILE_FILE"
 }
 
+# fish never reads ~/.profile and cannot run the POSIX lines above, so it gets
+# its own file in conf.d, which fish reads at every start and nothing else
+# writes to. PATH is set for every fish, scripts included, and the integration
+# only for interactive ones.
+setup_fish() {
+    FISH_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/nvx.fish"
+    if [ -f "$FISH_CONF" ] && grep -q "nvx env" "$FISH_CONF"; then
+        return 0
+    fi
+    echo "Adding shell integration to $FISH_CONF..."
+    mkdir -p "$(dirname "$FISH_CONF")"
+    {
+        printf '%s\n' "$MARKER_LINE"
+        printf '%s\n' 'if not contains $HOME/.nvx/bin $PATH'
+        printf '%s\n' '    set -gx PATH $HOME/.nvx/bin $PATH'
+        printf '%s\n' 'end'
+        printf '%s\n' 'if status is-interactive'
+        printf '%s\n' '    nvx env --shell=fish | source'
+        printf '%s\n' 'end'
+    } >> "$FISH_CONF"
+}
+
 case "$SHELL_NAME" in
     bash)
         # Interactive non-login shells (the common case on Linux) read .bashrc;
@@ -243,14 +265,13 @@ case "$SHELL_NAME" in
         setup_profile "$HOME/.zshrc" "true"
         ;;
     fish)
-        # fish never reads ~/.profile, and the lines above are POSIX syntax it
-        # cannot run. This branch used to write them there anyway and report
-        # the profile as updated. `nvx env` has no fish output, so PATH is the
-        # whole of the setup.
+        # This branch used to write the POSIX lines to ~/.profile anyway and
+        # report the profile as updated.
+        setup_fish
         echo ""
-        echo "nvx has been installed to $BIN_DIR."
-        echo "fish is not set up automatically. To put nvx on PATH for every fish session, run:"
-        echo "  fish_add_path \$HOME/.nvx/bin"
+        echo "nvx has been successfully installed!"
+        echo "New fish sessions pick it up automatically. To use nvx in THIS shell without restarting it, run:"
+        echo "  source $FISH_CONF"
         exit 0
         ;;
     *)

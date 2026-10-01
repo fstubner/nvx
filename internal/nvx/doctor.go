@@ -176,6 +176,15 @@ func resolveDirForScope(path string) string {
 // two apart the same way `nvx use` does.
 func shellPathFixLine(goos, shell, shimDir string) string {
 	switch {
+	case shell == "fish":
+		// A list in fish, so no colon-joined string. On Windows the directory is
+		// in the POSIX form fish there reads, as for bash.
+		if goos == "windows" {
+			shimDir = ToBashPath(shimDir)
+		}
+		return "set -gx PATH " + quoteFish(shimDir) + " $PATH"
+	case shell == "cmd":
+		return `set "PATH=` + shimDir + `;%PATH%"`
 	case goos != "windows":
 		return fmt.Sprintf(`export PATH="%s:$PATH"`, shimDir)
 	case shell == "bash" || shell == "zsh":
@@ -313,7 +322,45 @@ func powershellASCIIPath(p string) string {
 		base64.StdEncoding.EncodeToString([]byte(p)) + `'))`
 }
 
+// cmdShimPathLine is the cmd.exe form of the same step: one `set` line holding
+// path with any entry for shimDir removed and shimDir put first. cmd has no
+// functions to define, so it is computed here from the PATH nvx was run with
+// rather than by the shell. Entries compare case-insensitively and ignoring a
+// trailing backslash, as Windows does.
+func cmdShimPathLine(path, shimDir string) string {
+	same := func(a, b string) bool {
+		return strings.EqualFold(strings.TrimRight(a, `\`), strings.TrimRight(b, `\`))
+	}
+	parts := []string{shimDir}
+	for _, p := range strings.Split(path, ";") { // not SplitList: cmd's separator on any host
+		if p != "" && !same(p, shimDir) {
+			parts = append(parts, p)
+		}
+	}
+	return cmdSetLine("PATH", strings.Join(parts, ";"))
+}
+
 func shimPathPrependSnippet(shell, shimDir string) string {
+	if shell == "fish" {
+		dir := shimDir
+		if runtime.GOOS == "windows" {
+			dir = ToBashPath(shimDir)
+		}
+		// Rebuilt as a list without the shim dir, then put back in front: the
+		// same "once, and first" the POSIX form gives, and it holds when the
+		// integration is loaded twice.
+		return "set -l __nvx_bin " + quoteFish(dir) + "\n" +
+			"set -l __nvx_rest\n" +
+			"for __nvx_p in $PATH\n" +
+			"    if test \"$__nvx_p\" != \"$__nvx_bin\"\n" +
+			"        set -a __nvx_rest $__nvx_p\n" +
+			"    end\n" +
+			"end\n" +
+			"set -gx PATH $__nvx_bin $__nvx_rest\n"
+	}
+	if shell == "cmd" {
+		return cmdShimPathLine(os.Getenv("PATH"), shimDir)
+	}
 	if shell == "bash" || shell == "zsh" {
 		dir := shimDir
 		if runtime.GOOS == "windows" {

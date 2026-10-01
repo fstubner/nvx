@@ -476,13 +476,13 @@ func commandHelpText(command string) string {
 	case "uninstall", "uni":
 		return "nvx uninstall <[runtime@]version>\n\nRemove an installed runtime version. Refuses to remove the active shell\nversion or global default.\n"
 	case "use":
-		return "nvx use <[runtime@]version> [--shell=<powershell|bash|zsh>]\n\nEmit shell commands that switch the current terminal session to the\nrequested runtime version (defaults to Node.js for a bare version).\n"
+		return "nvx use <[runtime@]version> [--shell=<powershell|bash|zsh|fish|cmd>]\n\nEmit shell commands that switch the current terminal session to the\nrequested runtime version (defaults to Node.js for a bare version).\n"
 	case "default":
 		return "nvx default <[runtime@]version>\n\nSet the global default version link for a runtime.\n"
 	case "env":
-		return "nvx env [--shell=<powershell|bash|zsh>]\n\nPrint shell integration code. Installers normally add this to your shell profile.\n"
+		return "nvx env [--shell=<powershell|bash|zsh|fish|cmd>]\n\nPrint shell integration code. Installers normally add this to your shell profile.\n"
 	case "auto":
-		return "nvx auto [--shell=<powershell|bash|zsh>]\n\nDetect .nvmrc, .node-version, package.json engines, or Volta config and switch the current shell when needed.\n"
+		return "nvx auto [--shell=<powershell|bash|zsh|fish|cmd>]\n\nDetect .nvmrc, .node-version, package.json engines, or Volta config and switch the current shell when needed.\n"
 	case "verify-install":
 		return "nvx verify-install <package> [package...]\n\nInternal security verifier used by shims. Checks policy blocklists, typosquatting, install scripts, release age, and OSV vulnerabilities.\n"
 	case "policy":
@@ -576,8 +576,8 @@ exported and counted everything that could be read.
 	return ""
 }
 
-// defaultShell returns the shell whose syntax is emitted when none is specified.
-// defaultShell guesses the shell that will evaluate nvx's output.
+// defaultShell guesses the shell that will evaluate nvx's output, when none is
+// named.
 //
 // On Windows it used to answer "powershell" unconditionally, so `nvx use 20` in
 // Git Bash emitted PowerShell assignments that bash cannot evaluate. Nothing
@@ -585,24 +585,54 @@ exported and counted everything that could be read.
 // v20" -- a success message for something that did not happen. Auto-switch on
 // `cd` never fired there either.
 //
-// MSYSTEM is set by Git Bash and MSYS2 and by little else; a SHELL naming bash or
-// zsh is the fallback for other POSIX emulations. Both are heuristics, and
+// On Windows the process that started nvx is asked first. MSYSTEM and SHELL are
+// inherited by every child, so a cmd.exe opened from Git Bash still has MSYSTEM
+// set and was handed POSIX `export` lines it cannot run. With no recognisable
+// parent, MSYSTEM (set by Git Bash and MSYS2 and by little else) and then a SHELL
+// naming bash, zsh or fish are the fallback. Elsewhere SHELL is the only signal,
+// and anything but fish keeps the bash syntax. All of it is heuristic, and
 // `--shell=` still overrides, which is what the shell integration snippets pass.
 func defaultShell() string {
 	if runtime.GOOS != "windows" {
+		if filepath.Base(os.Getenv("SHELL")) == "fish" {
+			return "fish"
+		}
 		return "bash"
+	}
+	if sh := shellForParentExe(parentShellExe()); sh != "" {
+		return sh
 	}
 	if os.Getenv("MSYSTEM") != "" {
 		return "bash"
 	}
 	sh := strings.ToLower(os.Getenv("SHELL"))
-	if strings.Contains(sh, "bash") {
+	switch {
+	case strings.Contains(sh, "bash"):
 		return "bash"
-	}
-	if strings.Contains(sh, "zsh") {
+	case strings.Contains(sh, "zsh"):
 		return "zsh"
+	case strings.Contains(sh, "fish"):
+		return "fish"
 	}
 	return "powershell"
+}
+
+// shellForParentExe maps the file name of the process that started nvx to the
+// shell syntax it reads, or "" when it is not a shell nvx knows.
+func shellForParentExe(name string) string {
+	switch strings.ToLower(name) {
+	case "cmd.exe":
+		return "cmd"
+	case "powershell.exe", "pwsh.exe":
+		return "powershell"
+	case "bash.exe":
+		return "bash"
+	case "zsh.exe":
+		return "zsh"
+	case "fish.exe":
+		return "fish"
+	}
+	return ""
 }
 
 // useVersionArg picks the version out of `nvx use` arguments: the first one
@@ -647,13 +677,13 @@ func shellArgWasGiven(args []string) bool {
 // knownShells are the shells nvx can emit for. An explicit --shell naming
 // anything else is an error: every emitter's default branch is PowerShell, so
 // `--shell=fish` used to print PowerShell assignments for fish to evaluate.
-var knownShells = map[string]bool{"powershell": true, "pwsh": true, "bash": true, "zsh": true}
+var knownShells = map[string]bool{"powershell": true, "pwsh": true, "bash": true, "zsh": true, "fish": true, "cmd": true}
 
 func parseShellArg(args []string) (string, error) {
 	explicit := func(v string) (string, error) {
 		v = strings.ToLower(strings.TrimSpace(v))
 		if !knownShells[v] {
-			return "", fmt.Errorf("unknown shell %q: use powershell, pwsh, bash or zsh", v)
+			return "", fmt.Errorf("unknown shell %q: use powershell, pwsh, bash, zsh, fish or cmd", v)
 		}
 		return v, nil
 	}
@@ -666,8 +696,7 @@ func parseShellArg(args []string) (string, error) {
 		} else if arg == "--shell" && i+1 < len(args) {
 			return explicit(args[i+1])
 		} else if !strings.HasPrefix(arg, "-") {
-			switch strings.ToLower(arg) {
-			case "powershell", "pwsh", "bash", "zsh":
+			if knownShells[strings.ToLower(arg)] {
 				return strings.ToLower(arg), nil
 			}
 		}
@@ -709,7 +738,7 @@ Commands:
   default <[rt@]version>   Set the global default for a runtime (creates a link)
   list, ls                 List installed runtimes and versions
   list-remote, ls-remote   List Node.js versions on nodejs.org or NVX_NODE_MIRROR
-  env [--shell=<type>]     Print shell integration script (powershell, bash, zsh)
+  env [--shell=<type>]     Print shell integration script (powershell, bash, zsh, fish, cmd)
   auto [--shell=<type>]    Auto-switch runtimes from .nvmrc / .node-version /
                            .bun-version / package.json
   verify-install <pkgs>    Verify package safety before installing (called by wrappers)
@@ -743,7 +772,7 @@ Commands:
   help [command]           Show this list, or detail for one command
 
 Options:
-  --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
+  --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh', 'fish', 'cmd'
   --no-sandbox           Disable sandbox for this shim invocation. Must come
                          BEFORE the command; ignored if passed to it
   --standard             Force standard containment, overriding a project's
@@ -1149,7 +1178,23 @@ func runUse(query string, nvxHome string, shell string, viaIntegration bool) int
 	// The integration exports NVX_SHELL_INTEGRATION, so its presence is the
 	// question "will this be evaluated". A --shell argument means nvx was invoked
 	// BY the integration, which answers the same question.
-	if !viaIntegration && os.Getenv("NVX_SHELL_INTEGRATION") == "" {
+	//
+	// cmd.exe has no integration to load. Its one way in is the for loop in
+	// evalHint, which reads nvx's output through a pipe, so a piped stdout there
+	// is the loop and not a person.
+	evaluated := viaIntegration || os.Getenv("NVX_SHELL_INTEGRATION") != ""
+	if shell == "cmd" && !stdoutIsTerminal() {
+		evaluated = true
+	}
+	if !evaluated && shell == "cmd" {
+		LogWarn("%s %s is installed, but this window is unchanged. cmd.exe cannot be switched by a program.",
+			display, resolvedVer)
+		LogInfo("Commands that run through nvx already use the version your project's .nvmrc or package.json asks for.")
+		LogInfo("To set the version that new windows start on:  nvx default %s", version)
+		LogInfo("To switch only this window:  %s", evalHint(shell, version))
+		return 1
+	}
+	if !evaluated {
 		LogWarn("%s %s is installed, but this shell is unchanged: nothing is loading nvx's environment here.",
 			display, resolvedVer)
 		LogInfo("Load the shell integration once and it switches by itself from then on:")
@@ -1346,6 +1391,45 @@ func envScript(shell, exePath, shimDir string) string {
 	// every cd hook failed with it.
 	qexe := quotePOSIXShell(exe)
 	prepend := shimPathPrependSnippet(shell, shimDir)
+
+	// cmd.exe cannot evaluate output, so there is no function and no hook to
+	// define, and the one thing to print is the PATH line. It is run with
+	//   FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i
+	// and the shims then follow each project's version file with no hook at all.
+	if shell == "cmd" {
+		return prepend
+	}
+
+	if shell == "fish" {
+		// Mirrors the zsh branch: a wrapper that evaluates `use` and `auto`, and
+		// a hook on every directory change that is also run once at load, so a
+		// terminal opened inside a project switches before the first cd. fish
+		// fires --on-variable PWD only on a change, as zsh's chpwd does.
+		qfish := quoteFish(exe)
+		return prepend + fmt.Sprintf(`set -gx NVX_SHELL_INTEGRATION 1
+
+function nvx
+    if contains -- "$argv[1]" use auto
+        set -l __nvx_out (command %s $argv --shell=fish)
+        set -l __nvx_status $status
+        if test -n "$__nvx_out"
+            printf '%%s\n' $__nvx_out | source
+        end
+        return $__nvx_status
+    else
+        command %s $argv
+    end
+end
+
+function __nvx_auto --on-variable PWD
+    set -l __nvx_out (command %s auto --shell=fish)
+    if test -n "$__nvx_out"
+        printf '%%s\n' $__nvx_out | source
+    end
+end
+__nvx_auto
+`, qfish, qfish, qfish)
+	}
 
 	if shell == "bash" || shell == "zsh" {
 		return prepend + fmt.Sprintf(`export NVX_SHELL_INTEGRATION=1
