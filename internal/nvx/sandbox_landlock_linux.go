@@ -42,6 +42,9 @@ const (
 	landlockAccessFSRefer      = 1 << 13 // ABI v2, Linux 5.19
 	landlockAccessFSTruncate   = 1 << 14 // ABI v3, Linux 6.2
 	landlockAccessFSIoctlDev   = 1 << 15 // ABI v5, Linux 6.10
+	// connect() and addressed sendmsg() to a pathname UNIX socket created
+	// outside the Landlock domain. ABI v9.
+	landlockAccessFSResolveUnix = 1 << 16
 
 	landlockRulePathBeneath = 1
 
@@ -105,11 +108,13 @@ func landlockABIVersion() int {
 // truncation, device ioctls) are refinements on a boundary the v1 rights
 // already draw.
 //
-// RESOLVE_UNIX (ABI v9) is deliberately never handled. Once handled, connecting
-// to a UNIX socket created outside the sandbox needs an explicit rule, and the
-// in-container egress relay dials the parent's UNIX socket per connection,
-// after landlock_restrict_self. Handling it would cut every contained process
-// off from the network on kernels new enough to offer it.
+// RESOLVE_UNIX (ABI v9) is handled, and only the writable roots grant it. The
+// sockets nvx itself provides (egress, --connect, loopback) all live in the
+// guest home, a writable root, so they stay reachable. The supervisor's relays
+// dial them from threads Landlock never restricted in any case, because
+// landlock_restrict_self applies to the calling thread alone. This is a second
+// layer under the sandbox's own filesystem view (enterSandboxRoot), which
+// already hides host sockets on kernels without v9.
 func landlockHandledAccessForABI(abi int) uint64 {
 	if abi < 1 {
 		return 0
@@ -124,6 +129,10 @@ func landlockHandledAccessForABI(abi int) uint64 {
 	// v4 added network rights only.
 	if abi >= 5 {
 		handled |= landlockAccessFSIoctlDev
+	}
+	// v6 to v8 added no filesystem rights.
+	if abi >= 9 {
+		handled |= landlockAccessFSResolveUnix
 	}
 	return handled
 }
@@ -441,6 +450,14 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	if err := mountPrivateProc(); err != nil {
 		privateProc = false
 		LogWarn("Could not give the sandbox its own /proc (%v); it stays denied, and a runtime that reads it (Bun) will not run contained.", err)
+	}
+	// The filesystem view, before Landlock for the same reason as /proc. Fail
+	// closed. Without it, every UNIX socket on the host is one connect() away on
+	// kernels below Landlock ABI v9. See enterSandboxRoot.
+	visible := sandboxVisiblePaths(guestHome, workDir, nvxHome, a.ReadExecRoots, privateProc, networkMode)
+	if err := enterSandboxRoot(sandboxBindPlan(visible)); err != nil {
+		LogError("Could not build the sandbox's filesystem view (fail-closed): %v", err)
+		return 1
 	}
 	if err := applyLandlockSandbox(guestHome, workDir, nvxHome, a.ReadExecRoots, privateProc); err != nil {
 		LogError("Landlock isolation failed: %v", err)

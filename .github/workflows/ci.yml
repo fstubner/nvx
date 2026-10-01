@@ -406,6 +406,8 @@ jobs:
         # user namespace, so the private /proc the Bun fix depends on cannot be
         # mounted. Leaving it out of this filter would mean it runs nowhere -- the
         # exact shape of the drift that once left 31 of 41 probes matching nothing.
+        # The same prefix selects TestContainedProcessCannotReachHostUnixSockets,
+        # which runs the real supervisor and so needs root here for the same reason.
         sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone|TestContainedProcess|TestNvxTermination' ./internal/nvx 2>&1 | tee /tmp/priv.log
         # A failure, not a warning. This said "it is verifying nothing" and then
         # let the job go green, so the condition it names could persist

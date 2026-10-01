@@ -43,6 +43,7 @@ func TestLandlockAccessConstantsMatchTheKernelHeader(t *testing.T) {
 		{"LANDLOCK_ACCESS_FS_REFER", landlockAccessFSRefer, 1 << 13},
 		{"LANDLOCK_ACCESS_FS_TRUNCATE", landlockAccessFSTruncate, 1 << 14},
 		{"LANDLOCK_ACCESS_FS_IOCTL_DEV", landlockAccessFSIoctlDev, 1 << 15},
+		{"LANDLOCK_ACCESS_FS_RESOLVE_UNIX", landlockAccessFSResolveUnix, 1 << 16},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s = %#x, want %#x (include/uapi/linux/landlock.h)", tc.name, tc.got, tc.want)
@@ -192,7 +193,8 @@ func TestLandlockHandledAccessIsCappedToTheKernelABI(t *testing.T) {
 		{4, v1 | landlockAccessFSRefer | landlockAccessFSTruncate}, // v4 added network rights only
 		{5, v1 | landlockAccessFSRefer | landlockAccessFSTruncate | landlockAccessFSIoctlDev},
 		{7, v1 | landlockAccessFSRefer | landlockAccessFSTruncate | landlockAccessFSIoctlDev},
-		{9, v1 | landlockAccessFSRefer | landlockAccessFSTruncate | landlockAccessFSIoctlDev}, // RESOLVE_UNIX deliberately not handled: the egress relay dials a UNIX socket after restrict_self
+		{8, v1 | landlockAccessFSRefer | landlockAccessFSTruncate | landlockAccessFSIoctlDev},
+		{9, v1 | landlockAccessFSRefer | landlockAccessFSTruncate | landlockAccessFSIoctlDev | landlockAccessFSResolveUnix},
 	} {
 		if got := landlockHandledAccessForABI(tc.abi); got != tc.want {
 			t.Errorf("ABI v%d: handled = %#x, want %#x", tc.abi, got, tc.want)
