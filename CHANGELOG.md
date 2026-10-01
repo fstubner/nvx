@@ -192,6 +192,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **On Windows, a program your own code leaves running in the background now
+  outlives the command.** Through nvx it was killed the moment the command
+  exited. That hit `npm run` scripts that `start` a program, `spawn` with
+  `detached: true`, and tools that start a daemon and return. Measured on
+  2026-10-01, an `npm run` script of `start "" ping.exe -n 20 127.0.0.1` left 1
+  ping running with plain npm and 0 through nvx. A node script spawning ping
+  with `detached: true` gave the same 1 and 0. Both now leave 1 through nvx.
+
+  When nvx ends a command itself, because the program that started nvx has gone,
+  or when nvx is killed while the command runs, the command's whole process tree
+  still ends with it. A command nobody is waiting on is still not left behind.
+
 * **The pre-install checks now run on every package an npm install brings in.**
   They ran on the packages named on the command line, so `npm install tsx`
   installed esbuild and ran its postinstall with no prompt, while `npm install

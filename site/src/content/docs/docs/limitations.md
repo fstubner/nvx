@@ -87,6 +87,9 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
 - **On Windows, a contained process cannot create a pipe.** Synchronous and
   streaming capture are brokered by nvx; `child_process.fork` is refused outright
   and names `--no-sandbox`.
+- **On Windows, a background process your own code started ends with nvx if nvx
+  is stopped before the command finishes**, for example when the program that
+  started nvx exits. A command that finishes on its own leaves it running.
 - **A contained server needs `--expose` to be reachable from your machine**, and a
   contained tool needs `--connect` to reach a service you are already running.
 - **On Windows, `pnpm` runs inside the sandbox for a first install only, and

@@ -14,6 +14,6 @@ package nvx
 // Left as a no-op rather than reimplemented with process groups because the leak
 // has not been observed there -- machinery guarding a problem nobody has
 // measured is the thing this project keeps removing.
-func superviseDirectChild(pid int) (cleanup func()) {
-	return func() {}
+func superviseDirectChild(pid int) (finish func(reap bool)) {
+	return func(bool) {}
 }
