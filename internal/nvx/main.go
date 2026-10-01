@@ -174,8 +174,11 @@ func Main() {
 	case "install", "i":
 
 		if len(os.Args) < 3 {
-			LogError("Please specify a version to install. Example: nvx install 20")
-			os.Exit(1)
+			for _, pv := range projectVersionsOrExit("install") {
+				LogInfo("Installing %s, as %s asks.", pv.spec, filepath.Base(pv.source))
+				runInstall(pv.spec, nvxHome)
+			}
+			return
 		}
 		runInstall(os.Args[2], nvxHome)
 
@@ -189,8 +192,11 @@ func Main() {
 	case "use":
 		useVersion := useVersionArg(os.Args[2:])
 		if useVersion == "" {
-			LogError("Please specify a version to use. Example: nvx use 20")
-			os.Exit(1)
+			// The first declared runtime: each runtime's switch rewrites PATH
+			// from the shell's current one, so a second would undo the first.
+			pv := projectVersionsOrExit("use")[0]
+			LogInfo("Using %s, as %s asks.", pv.spec, filepath.Base(pv.source))
+			useVersion = pv.spec
 		}
 		os.Exit(runUse(useVersion, nvxHome, shellArgOrExit(os.Args[2:]), shellArgWasGiven(os.Args[2:])))
 
@@ -291,6 +297,13 @@ func Main() {
 		// than on the launch path, where deleting one could race a sandbox about
 		// to execute it.
 		pruneUnusedSupervisors(nvxHome)
+		// What an install killed part-way left: staging directories, partial
+		// downloads and locks whose process is gone.
+		if n := sweepAbandonedInstalls(nvxHome); n == 1 {
+			LogInfo("Removed 1 leftover from an interrupted install.")
+		} else if n > 1 {
+			LogInfo("Removed %d leftovers from an interrupted install.", n)
+		}
 		// Staged copies of commands from outside ~/.nvx/versions whose source
 		// has since changed, on Windows.
 		if copies := pruneStaleCommandCopies(nvxHome, 0); copies == 1 {
@@ -380,6 +393,21 @@ func Main() {
 		printHelp()
 		os.Exit(1)
 	}
+}
+
+// projectVersionsOrExit is what `nvx install` and `nvx use` act on when given no
+// version: what the working directory declares. With nothing declared it keeps
+// the old usage error. Version files nvx does not read are named either way.
+func projectVersionsOrExit(verb string) []projectVersion {
+	cwd, _ := os.Getwd()
+	noteIgnoredVersionFiles(cwd)
+	specs := projectVersionSpecs(cwd)
+	if len(specs) == 0 {
+		LogError("Please specify a version to %s. Example: nvx %s 20", verb, verb)
+		LogInfo("Or run it in a project that declares one in .nvmrc, .node-version, .bun-version or package.json engines.")
+		os.Exit(1)
+	}
+	return specs
 }
 
 // isShimCommand reports whether name is a package manager / runtime command that
@@ -755,6 +783,8 @@ Environment:
                          host, trusting a tool or a project policy. -y and
                          --agent-mode deliberately do not
   NVX_HOME=<dir>         Use a different nvx home instead of ~/.nvx
+  NO_COLOR=1             No colour codes in output. They are also left out
+                         whenever the output is not a terminal
 
 Examples:
   nvx install lts
@@ -769,7 +799,7 @@ func LogSuccess(format string, a ...interface{}) {
 	if quietFlag {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\x1b[32m✔\x1b[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, paint("32", "✔")+" "+format+"\n", a...)
 }
 
 func LogInfo(format string, a ...interface{}) {
@@ -777,7 +807,7 @@ func LogInfo(format string, a ...interface{}) {
 	if quietFlag {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\x1b[36mℹ\x1b[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, paint("36", "ℹ")+" "+format+"\n", a...)
 }
 
 // LogDetail is what nvx is doing on the way to the result -- a check starting,
@@ -796,7 +826,7 @@ func LogDetail(format string, a ...interface{}) {
 	if quietFlag || !verboseFlag {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\x1b[36mℹ\x1b[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, paint("36", "ℹ")+" "+format+"\n", a...)
 }
 
 func LogWarn(format string, a ...interface{}) {
@@ -817,12 +847,12 @@ func LogWarn(format string, a ...interface{}) {
 	// with a different contract -- see debug_log.go. audit.log still gets the
 	// template alone, so the password that motivated that rule never reaches it.
 	debugCapture("warn", fmt.Sprintf(format, a...))
-	fmt.Fprintf(os.Stderr, "\x1b[33m⚠\x1b[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, paint("33", "⚠")+" "+format+"\n", a...)
 }
 
 func LogError(format string, a ...interface{}) {
 	debugCapture("error", fmt.Sprintf(format, a...))
-	fmt.Fprintf(os.Stderr, "\x1b[31m✘\x1b[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, paint("31", "✘")+" "+format+"\n", a...)
 }
 
 // LogRefusalDetail carries the rest of a refusal: why nvx declined, and what to
@@ -841,7 +871,7 @@ func LogError(format string, a ...interface{}) {
 // errors already ignore both flags for the same reason.
 func LogRefusalDetail(format string, a ...interface{}) {
 	debugCapture("info", fmt.Sprintf(format, a...))
-	fmt.Fprintf(os.Stderr, "\x1b[36mℹ\x1b[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, paint("36", "ℹ")+" "+format+"\n", a...)
 }
 
 func CompareVersions(v1, v2 string) int {
@@ -896,7 +926,10 @@ func resolveLocalVersion(provider RuntimeProvider, query string, nvxHome string)
 	}
 
 	query = strings.TrimSpace(strings.ToLower(query))
-	if query == "latest" || query == "current" {
+	// `node` and `stable` are nvm's names for the newest version, and .nvmrc
+	// files carry them. Only Node reads them: they are not words another runtime
+	// has promised to mean this.
+	if query == "latest" || query == "current" || (provider.Name() == "node" && isLatestAlias(query)) {
 		return getLatestLocal(versions), nil
 	}
 
@@ -918,6 +951,14 @@ func resolveLocalVersion(provider RuntimeProvider, query string, nvxHome string)
 				"install one with 'nvx install lts', or name the version you want")
 		}
 		return getLatestLocal(lts), nil
+	}
+
+	// A bare LTS codename (`iron`), as `nvx install iron` already accepts, when an
+	// installed version is that line.
+	if provider.Name() == "node" {
+		if named := filterByLTSCodename(nvxHome, versions, query); len(named) > 0 {
+			return getLatestLocal(named), nil
+		}
 	}
 
 	// Anything else is a version expression, which covers an exact version, a
@@ -997,8 +1038,38 @@ func runInstall(query string, nvxHome string) {
 	// of quiet no-op this project removed from the policy struct this morning.
 	if installed, rerr := resolveLocalVersion(provider, version, nvxHome); rerr == nil {
 		pregrantRuntimeForSandbox(nvxHome, provider.Name(), installed)
+		noteDefaultAfterInstall(provider, installed, nvxHome)
 	} else {
 		LogDetail("Could not tell which version %q installed (%v); the first contained command will grant it.", version, rerr)
+	}
+}
+
+// noteDefaultAfterInstall makes the first installed version of a runtime its
+// default, and otherwise says how to switch to the one just installed.
+//
+// With no default and no `nvx use` in effect the shim has no version to run, so
+// `node` ran an unrelated system node or failed with "Could not find real
+// executable for node" and no hint (measured 2026-10-01, clean home).
+func noteDefaultAfterInstall(provider RuntimeProvider, installed, nvxHome string) {
+	name := provider.Name()
+	display := runtimeDisplayName(name)
+	link := runtimeCurrentLinkPath(nvxHome, name)
+	spec := installed
+	if name != "node" {
+		spec = name + "@" + installed
+	}
+	// Stat follows the link, so a default whose version was deleted counts as none.
+	if _, err := os.Stat(link); err != nil {
+		if err := CreateLink(link, filepath.Join(nvxHome, "versions", name, installed)); err != nil {
+			LogWarn("Could not make %s the default %s version: %v", installed, display, err)
+			LogInfo("Set it yourself with: nvx default %s", spec)
+			return
+		}
+		LogSuccess("%s %s is now the default %s version, because it is the first one installed.", display, installed, display)
+		return
+	}
+	if getGlobalDefaultVersionFor(nvxHome, name) != installed {
+		LogInfo("To use %s in this shell run 'nvx use %s'. To make it the default for new shells run 'nvx default %s'.", installed, spec, spec)
 	}
 }
 
@@ -1112,8 +1183,9 @@ func runDefault(query string, nvxHome string) {
 		os.Exit(1)
 	}
 
+	// No PATH advice: the shim directory is the only one that belongs on PATH,
+	// and a runtime directory ahead of it is what doctor reports as shadowing.
 	LogSuccess("Global default %s version set to %s.", runtimeDisplayName(provider.Name()), resolvedVer)
-	LogInfo("Make sure '%s' is added to your environment PATH.", GetVersionBinDir(currentLink))
 }
 
 func runList(nvxHome string) {
@@ -1129,16 +1201,16 @@ func runList(nvxHome string) {
 		activeVer := getActiveShellVersionFor(nvxHome, name)
 		defaultVer := getGlobalDefaultVersionFor(nvxHome, name)
 
-		fmt.Printf("\x1b[36mInstalled %s versions:\x1b[0m\n", runtimeDisplayName(name))
+		fmt.Println(paintOut("36", "Installed "+runtimeDisplayName(name)+" versions:"))
 		for _, v := range versions {
 			prefix := "  "
 			suffix := ""
 			if v == activeVer {
-				prefix = "\x1b[32m* \x1b[0m"
-				suffix += " \x1b[32m(active in this shell)\x1b[0m"
+				prefix = paintOut("32", "* ")
+				suffix += " " + paintOut("32", "(active in this shell)")
 			}
 			if v == defaultVer {
-				suffix += " \x1b[33m(global default)\x1b[0m"
+				suffix += " " + paintOut("33", "(global default)")
 			}
 			fmt.Printf("%s%s%s\n", prefix, v, suffix)
 		}
@@ -1229,7 +1301,7 @@ func releasesMatching(query string, releases []Release) []Release {
 }
 
 func printReleaseTable(heading string, releases []Release) {
-	fmt.Println("\n\x1b[36m" + heading + "\x1b[0m")
+	fmt.Println("\n" + paintOut("36", heading))
 	fmt.Printf("%-10s  %-12s  %-15s  %-8s\n", "Version", "Release Date", "LTS Status", "Npm version")
 	fmt.Println(strings.Repeat("-", 55))
 
@@ -1315,6 +1387,10 @@ if [[ -n "$ZSH_VERSION" ]]; then
     }
     autoload -U add-zsh-hook
     add-zsh-hook chpwd nvx_chpwd_hook
+    # chpwd only fires on a directory change, so a terminal opened inside a
+    # project would keep the default version until the first cd. bash switches
+    # on its first prompt; run the hook once here to match.
+    nvx_chpwd_hook
 elif [[ -n "$BASH_VERSION" ]]; then
     if [[ ! "$PROMPT_COMMAND" =~ nvx_prompt_hook ]]; then
         PROMPT_COMMAND="nvx_prompt_hook; $PROMPT_COMMAND"
@@ -1996,7 +2072,7 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 			reportAcceptedAdvisories(nvxHome, policy, accepted)
 			LogError("Vulnerability Scan Alert: Found active vulnerabilities!")
 			for pkgKey, list := range remaining {
-				fmt.Fprintf(os.Stderr, "  \x1b[31m●\x1b[0m %s:\n", pkgKey)
+				fmt.Fprintf(os.Stderr, "  %s %s:\n", paint("31", "●"), pkgKey)
 				for _, v := range list {
 					fmt.Fprintf(os.Stderr, "    - %s: %s\n", v.ID, v.Summary)
 				}

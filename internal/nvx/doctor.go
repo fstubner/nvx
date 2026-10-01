@@ -90,6 +90,12 @@ type doctorReport struct {
 	// PATHEXT-based check alone would call it healthy while bash runs the real
 	// npm unwrapped.
 	missingExeShims []string
+	// noRuntime lists wrapped commands the shim could not hand off to: no
+	// default version, and nothing on PATH outside nvx's shims. They fail with
+	// "Could not find real executable". Only Node's commands, and the commands
+	// of a runtime that has an installed version, are checked, since a machine
+	// that never installed Bun is not broken for lacking it.
+	noRuntime []string
 }
 
 // dirsEqual reports whether two directory paths are the same after cleaning
@@ -248,8 +254,35 @@ func diagnosePath(pathEnv, nvxHome string, shimCmds []string) doctorReport {
 			resolved: resolved,
 			viaShim:  resolved != "" && dirsEqual(filepath.Dir(resolved), shimDir),
 		})
+		if !runtimeBehindShim(c, pathEnv, nvxHome) {
+			rep.noRuntime = append(rep.noRuntime, c)
+		}
 	}
 	return rep
+}
+
+// runtimeBehindShim reports whether the shim for cmd has a real runtime to run:
+// the global default version, or a command on PATH outside nvx's shim
+// directories. A runtime nobody installed anything for is not expected to
+// resolve. Measured 2026-10-01: with shims and no default, doctor said
+// "intercepting" and exited 0 while `node` failed outright.
+func runtimeBehindShim(cmd, pathEnv, nvxHome string) bool {
+	rt := runtimeForShim(cmd)
+	if rt.Name() != "node" {
+		if versions, _ := rt.ListLocal(nvxHome); len(versions) == 0 {
+			return true
+		}
+	}
+	if def := getGlobalDefaultVersionFor(nvxHome, rt.Name()); def != "" && rt.ResolveBinary(cmd, nvxHome, def) != "" {
+		return true
+	}
+	var rest []string
+	for _, e := range filepath.SplitList(pathEnv) {
+		if !dirsEqual(e, filepath.Join(nvxHome, "bin")) && !directoryHoldsNvxShims(e) {
+			rest = append(rest, e)
+		}
+	}
+	return resolveCommandOnPath(cmd, strings.Join(rest, string(filepath.ListSeparator))) != ""
 }
 
 // shimPathPrependSnippet returns shell code that removes any existing shim-dir
@@ -385,7 +418,7 @@ func runDoctor(nvxHome string, fix bool) int {
 	// anyway. Closing over rep is deliberate: --fix reassigns it.
 	healthyNow := func() bool {
 		return rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.bypassing()) == 0 &&
-			len(rep.missingExeShims) == 0 && !weakened && !policyBroken && !sandboxBroken
+			len(rep.missingExeShims) == 0 && len(rep.noRuntime) == 0 && !weakened && !policyBroken && !sandboxBroken
 	}
 
 	// Runs whichever way the interception verdict goes: a machine whose PATH is
@@ -564,6 +597,12 @@ func formatDoctorReport(rep doctorReport) string {
 		b.WriteString("         Shims are nvx.exe under each command's name; an older nvx wrote .cmd/.ps1\n")
 		b.WriteString("         files instead, which Git Bash does not resolve, so these run unwrapped there.\n")
 		b.WriteString("         Fix: nvx init-shims\n")
+	}
+
+	if len(rep.noRuntime) > 0 {
+		b.WriteString("  [FAIL] no runtime to run for: " + strings.Join(rep.noRuntime, ", ") + "\n")
+		b.WriteString("         No default version is set and nothing else on PATH provides them.\n")
+		b.WriteString("         Fix: nvx install lts (the first install becomes the default)\n")
 	}
 
 	if len(rep.commands) > 0 {

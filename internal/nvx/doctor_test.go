@@ -397,7 +397,7 @@ func TestDoctorDiagnosesAPolicyItCannotRead(t *testing.T) {
 	if err := generateShims(nvxHome); err != nil {
 		t.Skipf("cannot generate shims in this environment: %v", err)
 	}
-	t.Setenv("PATH", shimDirPath(nvxHome))
+	t.Setenv("PATH", shimDirPath(nvxHome)+string(os.PathListSeparator)+stubRuntimeDir(t))
 
 	wd, err := os.Getwd()
 	if err != nil {

@@ -80,7 +80,9 @@ func DownloadFile(url, destPath string) error {
 		return fmt.Errorf("failed to save download content: %w", err)
 	}
 
-	fmt.Fprint(os.Stderr, "\r\x1b[K") // Clear line
+	if stderrIsTerminal() {
+		fmt.Fprint(os.Stderr, "\r\x1b[K") // Clear line
+	}
 	return nil
 }
 
@@ -200,17 +202,46 @@ type progressWriter struct {
 	total      int64
 	downloaded int64
 	lastUpdate time.Time
+	// lastStep is the last milestone printed as a plain line, when stderr is not
+	// a terminal.
+	lastStep int64
 }
 
 func (pw *progressWriter) Write(p []byte) (int, error) {
 	n := len(p)
 	pw.downloaded += int64(n)
 
+	if !stderrIsTerminal() {
+		pw.printPlainProgress()
+		return n, nil
+	}
 	if time.Since(pw.lastUpdate) > 100*time.Millisecond || pw.downloaded == pw.total {
 		pw.lastUpdate = time.Now()
 		pw.printProgress()
 	}
 	return n, nil
+}
+
+// printPlainProgress is the progress for a log or a pipe: a bar redrawn with
+// carriage returns arrives there as thousands of lines of control codes. One
+// plain line per tenth of the download, or per 10 MB when the size is unknown.
+func (pw *progressWriter) printPlainProgress() {
+	mb := float64(pw.downloaded) / (1024 * 1024)
+	if pw.total > 0 {
+		step := pw.downloaded * 10 / pw.total
+		if step <= pw.lastStep {
+			return
+		}
+		pw.lastStep = step
+		fmt.Fprintf(os.Stderr, "Downloading: %d%% (%.1f / %.1f MB)\n", step*10, mb, float64(pw.total)/(1024*1024))
+		return
+	}
+	step := pw.downloaded / (10 * 1024 * 1024)
+	if step <= pw.lastStep {
+		return
+	}
+	pw.lastStep = step
+	fmt.Fprintf(os.Stderr, "Downloading: %.1f MB\n", mb)
 }
 
 func (pw *progressWriter) printProgress() {
@@ -237,11 +268,11 @@ func (pw *progressWriter) printProgress() {
 	mbDownloaded := float64(pw.downloaded) / (1024 * 1024)
 	if pw.total > 0 {
 		mbTotal := float64(pw.total) / (1024 * 1024)
-		fmt.Fprintf(os.Stderr, "\r\x1b[36m📦 Downloading:\x1b[0m [%s] %.1f%% (%.1f / %.1f MB)",
-			bar, percent*100, mbDownloaded, mbTotal)
+		fmt.Fprintf(os.Stderr, "\r%s [%s] %.1f%% (%.1f / %.1f MB)",
+			paint("36", "📦 Downloading:"), bar, percent*100, mbDownloaded, mbTotal)
 	} else {
-		fmt.Fprintf(os.Stderr, "\r\x1b[36m📦 Downloading:\x1b[0m [%s] (%.1f MB)",
-			bar, mbDownloaded)
+		fmt.Fprintf(os.Stderr, "\r%s [%s] (%.1f MB)",
+			paint("36", "📦 Downloading:"), bar, mbDownloaded)
 	}
 }
 

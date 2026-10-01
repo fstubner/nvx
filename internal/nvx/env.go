@@ -1481,7 +1481,7 @@ func warnIfProjectPinsAnotherVersion(nvxHome string, rt RuntimeProvider, activeV
 		return
 	}
 	running := runtimeVersionOfBinary(nvxHome, binaryPath, activeVer)
-	if running == "" || versionSatisfies(running, want) {
+	if running == "" || versionSatisfies(nvxHome, running, want) {
 		return
 	}
 	LogWarn("%s asks for %s %s, but this command is running %s.",
@@ -1524,11 +1524,19 @@ func runtimeVersionOfBinary(nvxHome, binaryPath, activeVer string) string {
 }
 
 // versionSatisfies reports whether the running version answers what the project
-// asked for. The project's request may be a range ("^22", ">=20 <23") or a bare
-// version, so it goes through the same matcher `nvx use` does.
-func versionSatisfies(running, want string) bool {
+// asked for. The project's request may be a range ("^22", ">=20 <23"), a bare
+// version, or an alias (`lts/*`, `lts/jod`, `node`), so it goes through the same
+// matcher `nvx use` does. An alias names whichever installed version it would
+// select, and only that one satisfies it. Aliases used to fall through to the
+// range reader, which rejected them, so every command in a project whose .nvmrc
+// said `lts/*` warned even with the right version running.
+func versionSatisfies(nvxHome, running, want string) bool {
 	if strings.EqualFold(strings.TrimPrefix(running, "v"), strings.TrimPrefix(want, "v")) {
 		return true
+	}
+	if isVersionAlias(want) {
+		resolved, err := resolveLocalVersion(Providers["node"], want, nvxHome)
+		return err == nil && strings.EqualFold(resolved, running)
 	}
 	match, err := highestMatching(want, []string{running})
 	return err == nil && match != ""
