@@ -37,6 +37,17 @@ import (
 // itself restricted. Reaping is unaffected: it uses wait4, never /proc, which
 // sandbox_reap_linux.go documents as a deliberate choice.
 func mountPrivateProc() error {
+	if err := enterPrivateMountNamespace(); err != nil {
+		return err
+	}
+	return mountProc()
+}
+
+// enterPrivateMountNamespace gives the calling thread a mount namespace of its
+// own whose mounts do not propagate back to the host. Split from mountProc so
+// the supervisor can make the repository's git metadata read-only in the same
+// namespace even when the procfs mount fails (see mountGitMetadataReadOnly).
+func enterPrivateMountNamespace() error {
 	if err := syscall.Unshare(syscall.CLONE_NEWNS); err != nil {
 		return fmt.Errorf("unshare mount namespace: %w", err)
 	}
@@ -46,6 +57,12 @@ func mountPrivateProc() error {
 	if err := syscall.Mount("none", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
 		return fmt.Errorf("make mounts private: %w", err)
 	}
+	return nil
+}
+
+// mountProc mounts a fresh procfs on /proc. Only inside the namespace
+// enterPrivateMountNamespace creates.
+func mountProc() error {
 	flags := uintptr(syscall.MS_NOSUID | syscall.MS_NODEV | syscall.MS_NOEXEC)
 	if err := syscall.Mount("proc", "/proc", "proc", flags, ""); err != nil {
 		return fmt.Errorf("mount proc: %w", err)

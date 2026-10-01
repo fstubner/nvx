@@ -159,6 +159,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A contained install can no longer write the project's `.git`.** The project
+  directory was writable as a whole, `.git` included, and git runs outside the
+  sandbox. So a hook or a `.git/config` entry written by an install ran as you on
+  the next `git commit` or `git status`, at the `strict` level too. `.git` is now
+  read-only to contained runs on Linux, macOS and Windows, and so is the git
+  directory a `.git` file names inside the project. Reads still work. A run that
+  cannot protect `.git` refuses to start. Hook installers that run during an
+  install (husky's `prepare`, simple-git-hooks, lefthook) can no longer set
+  themselves up inside the sandbox, so run them yourself afterwards. On Windows
+  `.git` stops inheriting permission changes from the project folder.
+
 * **Cleanup no longer removes a running session's files on Windows.** A session
   whose owning process nvx could not open, such as an elevated one, was read as
   finished, and its home could be deleted while it ran. A trusted tool's
