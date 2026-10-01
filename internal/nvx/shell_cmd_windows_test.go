@@ -15,7 +15,9 @@ import (
 // that `FOR /f ... DO %i` over `nvx env --shell=cmd` puts the shim directory
 // first on that window's PATH, and that the parent nvx finds really is cmd.exe.
 func TestCmdForLoopPutsTheShimsFirstOnPath(t *testing.T) {
-	dir := tempDir(t)
+	// Long form: a runner's temp dir can come back with 8.3 components such as
+	// RUNNER~1, while `where` prints the long name, and the check is textual.
+	dir := longPathName(tempDir(t))
 	exe := filepath.Join(dir, "nvx.exe")
 	if out, err := runGoBuild(exe); err != nil {
 		t.Skipf("cannot build nvx here: %v\n%s", err, out)
@@ -56,4 +58,18 @@ func TestCmdForLoopPutsTheShimsFirstOnPath(t *testing.T) {
 	if !strings.HasPrefix(out, `set "PATH=`) || strings.Contains(out, "export ") {
 		t.Errorf("`nvx env` from cmd.exe printed:\n%s", out)
 	}
+}
+
+// longPathName expands 8.3 components, or returns p unchanged if it cannot.
+func longPathName(p string) string {
+	short, err := syscall.UTF16PtrFromString(p)
+	if err != nil {
+		return p
+	}
+	buf := make([]uint16, 1024)
+	n, err := syscall.GetLongPathName(short, &buf[0], uint32(len(buf)))
+	if err != nil || n == 0 || int(n) > len(buf) {
+		return p
+	}
+	return syscall.UTF16ToString(buf[:n])
 }

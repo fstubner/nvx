@@ -204,6 +204,7 @@ func TestUseInCmdExplainsInsteadOfPrintingPOSIX(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("NVX_SHELL_INTEGRATION", "")
+	notQuiet(t) // the switch instructions are info lines, which -q hides
 	orig := stdoutIsTerminal
 	t.Cleanup(func() { stdoutIsTerminal = orig })
 
