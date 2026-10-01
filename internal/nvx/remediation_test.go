@@ -625,7 +625,9 @@ func TestDetectShimPackagesForVerificationFallsBackToPackageJSON(t *testing.T) {
 
 	got := detectShimPackagesForVerification("npm", []string{"install"})
 	sort.Strings(got)
-	want := []string{"fsevents", "left-pad", "typescript"}
+	// Each at its declared version or range, which is what the package manager
+	// resolves. Names alone had the checks look at the newest version.
+	want := []string{"fsevents@2.3.3", "left-pad@^1.3.0", "typescript@~5.0.0"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("packages mismatch: got %v want %v", got, want)
 	}

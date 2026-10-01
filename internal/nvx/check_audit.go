@@ -29,18 +29,21 @@ import (
 // nvx_yes (approved without asking), prompt (a person answered),
 // non_interactive (nobody was there to answer) or policy (no prompt exists).
 const (
-	checkTyposquat         = "typosquat"
-	checkReleaseAge        = "release_age"
-	checkInstallScripts    = "install_scripts"
-	checkVulnerability     = "vulnerability"
-	checkRegistryLookup    = "registry_unreachable"
-	checkOSVLookup         = "osv_unreachable"
-	checkBlockedPackage    = "blocked_package"
-	checkEnforceNoScripts  = "enforce_ignore_scripts"
-	checkGlobalInstall     = "global_install"
-	answeredByPolicy       = "policy"
-	answeredByPrompt       = "prompt"
-	answeredNonInteractive = "non_interactive"
+	checkTyposquat          = "typosquat"
+	checkReleaseAge         = "release_age"
+	checkInstallScripts     = "install_scripts"
+	checkVulnerability      = "vulnerability"
+	checkRegistryLookup     = "registry_unreachable"
+	checkOSVLookup          = "osv_unreachable"
+	checkBlockedPackage     = "blocked_package"
+	checkEnforceNoScripts   = "enforce_ignore_scripts"
+	checkGlobalInstall      = "global_install"
+	checkLockfileSource     = "lockfile_mismatch"
+	checkResolution         = "resolution_failed"
+	checkLockfileUnreadable = "lockfile_unreadable"
+	answeredByPolicy        = "policy"
+	answeredByPrompt        = "prompt"
+	answeredNonInteractive  = "non_interactive"
 )
 
 // checkInfo describes one check outcome for the log and for the stderr line.

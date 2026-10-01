@@ -1,0 +1,264 @@
+package nvx
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+// Asking npm what an install will put on disk.
+//
+// npm's own resolver runs first, with --package-lock-only and --ignore-scripts.
+// It reads package metadata, writes a lockfile and runs no install scripts.
+// It runs the way the install will, in the same sandbox under the same egress
+// rules, with the project folder as its working directory. It writes into a
+// scratch copy of package.json, the lockfile and .npmrc under
+// node_modules/.cache, so the project's own files are not touched. The
+// lockfile it writes lists every package at the version npm chose, with its
+// tarball URL and hash, and the checks run on what is not installed already.
+//
+// A copy of those files cannot stand in for a project whose package.json names
+// workspaces or local folders, so those are not resolved, and the run says so.
+//
+// Measured 2026-10-01 on Windows, a 5-dependency project with no lockfile,
+// five runs each. `nvx npm install` took 5283 to 5573 ms with this step, and
+// 9950 ms on the first of the five. Without it, 3064 to 3219 ms. It runs only where reading the command line and
+// the lockfile would miss packages: named installs, update, dedupe, and a bare
+// install whose lockfile does not match package.json.
+
+// npmResolveVerbs are the npm commands that resolve new versions. ci and
+// rebuild install what the lockfile already says, which is read directly.
+var npmResolveVerbs = append(append([]string{}, refreshVerbs...),
+	"install", "i", "in", "ins", "inst", "insta", "instal", "isnt", "isnta", "isntal", "isntall", "add",
+	"install-test", "it")
+
+var launchNpmResolution = runNpmResolution
+
+// npmResolvedTargets returns what npm will install for this command, or nil
+// when the command is not one npm resolves for, or cannot be resolved on a
+// copy, and the caller should read the command line and project instead. A
+// non-zero code is a refusal.
+func npmResolvedTargets(req verifyRequest, platform nodePlatform) ([]verifyTarget, int, string) {
+	i := commandVerbIndex(req.pmArgs, npmResolveVerbs...)
+	if i < 0 {
+		return nil, 0, ""
+	}
+	verb := strings.ToLower(req.pmArgs[i])
+	if verb == "rebuild" || verb == "rb" {
+		return nil, 0, ""
+	}
+	named := positionalsAfter(req.pmArgs, i)
+	// A named package on the blocklist is refused before npm is asked about
+	// it. The full checks run on the resolved set below.
+	if policy, err := LoadPolicy(req.nvxHome); err == nil {
+		for _, spec := range named {
+			if name := targetPackageName(verifyTarget{spec: spec}); name != "" && refuseBlocked(policy, req.nvxHome, name) {
+				return nil, 1, blockedReason
+			}
+		}
+	}
+	root := projectManifestDir()
+	manifest, hasManifest := readManifestDeps(root)
+
+	// A bare install whose lockfile was written for this package.json installs
+	// that lockfile, which the checks read as it is.
+	if len(named) == 0 && installAliases[verb] && hasManifest {
+		if lock, ok, _ := readProjectLockfile(root); ok && lockMatchesManifest(lock, manifest) {
+			return nil, 0, ""
+		}
+	}
+
+	if why := npmResolutionBlocker(req.pmArgs, named, manifest); why != "" {
+		LogWarn("nvx checks the packages named on the command line or in the project's files, and not the dependencies npm resolves for them, because %s.", why)
+		return nil, 0, ""
+	}
+
+	targets, err := resolveNpmInstall(req, root, platform)
+	if err == nil {
+		return targets, 0, ""
+	}
+	msg := fmt.Sprintf("npm could not work out what this command installs (%v), so nvx can check only the packages named on the command line or in the project's files. Proceed?", err)
+	if !askCheck(req.nvxHome, checkInfo{check: checkResolution, detail: err.Error(),
+		what: "the install goes ahead with only the named packages checked"},
+		msg, resolutionRemedy) {
+		LogError("Installation aborted: npm's dependency resolution failed and proceeding was not approved.")
+		return nil, 1, "npm could not resolve what this command installs"
+	}
+	return nil, 0, ""
+}
+
+const resolutionRemedy = "npm's own message, above, says why it could not resolve the install. No policy setting waives this." +
+	" To proceed with only the named packages checked, pass -y or set NVX_YES=true, which approves every check in the run."
+
+// npmResolutionBlocker says why a command cannot be resolved on a copy of
+// package.json and the lockfile, or returns "".
+func npmResolutionBlocker(args, named []string, m manifestDeps) string {
+	if ws := strings.TrimSpace(string(m.Workspaces)); ws != "" && ws != "null" {
+		return "the project uses npm workspaces"
+	}
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		flag, _, _ := strings.Cut(a, "=")
+		switch flag {
+		case "--prefix", "-C", "--workspace", "-w", "--workspaces", "--ws", "--include-workspace-root", "-g", "--global", "--location":
+			return "the command names a workspace or another folder"
+		}
+	}
+	for _, spec := range named {
+		if isLocalSpec(spec) {
+			return "it installs from a local folder or file"
+		}
+	}
+	for _, deps := range m.depMaps() {
+		for name, spec := range deps {
+			if isLocalSpec(name + "@" + spec) {
+				return "package.json has a dependency on a local folder or file"
+			}
+		}
+	}
+	return ""
+}
+
+// isLocalSpec reports a spec that points at the local disk, which a scratch
+// copy elsewhere would resolve differently.
+func isLocalSpec(spec string) bool {
+	switch nonRegistrySpecKind(spec) {
+	case "a file: spec", "a local path", "a tarball", "a link: spec", "a workspace: spec", "a portal: spec":
+		return true
+	}
+	return false
+}
+
+// resolveNpmInstall runs npm's resolver on a scratch copy of the project and
+// returns the lockfile it wrote, as targets.
+func resolveNpmInstall(req verifyRequest, root string, platform nodePlatform) ([]verifyTarget, error) {
+	cacheDir := filepath.Join(root, "node_modules", ".cache")
+	created := missingDirs(cacheDir)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return nil, fmt.Errorf("could not create a scratch folder: %w", err)
+	}
+	defer func() {
+		// Only the folders made here, and only when empty.
+		for _, d := range created {
+			_ = os.Remove(d)
+		}
+	}()
+	scratch, err := os.MkdirTemp(cacheDir, "nvx-resolve-")
+	if err != nil {
+		return nil, fmt.Errorf("could not create a scratch folder: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(scratch) }()
+
+	for _, name := range []string{"package.json", "package-lock.json", "npm-shrinkwrap.json", ".npmrc"} {
+		if err := copyFileIfExists(filepath.Join(root, name), filepath.Join(scratch, name)); err != nil {
+			return nil, fmt.Errorf("could not copy %s: %w", name, err)
+		}
+	}
+
+	cfg := req.launch
+	cfg.Command = "npm"
+	cfg.Args = npmResolutionArgs(req.pmArgs, scratch)
+	cfg.WorkDir = root
+	cfg.ToolName = ""
+	cfg.OnRefusal = nil
+	LogDetail("Asking npm which packages this command installs, so each one is checked first.")
+	if code := launchNpmResolution(cfg, req.contain); code != 0 {
+		return nil, fmt.Errorf("its lockfile-only run exited with %d", code)
+	}
+	lock, ok, err := readProjectLockfile(scratch)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("its lockfile-only run wrote no lockfile")
+	}
+	// The tree npm wrote holds the whole project. What is installed already at
+	// the same version stays as it is, so `npm install left-pad` in a large
+	// project checks left-pad and what it brings in.
+	targets := lockTargets(lock, platform, root)
+	if targets == nil {
+		targets = []verifyTarget{}
+	}
+	return targets, nil
+}
+
+// npmResolutionArgs is the user's command with the flags that make npm only
+// resolve. They go before any "--", after which npm reads package names, and
+// after the user's own flags, so they win. --save and --package-lock are
+// forced on because --no-save would otherwise leave the lockfile unwritten and
+// the named packages out of it. --dry-run=false for the same reason.
+func npmResolutionArgs(args []string, scratch string) []string {
+	ours := []string{
+		"--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund", "--no-update-notifier", "--loglevel=error",
+		"--save=true", "--package-lock=true", "--dry-run=false", "--prefix=" + scratch,
+	}
+	out := make([]string, 0, len(args)+len(ours))
+	inserted := false
+	for _, a := range args {
+		if a == "--" && !inserted {
+			out = append(out, ours...)
+			inserted = true
+		}
+		out = append(out, a)
+	}
+	if !inserted {
+		out = append(out, ours...)
+	}
+	return out
+}
+
+// runNpmResolution starts npm contained or not, as the command itself will
+// run. npm prints a one-line summary on stdout, and stdout may be carrying
+// something else, so it goes nowhere. Errors go to stderr as usual.
+func runNpmResolution(cfg SandboxConfig, contain bool) int {
+	restore := quietStdout()
+	defer restore()
+	if contain {
+		return runSandbox(cfg)
+	}
+	cmd, err := directCommand(cfg.Command, cfg.Args, cfg.NvxHome, false)
+	if err != nil {
+		LogError("Could not find real executable for %s", cfg.Command)
+		return 127
+	}
+	cmd.Dir = cfg.WorkDir
+	cmd.Stdout = io.Discard
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
+		}
+		return 1
+	}
+	return 0
+}
+
+// missingDirs lists dir and each ancestor of it that does not exist yet,
+// deepest first, which is the order to remove them in.
+func missingDirs(dir string) []string {
+	var out []string
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(d); err == nil || filepath.Dir(d) == d {
+			return out
+		}
+		out = append(out, d)
+	}
+}
+
+func copyFileIfExists(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0o600)
+}

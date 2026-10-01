@@ -1,0 +1,547 @@
+package nvx
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"sort"
+	"strings"
+)
+
+// What the pre-install checks run on.
+//
+// The checks ran on nvx's guess of what the package manager would install:
+// the names on the command line, or the entries of package-lock.json taken at
+// their word. Measured 2026-10-01 against a build of main:
+//
+//   - `npm install tsx` checked tsx. It also installed esbuild, whose
+//     postinstall ran with no prompt, while `npm install esbuild` prompted.
+//   - A lockfile entry named left-pad@1.3.0 whose `resolved` URL was the
+//     is-number tarball was checked as left-pad and installed is-number.
+//   - With no lockfile, esbuild pinned at 0.20.0 in package.json was checked as
+//     0.28.2, and a `file:` dependency was looked up in the registry by name.
+//   - update, dedupe, rebuild, `npm exec`, create, init, dlx and `bun x` ran
+//     contained with no checks at all.
+//
+// For npm, nvx now asks npm what it will install (see npm_resolve.go). Every
+// lockfile entry is held to the registry's record of its name and version. The
+// other package managers keep reading the command line and the project's
+// files, which the docs say.
+
+// verifyTarget is one package the pre-install checks run on.
+type verifyTarget struct {
+	// spec is what the checks parse: name@version, or a spec as typed on the
+	// command line or declared in package.json.
+	spec string
+	// name is set for a lockfile entry, whose spec may be a bare name.
+	name string
+	// From a lockfile entry: where npm fetches the package and the hash it
+	// checks the download against. Both empty for anything else.
+	resolved, integrity string
+	// sourceKind names a lockfile entry's non-registry source: a git URL, a
+	// remote tarball someone asked for, a file: path.
+	sourceKind string
+	// hasInstallScript is the lockfile's own note that the package runs one.
+	// It can only add a prompt: npm writes it for a binding.gyp as well, which
+	// the registry's scripts field does not show.
+	hasInstallScript bool
+}
+
+func (t verifyTarget) fromLockfile() bool { return t.resolved != "" || t.integrity != "" }
+
+func specTargets(specs []string) []verifyTarget {
+	out := make([]verifyTarget, 0, len(specs))
+	for _, s := range specs {
+		out = append(out, verifyTarget{spec: s})
+	}
+	return out
+}
+
+func targetSpecs(targets []verifyTarget) []string {
+	if len(targets) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(targets))
+	for _, t := range targets {
+		out = append(out, t.spec)
+	}
+	return out
+}
+
+// verifyRequest is what the pre-install checks need to know about a command.
+type verifyRequest struct {
+	pmCmd   string
+	pmArgs  []string
+	nvxHome string
+	// contain and launch describe how the command itself will run, so that
+	// npm's resolution step runs the same way.
+	contain bool
+	launch  SandboxConfig
+}
+
+// verifyBeforeRun runs the pre-install checks for a package-manager command.
+// It returns 0 to proceed, or the exit code, a refusal reason and a label for
+// the first package checked.
+func verifyBeforeRun(req verifyRequest) (int, string, string) {
+	platform := installPlatform(req)
+	var targets []verifyTarget
+	if strings.EqualFold(req.pmCmd, "npm") {
+		resolved, code, reason := npmResolvedTargets(req, platform)
+		if code != 0 {
+			return code, reason, ""
+		}
+		targets = resolved
+	}
+	if targets == nil {
+		var err error
+		targets, err = detectTargets(req.pmCmd, req.pmArgs, platform)
+		if err != nil {
+			// The lockfile is what installs, and nvx could not read it. Checking
+			// package.json instead checked the newest version of each range in
+			// place of the locked one, and flagged versions nobody was installing.
+			msg := fmt.Sprintf("%v, so nvx cannot tell which versions this command installs and has nothing to check. Proceed without the pre-install checks?", err)
+			if !askCheck(req.nvxHome, checkInfo{check: checkLockfileUnreadable, detail: err.Error(),
+				what: "the install goes ahead without its lockfile checked"}, msg, lockfileUnreadableRemedy) {
+				LogError("Installation aborted: the lockfile could not be read and proceeding was not approved.")
+				return 1, "its lockfile could not be read", ""
+			}
+			return 0, "", ""
+		}
+	}
+	if len(targets) == 0 {
+		return 0, "", ""
+	}
+	code, reason := runVerifyTargets(targets, req.nvxHome)
+	return code, reason, targets[0].spec
+}
+
+const lockfileUnreadableRemedy = "No policy setting waives an unreadable lockfile. Check that it is valid JSON written by npm." +
+	" To proceed without the checks, pass -y or set NVX_YES=true, which approves every check in the run."
+
+// detectTargets lists what the checks run on without asking the package
+// manager: the packages a command names, or the project's lockfile, or its
+// package.json. The error is a lockfile that exists and could not be read.
+func detectTargets(cmdName string, args []string, platform nodePlatform) ([]verifyTarget, error) {
+	cmd := strings.ToLower(cmdName)
+	switch cmd {
+	case "npm", "yarn", "pnpm":
+		if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
+			return specTargets(pkgs), nil
+		}
+		if hasInstallVerb(args, ciVerbs...) || isBareYarnInstall(cmd, args) {
+			return projectTargets(platform)
+		}
+		if commandVerbIndex(args, refreshVerbs...) >= 0 {
+			return refreshTargets(args, platform)
+		}
+		if t := runnerTargets(cmd, args); t != nil {
+			return t, nil
+		}
+		// `npm link <name>` installs <name> from the registry into the global
+		// prefix before linking it. A path is skipped by the checks, which say so.
+		if cmd == "npm" && commandVerbIndex(args, "link", "ln") >= 0 {
+			return specTargets(installPackagesArg(args, "link", "ln")), nil
+		}
+	case "bun":
+		// bun add/install/i/a [pkg...]; "a" is Bun's short alias for add.
+		if pkgs := installPackagesArg(args, "a"); len(pkgs) > 0 {
+			return specTargets(pkgs), nil
+		}
+		if hasInstallVerb(args, "a") {
+			return projectTargets(platform)
+		}
+		if commandVerbIndex(args, refreshVerbs...) >= 0 {
+			return refreshTargets(args, platform)
+		}
+		if t := runnerTargets(cmd, args); t != nil {
+			return t, nil
+		}
+		// `bun pm trust <name>...` runs those packages' blocked scripts. With
+		// --all it names none, and there is nothing to check by name.
+		if hasCommandPair(args, "pm", "trust") {
+			return specTargets(installPackagesArg(args, "trust")), nil
+		}
+	case "npx", "bunx":
+		return specTargets(detectExecutorPackages(args)), nil
+	}
+	return nil, nil
+}
+
+// projectTargets reads what a project installs: its lockfile when it has one,
+// otherwise package.json as declared.
+func projectTargets(platform nodePlatform) ([]verifyTarget, error) {
+	lock, ok, err := readProjectLockfile(projectManifestDir())
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		if t := lockTargets(lock, platform, ""); len(t) > 0 {
+			return t, nil
+		}
+	}
+	return specTargets(packagesFromPackageJSON()), nil
+}
+
+// refreshTargets covers update, upgrade, dedupe and rebuild. Named packages
+// are checked as named. Without names they act on the whole project.
+func refreshTargets(args []string, platform nodePlatform) ([]verifyTarget, error) {
+	i := commandVerbIndex(args, refreshVerbs...)
+	named := installPackagesArg(args, refreshVerbs...)
+	verb := strings.ToLower(args[i])
+	rebuild := verb == "rebuild" || verb == "rb"
+	if len(named) > 0 && !rebuild {
+		return specTargets(named), nil
+	}
+	project, err := projectTargets(platform)
+	if err != nil || len(named) == 0 {
+		return project, err
+	}
+	// rebuild runs the scripts of what is installed, so the installed versions
+	// are the ones to check.
+	want := map[string]bool{}
+	for _, n := range named {
+		want[n] = true
+	}
+	var picked []verifyTarget
+	for _, t := range project {
+		if want[targetPackageName(t)] {
+			picked = append(picked, t)
+		}
+	}
+	if len(picked) > 0 {
+		return picked, nil
+	}
+	return specTargets(named), nil
+}
+
+// runnerVerbs fetch a package and run it: `npm exec`, `pnpm dlx`, `bun x`.
+var runnerVerbs = map[string][]string{
+	"npm":  {"exec", "x"},
+	"pnpm": {"dlx"},
+	"yarn": {"dlx"},
+	"bun":  {"x"},
+}
+
+// initializerVerbs fetch a create-* package and run it.
+var initializerVerbs = map[string][]string{
+	"npm":  {"create", "init"},
+	"pnpm": {"create"},
+	"yarn": {"create"},
+	"bun":  {"create", "c"},
+}
+
+func runnerTargets(cmd string, args []string) []verifyTarget {
+	if i := commandVerbIndex(args, runnerVerbs[cmd]...); i >= 0 {
+		return specTargets(detectExecutorPackages(args[i+1:]))
+	}
+	if i := commandVerbIndex(args, initializerVerbs[cmd]...); i >= 0 {
+		// Bare `npm init` writes a package.json and fetches nothing.
+		if spec := nextPositional(args, i); spec != "" {
+			return []verifyTarget{{spec: initializerPackage(spec)}}
+		}
+	}
+	return nil
+}
+
+// initializerPackage is the package `npm init <x>` and `create <x>` run, by
+// npm's rule: foo is create-foo, @scope is @scope/create, and @scope/foo is
+// @scope/create-foo, each keeping its version.
+func initializerPackage(spec string) string {
+	if nonRegistrySpecKind(spec) != "" {
+		return spec
+	}
+	name, version := parsePackageQuery(spec)
+	pkg := "create-" + name
+	if strings.HasPrefix(name, "@") {
+		if scope, rest, ok := strings.Cut(name, "/"); ok {
+			pkg = scope + "/create-" + rest
+		} else {
+			pkg = name + "/create"
+		}
+	}
+	if version != "" {
+		pkg += "@" + version
+	}
+	return pkg
+}
+
+// readProjectLockfile reads npm-shrinkwrap.json or package-lock.json from dir,
+// in the order npm prefers them. ok is false when there is neither. err is a
+// lockfile that is there and could not be read, which is not the same as no
+// lockfile: see verifyBeforeRun.
+func readProjectLockfile(dir string) (lock packageLockFile, ok bool, err error) {
+	for _, name := range []string{"npm-shrinkwrap.json", "package-lock.json"} {
+		data, rerr := os.ReadFile(filepath.Join(dir, name))
+		if errors.Is(rerr, os.ErrNotExist) {
+			continue
+		}
+		if rerr != nil {
+			return packageLockFile{}, false, fmt.Errorf("%s could not be read: %w", name, rerr)
+		}
+		if jerr := json.Unmarshal(data, &lock); jerr != nil {
+			return packageLockFile{}, false, fmt.Errorf("%s could not be parsed: %w", name, jerr)
+		}
+		return lock, true, nil
+	}
+	return packageLockFile{}, false, nil
+}
+
+// lockTargets lists what a lockfile installs on this platform, one target per
+// distinct name, version and source. With installedRoot set, an entry already
+// installed there at the same name and version is left out, because npm
+// leaves it as it is and runs nothing of it.
+func lockTargets(lock packageLockFile, platform nodePlatform, installedRoot string) []verifyTarget {
+	declared := declaredSpecs(lock)
+	seen := map[verifyTarget]bool{}
+	var out []verifyTarget
+	add := func(t verifyTarget) {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	for path, e := range lock.Packages {
+		if e.Link {
+			continue
+		}
+		name := lockEntryPackageName(path, e)
+		if name == "" || e.Version == "" || !platform.allows(e.OS, e.CPU) {
+			continue
+		}
+		if installedRoot != "" && isInstalledAt(installedRoot, path, name, e.Version) {
+			continue
+		}
+		add(lockEntryTarget(name, e.Version, e.Resolved, e.Integrity, e.HasInstallScript, declared[name]))
+	}
+	var walk func(map[string]packageLockDep)
+	walk = func(deps map[string]packageLockDep) {
+		for name, dep := range deps {
+			if dep.Version != "" {
+				add(lockEntryTarget(name, dep.Version, dep.Resolved, dep.Integrity, false, nil))
+			}
+			walk(dep.Dependencies)
+		}
+	}
+	walk(lock.Dependencies)
+	sort.Slice(out, func(i, j int) bool { return out[i].spec < out[j].spec })
+	return out
+}
+
+// isInstalledAt reports whether the package.json at root/path names this
+// package at this version.
+func isInstalledAt(root, path, name, version string) bool {
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path), "package.json"))
+	if err != nil {
+		return false
+	}
+	var m struct{ Name, Version string }
+	if json.Unmarshal(data, &m) != nil {
+		return false
+	}
+	return m.Name == name && m.Version == version
+}
+
+// lockEntryTarget classifies one lockfile entry by where it is fetched from.
+func lockEntryTarget(name, version, resolved, integrity string, scripts bool, declared []string) verifyTarget {
+	t := verifyTarget{spec: name + "@" + version, name: name, resolved: resolved, integrity: integrity, hasInstallScript: scripts}
+	lower := strings.ToLower(resolved)
+	switch {
+	case resolved == "":
+	case strings.HasPrefix(lower, "https://"), strings.HasPrefix(lower, "http://"):
+		// A URL is the registry's tarball unless the dependency asked for a
+		// URL. That is what holds an entry to the registry's record of its name
+		// and version: otherwise any lockfile could call any tarball left-pad.
+		if registryTarballName(resolved) == "" && declaresURL(declared) {
+			t.sourceKind = "a URL"
+		}
+	default:
+		t.sourceKind = nonRegistrySpecKind(resolved)
+	}
+	if t.sourceKind != "" {
+		t.spec = name
+	}
+	return t
+}
+
+func declaresURL(specs []string) bool {
+	for _, s := range specs {
+		if nonRegistrySpecKind(s) == "a URL" {
+			return true
+		}
+	}
+	return false
+}
+
+// declaredSpecs collects, for each dependency name, every spec a lockfile
+// entry declares for it.
+func declaredSpecs(lock packageLockFile) map[string][]string {
+	out := map[string][]string{}
+	for _, e := range lock.Packages {
+		for _, deps := range []map[string]string{e.Dependencies, e.DevDependencies, e.OptionalDependencies, e.PeerDependencies} {
+			for name, spec := range deps {
+				out[name] = append(out[name], spec)
+			}
+		}
+	}
+	return out
+}
+
+// manifestDeps is the dependency part of a package.json.
+type manifestDeps struct {
+	Dependencies         map[string]string `json:"dependencies"`
+	DevDependencies      map[string]string `json:"devDependencies"`
+	OptionalDependencies map[string]string `json:"optionalDependencies"`
+	PeerDependencies     map[string]string `json:"peerDependencies"`
+	Workspaces           json.RawMessage   `json:"workspaces"`
+}
+
+func (m manifestDeps) depMaps() []map[string]string {
+	return []map[string]string{m.Dependencies, m.DevDependencies, m.OptionalDependencies, m.PeerDependencies}
+}
+
+func readManifestDeps(dir string) (manifestDeps, bool) {
+	var m manifestDeps
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return m, false
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		LogWarn("Failed to parse package.json for verification: %v", err)
+		return m, false
+	}
+	return m, true
+}
+
+// manifestDepSpec is name@spec for a package.json dependency, which the checks
+// read as the declared version or range.
+func manifestDepSpec(name, spec string) string {
+	spec = strings.TrimSpace(spec)
+	switch {
+	case spec == "", strings.HasPrefix(spec, "catalog:"):
+		// A pnpm catalog keeps the version in pnpm-workspace.yaml, which nvx does
+		// not read, so the newest version is checked.
+		return name
+	case strings.Contains(spec, " - "):
+		// A hyphen range is outside the range grammar nvx resolves (see
+		// semver_range.go), and an unresolvable version prompts.
+		return name
+	}
+	return name + "@" + spec
+}
+
+// lockMatchesManifest reports whether a lockfile was written for the
+// package.json beside it, by comparing what each declares at the root. When
+// they match, `npm install` installs the lockfile as it is.
+func lockMatchesManifest(lock packageLockFile, m manifestDeps) bool {
+	root, ok := lock.Packages[""]
+	if !ok {
+		return false
+	}
+	have := []map[string]string{root.Dependencies, root.DevDependencies, root.OptionalDependencies, root.PeerDependencies}
+	for i, want := range m.depMaps() {
+		if len(want) == 0 && len(have[i]) == 0 {
+			continue
+		}
+		if !reflect.DeepEqual(want, have[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// stringList reads a JSON string or array of strings, which is how package
+// metadata spells os and cpu.
+type stringList []string
+
+func (l *stringList) UnmarshalJSON(b []byte) error {
+	var one string
+	if err := json.Unmarshal(b, &one); err == nil {
+		*l = stringList{one}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(b, &many); err != nil {
+		// Malformed here is not worth losing the whole lockfile over. An entry
+		// with no list is checked whatever the platform.
+		*l = nil
+		return nil
+	}
+	*l = many
+	return nil
+}
+
+// nodePlatform is a platform in Node's names. The zero value matches every
+// entry.
+type nodePlatform struct{ os, cpu string }
+
+func hostNodePlatform() nodePlatform {
+	return nodePlatform{nodePlatformName(runtime.GOOS), nodeArchName(runtime.GOARCH)}
+}
+
+// installPlatform is where the install will run: this machine, or Linux in a
+// container under the docker provider.
+func installPlatform(req verifyRequest) nodePlatform {
+	provider := req.launch.FilesystemProvider
+	if provider == "" {
+		if p, err := LoadPolicy(req.nvxHome); err == nil {
+			provider = p.FilesystemProvider()
+		}
+	}
+	p := hostNodePlatform()
+	if strings.EqualFold(provider, "docker") {
+		p.os = "linux"
+	}
+	return p
+}
+
+func nodePlatformName(goos string) string {
+	if goos == "windows" {
+		return "win32"
+	}
+	return goos
+}
+
+func nodeArchName(goarch string) string {
+	switch goarch {
+	case "amd64":
+		return "x64"
+	case "386":
+		return "ia32"
+	case "ppc64le":
+		return "ppc64"
+	}
+	return goarch
+}
+
+// allows applies npm's os and cpu rule: an entry for another platform is
+// skipped by npm, so it is not checked either.
+func (p nodePlatform) allows(osList, cpuList []string) bool {
+	if p.os == "" {
+		return true
+	}
+	return platformListAllows(osList, p.os) && platformListAllows(cpuList, p.cpu)
+}
+
+// platformListAllows is npm-install-checks' checkList: a "!x" entry excludes
+// x, and a list of plain entries allows only those.
+func platformListAllows(list []string, value string) bool {
+	if len(list) == 0 || (len(list) == 1 && list[0] == "any") {
+		return true
+	}
+	match, negated := false, 0
+	for _, v := range list {
+		if strings.HasPrefix(v, "!") {
+			if v[1:] == value {
+				return false
+			}
+			negated++
+			continue
+		}
+		match = match || v == value
+	}
+	return match || negated == len(list)
+}

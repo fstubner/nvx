@@ -14,32 +14,33 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
 - **Your own code is not contained by default.** `npm run build`, `npm test` and
   `node` run uncontained at the `standard` level, so a compromised dependency your
   own code imports is not sandboxed. A contained install can therefore influence a
-  later uncontained command, because the project's own files are writable by
-  design: `package.json` and its scripts, `node_modules`, lockfiles, build config,
-  and hook folders kept in the project such as `.husky`. The one exception is
-  `.git`, which contained runs can read and cannot write.
-  `isolation.level: strict` contains those commands, at the cost of breaking
-  anything that needs unrestricted filesystem or network access.
+  later uncontained command, because `node_modules/.bin` is writable by design.
+  `isolation.level: strict` contains them, at the cost of breaking anything that
+  needs unrestricted filesystem or network access.
 - **A `.env` inside the project is readable by a contained install.** The project
   directory has to be readable for the install to work, and `.env` lives in it.
   Environment *variables* are scrubbed; a file is a file.
-- **On macOS, reads outside your credential stores are not contained.** Writes
-  and egress are. The Seatbelt profile has to allow filesystem reads because the
-  dynamic linker loads system libraries whose locations move between macOS
-  versions. It denies the credential stores by path, so `~/.ssh`, `~/.aws`,
-  `~/.npmrc`, the other registry and cloud credential files, and your keychains
-  cannot be read. Other files can, including other projects and any credential
-  kept somewhere the list does not name.
+- **On macOS, reads are not contained.** Writes and egress are. The Seatbelt
+  profile has to allow filesystem reads because the dynamic linker loads system
+  libraries whose locations move between macOS versions.
 - **On Windows, your home directory is listable.** Contents stay unreadable, so
   `~/.ssh`, `~/.aws` and `~/.npmrc` cannot be read, but their presence is visible.
   That is an ACE Windows ships on your profile and nvx cannot revoke.
 - **Detection is best-effort.** Typosquat and vulnerability checks reduce risk
   without certifying a package. Containment is the backstop, not the checks.
-- **Only `package-lock.json` is read for the vulnerability check.** A project
-  that uses pnpm, yarn or bun has no `package-lock.json`, so nvx checks the
-  dependency names in `package.json` instead. Those carry no locked versions and
-  no transitive dependencies, so the packages actually installed are not all
-  checked.
+- **Dependencies are checked for npm installs, and not for everything.** For
+  `npm install`, `npm update` and `npm dedupe`, nvx asks npm which packages it
+  will install and checks all of them. `npm ci` checks every entry of
+  `package-lock.json` for this platform. The other commands are checked on the packages they name,
+  the entries of `package-lock.json`, or the versions `package.json` declares,
+  and the dependencies those bring in are not checked. That is `npx`, `npm
+  exec`, `npm create` and `npm init`, every pnpm, yarn and bun command, and npm
+  projects that use workspaces or depend on a local folder. pnpm, yarn and bun
+  lockfiles are not read.
+- **Packages from git, a URL or a local path get only the blocklist.** They are
+  checked against `blocked_packages` by the name they install under. The
+  typosquat, advisory and release-age checks look a package up in the registry,
+  and these are not in it.
 - **On Windows, a loopback exemption left by an `nvx setup` older than 0.5.0
   opens every service on 127.0.0.1** to contained code, whatever the allowlist
   says. Newer versions never add one. Removing it needs an Administrator
@@ -53,16 +54,27 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
 
 ## What surprises people
 
+- **An npm install that brings in new packages runs npm twice.** The first run
+  only resolves versions, contained, so that each package can be checked before
+  the second run installs it. An `npm install` whose lockfile already matches
+  `package.json` and `npm ci` run npm once.
+
+- **On Ubuntu 23.10 and later, the Linux sandbox may refuse to start.** Ubuntu
+  restricts the user namespaces the sandbox is built on, through the setting
+  `kernel.apparmor_restrict_unprivileged_userns`. Contained commands then fail
+  with "Operation not permitted", and nvx does not run them uncontained instead.
+  `nvx doctor` starts a contained process and names this setting when it is the
+  cause. You have two ways forward. `sudo sysctl -w
+  kernel.apparmor_restrict_unprivileged_userns=0` turns the restriction off for
+  every program on the machine. Or set `isolation.network.mode` to `open`, which
+  gives up the network namespace, so contained code shares your network and the
+  egress allowlist is not enforced. `nvx doctor` says whether `open` starts on
+  your machine.
 - **A contained command started in your home directory, or above it, starts in
   the sandbox's home instead.** The working directory is writable inside the
   sandbox, and granting your home would grant everything in it, `~/.nvx` and
   your shell profile included. nvx says so when it happens. Run the command from
   a project folder to work on files there.
-- **Git hook installers cannot set themselves up during a contained install.**
-  husky's `prepare` script, simple-git-hooks and lefthook write to `.git`
-  (`.git/config` or `.git/hooks`), which a contained install cannot write, so
-  their setup step fails there. Run it yourself afterwards, for example
-  `npx husky`, or run the install with `nvx --no-sandbox`.
 - **A stray `package.json` above your projects merges them into one sandbox
   scope.** `nvx doctor` reports it when the manifest sits in your home directory
   or at a volume root.

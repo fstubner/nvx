@@ -50,8 +50,28 @@ and run scripts. Its defenses are layered:
    against the publisher's `SHASUMS256.txt` over HTTPS before use. Archive
    extraction is protected against zip-bombs and path/symlink traversal.
 2. **Supply-chain checks** — typosquatting detection, OSV vulnerability
-   lookups, package release-age warnings, and install-script prompts run
-   before untrusted code executes.
+   lookups, package release-age warnings, install-script prompts and the
+   `blocked_packages` list run before untrusted code executes.
+
+   What they run on depends on the command. For `npm install`, `npm update`
+   and `npm dedupe`, nvx first runs npm's own resolver with
+   `--package-lock-only --ignore-scripts`, contained like the install, on a
+   scratch copy of `package.json` and the lockfile. Every package in the tree
+   it writes is checked, dependencies included, apart from those already
+   installed at the same version, which npm leaves alone. For `npm ci`, `npm rebuild` and
+   an `npm install` whose lockfile matches `package.json`, every lockfile entry
+   for this platform is checked. A lockfile entry's `resolved` URL and `integrity` hash
+   must match the registry's record for its name and version, and an entry that
+   does not is refused.
+
+   Everywhere else the checks run on the packages the command names, or on the
+   project's `package-lock.json`, or on the versions `package.json` declares.
+   That covers `npx`, `npm exec`, `npm create`, `npm init <initializer>`, every
+   pnpm, yarn and bun command, and npm projects that use workspaces or depend
+   on a local folder. The dependencies those packages bring in are not checked
+   there, and pnpm, yarn and bun lockfiles are not read. A package from git, a
+   URL or a local path is checked against `blocked_packages` by the name it
+   installs under, and skips the other checks.
 3. **Process isolation** — commands that fetch or execute package-authored code
    run inside an OS-native sandbox (Windows AppContainer, Linux Landlock +
    network namespace + seccomp, macOS Seatbelt) with a scrubbed environment and

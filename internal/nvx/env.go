@@ -445,9 +445,15 @@ func installPackagesArg(args []string, extraVerbs ...string) []string {
 	if subIdx == -1 {
 		return nil
 	}
+	return positionalsAfter(args, subIdx)
+}
+
+// positionalsAfter returns the non-flag tokens after args[verbIdx], which are
+// the packages a package-manager verb names.
+func positionalsAfter(args []string, verbIdx int) []string {
 	var pkgs []string
 	passthrough := false
-	for _, arg := range args[subIdx+1:] {
+	for _, arg := range args[verbIdx+1:] {
 		if !passthrough && arg == "--" {
 			// After the verb, "--" ends flag parsing: everything from here is a
 			// package spec, dashes included. Measured: `npm install -- --weird-name`
@@ -575,40 +581,12 @@ func hasLeadingSubcommand(args []string, name string) bool {
 	return false
 }
 
+// detectShimPackagesForVerification lists the package specs the pre-install
+// checks run on for a command, reading the project where the command names
+// none. npm's own resolution, which verifyBeforeRun adds, is not part of it.
 func detectShimPackagesForVerification(cmdName string, args []string) []string {
-	switch strings.ToLower(cmdName) {
-	case "npm", "yarn", "pnpm":
-		if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
-			return pkgs
-		}
-		if hasInstallVerb(args, ciVerbs...) || isBareYarnInstall(cmdName, args) {
-			if pkgs := packagesFromPackageLock(); len(pkgs) > 0 {
-				return pkgs
-			}
-			return packagesFromPackageJSON()
-		}
-		// `npm link <name>` installs <name> from the registry into the global
-		// prefix before linking it. A path is skipped by the checks, which say so.
-		if strings.EqualFold(cmdName, "npm") && commandVerbIndex(args, "link", "ln") >= 0 {
-			return installPackagesArg(args, "link", "ln")
-		}
-	case "bun":
-		// bun add/install/i/a [pkg...]; "a" is Bun's short alias for add.
-		if pkgs := installPackagesArg(args, "a"); len(pkgs) > 0 {
-			return pkgs
-		}
-		if hasInstallVerb(args, "a") {
-			return packagesFromPackageJSON()
-		}
-		// `bun pm trust <name>...` runs those packages' blocked scripts. With
-		// --all it names none, and there is nothing to check by name.
-		if hasCommandPair(args, "pm", "trust") {
-			return installPackagesArg(args, "trust")
-		}
-	case "npx", "bunx":
-		return detectExecutorPackages(args)
-	}
-	return nil
+	targets, _ := detectTargets(cmdName, args, hostNodePlatform())
+	return targetSpecs(targets)
 }
 
 func detectExecutorPackages(args []string) []string {
@@ -679,14 +657,28 @@ type packageLockFile struct {
 	Dependencies map[string]packageLockDep   `json:"dependencies"`
 }
 
-// A `packages` entry. Its own `dependencies` is deliberately not decoded: the
-// resolved version of every one of them already appears as its own entry in
-// `packages`, keyed by path.
+// A `packages` entry. The resolved version of each of its dependencies appears
+// as its own entry, keyed by path. Its dependency maps are read for the specs
+// they declare, which say whether a URL in `resolved` was asked for.
 type packageLockEntry struct {
 	Version string `json:"version"`
 	// Name is present when it differs from the path, which is what an npm alias
 	// does: `node_modules/lp` holding left-pad carries "name": "left-pad".
 	Name string `json:"name"`
+	// Where npm fetches the package, and the hash it checks the download
+	// against. The checks read only name and version until 2026-10-01, so an
+	// entry could name one package and fetch another.
+	Resolved         string     `json:"resolved"`
+	Integrity        string     `json:"integrity"`
+	Link             bool       `json:"link"`
+	HasInstallScript bool       `json:"hasInstallScript"`
+	OS               stringList `json:"os"`
+	CPU              stringList `json:"cpu"`
+
+	Dependencies         map[string]string `json:"dependencies"`
+	DevDependencies      map[string]string `json:"devDependencies"`
+	OptionalDependencies map[string]string `json:"optionalDependencies"`
+	PeerDependencies     map[string]string `json:"peerDependencies"`
 }
 
 // lockEntryPackageName is the package a `packages` entry installs. The path
@@ -703,6 +695,8 @@ func lockEntryPackageName(path string, entry packageLockEntry) string {
 // A node in the lockfileVersion 1 `dependencies` tree, which nests.
 type packageLockDep struct {
 	Version      string                    `json:"version"`
+	Resolved     string                    `json:"resolved"`
+	Integrity    string                    `json:"integrity"`
 	Dependencies map[string]packageLockDep `json:"dependencies"`
 }
 
@@ -726,44 +720,11 @@ func projectManifestDir() string {
 }
 
 func packagesFromPackageLock() []string {
-	data, err := os.ReadFile(filepath.Join(projectManifestDir(), "package-lock.json"))
-	if err != nil {
+	lock, ok, _ := readProjectLockfile(projectManifestDir())
+	if !ok {
 		return nil
 	}
-	var lock packageLockFile
-	if err := json.Unmarshal(data, &lock); err != nil {
-		LogWarn("Failed to parse package-lock.json for verification: %v", err)
-		return nil
-	}
-	seen := map[string]bool{}
-	var pkgs []string
-	for path, pkg := range lock.Packages {
-		name := lockEntryPackageName(path, pkg)
-		if name == "" || pkg.Version == "" {
-			continue
-		}
-		query := name + "@" + pkg.Version
-		if !seen[query] {
-			seen[query] = true
-			pkgs = append(pkgs, query)
-		}
-	}
-	addLockDependencies(lock.Dependencies, seen, &pkgs)
-	sort.Strings(pkgs)
-	return pkgs
-}
-
-func addLockDependencies(deps map[string]packageLockDep, seen map[string]bool, out *[]string) {
-	for name, dep := range deps {
-		if dep.Version != "" {
-			query := name + "@" + dep.Version
-			if !seen[query] {
-				seen[query] = true
-				*out = append(*out, query)
-			}
-		}
-		addLockDependencies(dep.Dependencies, seen, out)
-	}
+	return targetSpecs(lockTargets(lock, nodePlatform{}, ""))
 }
 
 func packageNameFromLockPath(path string) string {
@@ -775,34 +736,27 @@ func packageNameFromLockPath(path string) string {
 	return path[idx+len(marker):]
 }
 
+// packagesFromPackageJSON lists the dependencies package.json declares, each
+// with its declared spec: name@1.2.3, name@^1.0.0, name@file:../x.
+//
+// Names alone were returned until 2026-10-01, so the checks looked at the
+// newest version of each rather than the declared one (esbuild pinned at
+// 0.20.0 was checked as 0.28.2), and asked the registry about local and
+// workspace dependencies by name.
 func packagesFromPackageJSON() []string {
-	data, err := os.ReadFile(filepath.Join(projectManifestDir(), "package.json"))
-	if err != nil {
-		return nil
-	}
-	var pkg struct {
-		Dependencies         map[string]string `json:"dependencies"`
-		DevDependencies      map[string]string `json:"devDependencies"`
-		OptionalDependencies map[string]string `json:"optionalDependencies"`
-		PeerDependencies     map[string]string `json:"peerDependencies"`
-	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		LogWarn("Failed to parse package.json for verification: %v", err)
+	m, ok := readManifestDeps(projectManifestDir())
+	if !ok {
 		return nil
 	}
 	seen := map[string]bool{}
 	var pkgs []string
-	for _, deps := range []map[string]string{
-		pkg.Dependencies,
-		pkg.DevDependencies,
-		pkg.OptionalDependencies,
-		pkg.PeerDependencies,
-	} {
-		for name := range deps {
-			if !seen[name] {
-				seen[name] = true
-				pkgs = append(pkgs, name)
+	for _, deps := range m.depMaps() {
+		for name, spec := range deps {
+			if seen[name] {
+				continue
 			}
+			seen[name] = true
+			pkgs = append(pkgs, manifestDepSpec(name, spec))
 		}
 	}
 	sort.Strings(pkgs)
@@ -956,19 +910,25 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 
 	switch strings.ToLower(pmCmd) {
 	case "npm", "yarn", "pnpm", "npx", "bun", "bunx":
-		if pkgs := detectShimPackagesForVerification(pmCmd, pmArgs); len(pkgs) > 0 {
-			// Returning rather than exiting here is what lets runShim record the
-			// abort. A blocked or refused install is a run, and the one a later
-			// review most wants to find.
-			if code, reason := runVerifyInstall(pkgs, nvxHome); code != 0 {
-				trace.note(runModeRefused, "blocked by pre-install verification: "+reason)
-				// Say so to an MCP client if one is waiting. Without this the client
-				// sees a process that closed the pipe without answering and reports
-				// "Connection closed" -- the same message an unrelated transport bug
-				// produces, which is exactly how this was misdiagnosed once already.
-				reportRefusalOverStdio(reason, firstPackageLabel(pkgs))
-				return exitRefused
-			}
+		// Returning rather than exiting here is what lets runShim record the
+		// abort. A blocked or refused install is a run, and the one a later
+		// review most wants to find.
+		if code, reason, label := verifyBeforeRun(verifyRequest{
+			pmCmd: pmCmd, pmArgs: pmArgs, nvxHome: nvxHome, contain: contain,
+			launch: SandboxConfig{
+				NvxHome:            nvxHome,
+				FilesystemProvider: opts.filesystemProvider,
+				ReadExecRoots:      resolveReadExecRoots(policy.Isolation.Filesystem.AllowReadExec, nvxHome),
+				PassEnv:            policy.Isolation.Environment.Allow,
+			},
+		}); code != 0 {
+			trace.note(runModeRefused, "blocked by pre-install verification: "+reason)
+			// Say so to an MCP client if one is waiting. Without this the client
+			// sees a process that closed the pipe without answering and reports
+			// "Connection closed" -- the same message an unrelated transport bug
+			// produces, which is exactly how this was misdiagnosed once already.
+			reportRefusalOverStdio(reason, label)
+			return exitRefused
 		}
 	}
 	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" {
@@ -1057,6 +1017,30 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		}
 	}
 
+	cmd, err := directCommand(cmdName, args, nvxHome, true)
+	if err != nil {
+		LogError("Could not find real executable for %s", cmdName)
+		return 1
+	}
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := runDirectChild(cmd); err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			return childExitCode(exitError)
+		}
+		LogError("Failed to execute %s: %v", cmdName, err)
+		return 1
+	}
+	return 0
+}
+
+// directCommand builds the uncontained launch of cmdName the way a shim
+// resolves it: the pinned runtime first, then the project's own bin, then PATH
+// without nvx's shims. warnPin says whether to warn when the project pins
+// another runtime version, which only the command itself should do.
+func directCommand(cmdName string, args []string, nvxHome string, warnPin bool) (*exec.Cmd, error) {
 	rt := runtimeForShim(cmdName)
 	activeVer := getActiveShellVersionFor(nvxHome, rt.Name())
 	if activeVer == "" {
@@ -1073,12 +1057,13 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		var err error
 		binaryPath, err = lookPathSkippingNvxShims(cmdName, nvxHome)
 		if err != nil {
-			LogError("Could not find real executable for %s", cmdName)
-			return 1
+			return nil, err
 		}
 	}
 	binaryPath = preferWindowsRuntimeExe(binaryPath)
-	warnIfProjectPinsAnotherVersion(nvxHome, rt, activeVer, binaryPath)
+	if warnPin {
+		warnIfProjectPinsAnotherVersion(nvxHome, rt, activeVer, binaryPath)
+	}
 
 	// Windows: launch npm/npx as node.exe rather than through cmd.exe, and let
 	// the child find the real runtime for its own nested `node`/`bun` calls
@@ -1101,18 +1086,7 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	// a shim is for; launchPath comes from nvx's own resolution, not from input.
 	cmd := exec.Command(launchPath, launchArgs...)
 	cmd.Env = childEnv // nil inherits, exactly as before
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := runDirectChild(cmd); err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			return childExitCode(exitError)
-		}
-		LogError("Failed to execute %s: %v", cmdName, err)
-		return 1
-	}
-	return 0
+	return cmd, nil
 }
 
 // ToBashPath converts a Windows path to Git Bash path format (e.g. C:\Users -> /c/Users)
