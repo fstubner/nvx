@@ -46,7 +46,7 @@ system.
 | Host profile write blocked | Yes — measured | Yes — CI (Landlock) | Yes — CI (Seatbelt) |
 | Workdir write allowed | Yes — measured | Yes — CI | Yes — CI |
 | Project `.git` write blocked, read allowed | Yes — measured | Yes — CI (read-only bind mount) | Yes — CI (Seatbelt deny rule) |
-| Host profile read blocked | Yes — measured | Yes — CI (Landlock allowlist) | **No** — CI confirms reads are allowed |
+| Host profile read blocked | Yes — measured | Yes — CI (Landlock allowlist) | **Partial**. CI confirms credential stores are denied and other reads are allowed |
 | Egress blocked when not allowlisted | Yes — measured\* | Yes — CI | Yes — CI |
 | Allowlisted host reachable through the proxy | Yes — measured (AppContainer + parent proxy over a UNIX socket) | Yes — CI (loopback-only netns + parent proxy over a UNIX socket) | Yes — CI (Seatbelt + loopback proxy) |
 | Raw TCP/UDP bypass blocked at OS | Yes — measured (no network capability granted) | Yes — CI (netns + seccomp UDP deny) | Yes — CI (TCP and UDP; which layer refuses TCP is untested) |

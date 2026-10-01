@@ -12,14 +12,15 @@
 # apart. That distinction is not hypothetical here -- a Windows egress test once
 # reported success while the sandbox was blocking its own test server.
 #
-# It also asserts a WEAKNESS on purpose. macOS allows filesystem reads, so a
-# contained process can read credentials by absolute path. That is deliberate
-# (the dynamic linker needs system libraries whose paths vary by OS version, and
-# a strict read allowlist stops processes launching) and it is documented in
-# README, SECURITY.md, PRODUCT.md and docs/enforcement-matrix.md. Pinning it here
-# means that if the profile is ever tightened, this fails and forces those four
-# documents to be updated together -- rather than the docs quietly staying wrong
-# in either direction.
+# It also asserts a WEAKNESS on purpose. macOS allows filesystem reads outside
+# the user's credential stores, so a contained process can read other files by
+# absolute path. That is deliberate (the dynamic linker needs system libraries
+# whose paths vary by OS version, and a strict read allowlist stops processes
+# launching) and it is documented in README, SECURITY.md, PRODUCT.md and
+# docs/enforcement-matrix.md. Pinning it here means that if the profile is ever
+# tightened, this fails and forces those four documents to be updated together
+# -- rather than the docs quietly staying wrong in either direction. The
+# credential stores themselves are denied, and phase 3 asserts that.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -64,7 +65,10 @@ PROJ="$(mktemp -d)"
 OUTSIDE="$HOME/.nvx-enforcement-probe"
 rm -rf "$OUTSIDE"
 mkdir -p "$OUTSIDE"
-trap 'rm -rf "$PROJ" "$OUTSIDE"' EXIT
+# A throwaway home for phase 3, holding planted stand-ins for credential files
+# so the real ones are never read or written.
+FAKE_HOME="$(mktemp -d)"
+trap 'rm -rf "$PROJ" "$OUTSIDE" "$FAKE_HOME"' EXIT
 
 SECRET="$OUTSIDE/credentials"
 printf 'SECRET-CONTENT-DO-NOT-LEAK\n' > "$SECRET"
@@ -228,7 +232,7 @@ fi
 if ! grep -qx "READ_OUTSIDE=ALLOWED" "$REPORT"; then
   echo "FAIL: reads outside the project are no longer allowed on macOS." >&2
   echo "      That may be an improvement, but README, SECURITY.md, PRODUCT.md and" >&2
-  echo "      docs/enforcement-matrix.md all state that macOS does NOT contain reads." >&2
+  echo "      docs/enforcement-matrix.md all state that macOS allows reads outside the credential stores." >&2
   echo "      Update them in the same change that tightened the profile." >&2
   fail=1
 fi
@@ -330,10 +334,64 @@ for p in "$HOME_WRITE" "$NVX_WRITE"; do
   fi
 done
 
+# Phase 3: the user's credential stores are not readable.
+#
+# The profile allows reads broadly and then denies the credential stores under
+# the real home, which for nvx is whatever HOME says when it starts. So nvx runs
+# here with HOME pointing at a throwaway directory holding a planted .npmrc and
+# SSH key, and NVX_HOME where the runs above had it. mktemp puts that home under
+# /var/folders, a link to /private/var/folders, so this also checks that the
+# deny names the resolved path Seatbelt matches.
+#
+# Each read reports by exit code: 0 read, 3 refused by the OS (EPERM or EACCES),
+# anything else a failure to run at all. The project file and node's own binary
+# are the controls that must still read, or a refusal proves nothing.
+echo "Phase 3: credential files must be unreadable while other reads still work..."
+NVX_HOME_DIR="${NVX_HOME:-$HOME/.nvx}"
+mkdir -p "$FAKE_HOME/.ssh"
+printf '//registry.npmjs.org/:_authToken=PLANTED-NPM-TOKEN\nregistry=https://planted.invalid/\n' > "$FAKE_HOME/.npmrc"
+printf 'PLANTED-SSH-KEY\n' > "$FAKE_HOME/.ssh/id_test"
+printf 'project-file\n' > "$PROJ/project-file.txt"
+
+contained_read() {
+  local rc=0
+  HOME="$FAKE_HOME" NVX_HOME="$NVX_HOME_DIR" "$NVX" -y --strict shim node -e \
+    "const p=process.argv[1]==='SELF'?process.execPath:process.argv[1];try{require('fs').readFileSync(p);process.exit(0)}catch(e){process.exit(e.code==='EPERM'||e.code==='EACCES'?3:4)}" \
+    "$1" >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+expect_read() {
+  local path="$1" want="$2" why="$3" got
+  got="$(contained_read "$path")"
+  echo "  read $path: exit $got"
+  if [[ "$got" != "$want" ]]; then
+    echo "FAIL: a contained read of $path exited $got, expected $want. $why" >&2
+    fail=1
+  fi
+}
+expect_read "$FAKE_HOME/.npmrc"       3 "The user's .npmrc holds registry tokens and must be unreadable"
+expect_read "$FAKE_HOME/.ssh/id_test" 3 "Files under ~/.ssh must be unreadable"
+expect_read "$PROJ/project-file.txt"  0 "The project must stay readable, or the denials above prove nothing"
+expect_read "SELF"                    0 "Node's own binary must stay readable, or the denials above prove nothing"
+
+# Contained npm still works with a user .npmrc present, and does not use it.
+# The guest home has no .npmrc, so the planted registry must not appear.
+npm_rc=0
+NPM_OUT="$(HOME="$FAKE_HOME" NVX_HOME="$NVX_HOME_DIR" "$NVX" -y --strict shim npm config get registry 2>&1)" || npm_rc=$?
+echo "  contained npm config get registry: exit $npm_rc"
+if [[ $npm_rc -ne 0 ]]; then
+  echo "FAIL: contained npm exited $npm_rc with a user .npmrc present:" >&2
+  echo "$NPM_OUT" >&2
+  fail=1
+elif grep -q 'planted.invalid' <<<"$NPM_OUT"; then
+  echo "FAIL: contained npm used the registry from the user's .npmrc. It must only see the guest home's." >&2
+  fail=1
+fi
+
 if [[ $fail -ne 0 ]]; then
   echo "macOS enforcement probe FAILED." >&2
   exit 1
 fi
 
 echo "macOS enforcement probe passed: writes contained, egress denied for TCP and UDP,"
-echo "an allowlisted host reachable through the proxy, reads allowed as documented."
+echo "an allowlisted host reachable through the proxy, credential files unreadable, other reads allowed as documented."
