@@ -582,20 +582,26 @@ timing behind these claims is in `docs/enforcement-matrix.md`.
   next day. Three ways out, narrowest first:
 
   ```jsonc
-  // 1. approve nvx's warnings for this one server
-  { "command": "npx", "args": ["-y", "your-pkg"], "env": { "NVX_YES": "true" } }
+  // 1. exempt just this package, in ~/.nvx/policy.json
+  { "release_age": { "trusted_packages": ["your-pkg", "@your-scope/*"] } }
+  ```
+
+  ```jsonc
   // 2. pin to a version you have already used
   { "command": "npx", "args": ["-y", "your-pkg@1.2.3"] }
   ```
 
   ```jsonc
-  // 3. exempt just this package, in ~/.nvx/policy.json
-  { "release_age": { "trusted_packages": ["your-pkg", "@your-scope/*"] } }
+  // 3. approve every nvx check for this server, not only this one
+  { "command": "npx", "args": ["-y", "your-pkg"], "env": { "NVX_YES": "true" } }
   ```
 
-  The third keeps the cooling-off window for everything else, which
+  The first keeps the cooling-off window for everything else, which
   `release_age.min_age_hours` does not — that widens the window for every package
-  you install.
+  you install. The third is the broadest: `NVX_YES` also approves the typosquat,
+  install-script and known-advisory checks for that server, so it is the last
+  resort. Each check it approves is printed on stderr and written to
+  `~/.nvx/audit.log` as a `check_approved` record.
 
   Until 0.6.0 the only exemption list was `typosquatting.trusted_packages`, which
   waived typosquat detection at the same time. It no longer waives the

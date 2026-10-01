@@ -29,7 +29,7 @@ When running in the sandbox:
 
 ## Non-interactive use (CI)
 
-Security prompts (vulnerability warnings, install script confirmations, typosquatting alerts) **fail closed** when no interactive terminal is available: the operation is denied rather than silently approved. In CI pipelines, set `NVX_YES=true` to approve prompts explicitly. For direct `nvx` commands, leading `-y` / `--yes` is also supported; package-manager flags after a shim command are forwarded to the package manager.
+Security prompts (vulnerability warnings, install script confirmations, typosquatting alerts) **fail closed** when no interactive terminal is available: the operation is denied rather than silently approved. To let one package through, name it in the matching policy list (see [Policy](/docs/policy/)). To approve every prompt in a CI run, set `NVX_YES=true`. Each check approved that way is printed and recorded in the audit log. For direct `nvx` commands, leading `-y` / `--yes` is also supported; package-manager flags after a shim command are forwarded to the package manager.
 
 ## Verification matrix
 

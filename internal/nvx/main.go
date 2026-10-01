@@ -1571,20 +1571,46 @@ func emitSessionEnv(shell, nvxHome, targetDir string) {
 // pinning its own policy. It is deliberately not NVX_YES: nothing sets it by
 // habit, so setting it is a decision rather than an inheritance.
 func PromptTrustBoundary(message string) bool {
+	return promptTrustBoundaryWithRemedy(message, "")
+}
+
+// promptTrustBoundaryWithRemedy is PromptTrustBoundary for a caller that knows
+// the narrow, reviewable way to grant what it is asking for. A non-interactive
+// denial prints that first, as a refusal detail so -q does not hide it. The
+// only other way through is NVX_TRUST_YES, which the denial still names, last.
+func promptTrustBoundaryWithRemedy(message, remedy string) bool {
 	if os.Getenv("NVX_TRUST_YES") == "true" || os.Getenv("NVX_TRUST_YES") == "1" {
 		LogWarn("NVX_TRUST_YES is set: approving a request that widens nvx's trust boundary. %s", message)
 		return true
 	}
 	if !stdinIsInteractive() {
 		LogWarn("Denying a request that widens nvx's trust boundary, because nobody is here to approve it: %s", message)
-		LogInfo("-y, --agent-mode and NVX_YES deliberately do not approve this. Set NVX_TRUST_YES=true only if you have read what you are trusting.")
+		if remedy != "" {
+			LogRefusalDetail("%s", remedy)
+		}
+		LogRefusalDetail("-y, --agent-mode and NVX_YES deliberately do not approve this. Set NVX_TRUST_YES=true to approve every trust prompt in this run, only if you have read what you are trusting.")
 		return false
 	}
-	return promptConsoleYesNo(message)
+	return promptConsoleYesNo(message, trustBoundaryDenialHint)
 }
+
+// trustBoundaryDenialHint is what a console that cannot be opened says for a
+// trust prompt. The generic hint named -y, which does not approve these.
+const trustBoundaryDenialHint = "-y, --agent-mode and NVX_YES deliberately do not approve this. Set NVX_TRUST_YES=true only if you have read what you are trusting."
 
 // PromptYesNo prints a message to the console TTY and reads a Y/N keypress, bypassing standard redirections.
 func PromptYesNo(message string) bool {
+	return promptYesNoWithHint(message, genericDenialHint)
+}
+
+// genericDenialHint is the advice for a prompt that has no narrower answer: the
+// blanket switches are the only way through it. The pre-install checks pass
+// their own hint, which names the policy line that fixes that one check.
+const genericDenialHint = "Use -y / --yes or set NVX_YES=true to approve automatically."
+
+// promptYesNoWithHint is PromptYesNo with the advice printed on a
+// non-interactive denial supplied by the caller.
+func promptYesNoWithHint(message, hint string) bool {
 	if yesFlag {
 		return true
 	}
@@ -1592,7 +1618,7 @@ func PromptYesNo(message string) bool {
 		return true
 	}
 	if os.Getenv("NVX_NONINTERACTIVE") == "true" || os.Getenv("NVX_NONINTERACTIVE") == "1" {
-		LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
+		LogWarn("Non-interactive environment: denying prompt. %s Prompt was: %s", hint, message)
 		return false
 	}
 
@@ -1611,16 +1637,16 @@ func PromptYesNo(message string) bool {
 	// stays a character device, so an interactive user piping output is unaffected
 	// -- which is the case the CONIN$ path was written for in the first place.
 	if !stdinIsInteractive() {
-		LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
+		LogWarn("Non-interactive environment: denying prompt. %s Prompt was: %s", hint, message)
 		return false
 	}
 
-	return promptConsoleYesNo(message)
+	return promptConsoleYesNo(message, hint)
 }
 
 // promptConsoleYesNo does the console interaction itself, shared by PromptYesNo
 // and PromptTrustBoundary so the two cannot drift in how they read an answer.
-func promptConsoleYesNo(message string) bool {
+func promptConsoleYesNo(message, hint string) bool {
 	var ttyIn, ttyOut *os.File
 	var err error
 
@@ -1631,21 +1657,21 @@ func promptConsoleYesNo(message string) bool {
 	if runtime.GOOS == "windows" {
 		ttyOut, err = os.OpenFile("CONOUT$", os.O_WRONLY, 0)
 		if err != nil {
-			LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
+			LogWarn("Non-interactive environment: denying prompt. %s Prompt was: %s", hint, message)
 			return false
 		}
 		defer ttyOut.Close()
 
 		ttyIn, err = os.OpenFile("CONIN$", os.O_RDONLY, 0)
 		if err != nil {
-			LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
+			LogWarn("Non-interactive environment: denying prompt. %s Prompt was: %s", hint, message)
 			return false
 		}
 		defer ttyIn.Close()
 	} else {
 		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 		if err != nil {
-			LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
+			LogWarn("Non-interactive environment: denying prompt. %s Prompt was: %s", hint, message)
 			return false
 		}
 		defer tty.Close()
@@ -1810,6 +1836,7 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 		// 1. Policy Blocklist Check
 		if policy.IsBlocked(pkgName) {
 			LogError("Blocked by security policy: Package %q is blacklisted.", pkgName)
+			recordCheckRefused(nvxHome, checkInfo{check: checkBlockedPackage, pkg: pkgName})
 			return 1, "the security policy blocks one of its packages"
 		}
 
@@ -1819,12 +1846,22 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 			if maxDist <= 0 {
 				maxDist = 2
 			}
-			if suspect := CheckTyposquattingAuthority(pkgName, popularList, maxDist); suspect != "" {
-				pkgDownloads, _ := GetWeeklyDownloads(pkgName)
-				suspectDownloads, _ := GetWeeklyDownloads(suspect)
+			if verdict := assessTyposquat(pkgName, popularList, maxDist); verdict.suspect != "" {
+				suspect := verdict.suspect
+				pkgDownloads, suspectDownloads := verdict.pkgDownloads, verdict.suspectDownloads
+				info := checkInfo{check: checkTyposquat, pkg: pkgName, detail: "close to " + suspect,
+					what: fmt.Sprintf("%s looks like a typosquat of %s", pkgName, suspect)}
 
 				var msg string
-				if suspectDownloads > 0 {
+				if verdict.lookupErr != nil {
+					// Said in the question as well as the log: the answer depends on it.
+					// A 429, a proxy block or no network at all lands here, and the
+					// prompt used to read as a measured finding.
+					info.detail += ", weekly-download lookup failed"
+					msg = fmt.Sprintf("Package %q is close to popular package %q (edit distance <= %d), but the weekly-download lookup on api.npmjs.org failed (%v), "+
+						"so this is a name-similarity guess and not a measured typosquat. Proceed anyway?",
+						pkgName, suspect, maxDist, verdict.lookupErr)
+				} else if suspectDownloads > 0 {
 					msg = fmt.Sprintf("Package %q is suspiciously close to popular package %q (edit distance <= %d).\n"+
 						"    - %s: %d weekly downloads\n"+
 						"    - %s: %d weekly downloads\n"+
@@ -1835,7 +1872,7 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 						pkgName, suspect, maxDist)
 				}
 
-				if !PromptYesNo(msg) {
+				if !askCheck(nvxHome, info, msg, typosquatRemedy(pkgName)) {
 					LogError("Installation aborted: the typosquatting warning was not approved.")
 					return 1, "a package looked like a typosquat and the warning was not approved"
 				}
@@ -1863,7 +1900,9 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 			// so.
 			msg := fmt.Sprintf("Could not verify registry metadata for %s: %v. "+
 				"Proceed without metadata checks AND without the vulnerability scan for it?", pkgName, err)
-			if !PromptYesNo(msg) {
+			if !askCheck(nvxHome, checkInfo{check: checkRegistryLookup, pkg: pkgName,
+				what: pkgName + " installs without its registry metadata checks or a vulnerability scan"},
+				msg, unreachableRemedy("registry")) {
 				LogError("Installation aborted because registry metadata could not be verified.")
 				return 1, "the registry metadata for a package could not be verified"
 			}
@@ -1887,14 +1926,23 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 			LogWarn("Package %s@%s contains installation scripts (preinstall/postinstall/install).", pkgName, resolvedVer)
 			LogWarn("Malicious packages often execute rogue code during the install phase.")
 			if policy.EnforceIgnoreScripts {
-				LogError("Blocked by security policy: Package scripts are disallowed. Please run with --ignore-scripts.")
+				LogError("Blocked by security policy: %s has install scripts, and enforce_ignore_scripts is on.", pkgName)
+				// --ignore-scripts on the command line does not help: this check
+				// runs on the package list before the package manager starts and
+				// never reads that flag, so the same refusal comes back.
+				LogRefusalDetail("Passing --ignore-scripts does not change this. To let this package's install scripts run, add it to install_scripts.trusted_packages in ~/.nvx/policy.json: "+
+					`{"install_scripts":{"trusted_packages":[%q]}}`+
+					". To drop the rule for every package, set enforce_ignore_scripts to false.", pkgName)
+				recordCheckRefused(nvxHome, checkInfo{check: checkEnforceNoScripts, pkg: pkgName, version: resolvedVer})
 				return 1, "the security policy disallows package install scripts"
 			} else {
 				// Not "on your host": these run contained, and saying otherwise
 				// overstates the risk of approving while understating what the
 				// sandbox is doing for you.
 				msg := fmt.Sprintf("Package %s@%s contains install scripts. Run them (contained)?", pkgName, resolvedVer)
-				if !PromptYesNo(msg) {
+				if !askCheck(nvxHome, checkInfo{check: checkInstallScripts, pkg: pkgName, version: resolvedVer,
+					what: fmt.Sprintf("%s@%s runs its install scripts", pkgName, resolvedVer)},
+					msg, installScriptsRemedy(pkgName)) {
 					LogError("Installation aborted: the install-script warning was not approved.")
 					return 1, "a package runs install scripts and the warning was not approved"
 				}
@@ -1916,7 +1964,10 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 				LogWarn("%s is in typosquatting.trusted_packages, which no longer waives this check.", pkgName)
 				LogInfo("Add it to release_age.trusted_packages to skip the cooling-off window for it.")
 			}
-			if !PromptYesNo(msg) {
+			if !askCheck(nvxHome, checkInfo{check: checkReleaseAge, pkg: pkgName, version: resolvedVer,
+				detail: fmt.Sprintf("published %.1f hours ago", age.Hours()),
+				what:   fmt.Sprintf("%s@%s was published %.1f hours ago, inside the %d-hour release-age window", pkgName, resolvedVer, age.Hours(), windowHours)},
+				msg, releaseAgeRemedy(pkgName)) {
 				LogError("Installation aborted: the release-age warning was not approved.")
 				return 1, "a package version was published inside the release-age cooling-off window"
 			}
@@ -1934,7 +1985,9 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 		vulns, err := scanVulnerabilitiesBatchForVerify(osvQueries)
 		if err != nil {
 			msg := fmt.Sprintf("Vulnerability database scan failed: %v. Proceed without CVE checks?", err)
-			if !PromptYesNo(msg) {
+			if !askCheck(nvxHome, checkInfo{check: checkOSVLookup,
+				what: "the install goes ahead without the vulnerability database scan"},
+				msg, unreachableRemedy("vulnerability database")) {
 				LogError("Installation aborted because vulnerability checks could not be completed.")
 				return 1, "its vulnerability checks could not be completed"
 			}
@@ -1949,7 +2002,10 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 				}
 			}
 			fmt.Fprintln(os.Stderr)
-			if !PromptYesNo("Proceed with installation despite active vulnerabilities?") {
+			ids := advisoryIDs(remaining)
+			if !askCheck(nvxHome, checkInfo{check: checkVulnerability, detail: strings.Join(ids, ","),
+				what: "the install goes ahead despite " + strings.Join(ids, ", ")},
+				"Proceed with installation despite active vulnerabilities?", advisoryRemedy(ids)) {
 				LogError("Installation aborted: the vulnerability warning was not approved.")
 				return 1, "a package has a known active vulnerability and the warning was not approved"
 			}
