@@ -1745,6 +1745,9 @@ type packageDetails struct {
 	publishTime time.Time
 	hasScripts  bool
 	err         error
+	// The registry's tarball record, fetched for a lockfile entry only.
+	dist    npmDist
+	distErr error
 }
 
 // verifyFetchConcurrency bounds the registry requests prefetchPackageDetails
@@ -1761,39 +1764,91 @@ const verifyFetchConcurrency = 8
 // because its prompts must come one at a time and in order; only the network
 // wait moves ahead of it.
 func prefetchPackageDetails(args []string) map[packageQueryKey]packageDetails {
-	var keys []packageQueryKey
-	seen := map[packageQueryKey]bool{}
-	for _, arg := range args {
-		if nonRegistrySpecKind(arg) != "" {
+	return prefetchVerifyDetails(specTargets(args))
+}
+
+func prefetchVerifyDetails(targets []verifyTarget) map[packageQueryKey]packageDetails {
+	type job struct {
+		key  packageQueryKey
+		dist bool
+	}
+	var jobs []job
+	index := map[packageQueryKey]int{}
+	for _, t := range targets {
+		if targetSourceKind(t) != "" {
 			continue
 		}
-		name, query := parsePackageQuery(arg)
+		name, query := parsePackageQuery(t.spec)
 		k := packageQueryKey{name, query}
-		if name == "" || seen[k] {
+		if name == "" {
 			continue
 		}
-		seen[k] = true
-		keys = append(keys, k)
+		if i, ok := index[k]; ok {
+			jobs[i].dist = jobs[i].dist || t.fromLockfile()
+			continue
+		}
+		index[k] = len(jobs)
+		jobs = append(jobs, job{k, t.fromLockfile()})
 	}
 
-	out := make(map[packageQueryKey]packageDetails, len(keys))
+	out := make(map[packageQueryKey]packageDetails, len(jobs))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, verifyFetchConcurrency)
-	for _, k := range keys {
+	for _, j := range jobs {
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(k packageQueryKey) {
+		go func(j job) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			k := j.key
 			v, pub, scripts, err := resolveNpmPackageDetailsForVerify(k.name, k.query)
+			d := packageDetails{version: v, publishTime: pub, hasScripts: scripts, err: err}
+			if j.dist && err == nil {
+				// A lockfile entry's query is its exact version.
+				d.dist, d.distErr = fetchNpmDistForVerify(k.name, k.query)
+			}
 			mu.Lock()
-			out[k] = packageDetails{v, pub, scripts, err}
+			out[k] = d
 			mu.Unlock()
-		}(k)
+		}(j)
 	}
 	wg.Wait()
 	return out
+}
+
+const blockedReason = "the security policy blocks one of its packages"
+
+// refuseBlocked refuses, and records, a package on blocked_packages.
+func refuseBlocked(policy Policy, nvxHome, name string) bool {
+	if !policy.IsBlocked(name) {
+		return false
+	}
+	LogError("Blocked by security policy: Package %q is blacklisted.", name)
+	recordCheckRefused(nvxHome, checkInfo{check: checkBlockedPackage, pkg: name})
+	return true
+}
+
+// targetPackageName is the package a target installs, or "" for a spec that
+// does not say, such as a bare path.
+func targetPackageName(t verifyTarget) string {
+	if t.name != "" {
+		return t.name
+	}
+	if targetSourceKind(t) != "" {
+		return declaredPackageName(t.spec)
+	}
+	name, _ := parsePackageQuery(t.spec)
+	return name
+}
+
+// targetSourceKind names where a target comes from when that is not the
+// registry, or returns "".
+func targetSourceKind(t verifyTarget) string {
+	if t.sourceKind != "" {
+		return t.sourceKind
+	}
+	return nonRegistrySpecKind(t.spec)
 }
 
 // runVerifyInstall verifies packages against policy blocklists, typosquatting, and the real-time OSV CVE database.
@@ -1811,6 +1866,12 @@ func prefetchPackageDetails(args []string) map[packageQueryKey]packageDetails {
 // note on LogWarn), and this reason is shown to an MCP client and may be logged
 // there. See mcp_refusal.go.
 func runVerifyInstall(args []string, nvxHome string) (int, string) {
+	return runVerifyTargets(specTargets(args), nvxHome)
+}
+
+// runVerifyTargets is runVerifyInstall over targets, which can carry what a
+// lockfile says about each package.
+func runVerifyTargets(targets []verifyTarget, nvxHome string) (int, string) {
 	policy, err := LoadPolicy(nvxHome)
 	if err != nil {
 		LogError("Failed to load security policy: %v", err)
@@ -1819,13 +1880,25 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 
 	popularList := LoadPopularPackages(nvxHome)
 	var osvQueries []OSVQuery
-	details := prefetchPackageDetails(args)
+	details := prefetchVerifyDetails(targets)
 
-	for _, arg := range args {
+	for _, t := range targets {
+		arg := t.spec
 		// Classified before the name/version split, which would mangle a git URL
 		// carrying a user@host.
-		if kind := nonRegistrySpecKind(arg); kind != "" {
-			LogWarn("%s is %s rather than a registry package name; the blocklist, typosquat, advisory and release-age checks do not apply to it.", arg, kind)
+		if kind := targetSourceKind(t); kind != "" {
+			// The blocklist names packages, and most of these specs name one:
+			// left-pad@github:user/repo installs as left-pad. Until 2026-10-01 none
+			// of them was compared with it.
+			name := targetPackageName(t)
+			if name == "" {
+				LogWarn("%s is %s rather than a registry package name; the blocklist, typosquat, advisory and release-age checks do not apply to it.", arg, kind)
+				continue
+			}
+			if refuseBlocked(policy, nvxHome, name) {
+				return 1, blockedReason
+			}
+			LogWarn("%s comes from %s rather than the registry. It is not on blocked_packages as %s, and the typosquat, advisory and release-age checks do not apply to it.", arg, kind, name)
 			continue
 		}
 		pkgName, versionQuery := parsePackageQuery(arg)
@@ -1834,10 +1907,8 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 		}
 
 		// 1. Policy Blocklist Check
-		if policy.IsBlocked(pkgName) {
-			LogError("Blocked by security policy: Package %q is blacklisted.", pkgName)
-			recordCheckRefused(nvxHome, checkInfo{check: checkBlockedPackage, pkg: pkgName})
-			return 1, "the security policy blocks one of its packages"
+		if refuseBlocked(policy, nvxHome, pkgName) {
+			return 1, blockedReason
 		}
 
 		// 2. Typosquatting Check
@@ -1882,6 +1953,9 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 		LogDetail("Verifying package %q...", pkgName)
 		d := details[packageQueryKey{pkgName, versionQuery}]
 		resolvedVer, pubTime, hasScripts, err := d.version, d.publishTime, d.hasScripts, d.err
+		if err == nil && t.fromLockfile() {
+			err = d.distErr
+		}
 		if err != nil {
 			// The prompt names the vulnerability scan as well, because skipping it
 			// is what approving here actually does.
@@ -1913,6 +1987,18 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 			LogWarn("Proceeding without registry metadata checks for %s, and without scanning it for known vulnerabilities: advisories are looked up by exact version, and its version could not be resolved.", pkgName)
 			continue
 		}
+
+		// A lockfile entry is installed from its own URL and hash, so they must
+		// be the registry's for the name and version checked here.
+		if t.fromLockfile() {
+			if problem := lockEntryMismatch(t, d.dist); problem != "" {
+				LogError("The lockfile entry for %s@%s does not match the registry: %s.", pkgName, resolvedVer, problem)
+				LogRefusalDetail("npm would install what the entry points at, which may be another package. If the lockfile is your own, delete this entry and run npm install to write it again from the registry.")
+				recordCheckRefused(nvxHome, checkInfo{check: checkLockfileSource, pkg: pkgName, version: resolvedVer, detail: problem})
+				return 1, "a lockfile entry does not match the registry's record of that package"
+			}
+		}
+		hasScripts = hasScripts || t.hasInstallScript
 
 		// 3. Installation Script Execution Check
 		if hasScripts && policy.InstallScriptsTrusted(pkgName) {

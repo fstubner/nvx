@@ -28,11 +28,19 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   That is an ACE Windows ships on your profile and nvx cannot revoke.
 - **Detection is best-effort.** Typosquat and vulnerability checks reduce risk
   without certifying a package. Containment is the backstop, not the checks.
-- **Only `package-lock.json` is read for the vulnerability check.** A project
-  that uses pnpm, yarn or bun has no `package-lock.json`, so nvx checks the
-  dependency names in `package.json` instead. Those carry no locked versions and
-  no transitive dependencies, so the packages actually installed are not all
-  checked.
+- **Dependencies are checked for npm installs, and not for everything.** For
+  `npm install`, `npm update` and `npm dedupe`, nvx asks npm which packages it
+  will install and checks all of them. `npm ci` checks every entry of
+  `package-lock.json` for this platform. The other commands are checked on the packages they name,
+  the entries of `package-lock.json`, or the versions `package.json` declares,
+  and the dependencies those bring in are not checked. That is `npx`, `npm
+  exec`, `npm create` and `npm init`, every pnpm, yarn and bun command, and npm
+  projects that use workspaces or depend on a local folder. pnpm, yarn and bun
+  lockfiles are not read.
+- **Packages from git, a URL or a local path get only the blocklist.** They are
+  checked against `blocked_packages` by the name they install under. The
+  typosquat, advisory and release-age checks look a package up in the registry,
+  and these are not in it.
 - **On Windows, a loopback exemption left by an `nvx setup` older than 0.5.0
   opens every service on 127.0.0.1** to contained code, whatever the allowlist
   says. Newer versions never add one. Removing it needs an Administrator
@@ -45,6 +53,11 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   `open` unfiltered. Use the native provider for an egress allowlist.
 
 ## What surprises people
+
+- **An npm install that brings in new packages runs npm twice.** The first run
+  only resolves versions, contained, so that each package can be checked before
+  the second run installs it. An `npm install` whose lockfile already matches
+  `package.json` and `npm ci` run npm once.
 
 - **On Ubuntu 23.10 and later, the Linux sandbox may refuse to start.** Ubuntu
   restricts the user namespaces the sandbox is built on, through the setting

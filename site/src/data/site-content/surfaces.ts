@@ -29,7 +29,7 @@ export const surfaces: SurfaceCard[] = [
   },
   {
     title: 'Checked before it runs',
-    body: 'Every package is checked against the OSV advisory database, against a typosquat heuristic, and against how recently it was published. A version that appeared hours ago is the window a compromised release is usually caught in, so nvx stops and asks rather than installing it quietly.',
+    body: 'Packages are checked against the OSV advisory database, against a typosquat heuristic, and against how recently they were published, before anything runs. For an npm install that is every package npm resolves, dependencies included. A version that appeared hours ago is the window a compromised release is usually caught in, so nvx stops and asks rather than installing it quietly.',
     flip: true,
     // Captured on 2026-09-16 from a real `npm ci` in this repository's site
     // directory, which is how the check was found doing its job. Subtractive

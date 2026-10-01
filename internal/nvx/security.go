@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -634,13 +635,37 @@ type NpmRegistryMetadata struct {
 
 type NpmVersionDetails struct {
 	Scripts map[string]string `json:"scripts"`
+	Dist    struct {
+		Tarball   string `json:"tarball"`
+		Integrity string `json:"integrity"`
+		Shasum    string `json:"shasum"`
+	} `json:"dist"`
 }
 
 var resolveNpmPackageDetailsForVerify = ResolveNpmPackageDetails
 var scanVulnerabilitiesBatchForVerify = ScanVulnerabilitiesBatch
+var fetchNpmDistForVerify = fetchNpmDist
 
-// ResolveNpmPackageDetails queries npm registry for latest version, publish age, and installation script status
-func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, publishTime time.Time, hasScripts bool, err error) {
+// packuments holds each registry document fetched in this process. The checks
+// read a package's metadata and then its tarball record, and a lockfile names
+// the same package at several versions. One request serves all of them.
+var packuments sync.Map // name -> *packumentResult
+
+type packumentResult struct {
+	once sync.Once
+	meta NpmRegistryMetadata
+	err  error
+}
+
+func fetchNpmPackument(pkgName string) (NpmRegistryMetadata, error) {
+	v, _ := packuments.LoadOrStore(pkgName, &packumentResult{})
+	r := v.(*packumentResult)
+	r.once.Do(func() { r.meta, r.err = fetchNpmPackumentUncached(pkgName) })
+	return r.meta, r.err
+}
+
+func fetchNpmPackumentUncached(pkgName string) (NpmRegistryMetadata, error) {
+	var meta NpmRegistryMetadata
 	client := &http.Client{Timeout: 8 * time.Second}
 	// #nosec G704 -- the host is a hardcoded literal, so this cannot be pointed at
 	// another server; only the path segment varies, and EscapeScopedPackage runs it
@@ -648,16 +673,34 @@ func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, pub
 	// hardcoded-host case.
 	resp, err := client.Get(fmt.Sprintf("https://registry.npmjs.org/%s", EscapeScopedPackage(pkgName)))
 	if err != nil {
-		return "", time.Time{}, false, err
+		return meta, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", time.Time{}, false, fmt.Errorf("registry returned HTTP %s", resp.Status)
+		return meta, fmt.Errorf("registry returned HTTP %s", resp.Status)
 	}
-
-	var meta NpmRegistryMetadata
 	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return NpmRegistryMetadata{}, err
+	}
+	return meta, nil
+}
+
+// fetchNpmDist returns the registry's tarball record for one published
+// version. A version the registry does not have comes back empty.
+func fetchNpmDist(pkgName, version string) (npmDist, error) {
+	meta, err := fetchNpmPackument(pkgName)
+	if err != nil {
+		return npmDist{}, err
+	}
+	d := meta.Versions[version].Dist
+	return npmDist{tarball: d.Tarball, integrity: d.Integrity, shasum: d.Shasum}, nil
+}
+
+// ResolveNpmPackageDetails queries npm registry for latest version, publish age, and installation script status
+func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, publishTime time.Time, hasScripts bool, err error) {
+	meta, err := fetchNpmPackument(pkgName)
+	if err != nil {
 		return "", time.Time{}, false, err
 	}
 
