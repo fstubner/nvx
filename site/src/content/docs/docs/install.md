@@ -29,6 +29,45 @@ nvx is not yet published to winget, Scoop, Homebrew or npm. The other route is a
 binary: every release attaches one per platform with a SHA-256 sidecar, for
 Windows x64, macOS on Apple silicon and Intel, and Linux on x86_64 and arm64.
 
+## Verify a download
+
+Each release asset carries a signed build attestation, made by the release
+workflow in this repository. With the GitHub CLI (2.49 or newer, signed in with
+`gh auth login`), check the file you downloaded:
+
+```sh
+gh attestation verify nvx-linux-amd64 --repo fstubner/nvx
+```
+
+Use your own file name. If the command reports a failure, do not run the file.
+
+The `.sha256` file beside each asset holds the file's SHA-256. It comes from the
+same release page as the binary, so it catches a damaged download and does not
+prove who built the file. Compare it from the directory holding both files.
+
+On Linux:
+
+```sh
+sha256sum -c nvx-linux-amd64.sha256
+```
+
+On macOS:
+
+```sh
+shasum -a 256 -c nvx-darwin-arm64.sha256
+```
+
+On Windows:
+
+```powershell
+(Get-FileHash nvx.exe -Algorithm SHA256).Hash -ieq ((Get-Content nvx.exe.sha256) -split '\s+')[0]
+```
+
+That prints `True` when they match. When the GitHub CLI is installed, signed in
+and 2.49 or newer, `install.sh` and `install.ps1` run the attestation check on
+the download before they install it, and stop if it fails. Without it they say
+the check was skipped and print the command to run.
+
 ## From source
 
 ```sh

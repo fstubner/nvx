@@ -56,6 +56,10 @@ curl -fsSL https://nvx.run/install.sh | sh
 Prebuilt binaries, building from source and what the installer changes are in the
 **[install guide](https://nvx.run/docs/install/)**.
 
+To check a downloaded release asset, run
+`gh attestation verify <file> --repo fstubner/nvx` and compare the `.sha256` file
+beside it. The install guide has the steps for each platform.
+
 ## Usage
 
 ```bash

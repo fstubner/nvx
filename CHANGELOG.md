@@ -88,6 +88,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **The installers check the download's build attestation when `gh` is present.**
+  `install.sh` and `install.ps1` used to compare the download only with the
+  `.sha256` file from the same release, which a replaced release could replace
+  as well. When the GitHub CLI is installed, signed in and 2.49 or newer, they
+  now also run `gh attestation verify` against `fstubner/nvx` and stop without
+  changing nvx if it fails. Without a usable `gh` they print one line saying the
+  check was skipped and the command to run. The checksum check is unchanged.
+  The install guide now shows how to verify a downloaded asset by hand.
+
 * **The README is a short front page, and the reference moved to the docs
   site.** Containment, policy, known limitations and the FAQ are now docs pages,
   and the full `nvx help` reference is on the Commands page. The tests that held
