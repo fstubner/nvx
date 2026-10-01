@@ -144,7 +144,7 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 	// Not cmd.Run: a signalled nvx has to take the sandboxed process with it.
 	if err := runChildForwardingSignals(cmd); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
+			return childExitCode(exitErr)
 		}
 		LogError("Seatbelt execution failed: %v", err)
 		return 1

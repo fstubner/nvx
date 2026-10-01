@@ -138,12 +138,28 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// the supervisor's was missing it.
 	cmd.SysProcAttr = supervisorSysProcAttr(netCtx.Mode)
 
-	if err := cmd.Run(); err != nil {
+	if err := runSupervisor(cmd, guestHome); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode(), nil
+			return childExitCode(exitErr), nil
 		}
 		LogError("Landlock sandbox execution failed: %v", err)
 		return 1, refusedToStart("the landlock sandbox could not be launched")
 	}
 	return 0, nil
+}
+
+// runSupervisor runs the supervisor to completion, passing nvx's own
+// termination on to it and recording its pid beside nvx's in the session
+// records.
+//
+// Before this, the parent used cmd.Run: a SIGTERM to nvx killed nvx and left the
+// supervisor, and with it the contained process, running re-parented to init, and
+// the session marker named only the dead nvx, so the next run's cleanup deleted
+// the guest home underneath it. The supervisor's Pdeathsig (set in
+// supervisorSysProcAttr) covers SIGKILL. Signals that can be caught are forwarded
+// instead, so the contained process gets to shut down.
+func runSupervisor(cmd *exec.Cmd, guestHome string) error {
+	return startChildForwardingSignals(cmd, func(pid int) {
+		recordSupervisorPID(guestHome, pid)
+	})
 }

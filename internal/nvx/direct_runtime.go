@@ -28,25 +28,25 @@ import (
 // node -- and ONLY node, so a nested `npm install` inside a script still
 // resolves to the shim and stays intercepted.
 
-// windowsNpmCliLaunch resolves npm.cmd or npx.cmd to the node.exe and CLI script
+// windowsNpmCliLaunch resolves npm.cmd, npx.cmd or corepack.cmd to the node.exe and CLI script
 // the batch wrapper would run. nodeExeFallback is used when no node.exe sits
 // beside the .cmd, which is the layout of a self-updated npm in a version's
 // npm_global prefix: the CLI is kept beside the .cmd so that npm is the one that
 // runs, and only the interpreter falls back. ok is false when either file is
 // missing, in which case the caller launches the .cmd as it is.
 func windowsNpmCliLaunch(cmdPath, nodeExeFallback string) (nodeExe, cliPath string, ok bool) {
-	var cli string
+	dir := filepath.Dir(cmdPath)
 	switch strings.ToLower(filepath.Base(cmdPath)) {
 	case "npm.cmd":
-		cli = "npm-cli.js"
+		cliPath = filepath.Join(dir, "node_modules", "npm", "bin", "npm-cli.js")
 	case "npx.cmd":
-		cli = "npx-cli.js"
+		cliPath = filepath.Join(dir, "node_modules", "npm", "bin", "npx-cli.js")
+	case "corepack.cmd":
+		cliPath = filepath.Join(dir, "node_modules", "corepack", "dist", "corepack.js")
 	default:
 		return "", "", false
 	}
-	dir := filepath.Dir(cmdPath)
 	nodeExe = filepath.Join(dir, "node.exe")
-	cliPath = filepath.Join(dir, "node_modules", "npm", "bin", cli)
 	if !regularFileExists(nodeExe) && regularFileExists(nodeExeFallback) {
 		nodeExe = nodeExeFallback
 	}

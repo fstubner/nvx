@@ -17,7 +17,7 @@ func isPackageManagerCommand(cmd string) bool {
 	base := strings.ToLower(filepath.Base(cmd))
 	base = strings.TrimSuffix(strings.TrimSuffix(base, ".cmd"), ".exe")
 	switch base {
-	case "npm", "npx", "yarn", "pnpm":
+	case "npm", "npx", "yarn", "pnpm", "corepack":
 		return true
 	}
 	return false

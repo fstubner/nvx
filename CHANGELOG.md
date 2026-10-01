@@ -168,6 +168,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **More package-manager commands that run dependency code are contained.**
+  nvx contains a package-manager command when it recognises the verb, and
+  several verbs that run dependency install scripts ran uncontained with no
+  pre-install checks. `bun pm trust` and `pnpm approve-builds` run the scripts
+  the install held back. `npm uninstall`, `npm prune`, `pnpm remove`, `pnpm
+  fetch` and `bun remove` re-install whatever the lockfile lists that is
+  missing. `npm link <package>` and `bun link <package>` install as well, and
+  `npm pack` of a git dependency runs its prepare script. These verbs and their
+  aliases in npm, pnpm, yarn and bun are now contained. `corepack` is now
+  wrapped too, and `corepack pnpm add x` or `node "$npm_execpath" install x`
+  is judged as the package-manager command it runs. `npm link`, `pnpm
+  self-update` and `pnpm env use` write outside the project, so a contained run
+  of one is refused before it starts and names the `--no-sandbox` command to use
+  instead.
+* **Killing nvx on Linux now stops the contained process.** The sandbox
+  supervisor was started with no parent-death signal and no signal forwarding, so
+  `kill` or `kill -9` on nvx left the contained process running, and the next nvx
+  run deleted its home directory underneath it. The supervisor now dies with nvx,
+  SIGINT, SIGTERM and SIGHUP reach the contained process so it can shut down, and
+  the session record names the supervisor as well as nvx.
+
+* **A command run outside the sandbox now stops with nvx on Linux and macOS, and
+  reports a signal as 128 plus its number.** `kill` on nvx left the real `node`
+  running, and a runtime ended by SIGTERM exited 255 where a shell shows 143. nvx
+  now passes SIGINT, SIGTERM and SIGHUP on to the runtime, and on Linux the
+  kernel kills the runtime if nvx is killed outright. The same exit code mapping
+  applies to contained commands.
+
+* **`nvx doctor` now tests a real sandbox launch on Linux, and explains a refusal
+  on Ubuntu 23.10 and later.** It used to report a healthy sandbox without
+  starting one. It now runs a contained process, and when the kernel refuses the
+  namespaces it names `kernel.apparmor_restrict_unprivileged_userns`, offers
+  relaxing it or setting `isolation.network.mode` to `open`, and says whether
+  `open` starts on that machine. macOS is unchanged.
 * **On Linux, a contained process can no longer reach the host's UNIX sockets.**
   Landlock below ABI v9 does not restrict connecting to a UNIX socket by path, so
   a contained process could open `/var/run/docker.sock` or any other socket on
