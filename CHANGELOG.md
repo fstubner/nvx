@@ -159,6 +159,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **More package-manager commands that run dependency code are contained.**
+  nvx contains a package-manager command when it recognises the verb, and
+  several verbs that run dependency install scripts ran uncontained with no
+  pre-install checks. `bun pm trust` and `pnpm approve-builds` run the scripts
+  the install held back. `npm uninstall`, `npm prune`, `pnpm remove`, `pnpm
+  fetch` and `bun remove` re-install whatever the lockfile lists that is
+  missing. `npm link <package>` and `bun link <package>` install as well, and
+  `npm pack` of a git dependency runs its prepare script. These verbs and their
+  aliases in npm, pnpm, yarn and bun are now contained. `corepack` is now
+  wrapped too, and `corepack pnpm add x` or `node "$npm_execpath" install x`
+  is judged as the package-manager command it runs. `npm link`, `pnpm
+  self-update` and `pnpm env use` write outside the project, so a contained run
+  of one is refused before it starts and names the `--no-sandbox` command to use
+  instead.
+
 * **Cleanup no longer removes a running session's files on Windows.** A session
   whose owning process nvx could not open, such as an elevated one, was read as
   finished, and its home could be deleted while it ran. A trusted tool's

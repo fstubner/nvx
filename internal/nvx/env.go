@@ -503,8 +503,13 @@ func isGlobalInstall(cmdName string, args []string) bool {
 	if strings.EqualFold(cmdName, "yarn") && hasLeadingSubcommand(args, "global") {
 		return true
 	}
+	if globalOnlyCommand(cmdName, args) != "" {
+		return true
+	}
 
-	if !hasInstallVerb(args, ciVerbs...) {
+	// `pnpm link -g` and `bun link -g` register the current package in the
+	// global store, the same location an install with -g writes.
+	if !hasInstallVerb(args, append([]string{"link", "ln"}, ciVerbs...)...) {
 		return false
 	}
 	for i, arg := range args {
@@ -520,6 +525,34 @@ func isGlobalInstall(cmdName string, args []string) bool {
 		}
 	}
 	return false
+}
+
+// globalOnlyCommand names a command that always writes outside the project,
+// whatever its flags, or returns "".
+//
+// `npm link` in either form writes a symlink into the global prefix (measured
+// with npm 11.19.0), so it cannot work contained. `pnpm self-update` and `pnpm
+// env use` install pnpm and Node.js into PNPM_HOME. `npm link <package>` and
+// these two are contained since 2026-10-01, because they fetch or run code nvx
+// did not see. Refusing them up front tells the user to reach for
+// --no-sandbox, where a contained run would fail partway through.
+func globalOnlyCommand(cmdName string, args []string) string {
+	switch strings.ToLower(cmdName) {
+	case "npm":
+		if i := commandVerbIndex(args, "link", "ln"); i >= 0 {
+			return "npm " + strings.ToLower(args[i])
+		}
+	case "pnpm":
+		if commandVerbIndex(args, "self-update") >= 0 {
+			return "pnpm self-update"
+		}
+		for _, sub := range []string{"use", "add"} {
+			if hasCommandPair(args, "env", sub) {
+				return "pnpm env " + sub
+			}
+		}
+	}
+	return ""
 }
 
 // hasLeadingSubcommand reports whether name is the first non-flag token in args.
@@ -554,6 +587,11 @@ func detectShimPackagesForVerification(cmdName string, args []string) []string {
 			}
 			return packagesFromPackageJSON()
 		}
+		// `npm link <name>` installs <name> from the registry into the global
+		// prefix before linking it. A path is skipped by the checks, which say so.
+		if strings.EqualFold(cmdName, "npm") && commandVerbIndex(args, "link", "ln") >= 0 {
+			return installPackagesArg(args, "link", "ln")
+		}
 	case "bun":
 		// bun add/install/i/a [pkg...]; "a" is Bun's short alias for add.
 		if pkgs := installPackagesArg(args, "a"); len(pkgs) > 0 {
@@ -561,6 +599,11 @@ func detectShimPackagesForVerification(cmdName string, args []string) []string {
 		}
 		if hasInstallVerb(args, "a") {
 			return packagesFromPackageJSON()
+		}
+		// `bun pm trust <name>...` runs those packages' blocked scripts. With
+		// --all it names none, and there is nothing to check by name.
+		if hasCommandPair(args, "pm", "trust") {
+			return installPackagesArg(args, "trust")
 		}
 	case "npx", "bunx":
 		return detectExecutorPackages(args)
@@ -900,16 +943,20 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	// that block is inside shouldSandbox, which is where the refusal belongs: a
 	// global install is fine when isolation is off.
 	contain := shouldSandbox(cmdName, args, policy, opts)
-	if contain && isGlobalInstall(cmdName, args) {
+	// The package manager that will really run, when the command reaches it
+	// through corepack or its entry script: `corepack pnpm add -g x` is a global
+	// install and `node npm-cli.js install x` needs x checked.
+	pmCmd, pmArgs := packageManagerBehind(cmdName, args)
+	if contain && isGlobalInstall(pmCmd, pmArgs) {
 		trace.note(runModeRefused, "global install cannot be contained")
-		refuseContainedGlobalInstall(cmdName)
+		refuseContainedGlobalInstall(cmdName, pmCmd, pmArgs)
 		reportRefusalOverStdio("a global install cannot be run inside the sandbox", "")
 		return exitRefused
 	}
 
-	switch cmdName {
+	switch strings.ToLower(pmCmd) {
 	case "npm", "yarn", "pnpm", "npx", "bun", "bunx":
-		if pkgs := detectShimPackagesForVerification(cmdName, args); len(pkgs) > 0 {
+		if pkgs := detectShimPackagesForVerification(pmCmd, pmArgs); len(pkgs) > 0 {
 			// Returning rather than exiting here is what lets runShim record the
 			// abort. A blocked or refused install is a run, and the one a later
 			// review most wants to find.
@@ -950,10 +997,10 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		if opts.payloadBareProvider {
 			LogInfo("--filesystem-provider needs its value attached, as --filesystem-provider=native. Written with a space, nvx cannot tell the value from one of %s's own arguments, so it is passed through untouched.", cmdName)
 		}
-		if isGlobalInstall(cmdName, args) {
+		if isGlobalInstall(pmCmd, pmArgs) {
 			// Normally unreachable: the same check runs before verification above.
 			// Kept so the rule holds if that early return is ever moved.
-			refuseContainedGlobalInstall(cmdName)
+			refuseContainedGlobalInstall(cmdName, pmCmd, pmArgs)
 			return exitRefused
 		}
 		toolName := ""
@@ -1235,8 +1282,15 @@ func DetectVersionConfig(startDir string) (version string, sourceFile string, er
 // normally is -- but a source build that ran `init-shims` leaves shims pointing at
 // the build tree with no nvx.exe installed, and then this advice cannot be
 // followed. See installedNvxHint.
-func refuseContainedGlobalInstall(cmdName string) {
-	LogError("nvx refused: global installs (-g) can't run inside the sandbox.")
+//
+// pmCmd and pmArgs are the package-manager command actually being run (see
+// packageManagerBehind). cmdName is what the user typed, for the retry hint.
+func refuseContainedGlobalInstall(cmdName, pmCmd string, pmArgs []string) {
+	if what := globalOnlyCommand(pmCmd, pmArgs); what != "" {
+		LogError("nvx refused: `%s` installs outside the project, and that can't run inside the sandbox.", what)
+	} else {
+		LogError("nvx refused: global installs (-g) can't run inside the sandbox.")
+	}
 	LogRefusalDetail("Anything installed globally runs uncontained on every future nvx invocation on this machine. A contained install must not be able to plant something that later runs un-contained, so the sandbox never grants that write.")
 	LogRefusalDetail("If you are an automated agent: prefer `npx <package>` (contained, per run) or a project-local install. Do not pass --no-sandbox on your own. Tell the person you work for that this install would run uncontained on every future invocation, and let them decide.")
 	LogRefusalDetail("To install globally anyway, without OS isolation:  %s --no-sandbox %s ...", installedNvxHint(), cmdName)
