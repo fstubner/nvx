@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -461,10 +462,22 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	applyLinuxNamespaces(cmd, guestHome)
 
 	LogInfo("Linux Landlock + namespace isolation active")
+	// Pass nvx's termination on to the target. This process is PID 1 of its
+	// namespace, and a signal sent to it from outside only arrives when a handler
+	// exists. Without one the Go runtime's default ends this process, and PID 1
+	// dying SIGKILLs the target before it can run its own shutdown.
+	sigs := make(chan os.Signal, 4)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	if err := cmd.Start(); err != nil {
 		LogError("Sandbox execution failed: %v", err)
 		return 1
 	}
+	targetPid := cmd.Process.Pid
+	go func() {
+		for sig := range sigs {
+			_ = syscall.Kill(targetPid, sig.(syscall.Signal))
+		}
+	}()
 	// Not cmd.Wait(): this process is PID 1 of a PID namespace, so orphaned
 	// descendants reparent here and only an explicit wait4 loop will reap them.
 	// Waiting in two places would race os/exec for the target's exit status.

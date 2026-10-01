@@ -42,6 +42,13 @@ func supervisorCloneFlags(networkMode string) uintptr {
 // flags above plus the user namespace that makes them possible for an ordinary
 // user, with this user mapped to root inside it.
 //
+// Pdeathsig SIGKILL is what ties the supervisor's life to nvx's. SIGKILL reaches
+// PID 1 of a namespace from outside it, and PID 1 dying takes the namespace's
+// whole tree with it. Without it, `kill nvx` left the contained process running,
+// re-parented to init, and a later nvx run deleted its guest home from under it.
+// It fires when the forking THREAD exits, so launch from a locked thread; see
+// startChildForwardingSignals.
+//
 // It exists so there is one definition rather than two. The teardown test used to
 // build its own SysProcAttr from supervisorCloneFlags alone, and when
 // CLONE_NEWUSER was added to the real launch the test kept the old shape --
@@ -50,6 +57,7 @@ func supervisorCloneFlags(networkMode string) uintptr {
 // fine by then; nothing said so.
 func supervisorSysProcAttr(networkMode string) *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{
+		Pdeathsig:  syscall.SIGKILL,
 		Cloneflags: syscall.CLONE_NEWUSER | supervisorCloneFlags(networkMode),
 		UidMappings: []syscall.SysProcIDMap{
 			{ContainerID: 0, HostID: syscall.Getuid(), Size: 1},

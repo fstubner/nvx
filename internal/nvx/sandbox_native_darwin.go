@@ -73,7 +73,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 			if errBuf.Len() == 0 {
 				LogError("Sandboxed command exited %d with no output (command=%q, profile=%s).", exitErr.ExitCode(), cmdPath, profilePath)
 			}
-			return exitErr.ExitCode(), nil
+			return childExitCode(exitErr), nil
 		}
 		LogError("Seatbelt execution failed: %v", err)
 		return 1, refusedToStart("the seatbelt sandbox could not be launched")

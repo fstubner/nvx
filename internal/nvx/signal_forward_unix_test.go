@@ -96,3 +96,18 @@ func TestForwardingPreservesTheChildExitCode(t *testing.T) {
 		t.Fatalf("a successful child reported an error: %v", err)
 	}
 }
+
+// The uncontained shim path reports a runtime ended by a signal as 128 plus the
+// signal, which is what `node -e "process.kill(process.pid,'SIGTERM')"` run
+// through the shim must exit with. It was 255, because ExitCode is -1 for a
+// signalled child and os.Exit(-1) wraps.
+func TestDirectChildKilledBySignalReportsShellStatus(t *testing.T) {
+	err := runDirectChild(exec.Command("/bin/sh", "-c", "kill -TERM $$"))
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("expected an ExitError, got %v", err)
+	}
+	if got := childExitCode(exitErr); got != 143 {
+		t.Fatalf("exit code %d, want 143", got)
+	}
+}
