@@ -337,9 +337,12 @@ func flattenAuditEntry(e map[string]string) map[string]string {
 func securityEventDetail(e map[string]string) string {
 	// `state` and `reason` are the hangup watchdog's. Without them here a
 	// hangup_watch record printed as its event name and nothing else, which is
-	// the same uselessness the instrumentation was added to fix.
+	// the same uselessness the instrumentation was added to fix. `check`,
+	// `package`, `version`, `by` and `detail` are the pre-install check events'
+	// (check_approved, check_refused); without them an approval printed as its
+	// event name alone, which says nothing about what was approved.
 	var parts []string
-	for _, k := range []string{"host", "tool", "project", "path", "mode", "state", "reason"} {
+	for _, k := range []string{"host", "tool", "project", "path", "mode", "state", "reason", "check", "package", "version", "by", "detail", "advisory", "severity"} {
 		if v := e[k]; v != "" {
 			parts = append(parts, k+"="+v)
 		}

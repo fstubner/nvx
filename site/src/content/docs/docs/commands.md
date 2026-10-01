@@ -38,7 +38,7 @@ Run `nvx help <command>` for any of these.
 | --- | --- |
 | `nvx doctor` | Whether interception, the shell integration and containment are healthy. `--fix` repairs what it can. |
 | `nvx policy init` | Write a global or project policy file. |
-| `nvx audit` | What nvx recorded: runs, blocked hosts, prompts and how they were answered. |
+| `nvx audit` | What nvx recorded: blocked hosts, pre-install checks that were approved or refused and how they were answered (including approvals by `-y`, `--agent-mode` and `NVX_YES`), and runs when `NVX_TRACE=1`. |
 | `nvx grants` | Filesystem grants the sandbox holds, and which project each belongs to. |
 | `nvx env` | Print the shell integration snippet. |
 | `nvx report` | A diagnostic bundle to attach to a bug report. |
@@ -148,7 +148,8 @@ Passed to the wrapped command only, not before it:
 
 Options:
   --shell=<type>           Shell syntax to emit: powershell, bash, zsh
-  -y, --yes                Auto-approve all prompts
+  -y, --yes                Auto-approve all prompts. Each pre-install check approved
+                           this way is printed and recorded in the audit log
   -q, --quiet              Suppress success/info messages (errors and warnings
                            still print)
   --verbose                Show what nvx is doing on the way: checks, session
