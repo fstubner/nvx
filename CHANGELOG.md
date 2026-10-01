@@ -159,6 +159,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Killing nvx on Linux now stops the contained process.** The sandbox
+  supervisor was started with no parent-death signal and no signal forwarding, so
+  `kill` or `kill -9` on nvx left the contained process running, and the next nvx
+  run deleted its home directory underneath it. The supervisor now dies with nvx,
+  SIGINT, SIGTERM and SIGHUP reach the contained process so it can shut down, and
+  the session record names the supervisor as well as nvx.
+
+* **A command run outside the sandbox now stops with nvx on Linux and macOS, and
+  reports a signal as 128 plus its number.** `kill` on nvx left the real `node`
+  running, and a runtime ended by SIGTERM exited 255 where a shell shows 143. nvx
+  now passes SIGINT, SIGTERM and SIGHUP on to the runtime, and on Linux the
+  kernel kills the runtime if nvx is killed outright. The same exit code mapping
+  applies to contained commands.
+
+* **`nvx doctor` now tests a real sandbox launch on Linux, and explains a refusal
+  on Ubuntu 23.10 and later.** It used to report a healthy sandbox without
+  starting one. It now runs a contained process, and when the kernel refuses the
+  namespaces it names `kernel.apparmor_restrict_unprivileged_userns`, offers
+  relaxing it or setting `isolation.network.mode` to `open`, and says whether
+  `open` starts on that machine. macOS is unchanged.
+
 * **Cleanup no longer removes a running session's files on Windows.** A session
   whose owning process nvx could not open, such as an elevated one, was read as
   finished, and its home could be deleted while it ran. A trusted tool's

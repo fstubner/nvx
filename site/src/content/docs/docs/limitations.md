@@ -46,6 +46,17 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
 
 ## What surprises people
 
+- **On Ubuntu 23.10 and later, the Linux sandbox may refuse to start.** Ubuntu
+  restricts the user namespaces the sandbox is built on, through the setting
+  `kernel.apparmor_restrict_unprivileged_userns`. Contained commands then fail
+  with "Operation not permitted", and nvx does not run them uncontained instead.
+  `nvx doctor` starts a contained process and names this setting when it is the
+  cause. You have two ways forward. `sudo sysctl -w
+  kernel.apparmor_restrict_unprivileged_userns=0` turns the restriction off for
+  every program on the machine. Or set `isolation.network.mode` to `open`, which
+  gives up the network namespace, so contained code shares your network and the
+  egress allowlist is not enforced. `nvx doctor` says whether `open` starts on
+  your machine.
 - **A contained command started in your home directory, or above it, starts in
   the sandbox's home instead.** The working directory is writable inside the
   sandbox, and granting your home would grant everything in it, `~/.nvx` and
