@@ -200,6 +200,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **On Windows, contained runs now work under a long `NVX_HOME`.** The sandbox
+  reaches nvx through sockets that lived under `NVX_HOME`, and a socket path
+  must stay under 108 bytes. Measured on 2026-10-01, a 132-character
+  `NVX_HOME` needed a 174-byte path and every run that used the egress proxy
+  refused with exit 77. The longest that worked was 65 characters. Long
+  values are common on Windows, with profiles redirected to OneDrive or
+  corporate home folders. When the sockets do not fit under `NVX_HOME`, nvx
+  now puts them in the sandbox's own folder in `%LOCALAPPDATA%\Packages`,
+  which Windows already grants the sandbox. The same run then used a 90-byte
+  path and completed. When that folder's path is too long as well, the refusal
+  names the longest `NVX_HOME` that works.
+
 * **Packages from a private registry are now checked on that registry.** The
   pre-install checks asked registry.npmjs.org about every package. A package
   served only by a private registry came back 404, and with nobody to answer

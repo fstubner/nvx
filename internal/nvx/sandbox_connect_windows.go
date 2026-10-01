@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -46,10 +45,10 @@ import (
 // side initiates, so it can dial when it actually has traffic.
 
 // windowsConnectSocketPath is where the parent accepts tunnel connections for
-// one host port. Inside the guest home, like the egress and expose sockets, so
-// it needs no extra ACL work.
-func windowsConnectSocketPath(guestHome string, hostPort int) string {
-	return filepath.Join(guestHome, fmt.Sprintf(".nvx-connect-%d.sock", hostPort))
+// one host port. Under the session's socket prefix, like the egress and expose
+// sockets, so it needs no extra ACL work. See windowsSocketPrefix.
+func windowsConnectSocketPath(prefix string, hostPort int) string {
+	return prefix + fmt.Sprintf("connect-%d.sock", hostPort)
 }
 
 // connectHostListener is the parent's half: it accepts tunnel connections from
@@ -118,23 +117,10 @@ func readPeerHeader(r net.Conn) (srcPort, dstPort uint16, err error) {
 	return binary.BigEndian.Uint16(b[0:2]), binary.BigEndian.Uint16(b[2:4]), nil
 }
 
-// maxWindowsUnixSocketPath is how long an AF_UNIX path may be on Windows.
-// Measured 2026-08-28 on Windows 11 26200: 107 characters bind, 108 fails.
-//
-// Named because the failure is otherwise undiagnosable -- the syscall returns a
-// bare "bind: invalid argument" against a path that plainly exists and is
-// writable, with nothing pointing at its length. A long NVX_HOME is all it takes
-// (a guest home here is ~50 characters, so there is room, but not a lot).
-const maxWindowsUnixSocketPath = 107
-
-// openConnectPort sets up the parent side for one mapping.
-func openConnectPort(ctx context.Context, nvxHome, guestHome string, m connectMapping) (*connectHostListener, error) {
-	sock := windowsConnectSocketPath(guestHome, m.Host)
-	if len(sock) > maxWindowsUnixSocketPath {
-		return nil, fmt.Errorf(
-			"the tunnel socket path is %d characters and Windows allows %d: %s\n"+
-				"Set NVX_HOME to a shorter directory", len(sock), maxWindowsUnixSocketPath, sock)
-	}
+// openConnectPort sets up the parent side for one mapping. The socket path's
+// length is checked with the session's other sockets, by windowsSocketRoomError.
+func openConnectPort(ctx context.Context, nvxHome, sockets string, m connectMapping) (*connectHostListener, error) {
+	sock := windowsConnectSocketPath(sockets, m.Host)
 	_ = os.Remove(sock)
 	tunnelL, err := net.Listen("unix", sock)
 	if err != nil {
@@ -199,8 +185,8 @@ func (c *connectHostListener) Close() { _ = c.tunnelL.Close() }
 
 // startConnectListeners is the contained side: listen on the in-sandbox port and
 // forward each connection to the parent over the AF_UNIX socket.
-func startConnectListeners(ctx context.Context, guestHome string, m connectMapping) (int, error) {
-	sock := windowsConnectSocketPath(guestHome, m.Host)
+func startConnectListeners(ctx context.Context, sockets string, m connectMapping) (int, error) {
+	sock := windowsConnectSocketPath(sockets, m.Host)
 
 	// Inside 0 asks the OS for a free port. It cannot default to the host's own
 	// number: the container shares the host's network stack, so binding it here
