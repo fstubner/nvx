@@ -51,10 +51,30 @@ func (r Release) LTSName() string {
 	return ""
 }
 
-// FetchReleases fetches the list of Node.js releases from official nodejs.org mirror
+// nodeMirrorVars are the settings that move where Node.js releases come from,
+// in the order they are read. nvm and fnm users have the last two set already.
+var nodeMirrorVars = []string{"NVX_NODE_MIRROR", "NVM_NODEJS_ORG_MIRROR", "FNM_NODE_DIST_MIRROR"}
+
+// nodeDistBase is the release directory nvx reads Node.js from: the index, the
+// archives and SHASUMS256.txt all come from it, as with nvm. nodejs.org was
+// hard-coded, so a network that reaches it only through an internal mirror
+// could not install Node.js at all. A mirror is trusted as nodejs.org is,
+// because the checksums come from the same place as the archives.
+func nodeDistBase() string {
+	for _, name := range nodeMirrorVars {
+		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+			return strings.TrimRight(v, "/")
+		}
+	}
+	return "https://nodejs.org/dist"
+}
+
+// FetchReleases fetches the list of Node.js releases from nodejs.org or the
+// configured mirror.
 func FetchReleases() ([]Release, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get("https://nodejs.org/dist/index.json")
+	// #nosec G107 -- the base is nodejs.org or a mirror the user configured.
+	resp, err := client.Get(nodeDistBase() + "/index.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch release list: %w", err)
 	}
@@ -430,7 +450,7 @@ func (n NodeProvider) Install(version string, nvxHome string) error {
 
 	arch := GetArch()
 	archiveFilename := fmt.Sprintf("node-%s-%s-%s.%s", resolvedVer, getOS(), arch, getExtension())
-	url := fmt.Sprintf("https://nodejs.org/dist/%s/%s", resolvedVer, archiveFilename)
+	url := fmt.Sprintf("%s/%s/%s", nodeDistBase(), resolvedVer, archiveFilename)
 	// The pid in the name is what lets a later sweep tell a download whose
 	// install was killed from one still in progress.
 	tempFile := filepath.Join(GetDownloadsDir(), fmt.Sprintf("%s.tmp.%d", archiveFilename, os.Getpid()))

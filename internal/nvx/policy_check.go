@@ -195,7 +195,30 @@ func evaluatePolicyCheck(nvxHome, cwd string, online bool) policyCheckResult {
 		return result
 	}
 
-	checkProjectVulnerabilities(policy, deps, &result, add)
+	// Each dependency is looked up on the registry npm would fetch it from.
+	// One served by another registry is not sent to OSV; see npm_registry.go.
+	projectDir := findProjectRoot(cwd)
+	if projectDir == "" {
+		projectDir = cwd
+	}
+	regs := loadNpmRegistryConfig(projectDir, false)
+	setCheckRegistries(regs)
+	var publicDeps []projectDependency
+	private := 0
+	for _, dep := range deps {
+		if isPublicNpmRegistry(regs.registryFor(dep.Name)) {
+			publicDeps = append(publicDeps, dep)
+		} else {
+			private++
+		}
+	}
+	if private > 0 {
+		result.Skipped = append(result.Skipped, fmt.Sprintf("known vulnerabilities for %d dependencies from a registry other than the public one", private))
+	}
+
+	if len(publicDeps) > 0 || private == 0 {
+		checkProjectVulnerabilities(policy, publicDeps, &result, add)
+	}
 	checkProjectReleaseAge(policy, deps, &result, add)
 
 	result.ExitCode = worstPolicyCheckCode(result.Findings)

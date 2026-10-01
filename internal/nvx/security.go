@@ -648,8 +648,10 @@ var fetchNpmDistForVerify = fetchNpmDist
 
 // packuments holds each registry document fetched in this process. The checks
 // read a package's metadata and then its tarball record, and a lockfile names
-// the same package at several versions. One request serves all of them.
-var packuments sync.Map // name -> *packumentResult
+// the same package at several versions. One request serves all of them. Keyed
+// by registry as well as name, because a name on another registry is another
+// package.
+var packuments sync.Map // registry + "\x00" + name -> *packumentResult
 
 type packumentResult struct {
 	once sync.Once
@@ -658,27 +660,43 @@ type packumentResult struct {
 }
 
 func fetchNpmPackument(pkgName string) (NpmRegistryMetadata, error) {
-	v, _ := packuments.LoadOrStore(pkgName, &packumentResult{})
+	regs := currentCheckRegistries()
+	registry := regs.registryFor(pkgName)
+	v, _ := packuments.LoadOrStore(registry+"\x00"+pkgName, &packumentResult{})
 	r := v.(*packumentResult)
-	r.once.Do(func() { r.meta, r.err = fetchNpmPackumentUncached(pkgName) })
+	r.once.Do(func() { r.meta, r.err = fetchNpmPackumentUncached(registry, regs.tokenFor(registry), pkgName) })
 	return r.meta, r.err
 }
 
-func fetchNpmPackumentUncached(pkgName string) (NpmRegistryMetadata, error) {
+// fetchNpmPackumentUncached asks registry for a package's document. token is
+// the user's _authToken for that registry, or "". It goes in this request's
+// header and nowhere else: not in an error, a log line or an environment.
+func fetchNpmPackumentUncached(registry, token, pkgName string) (NpmRegistryMetadata, error) {
 	var meta NpmRegistryMetadata
 	client := &http.Client{Timeout: 8 * time.Second}
-	// #nosec G704 -- the host is a hardcoded literal, so this cannot be pointed at
-	// another server; only the path segment varies, and EscapeScopedPackage runs it
-	// through url.PathEscape first. gosec's taint analysis does not model the
-	// hardcoded-host case.
-	resp, err := client.Get(fmt.Sprintf("https://registry.npmjs.org/%s", EscapeScopedPackage(pkgName)))
+	req, err := http.NewRequest(http.MethodGet, registry+EscapeScopedPackage(pkgName), nil)
+	if err != nil {
+		return meta, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	// #nosec G704 -- the host is the registry the user's own npm configuration
+	// names for this package. Only the path segment varies, and
+	// EscapeScopedPackage runs it through url.PathEscape first.
+	resp, err := client.Do(req)
 	if err != nil {
 		return meta, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return meta, fmt.Errorf("registry returned HTTP %s", resp.Status)
+		host := registryHost(registry)
+		if token == "" && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+			return meta, fmt.Errorf("registry %s returned HTTP %s, and .npmrc has no _authToken for it", host, resp.Status)
+		}
+		return meta, fmt.Errorf("registry %s returned HTTP %s", host, resp.Status)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
 		return NpmRegistryMetadata{}, err

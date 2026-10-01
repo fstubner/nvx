@@ -102,9 +102,10 @@ func ComputeSHA256(filePath string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// nodeShasumsURL is where nodejs.org publishes the checksums for a release.
+// nodeShasumsURL is where the checksums for a release are published: on
+// nodejs.org, or on the mirror the archive comes from.
 func nodeShasumsURL(version string) string {
-	return fmt.Sprintf("https://nodejs.org/dist/%s/SHASUMS256.txt", version)
+	return fmt.Sprintf("%s/%s/SHASUMS256.txt", nodeDistBase(), version)
 }
 
 // fetchExpectedShasum downloads a SHASUMS256.txt-style manifest (lines of

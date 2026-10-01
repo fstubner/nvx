@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -41,7 +42,9 @@ const (
 	checkLockfileSource     = "lockfile_mismatch"
 	checkResolution         = "resolution_failed"
 	checkLockfileUnreadable = "lockfile_unreadable"
+	checkPublicRegistryOnly = "public_registry_checks"
 	answeredByPolicy        = "policy"
+	answeredByRegistry      = "registry"
 	answeredByPrompt        = "prompt"
 	answeredNonInteractive  = "non_interactive"
 )
@@ -168,6 +171,43 @@ func advisoryRemedy(ids []string) string {
 	return "To accept advisories you have assessed, add their IDs to vulnerabilities.allowed_advisories in ~/.nvx/policy.json: " +
 		`{"vulnerabilities":{"allowed_advisories":[` + jsonList(shown) + `]}}.` + more +
 		` To accept everything below a severity, set vulnerabilities.min_severity, for example {"vulnerabilities":{"min_severity":"high"}}.` + blanketNote
+}
+
+// reportPublicOnlyChecksSkipped says once per run, and records, that packages
+// from a registry other than the public one get no typosquat or advisory check.
+// Both ask a public service about a package by name: the download counts and
+// OSV describe the public registry's package of that name, which is another
+// package, and a private name should not leave the network it lives on.
+func reportPublicOnlyChecksSkipped(nvxHome string, targets []verifyTarget, regs npmRegistryConfig) {
+	hosts := map[string]bool{}
+	seen := map[string]bool{}
+	count := 0
+	for _, t := range targets {
+		if targetSourceKind(t) != "" {
+			continue
+		}
+		name, _ := parsePackageQuery(t.spec)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		if reg := regs.registryFor(name); !isPublicNpmRegistry(reg) {
+			hosts[registryHost(reg)] = true
+			count++
+		}
+	}
+	if count == 0 {
+		return
+	}
+	list := make([]string, 0, len(hosts))
+	for h := range hosts {
+		list = append(list, h)
+	}
+	sort.Strings(list)
+	joined := strings.Join(list, ", ")
+	LogWarn("%d package(s) come from %s, not the public npm registry. nvx checked them against that registry. The typosquat and known-vulnerability checks did not run for them, because those ask public services about a package by name.", count, joined)
+	recordCheck(nvxHome, "check_skipped", checkInfo{check: checkPublicRegistryOnly,
+		detail: strconv.Itoa(count) + " from " + joined}, answeredByRegistry)
 }
 
 // unreachableRemedy is honest that no setting waives a lookup that failed.

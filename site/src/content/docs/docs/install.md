@@ -85,6 +85,16 @@ go build -o nvx ./cmd/nvx
   `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` before a profile can
   load at all.
 
+## Behind a corporate proxy or mirror
+
+nvx reads `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` like other tools, and
+contained installs go through the same proxy once nvx's allowlist has approved
+the host. To fetch Node.js from an internal mirror, set `NVX_NODE_MIRROR` to its
+`dist` URL. An existing `NVM_NODEJS_ORG_MIRROR` or `FNM_NODE_DIST_MIRROR` works
+too. The pre-install checks use the registry your `.npmrc` names. See
+[Corporate networks](/docs/policy/#corporate-networks) for what each of these
+does and which hosts nvx contacts.
+
 ## Check it worked
 
 Open a new terminal — an installer that changed `PATH` cannot change it for a

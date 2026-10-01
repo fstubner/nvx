@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **`NVX_NODE_MIRROR` fetches Node.js from a mirror.** nodejs.org was
+  hard-coded, so a network that reaches it only through an internal mirror
+  could not install Node.js. The release index, the archives and
+  `SHASUMS256.txt` all come from the mirror, as with nvm. An existing
+  `NVM_NODEJS_ORG_MIRROR` or `FNM_NODE_DIST_MIRROR` is read too. The checksums
+  come from the same place as the archives, so a mirror is trusted as
+  nodejs.org is.
+
 * **A global policy can now be a baseline a project cannot weaken.** Setting
   `"enforced": true` in `~/.nvx/policy.json` means a project's own
   `.nvx-policy.json` may make a setting stricter and may not make one looser. A
@@ -191,6 +199,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   docker's. The native providers are unaffected.
 
 ### Fixed
+
+* **Packages from a private registry are now checked on that registry.** The
+  pre-install checks asked registry.npmjs.org about every package. A package
+  served only by a private registry came back 404, and with nobody to answer
+  the prompt the install was refused. nvx now reads the registry npm will use
+  for each package from `.npmrc` and `npm_config_*`, scopes included. A
+  contained install reads the project's `.npmrc` only, as its npm does. When
+  the registry needs a token to read metadata, nvx sends the `_authToken` from
+  your `.npmrc` with its own request. The token does not reach the sandbox or
+  any log. A package from a registry other than registry.npmjs.org skips the
+  typosquat and advisory checks, because both send the name to a public
+  service. The run says so in one line and the audit log records it as
+  `check_skipped`.
+
+* **Contained installs now work behind a corporate proxy.** nvx's egress proxy
+  dialled every allowed host itself, and the contained process got nvx's proxy
+  in place of yours. On a machine that reaches the internet only through a
+  proxy, a contained install could reach nothing. When `HTTPS_PROXY` or
+  `HTTP_PROXY` is set, an allowed connection now goes through that proxy as a
+  CONNECT tunnel, with `Proxy-Authorization` from the URL's user and password.
+  `NO_PROXY` hosts and loopback destinations are dialled directly. The
+  allowlist still decides first, so a host it refuses is never sent to your
+  proxy.
 
 * **On Windows, a program your own code leaves running in the background now
   outlives the command.** Through nvx it was killed the moment the command

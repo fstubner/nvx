@@ -116,3 +116,50 @@ Policies cascade: the global policy applies everywhere, and local policy files m
 * **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project (`<project>/.nvx/npm_global`) instead of being shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch. Because that directory goes on your PATH, a project file that turns this on counts as a loosening and needs the same approval as an egress host.
 
 Override filesystem provider per shim: `npm --filesystem-provider=docker install`.
+
+## Corporate networks
+
+**Private registries.** The pre-install checks look each package up on the
+registry npm will fetch it from. For a contained install that is what the
+project's `.npmrc` says in `registry=` and `@scope:registry=`, because a
+contained npm reads nothing else. For a run outside the sandbox,
+`npm_config_registry` and `npm_config_@scope:registry` come first, then the
+project's `.npmrc`, then `~/.npmrc` (or the file `npm_config_userconfig` names).
+The contained npm also needs the registry's host in
+`isolation.network.allow_hosts`.
+
+If the registry needs a token to read package metadata, nvx sends the
+`//host/:_authToken=` value from your `.npmrc` with its own request. That request
+runs outside the sandbox. The token is not put in the sandbox's environment or
+written to any log. `${VAR}` in `.npmrc` is filled in from nvx's environment, as
+npm does. Only `_authToken` is read. Without a token, a 401 or 403 counts as a
+lookup that failed. nvx asks before going on, and refuses when nobody can answer.
+
+**Which hosts the checks contact.** nvx makes these requests itself.
+
+| Host | When | What it is sent |
+| --- | --- | --- |
+| The package's registry | Every registry package checked | The package name, and your token for that registry if `.npmrc` has one |
+| `api.npmjs.org` | The typosquat check, for a public-registry package whose name is close to a popular one | Both names |
+| `api.osv.dev` | The advisory scan, for public-registry packages | Each name and version |
+| `cdn.jsdelivr.net` | Refreshing the popular-package list, once the cached copy is 7 days old | Nothing about your project |
+
+`api.npmjs.org` and `api.osv.dev` are asked only about packages from
+`registry.npmjs.org`. A package from any other registry skips the typosquat and
+advisory checks, and the run prints one line saying so. `~/.nvx/audit.log`
+records it as `check_skipped` with `check` set to `public_registry_checks`.
+
+**Upstream proxy.** When nvx's own environment sets `HTTPS_PROXY`, or
+`HTTP_PROXY` without it, the egress proxy sends each connection the allowlist
+permits through that proxy as a CONNECT tunnel. A user and password in the URL
+become its `Proxy-Authorization` header. Hosts in `NO_PROXY` and loopback
+destinations are dialled directly. The allowlist decides first, in nvx, so a
+host it refuses is never sent to your proxy. The contained process sees only
+nvx's proxy, never yours or its credentials. nvx's own requests, such as the
+checks above and runtime downloads, use your proxy as any Go program does.
+
+**Node.js mirror.** `NVX_NODE_MIRROR` replaces `https://nodejs.org/dist` for the
+release index, the archives and `SHASUMS256.txt`. `NVM_NODEJS_ORG_MIRROR` and
+`FNM_NODE_DIST_MIRROR` are read too, in that order after it. The checksums come
+from the mirror, so nvx trusts a mirror as it trusts nodejs.org. Use one you
+control, over `https://`. Bun is still downloaded from GitHub.

@@ -89,6 +89,9 @@ type EgressProxy struct {
 	session  map[string]bool
 	prompted map[string]bool
 	cancel   context.CancelFunc
+	// upstream is the user's own proxy, which allowed connections go through.
+	// nil dials directly. See egress_upstream.go.
+	upstream *upstreamProxy
 }
 
 func startEgressProxy(ctx context.Context, policy Policy, provider RuntimeProvider, nvxHome string) (*EgressProxy, error) {
@@ -117,6 +120,7 @@ func startEgressProxy(ctx context.Context, policy Policy, provider RuntimeProvid
 		policy:           policy,
 		nvxHome:          nvxHome,
 		prompted:         map[string]bool{},
+		upstream:         upstreamProxyFromEnv(),
 	}
 
 	proxyCtx, cancel := context.WithCancel(ctx)
@@ -627,7 +631,7 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 			_, _ = fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
 			return
 		}
-		remote, err := dialVetted(ips, hp.host, hp.port)
+		remote, err := p.dialAllowed(ips, hp)
 		if err != nil {
 			// Say which addresses were tried and what the last one said.
 			//
@@ -824,7 +828,7 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 		return
 	}
 
-	remote, err := dialVetted(ips, hp.host, hp.port)
+	remote, err := p.dialAllowed(ips, hp)
 	if err != nil {
 		_, _ = conn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return

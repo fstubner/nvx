@@ -96,7 +96,7 @@ Commands:
   use <[rt@]version>       Switch the current terminal session (installs if missing)
   default <[rt@]version>   Set the global default for a runtime (creates a link)
   list, ls                 List installed runtimes and versions
-  list-remote, ls-remote   List available Node.js versions from nodejs.org
+  list-remote, ls-remote   List Node.js versions on nodejs.org or NVX_NODE_MIRROR
   env [--shell=<type>]     Print shell integration script (powershell, bash, zsh)
   auto [--shell=<type>]    Auto-switch based on .nvmrc / .node-version /
                            .bun-version / package.json engines
@@ -179,6 +179,13 @@ Options:
                            egress host, trusting a tool or a project policy.
                            -y and --agent-mode deliberately do not
   NVX_HOME=<dir>           (env) Use a different nvx home instead of ~/.nvx
+  NVX_NODE_MIRROR=<url>    (env) Fetch Node.js from this mirror instead of
+                           https://nodejs.org/dist. NVM_NODEJS_ORG_MIRROR and
+                           FNM_NODE_DIST_MIRROR are read too. A mirror is
+                           trusted as nodejs.org is
+  HTTPS_PROXY=<url>        (env) Your own proxy. Contained connections the
+                           allowlist permits go through it (or HTTP_PROXY),
+                           apart from NO_PROXY hosts
   NO_COLOR=1               (env) No colour codes in output. They are also left
                            out whenever the output is not a terminal
 ```
