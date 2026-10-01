@@ -42,7 +42,7 @@ whether the kernel honours it is not.
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
 | Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |
-| Host filesystem read restricted | Yes⁴ | Yes⁸ | No² (confirmed⁵) |
+| Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: credential stores denied, other reads allowed⁵ |
 | Project `.git` read-only, rest of project writable | Yes¹⁴ | Yes¹⁴ | Yes¹⁴ |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
@@ -62,6 +62,18 @@ reliably; a strict read allowlist breaks process launch. Write containment and
 egress control remain enforced, and environment secrets are scrubbed with `$HOME`
 redirected to an ephemeral guest profile.
 
+The user's credential stores are the exception. After the blanket read allow, the
+profile denies reads of `~/.npmrc`, `~/.yarnrc`, `~/.yarnrc.yml`,
+`~/.config/pnpm/rc`, `~/Library/Preferences/pnpm/rc`, `~/.bunfig.toml`,
+`~/.docker/config.json`, `~/.netrc` and `~/.git-credentials`, and of everything
+under `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.kube`,
+`~/.config/gcloud`, `~/.azure` and `~/Library/Keychains`. `~` is the real home,
+and each path is also named with symbolic links resolved, because Seatbelt
+matches the resolved path. None of these is on the dynamic linker's path. Until
+2026-10-01 the profile denied none of them. Every other file outside the project
+stays readable, other projects included, and so does a credential kept anywhere
+the list does not name.
+
 Writes are contained, with named exceptions: the profile grants write access to
 `/dev`, `/private/tmp`, `/private/var/tmp` and `/private/var/folders` so a
 contained process has somewhere to put temporary files. "Writes cannot leave the
@@ -75,11 +87,11 @@ the profile working as designed.
 say it did** -- it claimed "the sensitive material is still protected", which is
 true of writes and false of reads. `$HOME` decides where `~` expands to; it does
 not stop anything opening `/Users/<you>/.ssh/id_rsa` by absolute path, and a
-postinstall script looking for credentials does not need `~` to find them. On
-macOS, credential *reads* are not contained. Say so rather than reasoning around
-it: the write and egress guarantees are real and the read guarantee is absent,
-which is a narrower product than the same sentence describes on Windows and
-Linux.
+postinstall script looking for credentials does not need `~` to find them. That
+is why the credential stores above are denied by path. On macOS, reads outside
+them are not contained. The write and egress guarantees are real and the read
+guarantee covers only the listed stores, which is a narrower product than the
+same sentence describes on Windows and Linux.
 
 ¹ On macOS, egress is gated by the loopback proxy and OS network rules. Linux
 additionally removes all non-loopback interfaces (network namespace), so DNS to
@@ -103,6 +115,12 @@ satisfied by a sandbox that had failed to start, and requiring something to
 *succeed* is the only thing that tells enforcement from breakage. `CONNECT=200`
 is the one that closed the largest gap here — until 2026-08-24 the whole script
 ran with an empty allowlist and could only ever observe refusals.
+
+The script's third phase starts nvx with `HOME` set to a throwaway directory
+holding a planted `.npmrc` and `.ssh/id_test`. A contained read of each must be
+refused by the OS, while a project file and node's own binary must still read,
+each checked by exit code. Contained `npm config get registry` must succeed with
+that `.npmrc` present and must not report the registry planted in it.
 
 `READ_OUTSIDE=ALLOWED` pins the documented weakness in ² deliberately. If the
 profile is ever tightened this fails, which forces the docs site's limitations

@@ -168,6 +168,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **On macOS a contained install can no longer read your credential files.**
+  The macOS sandbox allows filesystem reads so programs can load system
+  libraries, and that included `~/.npmrc`, `~/.ssh`, `~/.aws` and the other
+  places registry tokens, keys and cloud credentials live. Windows and Linux
+  already kept them out of reach. The macOS sandbox now refuses reads of the
+  npm, yarn, pnpm and bun config files, `~/.docker/config.json`, `~/.netrc`,
+  `~/.git-credentials`, and everything under `~/.ssh`, `~/.aws`, `~/.gnupg`,
+  `~/.config/gh`, `~/.kube`, `~/.config/gcloud`, `~/.azure` and
+  `~/Library/Keychains`. Other files outside the project stay readable on macOS.
 * **A contained install can no longer write the project's `.git`.** The project
   directory was writable as a whole, `.git` included, and git runs outside the
   sandbox. So a hook or a `.git/config` entry written by an install ran as you on

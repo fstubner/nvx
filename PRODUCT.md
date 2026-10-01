@@ -116,10 +116,11 @@ documentation:
    **cannot** open a network connection to a host outside the policy allowlist,
    including by ignoring `HTTP_PROXY`.
 
-   The read half of that is Windows and Linux only. macOS allows filesystem
-   reads, so on macOS step 3 means write containment and egress control and not
-   credential protection — a narrower product, stated here rather than left for
-   a reader to discover in a footnote.
+   On macOS the read half covers the credential stores only. The profile denies
+   `~/.ssh`, `~/.aws`, `~/.npmrc` and the other stores it names, and allows every
+   other read, so another project on the machine stays readable. That is a
+   narrower product, stated here rather than left for a reader to discover in a
+   footnote.
 
 Step 3 is the product. Steps 1 and 2 are the price of admission — if either is
 slow or fails on a normal machine, step 3 never happens because nvx is not
