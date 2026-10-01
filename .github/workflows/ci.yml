@@ -410,7 +410,7 @@ jobs:
         # mount namespace that makes .git read-only.
         # The same prefix selects TestContainedProcessCannotReachHostUnixSockets,
         # which runs the real supervisor and so needs root here for the same reason.
-        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone|TestContainedProcess|TestGitMetadata' ./internal/nvx 2>&1 | tee /tmp/priv.log
+        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone|TestContainedProcess|TestNvxTermination|TestGitMetadata' ./internal/nvx 2>&1 | tee /tmp/priv.log
         # A failure, not a warning. This said "it is verifying nothing" and then
         # let the job go green, so the condition it names could persist
         # indefinitely -- which is what happened on Linux before 2026-08-23, when
@@ -436,6 +436,14 @@ jobs:
         # is honest but verifies nothing. No `|| true`: a sysctl that fails here
         # is the start of a skip.
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        # doctor's own control launch must agree that the sandbox starts here. Its
+        # exit code is not asserted, since other checks (PATH, shims) are not set up
+        # on a runner; the line it prints about the sandbox is.
+        { ./nvx doctor || true; } 2>&1 | tee /tmp/doctor.log
+        if ! grep -q 'the sandbox starts' /tmp/doctor.log; then
+          echo "::error::nvx doctor did not report a sandbox that starts, on a host where the sandbox smoke is about to run"
+          exit 1
+        fi
         # Each script skips with exit 0 when a runtime will not install or the
         # host cannot host the sandbox, which is right on a developer machine
         # and verifies nothing here. So the step requires the line each prints
