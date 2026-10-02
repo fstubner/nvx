@@ -74,7 +74,7 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 	// a Linux network namespace has no route out of itself, and a Windows
 	// AppContainer is refused loopback without an elevated exemption. No-op
 	// elsewhere.
-	if err := prepareEgressSocket(egress, guestHome, &netCtx); err != nil {
+	if err := prepareEgressSocket(egress, guestHome, config.NvxHome, &netCtx); err != nil {
 		// "namespace isolation" until 2026-09-03, which named the Linux mechanism
 		// on every platform. The failure a person met here was a Windows one --
 		// an NVX_HOME too long for an AF_UNIX path -- and it arrived under a

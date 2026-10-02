@@ -9,13 +9,14 @@ import (
 	"testing"
 )
 
-// Off Windows only $SHELL can say, and only fish needs a different syntax.
+// Off Windows only $SHELL can say. fish and zsh are named by it.
 // (Windows reads the parent process instead. See shell_parent_windows_test.go.)
 func TestFishIsDetectedFromShellOffWindows(t *testing.T) {
 	for shell, want := range map[string]string{
 		"/usr/bin/fish":          "fish",
 		"/opt/homebrew/bin/fish": "fish",
-		"/bin/zsh":               "bash",
+		"/bin/zsh":               "zsh",
+		"/bin/bash":              "bash",
 		"":                       "bash",
 	} {
 		withEnv(t, "SHELL", shell)

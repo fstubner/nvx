@@ -98,11 +98,11 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   a project folder to work on files there.
 - **A long `NVX_HOME` can stop contained runs.** The sandbox reaches nvx
   through sockets under `NVX_HOME`, and a socket path must be shorter than 108
-  bytes. On Linux a run that needs one refuses and asks for a shorter
-  `NVX_HOME`. On Windows nvx moves the sockets to the sandbox's own folder in
-  `%LOCALAPPDATA%\Packages`, which Windows already grants the sandbox. It
-  refuses only when that path is too long as well, and then names the longest
-  `NVX_HOME` that works.
+  bytes. On Linux a run that needs one refuses and names the longest
+  `NVX_HOME` that works. On Windows nvx moves the sockets to the sandbox's own
+  folder in `%LOCALAPPDATA%\Packages`, which Windows already grants the
+  sandbox. It refuses only when that path is too long as well, and then names
+  the longest `NVX_HOME` that works.
 - **A stray `package.json` above your projects merges them into one sandbox
   scope.** `nvx doctor` reports it when the manifest sits in your home directory
   or at a volume root.

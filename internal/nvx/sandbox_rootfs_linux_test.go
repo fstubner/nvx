@@ -142,7 +142,7 @@ func TestContainedProcessCannotReachHostUnixSockets(t *testing.T) {
 
 	guestHome := tempDir(t)
 	netCtx := &NetworkLaunchContext{Mode: "proxy"}
-	if err := prepareEgressSocket(proxy, guestHome, netCtx); err != nil {
+	if err := prepareEgressSocket(proxy, guestHome, "", netCtx); err != nil {
 		t.Fatalf("prepareEgressSocket: %v", err)
 	}
 

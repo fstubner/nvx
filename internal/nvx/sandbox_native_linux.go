@@ -21,7 +21,7 @@ const egressSocketName = ".nvx-egress.sock"
 // A loopback-only netns has no route to any allowlisted host, so the proxy cannot
 // live inside it. UNIX sockets are filesystem objects and are not namespaced by
 // the network namespace, which makes them the one channel that crosses cleanly.
-func prepareEgressSocket(egress *EgressProxy, guestHome string, netCtx *NetworkLaunchContext) error {
+func prepareEgressSocket(egress *EgressProxy, guestHome, nvxHome string, netCtx *NetworkLaunchContext) error {
 	if egress == nil || netCtx == nil || guestHome == "" {
 		return nil
 	}
@@ -35,7 +35,7 @@ func prepareEgressSocket(egress *EgressProxy, guestHome string, netCtx *NetworkL
 		return nil
 	}
 	sock := filepath.Join(guestHome, egressSocketName)
-	if err := unixSocketPathTooLong("egress socket", sock); err != nil {
+	if err := unixSocketPathTooLong("egress socket", sock, nvxHome); err != nil {
 		return err
 	}
 	if err := egress.ListenUnix(sock); err != nil {
@@ -57,7 +57,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// Host services this run may reach. Opened here, outside the namespace, and
 	// the in-sandbox port is resolved here too, so both numbers reach the
 	// supervisor already decided.
-	connectEnv, stopConnect, err := openConnectSockets(guestHome, &netCtx)
+	connectEnv, stopConnect, err := openConnectSockets(guestHome, config.NvxHome, &netCtx)
 	if err != nil {
 		LogError("Could not open a path to a host service for the sandbox: %v", err)
 		return 1, refusedToStart("a path to a host service could not be opened")

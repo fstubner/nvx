@@ -15,7 +15,7 @@ import (
 // wording, a change to what the matcher looks for -- doctor appends the
 // integration again on every run, and the profile grows a copy per invocation.
 func TestTheLineDoctorWritesIsTheLineItThenRecognises(t *testing.T) {
-	for _, shell := range []string{"bash", "zsh", "powershell"} {
+	for _, shell := range []string{"bash", "zsh", "powershell", "fish"} {
 		t.Run(shell, func(t *testing.T) {
 			profile := filepath.Join(t.TempDir(), "profile")
 

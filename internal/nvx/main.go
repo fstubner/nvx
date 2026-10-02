@@ -589,15 +589,14 @@ exported and counted everything that could be read.
 // inherited by every child, so a cmd.exe opened from Git Bash still has MSYSTEM
 // set and was handed POSIX `export` lines it cannot run. With no recognisable
 // parent, MSYSTEM (set by Git Bash and MSYS2 and by little else) and then a SHELL
-// naming bash, zsh or fish are the fallback. Elsewhere SHELL is the only signal,
-// and anything but fish keeps the bash syntax. All of it is heuristic, and
+// naming bash, zsh or fish are the fallback. Elsewhere SHELL is the only signal:
+// fish and zsh are named by it, and anything else keeps the bash syntax. zsh is
+// the macOS default login shell, and a zsh user was told to add the integration
+// to ~/.bashrc, where `nvx doctor --fix` put it too. All of it is heuristic, and
 // `--shell=` still overrides, which is what the shell integration snippets pass.
 func defaultShell() string {
 	if runtime.GOOS != "windows" {
-		if filepath.Base(os.Getenv("SHELL")) == "fish" {
-			return "fish"
-		}
-		return "bash"
+		return posixShellFromEnv(os.Getenv("SHELL"))
 	}
 	if sh := shellForParentExe(parentShellExe()); sh != "" {
 		return sh
@@ -615,6 +614,19 @@ func defaultShell() string {
 		return "fish"
 	}
 	return "powershell"
+}
+
+// posixShellFromEnv names the shell a SHELL value points at, for the platforms
+// where that variable is the only signal. Anything that is not fish or zsh gets
+// the bash syntax.
+func posixShellFromEnv(shellVar string) string {
+	switch filepath.Base(shellVar) {
+	case "fish":
+		return "fish"
+	case "zsh":
+		return "zsh"
+	}
+	return "bash"
 }
 
 // shellForParentExe maps the file name of the process that started nvx to the
