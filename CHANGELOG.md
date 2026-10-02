@@ -1035,6 +1035,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   asked about. nvx cannot scan without a version; the prompt and the warning now
   say that is what approving costs.
 
+* **A zsh user is now treated as a zsh user.** With no `--shell` given, nvx on
+  Linux and macOS chose bash unless `SHELL` named fish. Someone on zsh, the
+  macOS default, who ran `nvx use 20` without the integration was told to add
+  the line to `~/.bashrc`, and `nvx doctor --fix` wrote it there, where zsh
+  never reads it. nvx now selects zsh when `SHELL` ends in `zsh`. The hint names
+  `~/.zshrc` and `nvx doctor --fix` writes to it.
+
+* **`nvx doctor --fix` writes the same fish file as the installer.** For fish
+  it wrote only the `nvx env --shell=fish | source` line. The installer's
+  `conf.d/nvx.fish` also puts `~/.nvx/bin` on `PATH` first, and without that
+  fish cannot find `nvx` when the line runs. doctor now writes the installer's
+  whole file. A file that already loads nvx, in either form, is left alone, so
+  one an earlier `doctor --fix` wrote keeps the line-only form until you delete
+  it and run `nvx doctor --fix` again.
+
+* **On Linux, the refusal for a long `NVX_HOME` names the longest one that
+  works.** A socket path must be shorter than 108 bytes, and the refusal only
+  said to use a shorter `NVX_HOME`, leaving you to guess how much shorter. It
+  now says `Set NVX_HOME to a directory of at most N characters (it is M)`, as
+  the Windows refusal does. N leaves room for the longest socket the run
+  creates, so following it does not meet a second refusal. The loopback
+  socket used to fail with a bare `bind: invalid argument` and now gets the
+  same check. Where the sockets live on Linux has not changed.
+
 ## [0.6.0] - 2026-09-09
 
 ### Added

@@ -154,9 +154,33 @@ func addIntegrationToProfileImpl(path, shell string) error {
 		return err
 	}
 	defer f.Close()
+	if shell == "fish" {
+		_, err = f.WriteString(fishConfDContent())
+		return err
+	}
 	_, err = f.WriteString("\n# nvx shell integration (runtime switching on cd)\n" + integrationLineFor(shell) + "\n")
 	return err
 }
+
+// fishConfDContent is the whole of nvx's conf.d file for fish, and it is the text
+// install.sh's setup_fish writes. TestFishConfDMatchesInstaller pins the two.
+//
+// The PATH block comes first because the integration line runs `nvx`, which fish
+// cannot find until ~/.nvx/bin is on PATH. doctor --fix used to write the line
+// alone. install.sh's bash and zsh profile lines put PATH ahead of the eval for
+// the same reason.
+func fishConfDContent() string {
+	return installerMarkerLine + "\n" +
+		"if not contains $HOME/.nvx/bin $PATH\n" +
+		"    set -gx PATH $HOME/.nvx/bin $PATH\n" +
+		"end\n" +
+		"if status is-interactive\n" +
+		"    " + integrationLineFor("fish") + "\n" +
+		"end\n"
+}
+
+// installerMarkerLine is the comment install.sh puts above what it writes.
+const installerMarkerLine = "# nvx (Node Version X-platform) shell integration"
 
 // reportShellIntegration says whether runtime switching will actually work,
 // and with fix set, makes it work.

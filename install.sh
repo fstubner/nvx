@@ -231,6 +231,9 @@ setup_profile() {
 # its own file in conf.d, which fish reads at every start and nothing else
 # writes to. PATH is set for every fish, scripts included, and the integration
 # only for interactive ones.
+# `nvx doctor --fix` writes the same text (fishConfDContent in
+# internal/nvx/shell_profile.go), and a Go test compares it with the printf
+# lines below, so change both together.
 setup_fish() {
     FISH_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/nvx.fish"
     if [ -f "$FISH_CONF" ] && grep -q "nvx env" "$FISH_CONF"; then

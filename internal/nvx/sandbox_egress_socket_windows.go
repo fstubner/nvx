@@ -107,10 +107,8 @@ func windowsSocketRoomError(prefix, nvxHome, guestHome string, netCtx NetworkLau
 	if inHome == "" {
 		inHome = sock
 	}
-	maxHome := unixSocketPathMax - 1 - (len(inHome) - len(nvxHome))
-	return fmt.Errorf("a socket path is %d bytes, over the %d-byte AF_UNIX limit: %s\n"+
-		"Set NVX_HOME to a directory of at most %d characters (it is %d)",
-		len(sock), unixSocketPathMax-1, sock, maxHome, len(nvxHome))
+	return fmt.Errorf("a socket path is %d bytes, over the %d-byte AF_UNIX limit: %s\n%s",
+		len(sock), unixSocketPathMax-1, sock, nvxHomeAdvice(inHome, nvxHome))
 }
 
 // windowsEgressNeedsRelay reports whether this network mode routes the contained
@@ -158,7 +156,7 @@ func windowsEgressNeedsRelay(mode string) bool {
 //
 // On Windows this only records the proxy. bindWindowsEgressSocket puts it on the
 // socket once platformLaunchNative knows where the socket goes.
-func prepareEgressSocket(egress *EgressProxy, guestHome string, netCtx *NetworkLaunchContext) error {
+func prepareEgressSocket(egress *EgressProxy, guestHome, nvxHome string, netCtx *NetworkLaunchContext) error {
 	if egress == nil || netCtx == nil || guestHome == "" {
 		return nil
 	}

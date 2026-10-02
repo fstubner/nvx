@@ -45,7 +45,7 @@ func linuxConnectSocketPath(guestHome string, hostPort int) string {
 // supervisor: `--connect 9222` with no second number has no port until one is
 // picked, and the contained side must never be the one to choose where or how it
 // can dial.
-func openConnectSockets(guestHome string, netCtx *NetworkLaunchContext) (env []string, stop func(), err error) {
+func openConnectSockets(guestHome, nvxHome string, netCtx *NetworkLaunchContext) (env []string, stop func(), err error) {
 	noop := func() {}
 	if netCtx == nil || len(netCtx.ConnectPorts) == 0 {
 		return nil, noop, nil
@@ -60,7 +60,7 @@ func openConnectSockets(guestHome string, netCtx *NetworkLaunchContext) (env []s
 
 	for i, m := range netCtx.ConnectPorts {
 		sock := linuxConnectSocketPath(guestHome, m.Host)
-		if err := unixSocketPathTooLong("tunnel socket", sock); err != nil {
+		if err := linuxSocketTooLong("tunnel socket", sock, guestHome, nvxHome, netCtx); err != nil {
 			stopAll()
 			return nil, noop, err
 		}

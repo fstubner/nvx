@@ -20,7 +20,7 @@ func TestOfflineModeIsNotOfferedTheEgressSocket(t *testing.T) {
 
 	for mode, want := range map[string]bool{"offline": false, " Offline ": false, "proxy": true, "loopback": true} {
 		netCtx := &NetworkLaunchContext{Mode: mode}
-		if err := prepareEgressSocket(proxy, tempDir(t), netCtx); err != nil {
+		if err := prepareEgressSocket(proxy, tempDir(t), "", netCtx); err != nil {
 			t.Fatalf("%s: %v", mode, err)
 		}
 		if got := netCtx.EgressSocketPath != ""; got != want {

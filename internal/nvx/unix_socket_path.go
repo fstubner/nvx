@@ -18,12 +18,30 @@ func egressSocketPathFits(path string) bool {
 	return path != "" && len(path) < unixSocketPathMax
 }
 
+// nvxHomeAdvice names the longest NVX_HOME that keeps sock inside the limit.
+// sock is a path built under nvxHome, so what NVX_HOME does not control is the
+// rest of it, and the limit minus that rest is the room NVX_HOME has. With no
+// nvxHome to measure against it can only say shorter.
+func nvxHomeAdvice(sock, nvxHome string) string {
+	if nvxHome == "" {
+		return "Set NVX_HOME to a shorter directory"
+	}
+	maxHome := unixSocketPathMax - 1 - (len(sock) - len(nvxHome))
+	return fmt.Sprintf("Set NVX_HOME to a directory of at most %d characters (it is %d)", maxHome, len(nvxHome))
+}
+
 // unixSocketPathTooLong returns the error for a socket path that will not bind,
-// naming the fix, or nil when it fits.
-func unixSocketPathTooLong(what, path string) error {
+// naming the fix, or nil when it fits. path and longest are under nvxHome.
+// longest is the longest socket the session creates, which is what the advised
+// NVX_HOME has to leave room for. Naming only path's limit let a person follow
+// the advice and be refused again by a longer socket name.
+func unixSocketPathTooLong(what, path, longest, nvxHome string) error {
 	if egressSocketPathFits(path) {
 		return nil
 	}
-	return fmt.Errorf("the %s path is %d bytes, over the %d-byte AF_UNIX limit: %s\n"+
-		"Set NVX_HOME to a shorter directory", what, len(path), unixSocketPathMax-1, path)
+	if len(longest) < len(path) {
+		longest = path
+	}
+	return fmt.Errorf("the %s path is %d bytes, over the %d-byte AF_UNIX limit: %s\n%s",
+		what, len(path), unixSocketPathMax-1, path, nvxHomeAdvice(longest, nvxHome))
 }
