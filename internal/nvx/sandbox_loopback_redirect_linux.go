@@ -93,8 +93,11 @@ func loopbackSocketPath(guestHome string) string {
 // socket lives in the guest home, so the contained process can open it directly
 // and send whatever header it wants; without this check "loopback mode" would be
 // "any address the sandbox names", which is `open` with extra steps.
-func openLoopbackSocket(guestHome, nvxHome string) (stop func(), err error) {
+func openLoopbackSocket(guestHome, nvxHome string, netCtx *NetworkLaunchContext) (stop func(), err error) {
 	sock := loopbackSocketPath(guestHome)
+	if err := linuxSocketTooLong("loopback socket", sock, guestHome, nvxHome, netCtx); err != nil {
+		return func() {}, err
+	}
 	_ = os.Remove(sock)
 	ln, err := net.Listen("unix", sock)
 	if err != nil {

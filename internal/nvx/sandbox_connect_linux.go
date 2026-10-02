@@ -60,7 +60,7 @@ func openConnectSockets(guestHome, nvxHome string, netCtx *NetworkLaunchContext)
 
 	for i, m := range netCtx.ConnectPorts {
 		sock := linuxConnectSocketPath(guestHome, m.Host)
-		if err := unixSocketPathTooLong("tunnel socket", sock, nvxHome); err != nil {
+		if err := linuxSocketTooLong("tunnel socket", sock, guestHome, nvxHome, netCtx); err != nil {
 			stopAll()
 			return nil, noop, err
 		}

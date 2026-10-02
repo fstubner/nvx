@@ -31,11 +31,17 @@ func nvxHomeAdvice(sock, nvxHome string) string {
 }
 
 // unixSocketPathTooLong returns the error for a socket path that will not bind,
-// naming the fix, or nil when it fits. path is under nvxHome.
-func unixSocketPathTooLong(what, path, nvxHome string) error {
+// naming the fix, or nil when it fits. path and longest are under nvxHome.
+// longest is the longest socket the session creates, which is what the advised
+// NVX_HOME has to leave room for. Naming only path's limit let a person follow
+// the advice and be refused again by a longer socket name.
+func unixSocketPathTooLong(what, path, longest, nvxHome string) error {
 	if egressSocketPathFits(path) {
 		return nil
 	}
+	if len(longest) < len(path) {
+		longest = path
+	}
 	return fmt.Errorf("the %s path is %d bytes, over the %d-byte AF_UNIX limit: %s\n%s",
-		what, len(path), unixSocketPathMax-1, path, nvxHomeAdvice(path, nvxHome))
+		what, len(path), unixSocketPathMax-1, path, nvxHomeAdvice(longest, nvxHome))
 }

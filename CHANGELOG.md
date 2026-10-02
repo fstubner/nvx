@@ -1054,7 +1054,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   works.** A socket path must be shorter than 108 bytes, and the refusal only
   said to use a shorter `NVX_HOME`, leaving you to guess how much shorter. It
   now says `Set NVX_HOME to a directory of at most N characters (it is M)`, as
-  the Windows refusal does. Where the sockets live on Linux has not changed.
+  the Windows refusal does. N leaves room for the longest socket the run
+  creates, so following it does not meet a second refusal. The loopback
+  socket used to fail with a bare `bind: invalid argument` and now gets the
+  same check. Where the sockets live on Linux has not changed.
 
 ## [0.6.0] - 2026-09-09
 

@@ -35,7 +35,7 @@ func prepareEgressSocket(egress *EgressProxy, guestHome, nvxHome string, netCtx 
 		return nil
 	}
 	sock := filepath.Join(guestHome, egressSocketName)
-	if err := unixSocketPathTooLong("egress socket", sock, nvxHome); err != nil {
+	if err := linuxSocketTooLong("egress socket", sock, guestHome, nvxHome, netCtx); err != nil {
 		return err
 	}
 	if err := egress.ListenUnix(sock); err != nil {
@@ -43,6 +43,39 @@ func prepareEgressSocket(egress *EgressProxy, guestHome, nvxHome string, netCtx 
 	}
 	netCtx.EgressSocketPath = sock
 	return nil
+}
+
+// linuxSessionSockets lists the sockets this session can create in guestHome:
+// the egress one, a tunnel per --connect port, and the loopback one in that mode.
+// The egress socket is listed whenever prepareEgressSocket would create it.
+func linuxSessionSockets(guestHome string, netCtx *NetworkLaunchContext) []string {
+	if netCtx == nil {
+		return nil
+	}
+	var socks []string
+	if networkModeRequiresNamespace(netCtx.Mode) && !strings.EqualFold(strings.TrimSpace(netCtx.Mode), "offline") {
+		socks = append(socks, filepath.Join(guestHome, egressSocketName))
+	}
+	for _, m := range netCtx.ConnectPorts {
+		socks = append(socks, linuxConnectSocketPath(guestHome, m.Host))
+	}
+	if loopbackRedirectMode(netCtx.Mode) {
+		socks = append(socks, loopbackSocketPath(guestHome))
+	}
+	return socks
+}
+
+// linuxSocketTooLong refuses sock when it will not bind. The NVX_HOME it advises
+// leaves room for the longest socket this session creates, as the Windows
+// refusal does, so following it cannot meet a second refusal from a longer name.
+func linuxSocketTooLong(what, sock, guestHome, nvxHome string, netCtx *NetworkLaunchContext) error {
+	longest := sock
+	for _, s := range linuxSessionSockets(guestHome, netCtx) {
+		if len(s) > len(longest) {
+			longest = s
+		}
+	}
+	return unixSocketPathTooLong(what, sock, longest, nvxHome)
 }
 
 // platformLaunchNative re-execs nvx as a Landlock child so restrictions are
@@ -70,7 +103,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// half: the socket it carries them to, and the check that only loopback
 	// addresses are dialled.
 	if loopbackRedirectMode(netCtx.Mode) {
-		stopLoopback, lerr := openLoopbackSocket(guestHome, config.NvxHome)
+		stopLoopback, lerr := openLoopbackSocket(guestHome, config.NvxHome, &netCtx)
 		if lerr != nil {
 			LogError("Could not open the loopback path for the sandbox: %v", lerr)
 			return 1, refusedToStart("the loopback path could not be opened")

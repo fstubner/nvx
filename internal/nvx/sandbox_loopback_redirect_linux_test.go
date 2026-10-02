@@ -18,7 +18,7 @@ func TestLoopbackSocketReachesAHostService(t *testing.T) {
 	guestHome := tempDir(t)
 	service := startEchoService(t)
 
-	stop, err := openLoopbackSocket(guestHome, tempDir(t))
+	stop, err := openLoopbackSocket(guestHome, tempDir(t), &NetworkLaunchContext{Mode: "loopback"})
 	if err != nil {
 		t.Fatalf("the parent could not open its loopback socket: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestLoopbackSocketRefusesAnythingThatIsNotLoopback(t *testing.T) {
 		t.Skip("this machine has no non-loopback address to prove the refusal against")
 	}
 
-	stop, err := openLoopbackSocket(guestHome, tempDir(t))
+	stop, err := openLoopbackSocket(guestHome, tempDir(t), &NetworkLaunchContext{Mode: "loopback"})
 	if err != nil {
 		t.Fatal(err)
 	}
