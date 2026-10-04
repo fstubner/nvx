@@ -12,6 +12,7 @@ package nvx
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -173,5 +174,47 @@ fs.realpath.native('.', (err) => {
 		if !strings.Contains(with, "ok "+name) {
 			t.Fatalf("with the preload, native realpath (%s) still failed; contained pnpm stops on it:\n%s", name, with)
 		}
+	}
+}
+
+// The preload's own walk, which answers a refused synchronous realpath where
+// Node's synchronous one fails too, resolves paths as Node's realpath does:
+// a plain directory, a relative path, and a path through a junction. Run
+// outside a container, where both can be compared.
+func TestWalkUpShimRealpathWalkMatchesNode(t *testing.T) {
+	node := realNodeForTest(t)
+	guestHome := tempDir(t)
+	workDir := tempDir(t)
+	shim, err := writeWalkupShim(guestHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := filepath.Join(workDir, "walk.js")
+	script := `
+const fs = require('fs');
+const path = require('path');
+const shim = require(process.argv[2]);
+fs.mkdirSync('real/inner', { recursive: true });
+fs.symlinkSync(path.resolve('real'), 'link', 'junction');
+const out = [];
+for (const p of ['.', 'real/inner', 'link/inner', path.resolve('link')]) {
+  const want = fs.realpathSync(p);
+  const got = shim.walkRealpathSync(p);
+  out.push((got === want ? 'same ' : 'DIFF ') + p + ' got=' + got + ' want=' + want);
+}
+console.log(out.join('\n'));
+`
+	if err := os.WriteFile(probe, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(node, probe, shim)
+	cmd.Dir = workDir
+	cmd.Env = append(os.Environ(), "USERPROFILE="+guestHome, "HOME="+guestHome, "NODE_OPTIONS=")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("running the walk failed: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "DIFF") || strings.Count(string(out), "same ") != 4 {
+		t.Fatalf("the preload's realpath walk disagrees with Node's realpath:\n%s", out)
 	}
 }
