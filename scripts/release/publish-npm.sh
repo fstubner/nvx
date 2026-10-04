@@ -16,9 +16,16 @@
 # it; shipping a postinstall to fetch our own binary would be the same trick.
 # npm resolves the one matching package and executes nothing.
 #
+# npm authenticates this job through trusted publishing: npm exchanges the
+# job's GitHub OIDC token for a short-lived publish token, so no npm token is
+# stored as a secret. Each of the six packages names fstubner/nvx and
+# publish.yml as its trusted publisher on npmjs.com. Trusted publishing needs
+# npm 11.5.1 or newer, which publish.yml installs.
+#
 # Required environment:
-#   NODE_AUTH_TOKEN - npm automation token. Absent fails the job.
-#   GH_TOKEN        - for `gh attestation verify` (see verified_sha in lib.sh).
+#   GH_TOKEN - for `gh attestation verify` (see verified_sha in lib.sh).
+#   ACTIONS_ID_TOKEN_REQUEST_URL - set by GitHub when the job has
+#     `id-token: write`; npm needs it for the OIDC exchange.
 # Required argument:
 #   $1 - tag, e.g. "v0.6.0".
 
@@ -34,23 +41,19 @@ validate_tag "$TAG"
 VERSION="${TAG#v}"
 BASE="https://github.com/fstubner/nvx/releases/download/${TAG}"
 
-# A failure, like a missing token in the Homebrew and Scoop jobs. This used to
-# exit 0, so publish.yml's summary reported npm as published when nothing had
-# been sent to it.
-if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-  echo "::error::NPM_TOKEN is not configured, so nothing was published to npm." >&2
-  echo "Add it as a repository secret and re-run this job." >&2
+# A failure, not a skip: without an OIDC token npm has no credential and the
+# publish fails later with a less useful message.
+if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+  echo "::error::No GitHub OIDC token is available. The npm job needs 'id-token: write'." >&2
   exit 1
 fi
 
 WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
-# The token stays in the environment. This file names the variable and npm
-# expands it when it reads the file, so no copy of the token is written to
-# disk, and it is gone when this step's environment is.
-# shellcheck disable=SC2016  # the literal ${NODE_AUTH_TOKEN} is the point
-printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' >"$WORKDIR/npmrc"
+# An empty user config, so nothing on the runner can point npm at another
+# registry or token.
+: >"$WORKDIR/npmrc"
 export NPM_CONFIG_USERCONFIG="$WORKDIR/npmrc"
 
 sha256_of() {

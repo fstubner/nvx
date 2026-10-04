@@ -3,7 +3,7 @@ import type { Platform, PlatformInstall, SectionCopy, TryCommand } from './types
 export const installCopy: SectionCopy = {
   heading: 'Install',
   leadHtml:
-    'One command on every platform. nvx is not yet on winget, Scoop, Homebrew or npm, so the install script and the release binaries are the two routes that exist.',
+    'One command on every platform. nvx is also on npm as <code>@fstubner/nvx</code>, and not yet on winget, Scoop or Homebrew.',
 };
 
 const RELEASE = 'https://github.com/fstubner/nvx/releases/latest/download';
