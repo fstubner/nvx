@@ -63,7 +63,7 @@ export const compareRows: ComparisonRow[] = [
   // volta and asdf resolve the version inside a shim when the command runs,
   // rather than hooking cd. Same result, and it is why a debugger or an IDE
   // launching node outside a project sees the wrong version.
-  { feature: 'Auto-switch on cd', cells: ['✓', 'shell hook', '✓', 'on invocation', 'on invocation', '✓'] },
+  { feature: 'Auto-switch per project', cells: ['✓', 'shell hook', '✓', 'on invocation', 'on invocation', '✓'] },
   { feature: 'Verified downloads', cells: ['✓', '✓', '—', '—', 'varies by plugin', '✓'] },
   { feature: 'Supply-chain checks', cells: ['✓', '—', '—', '—', '—', '—'] },
   // mise shipped sandboxing in April 2026, so these are no longer dashes for
