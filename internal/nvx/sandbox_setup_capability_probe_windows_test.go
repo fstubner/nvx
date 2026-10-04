@@ -42,6 +42,11 @@ func TestTheCapabilitySetupGrantsIsTheOneLaunchesCarry(t *testing.T) {
 		} else {
 			os.Stdout.WriteString("READ=OK\n")
 		}
+		if _, err := os.Stat(os.Getenv("NVX_PROBE_STAT_TARGET")); err != nil {
+			os.Stdout.WriteString("STAT=DENIED\n")
+		} else {
+			os.Stdout.WriteString("STAT=OK\n")
+		}
 		os.Exit(0)
 	}
 
@@ -75,6 +80,9 @@ func TestTheCapabilitySetupGrantsIsTheOneLaunchesCarry(t *testing.T) {
 	if err := os.WriteFile(target, []byte("SETUP-CAP-PROBE"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// A stand-in for a drive root, granted below through setup's own write: the
+	// this-folder entry, written without the walk beneath it.
+	statTarget := tempDir(t)
 
 	childExe := stageProbeChild(t, guestHome, "setupcap.exe")
 	run := func() string {
@@ -86,7 +94,8 @@ func TestTheCapabilitySetupGrantsIsTheOneLaunchesCarry(t *testing.T) {
 		procSetStdHandleTest.Call(stdOutputHandle, uintptr(write))
 
 		env := append(scrubEnvironment(guestHome),
-			"NVX_PROBE=1", "NVX_SETUPCAP_CHILD=1", "NVX_PROBE_TARGET="+target)
+			"NVX_PROBE=1", "NVX_SETUPCAP_CHILD=1", "NVX_PROBE_TARGET="+target,
+			"NVX_PROBE_STAT_TARGET="+statTarget)
 		// launchCapabilitySIDs, not a hand-written append of setupCap.
 		//
 		// The first version of this test passed setupCap to the launch itself, which
@@ -108,9 +117,14 @@ func TestTheCapabilitySetupGrantsIsTheOneLaunchesCarry(t *testing.T) {
 
 	// Negative control first: without the grant the file must be unreachable, or a
 	// later READ=OK would prove nothing about the capability.
-	if got := run(); !strings.Contains(got, "READ=DENIED") {
+	got := run()
+	if !strings.Contains(got, "READ=DENIED") {
 		t.Fatalf("the target was readable BEFORE any grant (%q); this probe cannot "+
 			"distinguish the capability from ambient access", got)
+	}
+	if !strings.Contains(got, "STAT=DENIED") {
+		t.Fatalf("the stat target was statable BEFORE any grant (%q); this probe cannot "+
+			"tell setup's grant from ambient access", got)
 	}
 
 	// Now the grant setup makes, on a directory this test can write.
@@ -118,8 +132,16 @@ func TestTheCapabilitySetupGrantsIsTheOneLaunchesCarry(t *testing.T) {
 		t.Fatalf("granting the setup capability read/execute: %v", err)
 	}
 	t.Cleanup(func() { _ = revokeACL(outside, setupCap) })
+	if err := grantSidReadExecThisFolder(setupCap, statTarget); err != nil {
+		t.Fatalf("setup's own grant: %v", err)
+	}
+	t.Cleanup(func() { _ = revokeSidGrant(setupCap, statTarget) })
 
-	if got := run(); !strings.Contains(got, "READ=OK") {
+	got = run()
+	if !strings.Contains(got, "STAT=OK") {
+		t.Fatalf("a launch could NOT stat a directory granted through setup's own write: got %q", got)
+	}
+	if !strings.Contains(got, "READ=OK") {
 		t.Fatalf("a launch could NOT reach a directory granted to %s (%s): got %q.\n"+
 			"That means `nvx setup` grants an identity contained launches do not carry, "+
 			"so the documented repair for contained npx would not work and would give no sign of it.",

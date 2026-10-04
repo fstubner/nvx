@@ -19,16 +19,16 @@ import (
 // root the write propagates over the whole tree, so `--undo` after a setup on a
 // large profile appeared to hang with nothing to say which path.
 //
-// The stall is injected through the same hook the grant tests use. Before the
-// fix the revoke did not go through the hooked, time-boxed path at all, so the
-// injected stall was bypassed and this returned at once with no error.
+// The stall is injected in place of setup's own write. Before the fix the
+// revoke did not go through a time-boxed path at all, so an injected stall
+// held it for as long as the stall lasted and it returned no error.
 func TestSetupUndoRevokesAreTimeBoxed(t *testing.T) {
-	stall := func(path, sidStr string, mask uint32, flags uint8) error {
+	origWrite := setupACLWrite
+	setupACLWrite = func(path, sidStr string, mask uint32) error {
 		time.Sleep(400 * time.Millisecond)
 		return nil
 	}
-	aclWriteFn.Store(&stall)
-	t.Cleanup(func() { aclWriteFn.Store(nil) })
+	t.Cleanup(func() { setupACLWrite = origWrite })
 
 	orig := undoRevokeTimeout
 	undoRevokeTimeout = 100 * time.Millisecond

@@ -6,23 +6,21 @@ import (
 )
 
 // setupHelpText is what `nvx setup --help` and `nvx help setup` print.
-const setupHelpText = `nvx setup [--undo] [--all-drives]
+const setupHelpText = `nvx setup [--undo]
 
-(Windows, Administrator) Grant the sandbox stat access to the roots of the
-volumes nvx, your profile and the current directory live on. Optional:
-installs and npx do not need it; only a tool that resolves a path all the
-way up to a drive root does, and nvx names this command after such a
-failure. Slow on a large volume. Also removes a loopback exemption an older
+(Windows, Administrator) Grant the sandbox stat access to the root of every
+fixed volume. Optional: installs and npx do not need it; only a tool that
+resolves a path all the way up to a drive root does, and nvx names this
+command after such a failure. Also removes a loopback exemption an older
 nvx left.
 
 --undo, -u     Reverse what setup granted.
---all-drives   Cover every fixed volume, which is slow on large ones.
+--all-drives   Accepted for older scripts. Setup covers every fixed volume.
 `
 
 type setupArgs struct {
-	undo      bool
-	allDrives bool
-	help      bool
+	undo bool
+	help bool
 }
 
 // parseSetupArgs reads setup's arguments and refuses any it does not know.
@@ -41,7 +39,8 @@ func parseSetupArgs(args []string) (setupArgs, error) {
 		case "--undo", "-u":
 			out.undo = true
 		case "--all-drives":
-			out.allDrives = true
+			// What setup does anyway since 2026-10-04. Still accepted, so a
+			// script written for an older nvx keeps working.
 		case "--help", "-h":
 			out.help = true
 		default:
@@ -70,5 +69,5 @@ func runSetupCommand(args []string, nvxHome string) int {
 		fmt.Print(setupHelpText)
 		return 0
 	}
-	return runSetupImpl(nvxHome, parsed.undo, parsed.allDrives)
+	return runSetupImpl(nvxHome, parsed.undo)
 }

@@ -343,10 +343,8 @@ func Main() {
 		os.Exit(runAuditCommand(os.Args[2:], nvxHome))
 
 	case "setup":
-		// --all-drives restores the pre-2026-09-01 behaviour of granting every
-		// fixed volume. Off by default because the cost of a grant scales with the
-		// size of the volume, and most machines have volumes no project will ever
-		// sit on. Anything unrecognised is refused: see parseSetupArgs.
+		// Grants every fixed volume. --all-drives is still accepted and changes
+		// nothing. Anything unrecognised is refused: see parseSetupArgs.
 		os.Exit(runSetupCommand(os.Args[2:], nvxHome))
 
 	case "__landlock-exec":
@@ -763,14 +761,12 @@ Commands:
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;
                            every run reclaims some automatically)
   setup                    (Windows, Administrator) Grant the sandbox stat access
-                           to the roots of the volumes nvx, your profile and the
-                           current directory live on. Optional: installs and npx
-                           do not need it; only a tool that resolves a path all
-                           the way up to a drive root does, and nvx names this
-                           command after such a failure. Slow on a large volume.
-                           Also removes a loopback exemption an older nvx left;
-                           '--all-drives' covers every fixed volume, which is
-                           slow on large ones. 'setup --undo' reverses it
+                           to the root of every fixed volume. Optional: installs
+                           and npx do not need it; only a tool that resolves a
+                           path all the way up to a drive root does, and nvx
+                           names this command after such a failure. Also removes
+                           a loopback exemption an older nvx left.
+                           'setup --undo' reverses it
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
   grants list              Show this project's approved egress hosts, trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)

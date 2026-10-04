@@ -14,24 +14,23 @@ import (
 // is the worst place for "unrecognised means proceed".
 func TestSetupRefusesArgumentsItDoesNotUnderstand(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		args      []string
-		undo      bool
-		allDrives bool
-		help      bool
-		wantErr   bool
+		name    string
+		args    []string
+		undo    bool
+		help    bool
+		wantErr bool
 	}{
-		{"no arguments", nil, false, false, false, false},
-		{"--undo", []string{"--undo"}, true, false, false, false},
-		{"-u", []string{"-u"}, true, false, false, false},
-		{"--all-drives", []string{"--all-drives"}, false, true, false, false},
-		{"both", []string{"--undo", "--all-drives"}, true, true, false, false},
-		{"--help asks for help, not setup", []string{"--help"}, false, false, true, false},
-		{"-h asks for help, not setup", []string{"-h"}, false, false, true, false},
-		{"help after a real flag still asks for help", []string{"--undo", "--help"}, true, false, true, false},
-		{"a typo of --undo is an error, not a forward setup", []string{"--undoo"}, false, false, false, true},
-		{"an unknown flag is an error", []string{"--yes"}, false, false, false, true},
-		{"a stray word is an error", []string{"now"}, false, false, false, true},
+		{"no arguments", nil, false, false, false},
+		{"--undo", []string{"--undo"}, true, false, false},
+		{"-u", []string{"-u"}, true, false, false},
+		{"--all-drives", []string{"--all-drives"}, false, false, false},
+		{"both", []string{"--undo", "--all-drives"}, true, false, false},
+		{"--help asks for help, not setup", []string{"--help"}, false, true, false},
+		{"-h asks for help, not setup", []string{"-h"}, false, true, false},
+		{"help after a real flag still asks for help", []string{"--undo", "--help"}, true, true, false},
+		{"a typo of --undo is an error, not a forward setup", []string{"--undoo"}, false, false, true},
+		{"an unknown flag is an error", []string{"--yes"}, false, false, true},
+		{"a stray word is an error", []string{"now"}, false, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := parseSetupArgs(tc.args)
@@ -41,9 +40,9 @@ func TestSetupRefusesArgumentsItDoesNotUnderstand(t *testing.T) {
 			if err != nil {
 				return
 			}
-			if got.undo != tc.undo || got.allDrives != tc.allDrives || got.help != tc.help {
-				t.Errorf("parseSetupArgs(%v) = %+v, want undo=%v allDrives=%v help=%v",
-					tc.args, got, tc.undo, tc.allDrives, tc.help)
+			if got.undo != tc.undo || got.help != tc.help {
+				t.Errorf("parseSetupArgs(%v) = %+v, want undo=%v help=%v",
+					tc.args, got, tc.undo, tc.help)
 			}
 		})
 	}
@@ -61,10 +60,10 @@ func TestSetupCommandDoesNotAttemptSetupForHelpOrABadArgument(t *testing.T) {
 	orig := runSetupImpl
 	t.Cleanup(func() { runSetupImpl = orig })
 	reached := 0
-	var gotUndo, gotAll bool
-	runSetupImpl = func(_ string, undo, allDrives bool) int {
+	var gotUndo bool
+	runSetupImpl = func(_ string, undo bool) int {
 		reached++
-		gotUndo, gotAll = undo, allDrives
+		gotUndo = undo
 		return 0
 	}
 
@@ -76,7 +75,7 @@ func TestSetupCommandDoesNotAttemptSetupForHelpOrABadArgument(t *testing.T) {
 	}
 	// The control: a well-formed invocation is what reaches it, with the
 	// parsed flags.
-	if code := runSetupCommand([]string{"--undo", "--all-drives"}, tempDir(t)); code != 0 || reached != 1 || !gotUndo || !gotAll {
-		t.Errorf("`setup --undo --all-drives`: exit %d, reached %d, undo=%v allDrives=%v; want 0, 1, true, true", code, reached, gotUndo, gotAll)
+	if code := runSetupCommand([]string{"--undo", "--all-drives"}, tempDir(t)); code != 0 || reached != 1 || !gotUndo {
+		t.Errorf("`setup --undo --all-drives`: exit %d, reached %d, undo=%v; want 0, 1, true", code, reached, gotUndo)
 	}
 }

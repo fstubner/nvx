@@ -200,58 +200,34 @@ func windowsAncestorGrantPaths() []string {
 	return paths
 }
 
-// setupProgressEvery is how often a running grant says it is still running.
+// setupACLWrite is the permission write setup and --undo make on each path: a
+// this-folder-only entry for the identity, or its removal when mask is 0.
 //
-// A permission write on a drive root can take many minutes -- the write itself is
-// tiny, but SetNamedSecurityInfoW re-runs Windows' auto-inheritance over
-// everything beneath the directory, linear in the number of entries (measured in
-// sandbox_ancestor_skip_windows.go: 773ms at 5000, 3.1s at 20000), and a drive
-// root's subtree is the whole volume. Measured 2026-09-01: a 932GB volume with
-// 1GB free on a 5400rpm disk had not finished after 36 minutes.
+// It was SetNamedSecurityInfoW, which re-runs Windows' auto-inheritance over
+// everything beneath the directory, and a drive root's subtree is the whole
+// volume. Measured 2026-09-01: a 932GB volume with 1GB free on a 5400rpm disk
+// had not finished after 36 minutes. Measured 2026-10-04: setup --all-drives
+// granted D:\ in 1s and E:\ in 3s, and was still on F:\ after 33 minutes. The
+// entry is not inheritable, so nothing beneath the root can see it.
+// writeThisFolderEntry writes the same list without the walk. Measured
+// 2026-10-04 on a temp directory holding 20,000 files: 2.67 to 3.01 s with the
+// walk, under 1 ms without, and no descendant's security descriptor changed
+// either way.
 //
-// Saying so periodically is the difference between "slow" and "hung", and it is
-// what setup owes anyone deciding whether to keep waiting.
-const setupProgressEvery = 30 * time.Second
+// A variable so a test can stand in a write that stalls.
+var setupACLWrite = writeThisFolderEntry
 
-// grantSidReadExecThisFolder grants the identity read/execute on path alone, and
-// keeps saying it is still working until it finishes.
+// grantSidReadExecThisFolder grants the identity read/execute on path alone.
 //
-// NOT time-bounded, and that is a correction rather than an oversight. A bounded
-// version shipped first, on the reasoning that an abandoned write lands anyway --
-// which is true of the runtime ancestor walk, whose process keeps running, and
-// false here. Measured 2026-09-02: setup was interrupted part-way through a
-// 1118GB volume and the root carried NO entry for the identity afterwards. The
-// write does not commit until the propagation behind it finishes, so ending the
-// process early loses the whole thing.
-//
-// A deadline therefore could not make this safer; it could only guarantee that a
-// volume needing longer than the deadline was never granted, after burning the
-// deadline on every attempt. What was actually wrong was paying this cost for
-// volumes nothing uses, and that is fixed in windowsSetupGrantPaths. What is left
-// is a genuinely long operation, so it reports progress and says plainly what
-// interrupting costs.
+// Not time-bounded. A bounded version shipped first and lost the whole grant
+// whenever the propagating write behind it was cut short. Measured 2026-09-02:
+// an interrupted 1118GB volume carried no entry afterwards. The write is now
+// local to the directory, so there is nothing long to bound.
 func grantSidReadExecThisFolder(sidStr, path string) error {
-	done := make(chan error, 1)
-	go func() {
-		// This folder only: no inheritance flags, so nothing below it is affected.
-		done <- grantACL(path, sidStr, aclMaskReadExec, 0)
-	}()
-
-	started := time.Now()
-	tick := time.NewTicker(setupProgressEvery)
-	defer tick.Stop()
-	for {
-		select {
-		case err := <-done:
-			if err != nil {
-				return fmt.Errorf("grant read/execute on %s: %w", path, err)
-			}
-			return nil
-		case <-tick.C:
-			LogInfo("  ... still working on %s (%s so far). Stopping now loses this volume's progress entirely.",
-				path, time.Since(started).Round(time.Second))
-		}
+	if err := setupACLWrite(path, sidStr, aclMaskReadExec); err != nil {
+		return fmt.Errorf("grant read/execute on %s: %w", path, err)
 	}
+	return nil
 }
 
 // runWindowsSetupGrants grants each path that does not already carry the grant,
@@ -265,46 +241,40 @@ func grantSidReadExecThisFolder(sidStr, path string) error {
 // be lost was the one that mattered.
 func runWindowsSetupGrants(paths []string, hasGrant func(string) bool, grant func(string) error) (failed int) {
 	for _, p := range paths {
-		// Already granted? Say so and move on. This is what makes setup resumable:
-		// re-running after a cancelled or interrupted attempt skips the volumes that
-		// finished rather than paying for them again, and that payment is measured
-		// in minutes on a large disk.
+		// Already granted? Say so and move on, so a re-run writes only what is
+		// missing.
 		if hasGrant(p) {
 			LogInfo("Sandbox stat access on %s is already in place.", p)
 			continue
 		}
-		LogInfo("Granting sandbox stat access on %s ... (minutes on a large or full volume; "+
-			"let it finish -- interrupting loses this volume's progress)", p)
+		LogInfo("Granting sandbox stat access on %s ...", p)
 		started := time.Now()
 		if err := grant(p); err != nil {
 			failed++
-			LogError("Failed to grant sandbox stat access on %s after %s: %v", p, time.Since(started).Round(time.Second), err)
+			LogError("Failed to grant sandbox stat access on %s after %s: %v", p, time.Since(started).Round(time.Millisecond), err)
 			LogInfo("Continuing with the remaining paths; re-run 'nvx setup' afterwards to retry this one.")
 			continue
 		}
-		LogInfo("Granted %s in %s.", p, time.Since(started).Round(time.Second))
+		LogInfo("Granted %s in %s.", p, time.Since(started).Round(time.Millisecond))
 	}
 	return failed
 }
 
-// windowsSetupGrantPaths splits the ancestor roots into the ones this run will
-// grant and the fixed volumes it will leave alone.
+// windowsSetupGrantPaths lists the ancestor roots a path in this run resolves
+// up to, and with allDrives the root of every other fixed volume too.
 //
-// Setup used to grant every fixed volume unconditionally. The permission is
-// narrow and stays narrow -- root-only RX, non-inheritable, measured not to reach
-// any subdirectory -- but its cost is proportional to the size of the volume, so
-// granting a drive that will never hold a project buys nothing and can cost more
-// than everything else combined. See setupGrantTimeout for the measurement.
+// `nvx setup` passes allDrives. From 2026-09-01 until 2026-10-04 it granted
+// only the volumes known to matter, because each grant cost time proportional
+// to the size of the volume. The grant no longer walks the volume (see
+// setupACLWrite), so there is no cost left to save.
 //
-// The default is therefore the volumes known to matter: the system drive, the
-// profile's volume, nvx's own home, and the directory setup was run from. The
-// rest are named in the output rather than silently dropped, because a project on
-// an ungranted volume fails with a bare EPERM from npm that mentions neither the
-// volume nor nvx. --all-drives restores the old behaviour.
+// The notices printed after a failed command list only the narrower set. It
+// holds the system drive and the volumes of the profile, nvx's own home and
+// the working directory, which are the roots this run could have walked to.
 //
 // windowsAncestorGrantPaths stays the FULL list on purpose: --undo has to take
-// back what any older setup granted, including volumes this one would skip.
-func windowsSetupGrantPaths(nvxHome, workDir string, allDrives bool) (grant, skipped []string) {
+// back what any older setup granted.
+func windowsSetupGrantPaths(nvxHome, workDir string, allDrives bool) (grant []string) {
 	seen := map[string]bool{}
 	add := func(p string) {
 		if p == "" {
@@ -348,16 +318,18 @@ func windowsSetupGrantPaths(nvxHome, workDir string, allDrives bool) (grant, ski
 		}
 	}
 
-	for _, root := range fixedDriveRoots() {
-		if allDrives {
+	if allDrives {
+		for _, root := range fixedDriveRoots() {
 			add(root)
-			continue
-		}
-		if !seen[strings.ToLower(filepath.Clean(root))] {
-			skipped = append(skipped, root)
 		}
 	}
-	return grant, skipped
+	return grant
+}
+
+// windowsSetupPaths is every path `nvx setup` grants: the ones a real path
+// resolves up to, and the root of every fixed volume.
+func windowsSetupPaths(nvxHome, workDir string) []string {
+	return windowsSetupGrantPaths(nvxHome, workDir, true)
 }
 
 // undoRevokeTimeout bounds each revoke `nvx setup --undo` performs. A variable
@@ -372,7 +344,14 @@ func revokeSidGrant(sidStr, path string) error {
 	// that does not finish in time is now reported by name and counted as a
 	// failure, which the caller already turns into a non-zero exit and "remove
 	// the entries named above by hand".
-	if err := revokeACLWithin(path, sidStr, undoRevokeTimeout); err != nil {
+	//
+	// The write itself is setup's own, which removes a this-folder entry without
+	// walking anything beneath it and writes nothing where there is no entry.
+	// The bound stays for a filter driver that stalls any write.
+	write := setupACLWrite
+	if err := aclWriteWithin(path, undoRevokeTimeout, func() error {
+		return write(path, sidStr, 0)
+	}); err != nil {
 		return fmt.Errorf("remove the permission on %s: %w", path, err)
 	}
 	return nil
@@ -399,7 +378,7 @@ func setLoopbackExempt(add bool, sidStr string) error {
 // proxy at all -- so allowlisted egress was an elevated opt-in and the default was
 // an unrestricted direct connection. The in-container relay reaches the proxy over
 // a UNIX socket instead, which needs no exemption and no elevation.
-func runWindowsSetup(nvxHome string, undo, allDrives bool) int {
+func runWindowsSetup(nvxHome string, undo bool) int {
 	if !isElevated() {
 		LogError("nvx setup must run from an elevated (Administrator) terminal.")
 		LogInfo("It grants the nvx sandbox drive-root stat access for tools that need it. Egress is allowlisted either way. Undo later with: nvx setup --undo")
@@ -435,7 +414,7 @@ func runWindowsSetup(nvxHome string, undo, allDrives bool) int {
 	}
 
 	workDir, _ := os.Getwd()
-	paths, skippedDrives := windowsSetupGrantPaths(nvxHome, workDir, allDrives)
+	paths := windowsSetupPaths(nvxHome, workDir)
 	failed := runWindowsSetupGrants(paths,
 		func(p string) bool { return appContainerHasGrantFor(sidStr, p, grantReadExec) },
 		func(p string) error { return grantSidReadExecThisFolder(sidStr, p) })
@@ -457,16 +436,6 @@ func runWindowsSetup(nvxHome string, undo, allDrives bool) int {
 		LoopbackExempt:  false,
 	}); err != nil {
 		LogWarn("Setup applied, but recording state failed: %v", err)
-	}
-
-	// Named, not silently dropped. A project on one of these gets a bare EPERM from
-	// npm that mentions neither nvx nor the volume, so the only way to connect the
-	// two is to have been told here.
-	if len(skippedDrives) > 0 {
-		LogInfo("Left alone: %s. These volumes are not where nvx, your profile or this "+
-			"directory live, and granting one costs time proportional to its size.",
-			strings.Join(skippedDrives, ", "))
-		LogInfo("Keep a project on one of them? Run 'nvx setup' from that volume, or 'nvx setup --all-drives'.")
 	}
 
 	if failed > 0 {
@@ -534,7 +503,7 @@ func windowsSetupUndoPaths(nvxHome, workDir string) []string {
 		add(p)
 	}
 	add(os.Getenv("USERPROFILE"))
-	grant, _ := windowsSetupGrantPaths(nvxHome, workDir, false)
+	grant := windowsSetupGrantPaths(nvxHome, workDir, false)
 	for _, p := range grant {
 		add(p)
 	}
