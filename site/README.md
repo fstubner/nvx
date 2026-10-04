@@ -24,6 +24,17 @@ that what you delete is obvious. Everything else is the shell.
   somewhere else with `repo`, name your issue forms in `template`, or set
   `enabled: false` to remove the block and its footer link entirely.
 - `public/assets/*` -- wordmark, hero screenshot, favicon, OG image.
+- Visuals: a surface card or the hero takes `visual`, one of the kinds in
+  `src/data/site-content/visual-types.ts` -- an image, a code block, the
+  terminal panel, or an agent session (a project, an open file, and a chat
+  in which an agent calls your tool). The sample surfaces show each. Set
+  `wide: true` on a card to put its visual across the row, under the text.
+- `src/data/site-content/install-clients.ts` -- install routes per client, and optional numbered install steps
+  (an agent, an editor, a marketplace) for a product that installs into
+  other tools. Non-empty, it replaces the per-OS tabs with a grid of cards.
+- `feedback.ts` -> `placement` -- which pages show the feedback block:
+  `landing` (the default), `docs`, `changelog`. The footer link stays on
+  every page.
 - `CHANGELOG.md` -- the changelog page's local fallback; it also reads
   GitHub Releases at runtime.
 - `src/styles/tokens.css` -- the brand palette, both themes. Then
@@ -43,6 +54,7 @@ src/styles/theme-control.css the light/dark/system control
 src/styles/docs/             the docs shell, one file per region
 src/styles/landing/          the landing page's character and base rules
 src/components/*.astro       Nav, Hero, Surfaces, Install, Faq, Footer
+src/components/Visual.astro  the picture slot: image, code, terminal, agent session
 src/components/starlight/    the Starlight overrides
 src/layouts/Page.astro       meta, OG, JSON-LD, the stylesheet order
 src/pages/                   index, 404, changelog, robots.txt
@@ -68,7 +80,8 @@ docs link from the nav, footer, 404 page and surfaces copy. Delete
 `src/content/docs/`, `content.config.ts`, `src/styles/docs/` and
 `src/components/starlight/` as well when a product will never have docs.
 `changelog: false` removes the changelog links; delete
-`src/pages/changelog.astro` and `src/scripts/changelog/` with it.
+`src/pages/changelog.astro`, `src/scripts/changelog-page.ts` and
+`src/scripts/changelog/` with it; `astro check` fails on the page script otherwise.
 
 ## Local development
 

@@ -3,13 +3,25 @@
 // guard when the feedback feature landed (302, measured 2026-09-21 on the first
 // CI run after the runner came back), and the guard's exception map is for
 // transitions with a named next step rather than for carrying a file over.
-export type { Feedback, FeedbackRoute } from './feedback-types';
+export type { Feedback, FeedbackPlacement, FeedbackRoute } from './feedback-types';
 import type { Feedback } from './feedback-types';
 
 // The hero's types live in ./hero-types and are re-exported the same way, for
 // the same reason: the comparison table's types took this file to 328.
 export type { Hero, HeroCommands, HeroDownload } from './hero-types';
 import type { Hero, HeroCommands, HeroDownload } from './hero-types';
+
+// The shared picture-slot type; see ./visual-types.
+export type {
+  AgentSession,
+  AgentSessionVisual,
+  AgentTurn,
+  CodeVisual,
+  ImageVisual,
+  TerminalVisual,
+  Visual,
+} from './visual-types';
+import type { Visual } from './visual-types';
 
 // Shared type definitions for the site content modules under
 // site/src/data/site-content/. Assembled into the public `SiteData` shape
@@ -103,8 +115,15 @@ export interface SurfaceCard {
   };
   /** If set instead of image, renders a stylised code block. HTML allowed. */
   codeHtml?: string;
+  /** Any visual kind -- see visual-types.ts. Takes the place of `image`
+   *  and `codeHtml` when set; those two stay for sites written before it. */
+  visual?: Visual;
   /** If true, flips text and visual sides for alternating rhythm. */
   flip?: boolean;
+  /** Text above, visual across the full content width, instead of side by
+   *  side. For a visual that needs the room -- an agent session's three
+   *  panes -- and ignores `flip`. */
+  wide?: boolean;
   /** Optional per-platform download buttons rendered below the body.
    *  Used by the Desktop card to surface .msi / .dmg / .deb / .AppImage
    *  installers from the latest GitHub release. */
@@ -150,6 +169,26 @@ export interface PlatformInstall {
   /** Desktop application routes. Leave empty for a product with no
    *  desktop build; the section renders without that column. */
   desktop: InstallEntry[];
+}
+
+/** One client in the install grid; see install-clients.ts. */
+export interface InstallClient {
+  /** The client as its users call it: "Claude Code", "VS Code". */
+  name: string;
+  /** Under the name, so a visitor can tell what the client is without its
+   *  logo -- most vendors do not allow a third party to show theirs. Who
+   *  makes it and what kind of tool it is: "Anthropic · terminal agent". */
+  maker?: string;
+  /** Drawn as a glyph beside the name; see install-types.ts. */
+  kind?: import('./install-types').InstallClientKind;
+  /** Commands, in order, each with its own copy button. Empty for a client
+   *  whose route has no command -- say what to do in `note` instead. */
+  commands: string[];
+  /** Show `commands` in one copyable box, one per line, instead of a box each. */
+  oneBox?: boolean;
+  /** One line under the commands: a caveat, or the route when there is no
+   *  command. Plain text. */
+  note?: string;
 }
 
 export interface TryCommand {
@@ -264,6 +303,11 @@ export interface SiteData {
   install: {
     /** Per-OS install routes, each split into CLI and desktop groups. */
     byPlatform: Record<Platform, PlatformInstall>;
+    /** Install routes per client. When non-empty the install section shows
+     *  these as a grid of cards instead of the per-OS tabs. */
+    clients: InstallClient[];
+    /** Numbers the by-client layout's two steps; see install-types.ts. */
+    steps?: import('./install-types').InstallSteps;
     tryCommands: TryCommand[];
     binariesNote: string;
     /** Build-from-source command, listed in /llms.txt after the quickstart. */

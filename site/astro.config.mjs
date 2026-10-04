@@ -17,8 +17,9 @@ import {
 export default defineConfig({
   site: meta.domain,
   integrations: [
-    // robots.txt advertises /sitemap-index.xml, so something has to emit it.
-    // Without this the reference 404s, which is worse than having neither.
+    // robots.txt.ts advertises /sitemap-index.xml, so something has to emit
+    // it. Without this integration that reference 404s, which is worse than
+    // not mentioning a sitemap at all.
     sitemap(),
     // Gated on modules.docs (src/data/site-content/modules.ts). A product
     // without docs turns the flag off and can delete src/content/docs/,
