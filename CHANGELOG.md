@@ -107,6 +107,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **`nvx setup` covers every fixed drive.** It used to grant only the drives
+  holding Windows, your profile, nvx and the current directory, because each
+  grant was slow on a large drive. Now that a grant is fast, one run covers them
+  all and nobody has to run setup again from each drive. `--all-drives` is
+  still accepted and changes nothing.
 * **nvx is on npm as `@fstubner/nvx`, published through trusted publishing.**
   `npm install -g @fstubner/nvx` installs the binary for your platform and runs
   no install script. Releases now publish to npm with the release workflow's
@@ -216,6 +221,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **`nvx setup` no longer spends minutes on each large drive.**
+  On 2026-10-04 `nvx setup --all-drives` granted D:\ in 1 second and E:\ in 3,
+  then was still working on F:\ after 33 minutes. The grant is one entry on the
+  drive root that nothing below the root inherits. Writing it made Windows
+  re-check the permissions of every file on the volume, which changed nothing.
+  Setup and `nvx setup --undo` now write the root's own permissions and leave
+  the rest of the volume alone. On a test directory holding 20,000 files the
+  old write took 2.67 to 3.01 seconds and the new one under 1 millisecond, and
+  no file's permissions changed either way. The same write used to drop the
+  directory's auto-inherited mark, and now keeps it as it was.
 * **The typosquat check no longer refuses dependencies you did not choose.**
   The pre-install checks run over the whole resolved tree, and the typosquat
   check asked api.npmjs.org for the weekly downloads of every package in it.

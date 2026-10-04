@@ -261,7 +261,7 @@ func reportStrandedSetupGrant(nvxHome string) bool {
 	fmt.Println("         an earlier 'nvx setup' granted an identity nvx no longer uses. Installs and")
 	fmt.Println("         npx do not need it; a tool that resolves a path all the way to a drive root")
 	fmt.Println("         might. If one fails with EPERM there, 'nvx setup' from an Administrator")
-	fmt.Println("         terminal, run from that volume, grants it. This is not a failure.")
+	fmt.Println("         terminal grants it. This is not a failure.")
 	return false
 }
 
@@ -285,7 +285,7 @@ func strandedSetupGrantPaths(nvxHome, workDir, recordedSID, currentSID string, h
 	if recordedSID == "" || strings.EqualFold(recordedSID, currentSID) {
 		return nil
 	}
-	paths, _ := windowsSetupGrantPaths(nvxHome, workDir, false)
+	paths := windowsSetupGrantPaths(nvxHome, workDir, false)
 	var missing []string
 	for _, p := range paths {
 		if !hasGrant(p) {

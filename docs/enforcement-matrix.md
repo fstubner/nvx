@@ -811,8 +811,12 @@ they date quickly; each carries the date and machine it was taken on.
   that walks to a drive root; if one fails with `EPERM` there, nvx names setup
   after the failure, and `nvx doctor` shows the missing roots as a note. The
   grant is read/execute on the root folder itself, never inherited, for the
-  sandbox's identity only, and its cost is proportional to the volume's size:
-  22 minutes for 5.6 million entries. `nvx setup --undo` takes it back.
+  sandbox's identity only. Setup grants every fixed volume. Each grant used to
+  cost time proportional to the volume's size (22 minutes for 5.6 million
+  entries) because the write walked everything beneath the root. It no longer
+  does: measured 2026-10-04 on a directory holding 20,000 files, 2.67 to 3.01 s
+  with the walk and under 1 ms without, with no file's permissions changed
+  either way. `nvx setup --undo` takes it back.
 - **A contained command costs a few hundred milliseconds, and the first one after a
   new runtime is staged can be minutes.** A contained launch has to prepare an
   isolated home and check permissions, which the shim's own dispatch does not. The first run in a project is slower than the rest, because
