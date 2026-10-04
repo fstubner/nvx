@@ -140,9 +140,14 @@ lookup that failed. nvx asks before going on, and refuses when nobody can answer
 | Host | When | What it is sent |
 | --- | --- | --- |
 | The package's registry | Every registry package checked | The package name, and your token for that registry if `.npmrc` has one |
-| `api.npmjs.org` | The typosquat check, for a public-registry package whose name is close to a popular one | Both names |
+| `api.npmjs.org` | The typosquat check, for a public-registry package you chose whose name is close to a popular one | Both names |
 | `api.osv.dev` | The advisory scan, for public-registry packages | Each name and version |
 | `cdn.jsdelivr.net` | Refreshing the popular-package list, once the cached copy is 7 days old | Nothing about your project |
+
+The typosquat check runs on the names you chose: the packages named on the
+command line, or with none named, the dependencies in `package.json`. A
+dependency that came in with one of them was named by its author and is not
+looked up. Each name is looked up once per run.
 
 `api.npmjs.org` and `api.osv.dev` are asked only about packages from
 `registry.npmjs.org`. A package from any other registry skips the typosquat and

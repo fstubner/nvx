@@ -210,6 +210,24 @@ func reportPublicOnlyChecksSkipped(nvxHome string, targets []verifyTarget, regs 
 		detail: strconv.Itoa(count) + " from " + joined}, answeredByRegistry)
 }
 
+// recordScriptCheckSkipped records, once per run, that the install-script check
+// did not run because the command turns lifecycle scripts off. `by` says where.
+func recordScriptCheckSkipped(nvxHome, source string) {
+	auditLog(nvxHome, "check_skipped", map[string]string{"check": checkInstallScripts,
+		"by": scriptsOffBy(source), "detail": "scripts are ignored by " + source})
+}
+
+// scriptsOffBy is the audit `by` token for a source of ignore-scripts.
+func scriptsOffBy(source string) string {
+	switch source {
+	case scriptsOffByFlag:
+		return "ignore_scripts_flag"
+	case scriptsOffByEnv:
+		return "ignore_scripts_env"
+	}
+	return "ignore_scripts_npmrc"
+}
+
 // unreachableRemedy is honest that no setting waives a lookup that failed.
 func unreachableRemedy(what string) string {
 	return "No policy setting waives a failed " + what + " lookup. Retry once it is reachable." +
