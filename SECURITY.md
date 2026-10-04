@@ -64,6 +64,14 @@ and run scripts. Its defenses are layered:
    must match the registry's record for its name and version, and an entry that
    does not is refused.
 
+   The typosquat check is the one exception to "every package". A typosquat is
+   a name someone typed wrongly, so it runs only on the names you chose: the
+   packages named on the command line, or with none named, the dependencies in
+   your `package.json` (all four dependency fields). A dependency that came in
+   with one of those was named by its author, and skips the typosquat check
+   and the download lookup behind it. The blocklist, release-age, install-script
+   and advisory checks still cover the whole tree.
+
    Everywhere else the checks run on the packages the command names, or on the
    project's `package-lock.json`, or on the versions `package.json` declares.
    That covers `npx`, `npm exec`, `npm create`, `npm init <initializer>`, every
@@ -80,7 +88,8 @@ and run scripts. Its defenses are layered:
      `npm_config_*` as npm reads them. For a contained install that is the
      project's `.npmrc` only, because the contained npm reads nothing else.
    - `api.npmjs.org` for weekly download counts, when a public-registry
-     package's name is close to a popular one.
+     package you chose has a name close to a popular one. Each name is looked
+     up once per run.
    - `api.osv.dev` for advisories on public-registry packages.
    - `cdn.jsdelivr.net` for the popular-package list, once the cached copy is
      7 days old.

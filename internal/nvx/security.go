@@ -292,6 +292,30 @@ type typosquatVerdict struct {
 // network at all therefore looked the same as a measured squat, and a
 // legitimate package was reported as one with no way to tell why.
 func assessTyposquat(pkgName string, popularList []string, maxDist int) typosquatVerdict {
+	return assessTyposquatWith(pkgName, popularList, maxDist, weeklyDownloads)
+}
+
+// memoizeDownloads remembers each lookup, failures included, for as long as the
+// returned function lives. A run uses one, so a popular package that many names
+// sit close to is asked about once, and a rate-limited API is not asked again.
+func memoizeDownloads(lookup func(string) (int, error)) func(string) (int, error) {
+	type result struct {
+		n   int
+		err error
+	}
+	seen := map[string]result{}
+	return func(name string) (int, error) {
+		if r, ok := seen[name]; ok {
+			return r.n, r.err
+		}
+		n, err := lookup(name)
+		seen[name] = result{n, err}
+		return n, err
+	}
+}
+
+// assessTyposquatWith is assessTyposquat with the download lookup supplied.
+func assessTyposquatWith(pkgName string, popularList []string, maxDist int, lookup func(string) (int, error)) typosquatVerdict {
 	pkgName = strings.ToLower(strings.TrimSpace(pkgName))
 	for _, popular := range popularList {
 		if pkgName == popular {
@@ -309,8 +333,8 @@ func assessTyposquat(pkgName string, popularList []string, maxDist int) typosqua
 		}
 
 		// Query downloads to verify authority
-		pkgDownloads, errPkg := weeklyDownloads(pkgName)
-		suspectDownloads, errSus := weeklyDownloads(popular)
+		pkgDownloads, errPkg := lookup(pkgName)
+		suspectDownloads, errSus := lookup(popular)
 
 		if errPkg == nil && errSus == nil {
 			// A package with a real user base of its own is not a squat, whatever

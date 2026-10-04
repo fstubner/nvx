@@ -63,7 +63,7 @@ trust boundary ignore `-y`/`NVX_YES` entirely (see [Commands](/docs/commands/#po
 Policies cascade: the global policy applies everywhere, and local policy files merge over it as you get closer to the working directory (the nearest policy wins on conflicting settings; blocklists and trusted packages are unioned).
 
 ## Reference
-* **`enforce_ignore_scripts`**: When `true`, nvx refuses to install a package that has hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine. A command that already turns scripts off is not refused, because the package manager runs none of them. That is `--ignore-scripts` on the command line (npm, pnpm, yarn and bun), `npm_config_ignore_scripts=true` in the environment, or `ignore-scripts=true` in the project `.npmrc`. A run inside the sandbox gets no `npm_config_*` variables, so the environment counts only outside it. `--ignore-scripts=false` does not count. The same holds for the install-script prompt, which is not asked when scripts are off. Otherwise the refusal comes before the package manager starts. Name the package in `install_scripts.trusted_packages` to let it through.
+* **`enforce_ignore_scripts`**: When `true`, nvx refuses to install a package that has hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine. The refusal comes before the package manager starts, so passing `--ignore-scripts` yourself does not change it. Name the package in `install_scripts.trusted_packages` to let it through.
 * **Per-check exemptions.** Every install-time check applies to every package
   until a policy names an exception, and each list waives only its own check —
   naming a package in one never affects another. Adding an entry to any of them is
@@ -140,9 +140,14 @@ lookup that failed. nvx asks before going on, and refuses when nobody can answer
 | Host | When | What it is sent |
 | --- | --- | --- |
 | The package's registry | Every registry package checked | The package name, and your token for that registry if `.npmrc` has one |
-| `api.npmjs.org` | The typosquat check, for a public-registry package whose name is close to a popular one | Both names |
+| `api.npmjs.org` | The typosquat check, for a public-registry package you chose whose name is close to a popular one | Both names |
 | `api.osv.dev` | The advisory scan, for public-registry packages | Each name and version |
 | `cdn.jsdelivr.net` | Refreshing the popular-package list, once the cached copy is 7 days old | Nothing about your project |
+
+The typosquat check runs on the names you chose: the packages named on the
+command line, or with none named, the dependencies in `package.json`. A
+dependency that came in with one of them was named by its author and is not
+looked up. Each name is looked up once per run.
 
 `api.npmjs.org` and `api.osv.dev` are asked only about packages from
 `registry.npmjs.org`. A package from any other registry skips the typosquat and

@@ -24,9 +24,11 @@ You do not change how you type anything. nvx puts shims on `PATH`, so
 
 Before an install runs, nvx checks what it is about to fetch.
 
-- **Typosquats.** Package names are compared with a list of popular packages,
-  and the npm download counts tell a lookalike apart from a real package with a
-  similar name.
+- **Typosquats.** The names you chose, on the command line or as the project's
+  direct dependencies, are compared with a list of popular packages, and the
+  npm download counts tell a lookalike apart from a real package with a similar
+  name. Packages that arrive as dependencies of others were named by their
+  authors, so they skip this check and get the others.
 - **Known vulnerabilities.** Direct installs, `npx`-style tool runs and the
   packages in `package-lock.json` are checked against the OSV database. Without
   a `package-lock.json`, which pnpm, yarn and bun do not write, only the names
