@@ -133,6 +133,60 @@ try {
   // require('fs/promises') and fs.promises are the same object.
   fsp.lstat = wrapPromise(fsp.lstat);
   fsp.stat = wrapPromise(fsp.stat);
+
+  // The native realpath functions ask Windows for a handle's final path with
+  // its drive letter (GetFinalPathNameByHandleW, VOLUME_NAME_DOS), and an
+  // AppContainer is refused that on every path, the project directory
+  // included. pnpm 10 resolves the project with fs.promises.realpath and stops:
+  //
+  //   EPERM: operation not permitted, realpath 'C:\...\project'
+  //
+  // Node's JavaScript realpath reaches the same answer by walking the path with
+  // lstat and readlink, which the sandbox may do. Measured 2026-10-04 inside the
+  // container with Node 22.23.3, on C: and on H:: realpathSync.native and
+  // promises.realpath gave EPERM on the working directory, the sandbox's home,
+  // C:\Users and C:\, and realpathSync and the callback realpath returned the
+  // path for all of them. So a refused native call is retried with the
+  // JavaScript one. It learns nothing the process could not learn with lstat,
+  // and any other error, or a failed retry, surfaces the original error.
+  const jsRealpathSync = fs.realpathSync;
+  const jsRealpath = fs.realpath;
+
+  if (typeof fs.realpathSync.native === 'function') {
+    const nativeSync = fs.realpathSync.native;
+    jsRealpathSync.native = function (p, options) {
+      try {
+        return nativeSync.call(this, p, options);
+      } catch (e) {
+        if (!isPermissionError(e)) throw e;
+        try { return jsRealpathSync(p, options); } catch (e2) { throw e; }
+      }
+    };
+  }
+
+  if (typeof fs.realpath.native === 'function') {
+    const nativeCb = fs.realpath.native;
+    jsRealpath.native = function (p, options, cb) {
+      if (typeof options === 'function') { cb = options; options = undefined; }
+      if (typeof cb !== 'function') return nativeCb.call(this, p, options, cb);
+      return nativeCb.call(this, p, options, (err, resolved) => {
+        if (!isPermissionError(err)) return cb(err, resolved);
+        jsRealpath(p, options, (err2, resolved2) => (err2 ? cb(err) : cb(null, resolved2)));
+      });
+    };
+  }
+
+  const nativePromise = fsp.realpath;
+  fsp.realpath = async function (p, options) {
+    try {
+      return await nativePromise.call(this, p, options);
+    } catch (e) {
+      if (!isPermissionError(e)) throw e;
+      return new Promise((resolve, reject) => {
+        jsRealpath(p, options, (err2, resolved) => (err2 ? reject(e) : resolve(resolved)));
+      });
+    }
+  };
 } catch (e) {
   // Never the reason a contained process fails.
 }
