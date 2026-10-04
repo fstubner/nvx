@@ -14,9 +14,12 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
 - **Your own code is not contained by default.** `npm run build`, `npm test` and
   `node` run uncontained at the `standard` level, so a compromised dependency your
   own code imports is not sandboxed. A contained install can therefore influence a
-  later uncontained command, because `node_modules/.bin` is writable by design.
-  `isolation.level: strict` contains them, at the cost of breaking anything that
-  needs unrestricted filesystem or network access.
+  later uncontained command, because the project's own files are writable by
+  design: `package.json` and its scripts, `node_modules`, lockfiles, build config,
+  and hook folders kept in the project such as `.husky`. The one exception is
+  `.git`, which contained runs can read and cannot write.
+  `isolation.level: strict` contains those commands, at the cost of breaking
+  anything that needs unrestricted filesystem or network access.
 - **A `.env` inside the project is readable by a contained install.** The project
   directory has to be readable for the install to work, and `.env` lives in it.
   Environment *variables* are scrubbed; a file is a file.
@@ -30,6 +33,10 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
 - **On Windows, your home directory is listable.** Contents stay unreadable, so
   `~/.ssh`, `~/.aws` and `~/.npmrc` cannot be read, but their presence is visible.
   That is an ACE Windows ships on your profile and nvx cannot revoke.
+- **On Linux, a UNIX socket inside the project can be reached.** A contained
+  process sees only the directories it is granted, so host sockets such as
+  Docker's are absent. A socket placed in the project directory, or in a
+  directory added with `allow_read_exec`, can still be connected to.
 - **Detection is best-effort.** Typosquat and vulnerability checks reduce risk
   without certifying a package. Containment is the backstop, not the checks.
 - **Dependencies are checked for npm installs, and not for everything.** For
@@ -107,6 +114,11 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   folder in `%LOCALAPPDATA%\Packages`, which Windows already grants the
   sandbox. It refuses only when that path is too long as well, and then names
   the longest `NVX_HOME` that works.
+- **Git hook installers cannot set themselves up during a contained install.**
+  husky's `prepare` script, simple-git-hooks and lefthook write to `.git`
+  (`.git/config` or `.git/hooks`), which a contained install cannot write, so
+  their setup step fails there. Run it yourself afterwards, for example
+  `npx husky`, or run the install with `nvx --no-sandbox`.
 - **A stray `package.json` above your projects merges them into one sandbox
   scope.** `nvx doctor` reports it when the manifest sits in your home directory
   or at a volume root.
