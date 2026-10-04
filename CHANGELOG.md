@@ -221,6 +221,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **pnpm installs inside the Windows sandbox.** pnpm 10 resolves the project
+  directory with `fs.promises.realpath`, which asks Windows for the path with
+  its drive letter, and an AppContainer is refused that on every path. A first
+  `pnpm install` stopped with `EPERM: operation not permitted, realpath`. The
+  preload nvx puts in every contained node process now retries a refused native
+  realpath with Node's JavaScript one, which walks the path with `lstat` and
+  `readlink` and reaches the same answer. Measured 2026-10-04 with pnpm
+  10.34.6 on Node 22.23.3: a first install now completes in projects on `C:`
+  and on `H:`.
+
 * **`nvx setup` no longer spends minutes on each large drive.**
   On 2026-10-04 `nvx setup --all-drives` granted D:\ in 1 second and E:\ in 3,
   then was still working on F:\ after 33 minutes. The grant is one entry on the
