@@ -883,9 +883,12 @@ they date quickly; each carries the date and machine it was taken on.
 - **Bun does not reliably run inside the Windows sandbox.** Measured
   2026-10-04 on one machine with bun 1.4.2: `bun install` succeeded in
   projects on `C:` (in a temp directory, under the profile and at the drive
-  root), a drive whose root `nvx setup` had granted, and failed with `EBADF`
-  in a project on `H:`, whose root it had not. Whether that grant is the
-  cause has not been tested. Earlier runs disagreed in the same way: on
+  root), and failed with `EBADF` in projects on `D:` and `H:`. `nvx setup`'s
+  grant was in place on all three drive roots (`nvx doctor`: grants in place
+  on 7 paths), so the grant does not explain the difference. Failures on `H:`
+  did not change with `--backend=copyfile`, `--backend=hardlink`,
+  `--no-cache`, or bun's cache moved into the project, and the same install
+  ran uncontained. Earlier runs disagreed in the same way: on
   2026-09-17 `bun install` failed on every run (`ENOENT` on 1.3.1, `EBADF` on
   1.4.2), and on 2026-09-06 1.4.2 ran `bun install`, `bunx` and relative-path
   reads and writes contained. The docs site's limitations page

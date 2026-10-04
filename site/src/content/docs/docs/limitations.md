@@ -138,9 +138,9 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   contained tool needs `--connect` to reach a service you are already running.
 - **On Windows, `pnpm` and `bun` do not reliably install inside the sandbox.**
   Measured 2026-10-04: a first `pnpm install` with pnpm 10 failed with `EPERM
-  realpath`. `bun install` with bun 1.4.2 worked in projects on `C:`, a drive
-  `nvx setup` had prepared on that machine, and failed with `EBADF` in a project
-  on `H:`, which it had not. Use `--no-sandbox` for those two, or npm or yarn
+  realpath`. `bun install` with bun 1.4.2 worked in projects on `C:` and failed
+  with `EBADF` in projects on `D:` and `H:`, with `nvx setup`'s grant in place
+  on all three drive roots. Use `--no-sandbox` for those two, or npm or yarn
   instead. The cause, as far as it has been traced: pnpm asks the OS to turn a file handle back into a
   drive-letter path, which an AppContainer is refused: `GetFinalPathNameByHandle`
   and `QueryDosDevice` answer "Access is denied" from inside the container,
