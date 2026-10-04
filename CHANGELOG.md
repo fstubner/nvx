@@ -107,6 +107,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **nvx is on npm as `@fstubner/nvx`, published through trusted publishing.**
+  `npm install -g @fstubner/nvx` installs the binary for your platform and runs
+  no install script. Releases now publish to npm with the release workflow's
+  GitHub identity rather than a stored npm token, so each version carries npm
+  provenance and there is no `NPM_TOKEN` secret to leak or expire.
 * **The shims run the version the project pins, with or without the shell
   integration.** In a project whose `.nvmrc` said 20.11, with 22 as the
   default, `node --version` through the shim printed v22.23.3 and a warning.

@@ -33,7 +33,14 @@ single window.
 
 ## Prebuilt binaries
 
-nvx is not yet published to winget, Scoop, Homebrew or npm. The other route is a
+nvx is on npm as `@fstubner/nvx`. It installs only the binary for your
+platform and runs no install script:
+
+```sh
+npm install -g @fstubner/nvx
+```
+
+It is not yet published to winget, Scoop or Homebrew. The other route is a
 binary: every release attaches one per platform with a SHA-256 sidecar, for
 Windows x64, macOS on Apple silicon and Intel, and Linux on x86_64 and arm64.
 

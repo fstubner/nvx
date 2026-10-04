@@ -53,6 +53,11 @@ irm https://nvx.run/install.ps1 | iex
 curl -fsSL https://nvx.run/install.sh | sh
 ```
 
+```bash
+# Or from npm, on any platform
+npm install -g @fstubner/nvx
+```
+
 Prebuilt binaries, building from source and what the installer changes are in the
 **[install guide](https://nvx.run/docs/install/)**.
 

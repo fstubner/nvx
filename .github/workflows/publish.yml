@@ -80,7 +80,8 @@ jobs:
     name: npm
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # id-token for npm --provenance; attestations to read release.yml's.
+    # id-token for npm trusted publishing (OIDC) and provenance;
+    # attestations to read release.yml's.
     permissions:
       contents: read
       id-token: write
@@ -89,9 +90,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TAG }}
+      # Trusted publishing needs npm 11.5.1 or newer, and the runner's
+      # preinstalled npm can be older, so install a known version.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install npm 11.6.2
+        run: npm install -g npm@11.6.2 && npm --version
       - name: Publish @fstubner/nvx
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/release/publish-npm.sh "$TAG"
 
