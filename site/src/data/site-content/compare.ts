@@ -29,6 +29,8 @@ export const compareCopy: SectionCopy = {
   leadHtml: '',
 };
 
+// Column order is the cell order in every row below. The highlighted column is
+// this product, and it gets the accent outline.
 export const compareColumns: ComparisonColumn[] = [
   { name: 'nvx', highlight: true },
   { name: 'nvm' },
