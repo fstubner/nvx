@@ -1,4 +1,5 @@
-import type { ChangelogSurface, SectionCopy } from './types';
+import type { SectionCopy } from './types';
+import type { ChangelogSurface } from './product-types';
 import { meta } from './meta';
 
 // The changelog page's own copy, and one plain-language summary per release.
