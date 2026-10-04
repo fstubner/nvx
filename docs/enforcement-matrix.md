@@ -880,14 +880,16 @@ they date quickly; each carries the date and machine it was taken on.
   procfs of its own — Bun reads `/proc/self` to size its stack, and before
   that a contained `bun install` failed with "JSON document is too deeply
   nested" against a valid file. Windows is below.
-- **Bun does not run inside the Windows sandbox.** Measured 2026-09-17:
-  `bun install` fails on every run, with `ENOENT` on 1.3.1 and `EBADF` on
-  1.4.2, and `bun -e` cannot read its own working directory. The docs site's
-  limitations page (`site/src/content/docs/docs/limitations.md`) has the
-  detail. An earlier measurement, on 2026-09-06, found 1.4.2 running `bun
-  install`, `bunx` and relative-path reads and writes contained, and 1.3.1
-  failing every relative-path operation with `EBADFD`. The later run is the
-  one that stands.
+- **Bun does not reliably run inside the Windows sandbox.** Measured
+  2026-10-04 on one machine with bun 1.4.2: `bun install` succeeded in
+  projects on `C:` (in a temp directory, under the profile and at the drive
+  root), a drive whose root `nvx setup` had granted, and failed with `EBADF`
+  in a project on `H:`, whose root it had not. Whether that grant is the
+  cause has not been tested. Earlier runs disagreed in the same way: on
+  2026-09-17 `bun install` failed on every run (`ENOENT` on 1.3.1, `EBADF` on
+  1.4.2), and on 2026-09-06 1.4.2 ran `bun install`, `bunx` and relative-path
+  reads and writes contained. The docs site's limitations page
+  (`site/src/content/docs/docs/limitations.md`) has the user-facing summary.
 
   Bun added
   AppContainer support in [oven-sh/bun#33119](https://github.com/oven-sh/bun/pull/33119),

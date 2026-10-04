@@ -91,7 +91,7 @@ export const compareRows: ComparisonRow[] = [
  *  obituary at length reads as score-settling however true it is. */
 export const compareNoteHtml = [
   "<p>* NVM for Windows is a separate, Windows-only project with no shared code, and it does not sandbox installs.</p>",
-  '<p>† On Windows, pnpm runs contained for a first install only, and bun cannot run contained at all. npm and yarn are unaffected. <a href="/docs/limitations/">Known limitations</a> has the detail.</p>',
+  '<p>† On Windows, pnpm and bun do not reliably install contained: pnpm 10 failed on a first install, and bun 1.4.2 worked on one drive and failed on another (measured 2026-10-04). npm works, and yarn classic fails in a project under your user profile when you have a <code>~/.yarnrc</code>. <a href="/docs/limitations/">Known limitations</a> has the detail.</p>',
   '<p>‡ Environment variables are scrubbed and credential files such as <code>~/.ssh</code> and <code>~/.npmrc</code> are unreadable on every platform. On macOS a contained install can still read other files outside the project.</p>',
   "<p>volta's maintainers announced in November 2025 that it is unmaintained. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.</p>",
   '<p>Out-of-the-box defaults, checked against each project on 18 September 2026.</p>',

@@ -136,8 +136,12 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   started nvx exits. A command that finishes on its own leaves it running.
 - **A contained server needs `--expose` to be reachable from your machine**, and a
   contained tool needs `--connect` to reach a service you are already running.
-- **On Windows, `pnpm` runs inside the sandbox for a first install only, and
-  `bun` does not run.** pnpm asks the OS to turn a file handle back into a
+- **On Windows, `pnpm` and `bun` do not reliably install inside the sandbox.**
+  Measured 2026-10-04: a first `pnpm install` with pnpm 10 failed with `EPERM
+  realpath`. `bun install` with bun 1.4.2 worked in projects on `C:`, a drive
+  `nvx setup` had prepared on that machine, and failed with `EBADF` in a project
+  on `H:`, which it had not. Use `--no-sandbox` for those two, or npm or yarn
+  instead. The cause, as far as it has been traced: pnpm asks the OS to turn a file handle back into a
   drive-letter path, which an AppContainer is refused: `GetFinalPathNameByHandle`
   and `QueryDosDevice` answer "Access is denied" from inside the container,
   while the NT form of the same path comes back fine. The drive letters live in
@@ -145,13 +149,9 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   session-local drive letter pointing at the same volume, unelevated, is
   reachable and openable from inside the container once granted, but the
   refused call does not fall back to it: `sandbox_local_drive_probe_windows_test.go`
-  has the measurement. Measured 2026-09-17 with pnpm 8.7.5: a first `pnpm install` in a fresh
-  project exits 0, and a second one fails with `EPERM realpath
-  'node_modules'`. `bun install` fails on every run, with `ENOENT` on 1.3.1
-  and `EBADF` on 1.4.2, and `bun -e` cannot read its own working directory;
-  bun's call has not been traced, but the shape is the same. npm and yarn
-  resolve paths in JavaScript and never ask. Use `--no-sandbox` for those two,
-  or npm or yarn instead.
+  has the measurement. Earlier, on 2026-09-17, pnpm 8.7.5 managed a first
+  install and failed on the second. bun's failing call has not been traced. npm
+  and yarn resolve paths in JavaScript and never ask.
 - **On Windows, `yarn` classic fails in a project under your user profile if you
   have a `~/.yarnrc`.** yarn reads every `.yarnrc` on the way up from the
   project to the drive root, and the sandbox refuses the one in your real home;
