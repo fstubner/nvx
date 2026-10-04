@@ -191,6 +191,7 @@ func remedyFor(reason string) string {
 	// so the line carries a placeholder.
 	case strings.Contains(reason, "disallows package install scripts"):
 		return "This is a policy decision rather than a warning, so approving prompts does not affect it. " +
+			"To install without running its scripts, pass --ignore-scripts. " +
 			"To let one package's install scripts run, add it to install_scripts.trusted_packages in ~/.nvx/policy.json, " +
 			`for example {"install_scripts":{"trusted_packages":["<package>"]}}. ` +
 			"To drop the rule for every package, set enforce_ignore_scripts to false."
