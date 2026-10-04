@@ -216,6 +216,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **The typosquat check no longer refuses dependencies you did not choose.**
+  The pre-install checks run over the whole resolved tree, and the typosquat
+  check asked api.npmjs.org for the weekly downloads of every package in it.
+  On 2026-10-04 `npm ci` over a 415-package tree got HTTP 429 from that API,
+  the lookups fell back to name similarity, and the legitimate transitive
+  package `regex` was refused as a typosquat. A typosquat is a name someone
+  typed wrongly, and a dependency's name was written by its author. The check
+  now runs only on the packages named on the command line, or with none named,
+  on the dependencies in `package.json`. The blocklist, release-age,
+  install-script and advisory checks still cover the whole tree. Download
+  lookups are also remembered for the rest of the run.
 * **`nvx use` in cmd.exe no longer prints bash or PowerShell syntax.** Run from
   a cmd window opened out of Git Bash it printed `export PATH='/c/...'` lines
   and told you to add a line to `~/.bashrc`, because the `MSYSTEM` variable

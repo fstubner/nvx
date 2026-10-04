@@ -79,7 +79,13 @@ func npmResolvedTargets(req verifyRequest, platform nodePlatform) ([]verifyTarge
 
 	targets, err := resolveNpmInstall(req, root, platform)
 	if err == nil {
-		return targets, 0, ""
+		// The user chose what they named, or with no names the project's own
+		// dependencies. Everything else in the tree came with those.
+		chosen := named
+		if len(chosen) == 0 {
+			chosen = manifestSpecs(manifest)
+		}
+		return markTransitive(targets, chosen), 0, ""
 	}
 	msg := fmt.Sprintf("npm could not work out what this command installs (%v), so nvx can check only the packages named on the command line or in the project's files. Proceed?", err)
 	if !askCheck(req.nvxHome, checkInfo{check: checkResolution, detail: err.Error(),

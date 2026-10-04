@@ -49,6 +49,10 @@ type verifyTarget struct {
 	// It can only add a prompt: npm writes it for a binding.gyp as well, which
 	// the registry's scripts field does not show.
 	hasInstallScript bool
+	// transitive marks a lockfile entry the user did not choose: a dependency
+	// of something they did. The typosquat check skips it, because a name a
+	// package's author wrote is not a name anyone mistyped.
+	transitive bool
 }
 
 func (t verifyTarget) fromLockfile() bool { return t.resolved != "" || t.integrity != "" }
@@ -183,10 +187,72 @@ func projectTargets(platform nodePlatform) ([]verifyTarget, error) {
 	}
 	if ok {
 		if t := lockTargets(lock, platform, ""); len(t) > 0 {
-			return t, nil
+			return markTransitive(t, directDepSpecs(lock)), nil
 		}
 	}
 	return specTargets(packagesFromPackageJSON()), nil
+}
+
+// directDepSpecs lists what the project itself declares, for markTransitive: the
+// dependencies in package.json, and those of any lockfile entry that is not
+// under node_modules, which is the root and each workspace member.
+func directDepSpecs(lock packageLockFile) []string {
+	var specs []string
+	if m, ok := readManifestDeps(projectManifestDir()); ok {
+		specs = manifestSpecs(m)
+	}
+	for path, e := range lock.Packages {
+		if strings.Contains(path, "node_modules/") {
+			continue
+		}
+		for _, deps := range []map[string]string{e.Dependencies, e.DevDependencies, e.OptionalDependencies, e.PeerDependencies} {
+			for name, spec := range deps {
+				specs = append(specs, manifestDepSpec(name, spec))
+			}
+		}
+	}
+	return specs
+}
+
+// manifestSpecs is every dependency package.json declares, in all four fields.
+func manifestSpecs(m manifestDeps) []string {
+	var specs []string
+	for _, deps := range m.depMaps() {
+		for name, spec := range deps {
+			specs = append(specs, manifestDepSpec(name, spec))
+		}
+	}
+	return specs
+}
+
+// markTransitive flags the lockfile targets whose package is not among the
+// chosen specs: the packages the user named, or the project's own dependencies.
+// With nothing chosen it flags nothing, so a project whose manifest could not be
+// read keeps every check.
+func markTransitive(targets []verifyTarget, chosen []string) []verifyTarget {
+	if len(chosen) == 0 {
+		return targets
+	}
+	names := map[string]bool{}
+	for _, spec := range chosen {
+		if n := targetPackageName(verifyTarget{spec: spec}); n != "" {
+			names[n] = true
+		}
+		// An alias, lp@npm:left-pad, installs left-pad, which the lockfile names.
+		if _, v := parsePackageQuery(spec); strings.HasPrefix(v, "npm:") {
+			if n, _ := parsePackageQuery(strings.TrimPrefix(v, "npm:")); n != "" {
+				names[n] = true
+			}
+		}
+	}
+	out := make([]verifyTarget, len(targets))
+	for i, t := range targets {
+		if t.fromLockfile() && !names[targetPackageName(t)] {
+			t.transitive = true
+		}
+		out[i] = t
+	}
+	return out
 }
 
 // refreshTargets covers update, upgrade, dedupe and rebuild. Named packages
@@ -212,6 +278,7 @@ func refreshTargets(args []string, platform nodePlatform) ([]verifyTarget, error
 	var picked []verifyTarget
 	for _, t := range project {
 		if want[targetPackageName(t)] {
+			t.transitive = false // named on the command line
 			picked = append(picked, t)
 		}
 	}

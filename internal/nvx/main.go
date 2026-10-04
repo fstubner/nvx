@@ -2069,6 +2069,7 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 	var osvQueries []OSVQuery
 	reportPublicOnlyChecksSkipped(nvxHome, targets, regs)
 	details := prefetchVerifyDetails(targets)
+	lookupDownloads := memoizeDownloads(weeklyDownloads)
 
 	for _, t := range targets {
 		arg := t.spec
@@ -2104,13 +2105,16 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 		// one they describe, and its name is not sent to them.
 		public := isPublicNpmRegistry(regs.registryFor(pkgName))
 
-		// 2. Typosquatting Check
-		if public && policy.Typosquatting.Enabled && !policy.IsTrustedPackage(pkgName) {
+		// 2. Typosquatting Check. A typosquat is a name someone typed wrongly, so
+		// it applies to what the user chose and not to the dependencies a package
+		// brought in. Asking api.npmjs.org about every package in a 415-package
+		// tree got HTTP 429 on 2026-10-04, and the fallback refused `regex`.
+		if public && !t.transitive && policy.Typosquatting.Enabled && !policy.IsTrustedPackage(pkgName) {
 			maxDist := policy.Typosquatting.MaxDistance
 			if maxDist <= 0 {
 				maxDist = 2
 			}
-			if verdict := assessTyposquat(pkgName, popularList, maxDist); verdict.suspect != "" {
+			if verdict := assessTyposquatWith(pkgName, popularList, maxDist, lookupDownloads); verdict.suspect != "" {
 				suspect := verdict.suspect
 				pkgDownloads, suspectDownloads := verdict.pkgDownloads, verdict.suspectDownloads
 				info := checkInfo{check: checkTyposquat, pkg: pkgName, detail: "close to " + suspect,
