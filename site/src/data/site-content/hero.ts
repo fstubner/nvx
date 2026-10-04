@@ -60,9 +60,9 @@ found 0 vulnerabilities`,
 };
 
 export const heroCommands: HeroCommands = {
-  // No package-manager route yet on any platform: nvx is not on winget, Scoop,
-  // Homebrew or npm. Both rows therefore carry the install script rather than
-  // advertising a channel that would 404.
+  // Both rows carry the install script. nvx is on npm as @fstubner/nvx, but
+  // that route needs Node.js already installed, which a version manager's first
+  // command should not assume. It is not on winget, Scoop or Homebrew yet.
   windows: {
     packageManager: 'irm https://nvx.run/install.ps1 | iex',
     script: 'irm https://nvx.run/install.ps1 | iex',
