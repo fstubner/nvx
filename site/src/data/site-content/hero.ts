@@ -55,8 +55,6 @@ found 0 vulnerabilities`,
   heroImageWidth: 1200,
   heroImageHeight: 618,
   sourceUrl: 'https://github.com/fstubner/nvx',
-  // The nav already links GitHub, so the hero does not repeat it.
-  showSourceLink: false,
   downloadLabel: 'Desktop app',
   downloadMenuLabel: 'Choose desktop installer',
 };
