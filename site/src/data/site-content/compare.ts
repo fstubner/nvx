@@ -40,14 +40,14 @@ export const compareColumns: ComparisonColumn[] = [
   { name: 'mise' },
 ];
 
-// nvm's cells below are nvm-sh/nvm, for macOS and Linux -- the asterisk on
-// its platform cell points at the footnote under the table. A two-column
+// nvm's cells below are nvm-sh/nvm, for macOS and Linux. The FAQ covers NVM
+// for Windows, so the table carries no footnote for it. A two-column
 // split (nvm vs NVM for Windows) was tried on 2026-09-18 and reverted the
 // same day: the table is cross-platform to begin with, most rows would have
 // carried the same answer twice, and a reader on any platform other than
 // Windows had to scroll past a whole column for a tool that could never
 // apply to them. NVM for Windows is a separate, Windows-only project with no
-// shared code; the footnote says what actually differs. Checked against its
+// shared code. Checked against its
 // v2.0.0 release (2026-09-02) and the "What's new in v2" page at
 // docs.nvm-windows.com/features/newv2.
 export const compareRows: ComparisonRow[] = [
@@ -58,7 +58,7 @@ export const compareRows: ComparisonRow[] = [
   // "Policy file in repo" came in, checked against mise's sandboxing page the
   // same day: its sandbox settings can live in a project's mise.toml, are off
   // unless set, and are not enforced on Windows.
-  { feature: 'Windows, macOS, Linux', cells: ['✓', 'macOS, Linux*', '✓', '✓', 'macOS, Linux', '✓'] },
+  { feature: 'Windows, macOS, Linux', cells: ['✓', 'macOS, Linux', '✓', '✓', 'macOS, Linux', '✓'] },
   { feature: 'Runtimes', cells: ['Node.js, Bun', 'Node.js', 'Node.js', 'Node.js', 'many, via plugins', 'many, via backends'] },
   // volta and asdf resolve the version inside a shim when the command runs,
   // rather than hooking cd. Same result, and it is why a debugger or an IDE
@@ -71,28 +71,24 @@ export const compareRows: ComparisonRow[] = [
   // and `mise exec` rather than an install, and mise's own docs say it is
   // unavailable on Windows.
   //
-  // nvx's ticks on Sandboxed installs and Secrets hidden carry a mark to the
-  // notes below, because each has a platform exception on the limitations
+  // nvx's ticks on Sandboxed installs and Secrets hidden share one mark and
+  // one note below, because each has a platform exception on the limitations
   // page. The first is pnpm and bun on Windows. The second is reads on macOS.
-  { feature: 'Sandboxed installs', cells: ['✓†', '—', '—', '—', '—', 'opt-in, not Windows'] },
+  { feature: 'Sandboxed installs', cells: ['✓*', '—', '—', '—', '—', 'opt-in, not Windows'] },
   { feature: 'Network allowlist', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
-  { feature: 'Secrets hidden', cells: ['✓‡', '—', '—', '—', '—', 'opt-in, not Windows'] },
+  { feature: 'Secrets hidden', cells: ['✓*', '—', '—', '—', '—', 'opt-in, not Windows'] },
   { feature: 'Policy file in repo', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
 ];
 
-/** Shown under the table. The asterisk sentence leads because a reader who
- *  just saw it on the platform row wants the explanation next, not after an
- *  unrelated remark about volta.
+/** Shown under the table. Two notes and no more: the exceptions behind the
+ *  marked ticks, and when the other columns were checked. Detail lives on the
+ *  limitations page, which the first note links.
  *
- *  Stated flatly and left there. An earlier version added that volta's own
- *  maintainers recommend mise, which pointed readers at the one tool here
- *  that is ahead of nvx on integrity, and explained that volta was listed
- *  because people still run it, which nobody asked. Writing a competitor's
+ *  volta's status is stated flatly and left there. An earlier version added
+ *  that volta's own maintainers recommend mise, which pointed readers at the
+ *  one tool here that is ahead of nvx on integrity. Writing a competitor's
  *  obituary at length reads as score-settling however true it is. */
 export const compareNoteHtml = [
-  "<p>* NVM for Windows is a separate, Windows-only project with no shared code, and it does not sandbox installs.</p>",
-  '<p>† On Windows, bun installs contained only in projects on the drive Windows is installed on, usually C:. pnpm does not install contained reliably, and yarn classic fails under your user profile if you have a <code>~/.yarnrc</code>. <a href="/docs/limitations/">Known limitations</a> has the detail.</p>',
-  '<p>‡ Environment variables are scrubbed and credential files such as <code>~/.ssh</code> and <code>~/.npmrc</code> are unreadable on every platform. On macOS a contained install can still read other files outside the project.</p>',
-  "<p>volta's maintainers announced in November 2025 that it is unmaintained. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.</p>",
-  '<p>Out-of-the-box defaults, checked against each project on 18 September 2026.</p>',
+  '<p>* With platform exceptions. On Windows, bun installs contained only on the drive Windows is installed on, and pnpm does not install contained reliably. On macOS, a contained install can read files outside the project, though not credential files such as <code>~/.ssh</code>. <a href="/docs/limitations/">Known limitations</a> has the rest.</p>',
+  "<p>Out-of-the-box defaults, checked against each project on 18 September 2026. volta's maintainers announced in November 2025 that it is unmaintained.</p>",
 ].join('');
