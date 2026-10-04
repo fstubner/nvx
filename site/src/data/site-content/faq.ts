@@ -85,8 +85,8 @@ export const faq: FaqItem[] = [
   {
     group: 'Using it',
     q: 'Can I install it from winget, Homebrew, Scoop or npm?',
-    a: 'Not yet. The install script and the prebuilt release binaries are the two routes today, on all three platforms.',
+    a: 'npm, yes: npm install -g @fstubner/nvx installs the binary for your platform and runs no install script. winget, Homebrew and Scoop not yet. The install script and the prebuilt release binaries work on all three platforms.',
     aHtml:
-      '<p>Not yet. The install script and the prebuilt release binaries are the two routes today, on all three platforms.</p>',
+      '<p>npm, yes: <code>npm install -g @fstubner/nvx</code> installs the binary for your platform and runs no install script. winget, Homebrew and Scoop not yet. The install script and the prebuilt release binaries work on all three platforms.</p>',
   },
 ];

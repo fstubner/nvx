@@ -90,7 +90,7 @@ export const compareRows: ComparisonRow[] = [
 export const compareNoteHtml = [
   "<p>* NVM for Windows is a separate, Windows-only project with no shared code, and it does not sandbox installs.</p>",
   '<p>† On Windows, pnpm runs contained for a first install only, and bun cannot run contained at all. npm and yarn are unaffected. <a href="/docs/limitations/">Known limitations</a> has the detail.</p>',
-  '<p>‡ Environment variables are scrubbed on every platform. On macOS a contained install can still read files outside the project by absolute path, so <code>~/.ssh</code> is not out of reach there.</p>',
+  '<p>‡ Environment variables are scrubbed and credential files such as <code>~/.ssh</code> and <code>~/.npmrc</code> are unreadable on every platform. On macOS a contained install can still read other files outside the project.</p>',
   "<p>volta's maintainers announced in November 2025 that it is unmaintained. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.</p>",
   '<p>Out-of-the-box defaults, checked against each project on 18 September 2026.</p>',
 ].join('');

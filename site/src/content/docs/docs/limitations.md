@@ -20,9 +20,13 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
 - **A `.env` inside the project is readable by a contained install.** The project
   directory has to be readable for the install to work, and `.env` lives in it.
   Environment *variables* are scrubbed; a file is a file.
-- **On macOS, reads are not contained.** Writes and egress are. The Seatbelt
-  profile has to allow filesystem reads because the dynamic linker loads system
-  libraries whose locations move between macOS versions.
+- **On macOS, reads outside your credential stores are not contained.** Writes
+  and egress are. The Seatbelt profile has to allow filesystem reads because the
+  dynamic linker loads system libraries whose locations move between macOS
+  versions. It denies the credential stores by path, so `~/.ssh`, `~/.aws`,
+  `~/.npmrc`, the other registry and cloud credential files, and your keychains
+  cannot be read. Other files can, including other projects and any credential
+  kept somewhere the list does not name.
 - **On Windows, your home directory is listable.** Contents stay unreadable, so
   `~/.ssh`, `~/.aws` and `~/.npmrc` cannot be read, but their presence is visible.
   That is an ACE Windows ships on your profile and nvx cannot revoke.
