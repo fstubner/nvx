@@ -22,6 +22,10 @@ type checkScenario struct {
 	regErr  error
 	vulns   map[string][]OSVVuln
 	osvErr  error
+	// command, when set, runs verifyBeforeRun for this package manager command
+	// (pm first, then its arguments) so flags on the command line are seen.
+	command []string
+	contain bool
 	// what the audit record and the refusal text must say
 	check string
 	by    string // for a refusal with nobody to ask
@@ -106,6 +110,12 @@ func runScenario(t *testing.T, sc checkScenario, args ...string) (int, string, s
 		args = []string{sc.pkg}
 	}
 	var code int
+	if len(sc.command) > 0 {
+		out := captureStderrHere(t, func() {
+			code, _, _ = verifyBeforeRun(verifyRequest{pmCmd: sc.command[0], pmArgs: sc.command[1:], nvxHome: home, contain: sc.contain})
+		})
+		return code, out, home
+	}
 	out := captureStderrHere(t, func() { code, _ = runVerifyInstall(args, home) })
 	return code, out, home
 }
@@ -282,22 +292,139 @@ func TestRefusalTextNamesTheNarrowRemedyBeforeTheBlanketSwitch(t *testing.T) {
 	}
 }
 
-// --ignore-scripts on the command line does not get past enforce_ignore_scripts:
-// the check reads the package list and never the flag. The refusal says what
-// does work.
-func TestEnforceIgnoreScriptsRefusalDoesNotSendYouToTheFlag(t *testing.T) {
+// A command that turns install scripts off has nothing for the install-script
+// check to ask about. Measured 2026-10-04 before the fix: `npm install esbuild
+// --ignore-scripts` aborted non-interactively with exit 77, and
+// `npm ci --ignore-scripts` stopped at the prompt.
+func TestIgnoreScriptsSkipsTheInstallScriptCheck(t *testing.T) {
+	enforce := `{"enforce_ignore_scripts":true,"typosquatting":{"enabled":false}}`
+	prompt := `{"typosquatting":{"enabled":false}}`
+	projectWith := func(t *testing.T, npmrc string) {
+		t.Helper()
+		dir := tempDir(t)
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"p"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if npmrc != "" {
+			if err := os.WriteFile(filepath.Join(dir, ".npmrc"), []byte(npmrc), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		prev, _ := os.Getwd()
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(prev) })
+	}
+	cases := []struct {
+		name    string
+		policy  string
+		command []string
+		contain bool
+		env     string // npm_config_ignore_scripts
+		npmrc   string
+		pass    bool
+		by      string // for a pass, the check_skipped record's by
+	}{
+		{name: "flag, pnpm", policy: prompt, command: []string{"pnpm", "add", "some-pkg", "--ignore-scripts"}, pass: true, by: "ignore_scripts_flag"},
+		{name: "flag, yarn", policy: prompt, command: []string{"yarn", "add", "some-pkg", "--ignore-scripts"}, pass: true, by: "ignore_scripts_flag"},
+		{name: "flag, bun", policy: prompt, command: []string{"bun", "add", "some-pkg", "--ignore-scripts"}, pass: true, by: "ignore_scripts_flag"},
+		{name: "flag=true", policy: prompt, command: []string{"pnpm", "add", "some-pkg", "--ignore-scripts=true"}, pass: true, by: "ignore_scripts_flag"},
+		{name: "flag, contained", policy: prompt, command: []string{"pnpm", "add", "some-pkg", "--ignore-scripts"}, contain: true, pass: true, by: "ignore_scripts_flag"},
+		{name: "flag satisfies enforce_ignore_scripts", policy: enforce, command: []string{"pnpm", "add", "some-pkg", "--ignore-scripts"}, pass: true, by: "ignore_scripts_flag"},
+		{name: "environment", policy: prompt, command: []string{"pnpm", "add", "some-pkg"}, env: "true", pass: true, by: "ignore_scripts_env"},
+		{name: "project .npmrc", policy: prompt, command: []string{"pnpm", "add", "some-pkg"}, npmrc: "ignore-scripts=true\n", pass: true, by: "ignore_scripts_npmrc"},
+		{name: "project .npmrc satisfies enforce_ignore_scripts", policy: enforce, command: []string{"pnpm", "add", "some-pkg"}, npmrc: "ignore-scripts=true\n", pass: true, by: "ignore_scripts_npmrc"},
+
+		{name: "no flag still asks", policy: prompt, command: []string{"pnpm", "add", "some-pkg"}},
+		{name: "no flag still refuses under enforce_ignore_scripts", policy: enforce, command: []string{"pnpm", "add", "some-pkg"}},
+		{name: "flag=false still asks", policy: prompt, command: []string{"pnpm", "add", "some-pkg", "--ignore-scripts=false"}},
+		{name: "flag=false still refuses under enforce_ignore_scripts", policy: enforce, command: []string{"pnpm", "add", "some-pkg", "--ignore-scripts=false"}},
+		{name: "flag after -- is not the package manager's", policy: prompt, command: []string{"pnpm", "add", "some-pkg", "--", "--ignore-scripts"}},
+		{name: "flag=false beats the project .npmrc", policy: prompt, command: []string{"pnpm", "add", "some-pkg", "--ignore-scripts=false"}, npmrc: "ignore-scripts=true\n"},
+		{name: "environment false beats the project .npmrc", policy: prompt, command: []string{"pnpm", "add", "some-pkg"}, env: "false", npmrc: "ignore-scripts=true\n"},
+		{name: "ignore-scripts=false in .npmrc", policy: prompt, command: []string{"pnpm", "add", "some-pkg"}, npmrc: "ignore-scripts=false\n"},
+		// A contained npm is given no npm_config_* variables, so it would run the scripts.
+		{name: "environment is not seen by a contained run", policy: prompt, command: []string{"pnpm", "add", "some-pkg"}, contain: true, env: "true"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("NVX_NONINTERACTIVE", "1")
+			t.Setenv("NVX_YES", "")
+			t.Setenv("npm_config_ignore_scripts", c.env)
+			projectWith(t, c.npmrc)
+			sc := checkScenario{pkg: "some-pkg", policy: c.policy, age: 1000 * time.Hour, scripts: true,
+				command: c.command, contain: c.contain}
+			code, out, home := runScenario(t, sc)
+			recs := readAuditRecords(t, home)
+			if !c.pass {
+				if code == 0 {
+					t.Fatalf("the install-script check did not stop it:\n%s", out)
+				}
+				return
+			}
+			if code != 0 {
+				t.Fatalf("a command that ignores scripts was stopped (exit %d):\n%s", code, out)
+			}
+			if strings.Contains(out, "install scripts") || strings.Contains(out, "installation scripts") {
+				t.Errorf("the run printed about install scripts:\n%s", out)
+			}
+			r := findRecord(recs, "check_skipped", "install_scripts")
+			if r == nil || r["by"] != c.by {
+				t.Errorf("want one check_skipped record for install_scripts with by=%s, got %v", c.by, recs)
+			}
+			for _, r := range recs {
+				if r["event"] == "check_refused" || r["event"] == "check_approved" {
+					t.Errorf("unexpected record: %v", r)
+				}
+			}
+		})
+	}
+}
+
+// Skipping the install-script check leaves every other check running, and is
+// recorded once however many packages carry scripts.
+func TestIgnoreScriptsLeavesTheOtherChecksRunning(t *testing.T) {
+	t.Setenv("NVX_NONINTERACTIVE", "1")
+	t.Setenv("NVX_YES", "")
+	t.Setenv("npm_config_ignore_scripts", "")
+	sc := checkScenario{pkg: "reakt", policy: `{}`, age: 1000 * time.Hour, scripts: true,
+		command: []string{"pnpm", "add", "reakt", "lodash", "--ignore-scripts"}}
+	code, out, home := runScenario(t, sc)
+	if code == 0 {
+		t.Fatalf("the typosquat check was skipped along with the script check:\n%s", out)
+	}
+	if findRecord(readAuditRecords(t, home), "check_refused", "typosquat") == nil {
+		t.Errorf("no typosquat refusal recorded: %v", readAuditRecords(t, home))
+	}
+
+	sc = checkScenario{pkg: "some-pkg", policy: `{"typosquatting":{"enabled":false}}`, age: 1000 * time.Hour, scripts: true,
+		command: []string{"pnpm", "add", "a-pkg", "b-pkg", "--ignore-scripts"}}
+	if code, out, home = runScenario(t, sc); code != 0 {
+		t.Fatalf("stopped:\n%s", out)
+	}
+	n := 0
+	for _, r := range readAuditRecords(t, home) {
+		if r["event"] == "check_skipped" && r["check"] == "install_scripts" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("want the skip recorded once for two packages, got %d", n)
+	}
+}
+
+// The refusal under enforce_ignore_scripts names the flag as a way through, and
+// the policy line for the package.
+func TestEnforceIgnoreScriptsRefusalNamesTheFlag(t *testing.T) {
+	t.Setenv("NVX_NONINTERACTIVE", "1")
 	sc := checkScenario{pkg: "some-pkg", policy: `{"enforce_ignore_scripts":true,"typosquatting":{"enabled":false}}`,
 		age: 1000 * time.Hour, scripts: true}
-
-	pkgs := detectShimPackagesForVerification("npm", []string{"install", "some-pkg", "--ignore-scripts"})
-	code, out, _ := runScenario(t, sc, pkgs...)
+	code, out, _ := runScenario(t, sc)
 	if code == 0 {
-		t.Fatalf("--ignore-scripts got past enforce_ignore_scripts, so the old advice was right:\n%s", out)
+		t.Fatalf("not refused:\n%s", out)
 	}
-	if strings.Contains(out, "Please run with --ignore-scripts") {
-		t.Errorf("the refusal still tells the reader to pass the flag that triggers it:\n%s", out)
-	}
-	for _, want := range []string{"install_scripts.trusted_packages", `{"install_scripts":{"trusted_packages":["some-pkg"]}}`, "enforce_ignore_scripts to false"} {
+	for _, want := range []string{"pass --ignore-scripts", "install_scripts.trusted_packages", `{"install_scripts":{"trusted_packages":["some-pkg"]}}`, "enforce_ignore_scripts to false"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the refusal does not say %q:\n%s", want, out)
 		}
