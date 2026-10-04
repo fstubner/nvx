@@ -136,22 +136,22 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   started nvx exits. A command that finishes on its own leaves it running.
 - **A contained server needs `--expose` to be reachable from your machine**, and a
   contained tool needs `--connect` to reach a service you are already running.
-- **On Windows, `pnpm` and `bun` do not reliably install inside the sandbox.**
-  Measured 2026-10-04: a first `pnpm install` with pnpm 10 failed with `EPERM
-  realpath`. `bun install` with bun 1.4.2 worked in projects on `C:` and failed
-  with `EBADF` in projects on `D:` and `H:`, with `nvx setup`'s grant in place
-  on all three drive roots. Use `--no-sandbox` for those two, or npm or yarn
-  instead. The cause, as far as it has been traced: pnpm asks the OS to turn a file handle back into a
-  drive-letter path, which an AppContainer is refused: `GetFinalPathNameByHandle`
-  and `QueryDosDevice` answer "Access is denied" from inside the container,
-  while the NT form of the same path comes back fine. The drive letters live in
-  an object directory the system owns, and no file permission reaches it. A
-  session-local drive letter pointing at the same volume, unelevated, is
-  reachable and openable from inside the container once granted, but the
-  refused call does not fall back to it: `sandbox_local_drive_probe_windows_test.go`
-  has the measurement. Earlier, on 2026-09-17, pnpm 8.7.5 managed a first
-  install and failed on the second. bun's failing call has not been traced. npm
-  and yarn resolve paths in JavaScript and never ask.
+- **On Windows, `bun` installs inside the sandbox only in projects on the drive
+  Windows is installed on, and `pnpm` does not install there reliably.** Both
+  ask Windows to turn a file handle back into a drive-letter path
+  (`GetFinalPathNameByHandle`), and Windows refuses that inside an
+  AppContainer. The drive letters live in an object directory the system owns,
+  and no file permission reaches it, so `nvx setup` does not help. bun 1.4.2
+  rebuilds the path itself for the Windows drive only, so `bun install` works
+  in a project on `C:` and fails with `EBADF` on any other drive (measured
+  2026-10-04 on `C:`, `D:` and `H:`). pnpm has no such fallback, and a first
+  `pnpm install` with pnpm 10 failed with `EPERM realpath` (measured
+  2026-10-04). Use `--no-sandbox` for those two, or npm or yarn instead, which
+  resolve paths in JavaScript and never ask. A session-local drive letter
+  pointing at the same volume is reachable from inside the container once
+  granted, but the refused call does not fall back to it, as
+  `sandbox_local_drive_probe_windows_test.go` measures. Earlier, on 2026-09-17,
+  pnpm 8.7.5 managed a first install and failed on the second.
 - **On Windows, `yarn` classic fails in a project under your user profile if you
   have a `~/.yarnrc`.** yarn reads every `.yarnrc` on the way up from the
   project to the drive root, and the sandbox refuses the one in your real home;

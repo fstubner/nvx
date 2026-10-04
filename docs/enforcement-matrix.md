@@ -880,7 +880,7 @@ they date quickly; each carries the date and machine it was taken on.
   procfs of its own — Bun reads `/proc/self` to size its stack, and before
   that a contained `bun install` failed with "JSON document is too deeply
   nested" against a valid file. Windows is below.
-- **Bun does not reliably run inside the Windows sandbox.** Measured
+- **Bun installs inside the Windows sandbox only on the system drive.** Measured
   2026-10-04 on one machine with bun 1.4.2: `bun install` succeeded in
   projects on `C:` (in a temp directory, under the profile and at the drive
   root), and failed with `EBADF` in projects on `D:` and `H:`. `nvx setup`'s
@@ -888,7 +888,22 @@ they date quickly; each carries the date and machine it was taken on.
   on 7 paths), so the grant does not explain the difference. Failures on `H:`
   did not change with `--backend=copyfile`, `--backend=hardlink`,
   `--no-cache`, or bun's cache moved into the project, and the same install
-  ran uncontained. Earlier runs disagreed in the same way: on
+  ran uncontained.
+
+  The cause is in bun. Its package manager opens the root `package.json` and
+  asks for that handle's path (`bun_sys::get_fd_path`, called from
+  `src/install/PackageManager.rs` in bun-v1.4.2), which calls
+  `GetFinalPathNameByHandleW` with `VOLUME_NAME_DOS`. An AppContainer is
+  refused that. bun's fallback (`lowbox_dos_name_fallback` in
+  `src/sys/windows/mod.rs`) rebuilds the drive-letter path only when the
+  handle is on the volume holding the system directory, and any other volume
+  returns an error that `get_fd_path` reports as `EBADF`. That is why
+  `bun --print` runs contained on `H:` and `bun pm bin` with an empty
+  `package.json` does not. Open upstream: oven-sh/bun#43540 adds a
+  `QueryDosDeviceW` fallback, which an AppContainer is also refused, and
+  oven-sh/bun#38365 removes `get_fd_path`, which would fix it.
+
+  Earlier runs disagreed in the same way: on
   2026-09-17 `bun install` failed on every run (`ENOENT` on 1.3.1, `EBADF` on
   1.4.2), and on 2026-09-06 1.4.2 ran `bun install`, `bunx` and relative-path
   reads and writes contained. The docs site's limitations page
