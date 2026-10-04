@@ -2052,12 +2052,13 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 // lockfile says about each package. It reads the registries an npm run outside
 // the sandbox would use.
 func runVerifyTargets(targets []verifyTarget, nvxHome string) (int, string) {
-	return runVerifyTargetsWith(targets, nvxHome, loadNpmRegistryConfig(projectManifestDir(), false))
+	return runVerifyTargetsWith(targets, nvxHome, loadNpmRegistryConfig(projectManifestDir(), false), "")
 }
 
 // runVerifyTargetsWith runs the checks with each package looked up on the
-// registry regs names for it.
-func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegistryConfig) (int, string) {
+// registry regs names for it. scriptsOff says where the command turns
+// lifecycle scripts off (see ignoreScriptsSource), or is "" when they run.
+func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegistryConfig, scriptsOff string) (int, string) {
 	policy, err := LoadPolicy(nvxHome)
 	if err != nil {
 		LogError("Failed to load security policy: %v", err)
@@ -2067,6 +2068,7 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 	setCheckRegistries(regs)
 	popularList := LoadPopularPackages(nvxHome)
 	var osvQueries []OSVQuery
+	scriptsSkipRecorded := false
 	reportPublicOnlyChecksSkipped(nvxHome, targets, regs)
 	details := prefetchVerifyDetails(targets)
 	lookupDownloads := memoizeDownloads(weeklyDownloads)
@@ -2198,7 +2200,15 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 		hasScripts = hasScripts || t.hasInstallScript
 
 		// 3. Installation Script Execution Check
-		if hasScripts && policy.InstallScriptsTrusted(pkgName) {
+		if hasScripts && scriptsOff != "" {
+			// The package manager runs none of these scripts, so there is nothing
+			// to ask about or refuse, and enforce_ignore_scripts is met by the
+			// request itself. Recorded once, and silent otherwise.
+			if !scriptsSkipRecorded {
+				scriptsSkipRecorded = true
+				recordScriptCheckSkipped(nvxHome, scriptsOff)
+			}
+		} else if hasScripts && policy.InstallScriptsTrusted(pkgName) {
 			// Said out loud every time, and as a warning rather than a detail. The
 			// exemption skips the one prompt standing between a compromised
 			// postinstall and this machine, so the run that used it says so whether
@@ -2210,10 +2220,7 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 			LogWarn("Malicious packages often execute rogue code during the install phase.")
 			if policy.EnforceIgnoreScripts {
 				LogError("Blocked by security policy: %s has install scripts, and enforce_ignore_scripts is on.", pkgName)
-				// --ignore-scripts on the command line does not help: this check
-				// runs on the package list before the package manager starts and
-				// never reads that flag, so the same refusal comes back.
-				LogRefusalDetail("Passing --ignore-scripts does not change this. To let this package's install scripts run, add it to install_scripts.trusted_packages in ~/.nvx/policy.json: "+
+				LogRefusalDetail("To install without running its scripts, pass --ignore-scripts. To let this package's install scripts run, add it to install_scripts.trusted_packages in ~/.nvx/policy.json: "+
 					`{"install_scripts":{"trusted_packages":[%q]}}`+
 					". To drop the rule for every package, set enforce_ignore_scripts to false.", pkgName)
 				recordCheckRefused(nvxHome, checkInfo{check: checkEnforceNoScripts, pkg: pkgName, version: resolvedVer})

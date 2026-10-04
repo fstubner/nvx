@@ -227,6 +227,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the dependencies in `package.json`. The blocklist, release-age,
   install-script and advisory checks still cover the whole tree. Download
   lookups are also remembered for the rest of the run.
+* **A command that turns install scripts off is no longer asked about them.**
+  `npm ci --ignore-scripts` in a project depending on chromedriver stopped at
+  the install-script prompt, and `npm install esbuild --ignore-scripts` aborted
+  non-interactively with exit 77, although npm ran none of those scripts. The
+  install-script prompt and the `enforce_ignore_scripts` refusal are now skipped
+  when `--ignore-scripts` is on the command line (also `--ignore-scripts=true`),
+  when `npm_config_ignore_scripts=true` is in the environment, or when the
+  project `.npmrc` sets `ignore-scripts=true`. bun reads only the flag. A run
+  inside the sandbox gets no `npm_config_*` variables, so the environment does
+  not count there. `--ignore-scripts=false` does not count. The skip is
+  recorded once per run as `check_skipped`. The typosquat, release-age, advisory
+  and blocklist checks still run.
+
 * **`nvx use` in cmd.exe no longer prints bash or PowerShell syntax.** Run from
   a cmd window opened out of Git Bash it printed `export PATH='/c/...'` lines
   and told you to add a line to `~/.bashrc`, because the `MSYSTEM` variable

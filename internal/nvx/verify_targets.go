@@ -122,7 +122,8 @@ func verifyBeforeRun(req verifyRequest) (int, string, string) {
 	// The registries this command's own npm will read: a contained npm sees
 	// the project's .npmrc only. See npm_registry.go.
 	regs := loadNpmRegistryConfig(projectManifestDir(), req.contain)
-	code, reason := runVerifyTargetsWith(targets, req.nvxHome, regs)
+	scriptsOff := ignoreScriptsSource(req.pmCmd, req.pmArgs, req.contain, projectManifestDir())
+	code, reason := runVerifyTargetsWith(targets, req.nvxHome, regs, scriptsOff)
 	return code, reason, targets[0].spec
 }
 
