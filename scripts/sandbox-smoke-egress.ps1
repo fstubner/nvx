@@ -132,9 +132,9 @@ if ($installCode -ne 0 -or $defaultCode -ne 0) {
 # written by this script, so approving it is the intent.
 $env:NVX_YES = "true"
 
-# Can this host create an AppContainer at all? GitHub-hosted Windows runners cannot
-# (see the sibling smoke script). Probe once and skip with that reason, so the
-# environment's limitation is not reported as a product failure.
+# Can this host create an AppContainer at all? GitHub-hosted Windows runners could
+# not until 2026-09-21 (see the sibling smoke script). Probe once and skip with that
+# reason, so a host that refuses is not reported as a product failure.
 $probe = (Invoke-NativeCapture $nvx @('shim', 'node', '-e', 'process.exit(0)')).Output
 if ($probe -match 'AppContainer launch failed') {
     # Only the two shapes a HOST refusal takes, the same narrowed test as

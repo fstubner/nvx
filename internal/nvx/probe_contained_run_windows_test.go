@@ -16,7 +16,9 @@ import (
 // refusal arrives as text on stdout. Three probes written on 2026-09-04 and
 // 2026-09-05 asserted straight through that and called t.Fatalf, which passed
 // locally -- this machine creates AppContainers -- and turned Windows CI red,
-// because GitHub-hosted runners cannot create them at all.
+// because GitHub-hosted runners refused to create them then. They stopped
+// refusing on 2026-09-21 (run 37244525606 launched them); the skip stays for a
+// runner that refuses again.
 //
 // Routing the text back through the same decision keeps the property that
 // decision exists for: a host that CAN create AppContainers and still refused is
