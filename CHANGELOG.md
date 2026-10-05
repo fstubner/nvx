@@ -107,6 +107,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **The release workflow Authenticode-signs `nvx.exe`**, with the Certum
+  certificate netscli uses, before any checksum, attestation or SBOM is made
+  over it. Signing runs in its own job, which holds the Certum credentials and
+  receives only `nvx.exe`, and has no write access to the release. The workflow
+  can be run by hand to build, sign and verify without publishing anything.
+
 * **A failed contained `bun install` outside the system drive says why.** Bun's
   package manager cannot run in the Windows sandbox in a project on a drive other
   than the one Windows is installed on, and printed only `error: An internal error
