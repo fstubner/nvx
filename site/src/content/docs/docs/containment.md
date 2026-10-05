@@ -54,18 +54,21 @@ system.
 | A contained server reachable from the host | Only via `--expose` | Yes | Yes |
 | One named host service reachable from the sandbox | Via `allow_hosts` for proxy-aware clients, or `--connect` | Via `allow_hosts` for proxy-aware clients, or `--connect` except in `offline` | Via `allow_hosts` for proxy-aware clients, or `--connect` |
 
-**What backs the Windows column, and what does not.** Every "measured" above means
-a person ran it on a real Windows machine before a release. **No automated check
-proves that run happened.** Hosted Windows runners refuse to create AppContainer
-children — `CreateProcess` returns "Access is denied" for every executable — so
-the containment probes skip in CI, and a skip is a pass. Since 2026-09-03 CI does
-fail if a probe skips for any reason *other* than that known host limitation,
-which catches a probe that quietly stops running; it cannot substitute for the
-manual gate. The last hand-run gate — `NVX_PROBE=1 go test -race -timeout 40m ./internal/nvx`,
-with a runtime installed and set as the global default — was **492 pass, 6 skip,
-0 fail** on 2026-09-03, the six skips being the ones `CONTRIBUTING.md` names. Weigh
-the Windows column as a person's word plus a reproducible command
-(`CONTRIBUTING.md`), and the Linux and macOS columns as a machine's.
+**What backs the Windows column.** Every "measured" above means a person ran
+it on a real Windows machine before a release. Since 2026-09-21 the Windows
+containment probes also run in CI. Until then hosted Windows runners refused to
+create AppContainer children, because nvx asked for a process flag the runner's
+job forbids, so the probes skipped there. In CI run 37244525606 on 2026-10-04
+the Windows probe step passed 1396 tests and skipped 8, and none of the skips
+was a refused launch. The probes that passed include one project's sandbox
+failing to read another's, a denied secret staying hidden, and only allowlisted
+hosts being reachable through the relay. CI still fails when a probe skips for
+any reason other than a known host limitation. The last hand-run gate,
+`NVX_PROBE=1 go test -race -timeout 40m ./internal/nvx` with a runtime installed
+and set as the global default, was **492 pass, 6 skip, 0 fail** on 2026-09-03,
+the six skips being the ones `CONTRIBUTING.md` names. Not every cell maps to a
+probe CI runs, so weigh the Windows column as a person's word, a reproducible
+command (`CONTRIBUTING.md`), and CI's probe run together.
 
 **What backs the macOS column, as of 2026-08-24.**
 `scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on every CI
