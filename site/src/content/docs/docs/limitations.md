@@ -159,4 +159,9 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   an MCP server launched by an editor fails to start rather than prompting.
 - **The first contained run in a project takes seconds; later ones take a few
   hundred milliseconds.**
-- **Windows may flag nvx as malware, and releases are not Authenticode-signed.**
+- **Windows may still warn about a new nvx download.** Releases from 0.7.0 are
+  Authenticode-signed, but SmartScreen also judges a download by its reputation,
+  which a certificate builds up as people download what it signed, so early
+  signed releases can still show "Windows protected your PC". Defender has also
+  flagged unsigned builds as malware by machine learning, because nvx rewrites
+  permissions and creates sandbox tokens the way some malware does.

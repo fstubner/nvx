@@ -15,7 +15,7 @@ export const installByPlatform: Record<Platform, PlatformInstall> = {
         label: 'PowerShell',
         command: 'irm https://nvx.run/install.ps1 | iex',
       },
-      { label: 'Binary', href: `${RELEASE}/nvx.exe`, hint: 'x64, unsigned, so SmartScreen will ask before it runs.' },
+      { label: 'Binary', href: `${RELEASE}/nvx.exe`, hint: 'x64 and signed. SmartScreen may still ask while the certificate is new.' },
     ],
     desktop: [],
   },
