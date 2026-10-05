@@ -25,7 +25,7 @@ observed behaviour — see ⁵ for which macOS rows are now confirmed against a
 running system and which are not.
 
 **Where the evidence for each column comes from.** Windows is asserted by
-`scripts/sandbox-enforcement-windows.ps1` and ~20 `NVX_PROBE=1` tests run by hand
+`scripts/sandbox-enforcement-windows.ps1` and the `NVX_PROBE=1` tests run by hand
 on a real machine before a release. They also run on a hosted Windows runner in
 CI now (see the CI note below). Linux was confirmed on real Linux on
 2026-09-01 — WSL2, Ubuntu 24.04, kernel 6.18 — rather than on CI's word:
@@ -51,7 +51,7 @@ whether the kernel honours it is not.
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes⁵ (TCP and UDP; UDP refused at bind) |
 | Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
 | Any loopback service reachable | No, unless the policy lists it¹¹, or `network.mode: loopback`¹³ | No, unless the policy lists it, or `network.mode: loopback`¹³ | No⁶ (proxy port only), or `network.mode: loopback`¹³ |
-| One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | Via `--connect` for one run, except in `offline`¹² | Via `--connect` for one run¹² |
+| One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | Via `allow_hosts` for proxy-aware clients, or `--connect` for one run, except in `offline`¹¹ ¹² | Via `allow_hosts` for proxy-aware clients, or `--connect` for one run¹¹ ¹² |
 | Another project's sandbox reachable over loopback | No¹⁰ (per-project package) | No (each has its own netns) | Untested |
 | A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
@@ -273,7 +273,7 @@ names of the directories in your home, though not their contents.
 
 Two things this deliberately does not separate. Sessions in the *same* project
 share one capability, because a project's own tool credentials are in its own trust
-domain. And ancestor directories keep a shared this-folder-only RX grant for
+domain. And ancestor directories keep a shared this-folder-only (X,RA) grant for
 traverse, which lets a sandbox walk *through* a parent without reading what else is
 inside it.
 
@@ -370,7 +370,8 @@ smoke hang.
 `network.mode: open` is the documented opt-out and is the only mode that grants a
 network capability. Setup no longer registers a loopback exemption, and removes an
 existing one, because the relay makes it an access grant with no remaining
-purpose; `nvx setup` is now only about drive-root stat access.
+purpose; `nvx setup` is now only about read and list access to the root of every fixed
+volume and its Users folder.
 
 **A leftover exemption defeats the loopback half of this, and 0.5.0 shipped
 without saying so.** Everything above rests on Windows refusing an AppContainer's
@@ -831,8 +832,8 @@ they date quickly; each carries the date and machine it was taken on.
   isolated home and check permissions, which the shim's own dispatch does not. The first run in a project is slower than the rest, because
   that is when the permission grants are made and remembered.
 
-  Measured on Windows 11: ~2.4s for a project's first contained run, ~390ms for
-  every one after. Re-measured 2026-08-29 on a second Windows 11 machine: 2.9s
+  Measured 2026-08-24 on a Windows 11 machine: ~2.4s for a project's first
+  contained run, ~390ms for every one after. Re-measured 2026-08-29 on a second Windows 11 machine: 2.9s
   first, 785ms steady (median of 8 runs), with the same Node binary taking 58ms
   when run directly. Plan against "a few hundred milliseconds to about a second"
   rather than either figure — the steady state moves by roughly a factor of two

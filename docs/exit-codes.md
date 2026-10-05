@@ -1,7 +1,7 @@
 # Exit codes
 
 `nvx policy check` is meant to gate a pipeline, so it exits with a different code
-for each kind of failure. It is not in v0.6.0 and is coming in the next release.
+for each kind of failure. It ships in v0.7.0.
 
 ## Every other command
 
@@ -12,7 +12,7 @@ for each kind of failure. It is not in v0.6.0 and is coming in the next release.
 | 2    | A usage error, such as an unknown `--shell` value or a bad `nvx setup` flag. |
 | 77   | nvx refused to run the command: a global install it will not contain, a package that failed its pre-install checks, or a sandbox it could not establish (`exitRefused` in `internal/nvx/env.go`). v0.6.0 exits 1 for these. |
 | 127  | The command to run was not found. |
-| 129  | nvx stopped the command because the program that started it had exited (`exitParentHungUp`). |
+| 129  | On Windows, nvx stopped the command because the program that started it had exited (`exitParentHungUp`). |
 
 A wrapped command's own exit code is passed through unchanged, so a contained
 `npm install` that fails exits with npm's code.
@@ -31,8 +31,9 @@ A wrapped command's own exit code is passed through unchanged, so a contained
 | 15   | `policy_file_invalid` | A policy file could not be read or parsed, so no verdict could be reached about the project. |
 
 When more than one class fails, all of them are reported and the exit code is the
-most severe present, in the order of the table: `internal_error` first, then
-`policy_file_invalid`, then down to `sandbox_unavailable`. A run that could not
+most severe present. The order is `internal_error`, `policy_file_invalid`,
+`policy_violation`, `blocked_package`, `vulnerability`, `release_age`, then
+`sandbox_unavailable`. A run that could not
 finish outranks a verdict because it did not reach one; a platform that cannot
 contain is last because it is a property of the machine rather than of the change
 under review.

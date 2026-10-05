@@ -27,6 +27,10 @@ const projectPolicyScaffold = `{
 `
 
 func runPolicyInit(args []string, nvxHome string) int {
+	if wantsHelp(args) {
+		fmt.Print(commandHelpText("policy"))
+		return 0
+	}
 	global := false
 	project := false
 	force := false

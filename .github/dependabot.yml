@@ -6,3 +6,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # The docs site's npm dependencies. Without an entry here Dependabot only
+  # opens security updates for them, one per advisory.
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly

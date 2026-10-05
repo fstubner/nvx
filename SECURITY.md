@@ -104,7 +104,7 @@ and run scripts. Its defenses are layered:
    run inside an OS-native sandbox (Windows AppContainer, Linux Landlock +
    network namespace + seccomp, macOS Seatbelt) with a scrubbed environment and
    filesystem writes confined to the working directory and an ephemeral guest
-   home.
+   home (on macOS also `/dev` and the system temp directories).
 
    That is installs (`install`, `ci`, `add`, `update`, `rebuild`, `dedupe`,
    `audit fix`) and ad-hoc tool runners (`npx`, `bunx`, `npm exec`, `pnpm dlx`,
@@ -572,8 +572,8 @@ timing behind these claims is in `docs/enforcement-matrix.md`.
   listing was refused and called it a Landlock limitation; it was a wrong constant
   in nvx, since fixed.
 
-- **nvx stops a command once the program that started it has exited, and reports
-  exit 129.** It checks every 15 seconds and needs two consecutive observations,
+- **On Windows, nvx stops a command once the program that started it has exited,
+  and reports exit 129.** It checks every 15 seconds and needs two consecutive observations,
   so this lands 15–30 seconds after the parent goes away. It only applies when
   nvx's input is a pipe — the shape a long-lived stdio server is launched with.
 

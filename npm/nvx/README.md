@@ -1,7 +1,8 @@
 # @fstubner/nvx
 
-Contain what your agent installs. nvx runs npm, npx and bun inside an OS
-sandbox, and manages Node.js and Bun versions.
+Contain what your agent installs. nvx runs installs and ad-hoc tool runners
+(npx, bunx) from npm, yarn, pnpm and bun inside an OS sandbox, and manages
+Node.js and Bun versions.
 
 ```sh
 npm install -g @fstubner/nvx

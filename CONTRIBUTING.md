@@ -55,7 +55,7 @@ refuses everything fails it rather than passing:
 |---|---|
 | `sandbox-enforcement-linux.sh` | CI, every build, unprivileged |
 | `sandbox-enforcement-macos.sh` | CI, every build |
-| `sandbox-enforcement-windows.ps1` | **Manually — see below** |
+| `sandbox-enforcement-windows.ps1` | CI, and by hand before a release — see below |
 
 ### Running the Linux probe without a Linux machine
 
@@ -139,8 +139,8 @@ allowlist to make a flaky runner quiet.
 `NVX_PROBE=1` matters as much as the script. Those probes launch real
 AppContainers to check that a sandbox cannot read another project, that a deny
 ACE hides a secret, that one session cannot read another's guest home, and that
-the relay does not expose host loopback services — roughly twenty end-to-end
-containment assertions. They skipped on hosted CI until 2026-09-21 and run
+the relay does not expose host loopback services — end-to-end containment
+assertions. They skipped on hosted CI until 2026-09-21 and run
 there now, so CI and this machine both exercise them.
 
 Expect **0 failures and exactly these 6 top-level skips**. `go test -v` also
