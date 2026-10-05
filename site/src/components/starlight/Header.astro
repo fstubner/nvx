@@ -176,9 +176,9 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 1.15rem;
+      gap: var(--ui-nav-link-gap);
       min-width: 0;
-      font-size: 0.8125rem;
+      font-size: var(--ui-nav-font-size);
       height: var(--sl-nav-height);
       line-height: 1;
     }
@@ -212,13 +212,13 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
      * sits in that margin, negatively inset. */
     .docs-nav-links a.nav-group-start {
       position: relative;
-      margin-inline-start: 1.3rem;
+      margin-inline-start: var(--ui-nav-group-gap);
     }
 
     .docs-nav-links a.nav-group-start::before {
       content: "";
       position: absolute;
-      inset-inline-start: -0.65rem;
+      inset-inline-start: calc((var(--ui-nav-group-gap) + var(--ui-nav-link-gap) + 1px) / -2);
       top: 50%;
       width: 1px;
       height: 18px;
@@ -284,11 +284,6 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
         padding-inline: 1rem;
       }
 
-      .docs-nav-links {
-        gap: 0.75rem;
-        font-size: 0.78rem;
-      }
-
       .docs-header-search {
         flex-basis: 8.75rem;
         width: 8.75rem;
@@ -321,8 +316,6 @@ function linkClass(link: (typeof navLinks)[number], index: number): string | und
 
       .docs-nav-links {
         margin-left: auto;
-        gap: 0.7rem;
-        font-size: 0.76rem;
       }
 
       .docs-header-search {
