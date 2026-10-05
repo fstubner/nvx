@@ -107,6 +107,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **A failed contained `bun install` outside the system drive says why.** Bun's
+  package manager cannot run in the Windows sandbox in a project on a drive other
+  than the one Windows is installed on, and printed only `error: An internal error
+  occurred (EBADF)`. Measured with Bun 1.4.2, `bun install` works on C: and fails on
+  D: and H:. After a failed `bun install`, `add`, `remove`, `update`, `patch` or
+  `pm` in such a project, nvx now adds two lines naming the cause and the two ways
+  out. Those are `nvx --no-sandbox bun ...`, which runs Bun uncontained, or moving
+  the project to the system drive. Bun's fix is in progress as oven-sh/bun#38365.
 * **`nvx setup` covers every fixed drive.** It used to grant only the drives
   holding Windows, your profile, nvx and the current directory, because each
   grant was slow on a large drive. Now that a grant is fast, one run covers them

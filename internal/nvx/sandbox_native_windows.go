@@ -506,6 +506,10 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	if exitCode != 0 && isPackageManagerCommand(config.Command) {
 		remindAboutDriveRoots(config.NvxHome, workDir)
 	}
+	// bun's own error for this is a bare EBADF. See sandbox_bun_ebadf_hint.
+	if exitCode != 0 {
+		noteBunOffSystemDrive(config.Command, config.Args, workDir, exitCode)
+	}
 	return exitCode, nil
 }
 
