@@ -31,14 +31,24 @@ var procGetSystemDirectoryW = modKernel32.NewProc("GetSystemDirectoryW")
 // because an environment variable is one more thing the caller's environment
 // supplies; the API answers from the system itself.
 func systemToolPath(rel string) (string, error) {
+	dir, err := systemDirectory()
+	if err != nil {
+		return "", err
+	}
+	p := filepath.Join(dir, rel)
+	if _, err := os.Stat(p); err != nil {
+		return "", fmt.Errorf("system tool %s: %w", rel, err)
+	}
+	return p, nil
+}
+
+// systemDirectory returns the Windows system directory, `C:\Windows\System32`
+// on a stock install, as the kernel reports it.
+func systemDirectory() (string, error) {
 	buf := make([]uint16, syscall.MAX_PATH)
 	n, _, callErr := procGetSystemDirectoryW.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
 	if n == 0 || n >= uintptr(len(buf)) {
 		return "", fmt.Errorf("GetSystemDirectoryW: %v", callErr)
 	}
-	p := filepath.Join(syscall.UTF16ToString(buf[:n]), rel)
-	if _, err := os.Stat(p); err != nil {
-		return "", fmt.Errorf("system tool %s: %w", rel, err)
-	}
-	return p, nil
+	return syscall.UTF16ToString(buf[:n]), nil
 }
