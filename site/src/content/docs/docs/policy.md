@@ -3,7 +3,11 @@ title: Policy
 description: The global and project policy files, how they merge, and every setting they accept.
 ---
 
-Corporate policies can be defined globally in `~/.nvx/policy.json` and customized per-project via `.nvx-policy.json`:
+Corporate policies can be defined globally in `~/.nvx/policy.json` and customized per-project via `.nvx-policy.json`.
+
+Policies cascade. The global policy applies everywhere, and project policy files merge over it as you get closer to the working directory. The nearest policy wins on conflicting settings, and blocklists, trusted packages and `allow_hosts` are combined. A global policy that sets `"enforced": true` is a baseline. A project file may tighten it, and nvx refuses a project file that loosens it.
+
+An example global policy:
 
 ```json
 {
@@ -48,25 +52,21 @@ Corporate policies can be defined globally in `~/.nvx/policy.json` and customize
 }
 ```
 
-**Not yet implemented.** `prompts.interactive`, `prompts.non_interactive` and
-`prompts.network_unknown` are parsed and merged but nothing reads them, so setting
-any of them does nothing — including tightening one. They were previously shown in
-this example and scaffolded by `nvx policy init`, which made them look effective.
-
-`isolation.filesystem.mode` was in the same state and sat in the example above,
-where `"mode": "strict"` read as a tightening someone had chosen. It was removed
-on 2026-09-05 rather than left inert, so a policy naming it now gets an
-unknown-key warning instead of silence. Prompt behaviour is fixed:
-interactive asks, non-interactive denies, and the two decisions that widen nvx's
-trust boundary ignore `-y`/`NVX_YES` entirely (see [Commands](/docs/commands/#policy-files)).
-
-Policies cascade: the global policy applies everywhere, and local policy files merge over it as you get closer to the working directory (the nearest policy wins on conflicting settings; blocklists and trusted packages are unioned).
+**Prompt behaviour is fixed.** At an interactive terminal nvx asks. With nobody
+to answer, it refuses. A prompt that widens nvx's trust boundary, such as an
+unknown egress host or a project policy that loosens the global one, ignores
+`-y`, `--agent-mode` and `NVX_YES`. Only `NVX_TRUST_YES=true` approves those
+without asking (see [Commands](/docs/commands/#policy-files)). The keys
+`prompts.interactive`, `prompts.non_interactive` and `prompts.network_unknown`
+are accepted and ignored, so setting one changes nothing, even to something
+stricter. `isolation.filesystem.mode` is not a setting, and a policy naming it
+gets an unknown-key warning.
 
 ## Reference
 * **`enforce_ignore_scripts`**: When `true`, nvx refuses to install a package that has hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine. A command that already turns scripts off is not refused, because the package manager runs none of them. That is `--ignore-scripts` on the command line (npm, pnpm, yarn and bun), `npm_config_ignore_scripts=true` in the environment, or `ignore-scripts=true` in the project `.npmrc`. A run inside the sandbox gets no `npm_config_*` variables, so the environment counts only outside it. `--ignore-scripts=false` does not count. The same holds for the install-script prompt, which is not asked when scripts are off. Otherwise the refusal comes before the package manager starts. Name the package in `install_scripts.trusted_packages` to let it through.
 * **Per-check exemptions.** Every install-time check applies to every package
-  until a policy names an exception, and each list waives only its own check —
-  naming a package in one never affects another. Adding an entry to any of them is
+  until a policy names an exception, and each list waives only its own check.
+  Naming a package in one never affects another. Adding an entry to any of them is
   a loosening, so a project file doing it needs approval.
   - **`typosquatting.trusted_packages`**: this name is not a misspelling of a
     popular one. Names and globs.
@@ -74,20 +74,21 @@ Policies cascade: the global policy applies everywhere, and local policy files m
     package. Use it for a package that publishes often and is started
     non-interactively, such as an MCP server.
   - **`install_scripts.trusted_packages`**: run this package's install scripts
-    without asking, and past `enforce_ignore_scripts` — which is how "block
+    without asking, and past `enforce_ignore_scripts`. That is how "block
     install scripts except for these" is written. `esbuild`, `sharp` and
-    Playwright fetch a platform binary in theirs. The sharpest of these
-    exemptions: it is arbitrary code at install time, and every run that uses one
-    says which package it let through.
+    Playwright fetch a platform binary in theirs. This is the sharpest of these
+    exemptions, because it is arbitrary code at install time. Every run that uses
+    one says which package it let through.
   - **`vulnerabilities.allowed_advisories`**: accept an OSV advisory you have
     assessed, by ID. Per advisory rather than per package, so a finding published
     after your assessment still stops the install.
   - **`vulnerabilities.min_severity`**: `low`, `moderate` (or `medium`), `high` or
     `critical`. Advisories below the floor are reported and do not stop the
     install. Unset by default, which stops on every advisory. An advisory nvx
-    could not rate stops the install at every floor — the rating comes from a
-    network lookup, so a failed one must never be why a finding slipped under the
-    line — and an unrecognised value is no floor at all, reported at load time.
+    could not rate stops the install at every floor. The rating comes from a
+    network lookup, and a failed lookup must never be why a finding slipped under
+    the line. An unrecognised value is no floor at all, and is reported at load
+    time.
 * **What the audit log holds for these checks.** Every check above that would
   have prompted is written to `~/.nvx/audit.log`, whether a person answered it,
   `-y`, `--agent-mode` or `NVX_YES` approved it without asking, or nobody was there
@@ -98,12 +99,12 @@ Policies cascade: the global policy applies everywhere, and local policy files m
   and names `-y` and `NVX_YES` last, because they approve every check in the run.
 * **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary). See the [enforcement matrix](https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md) for exact guarantees.
   - `native` (default): AppContainer (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Zero-config, fail-closed.
-  - `docker`: runs in a container (hardened; `offline`/`loopback` enforced via `--network none`). Requires Docker running. Does not carry `--connect`, and says so when asked: the relay needs a process of nvx's inside the sandbox, and this provider launches the target command as the container's only process.
+  - `docker`: runs in a Docker container, hardened, with `offline` and `loopback` enforced via `--network none`. Requires Docker running. Does not carry `--connect`, and says so when asked: the relay needs a process of nvx's inside the sandbox, and this provider launches the target command as the container's only process.
 
   Any other name is an error and stops the run. `wsl`, `wslc` and
-  `systemd-nspawn` have been removed; see the changelog for why.
+  `systemd-nspawn` are not providers.
 * **`isolation.network.mode`**: How egress is governed.
-  - `proxy` (default): parent-process HTTP CONNECT + SOCKS5 proxy with policy allowlist; injects `HTTP_PROXY` / `HTTPS_PROXY`.
+  - `proxy` (default): parent-process HTTP CONNECT + SOCKS5 proxy with policy allowlist. Injects `HTTP_PROXY` / `HTTPS_PROXY`.
   - `open`: no egress filtering.
   - `offline`: no network at all.
   - `loopback`: `proxy` mode with one addition. The services on your own
