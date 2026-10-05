@@ -931,11 +931,7 @@ they date quickly; each carries the date and machine it was taken on.
   Node is unaffected because it holds no such descriptor.
 
   `nvx --no-sandbox` is the escape hatch, which means running Bun **without**
-  containment, so treat what it installs accordingly. npm and yarn run
-  contained.
-
-  Measured 2026-10-04 with Bun 1.4.2, `bun install` works contained on the
-  system drive and fails with a bare `EBADF` on D: and H:. Bun rebuilds a
-  file's path only for that drive ([oven-sh/bun#38365](https://github.com/oven-sh/bun/pull/38365)
-  is the fix). When a contained `bun install`, `add`, `remove`, `update`, `patch`
-  or `pm` fails in a project off the system drive, nvx now names that cause.
+  containment, so treat what it installs accordingly. npm, yarn and pnpm run
+  contained. When a contained `bun install`, `add`, `remove`, `update`,
+  `patch` or `pm` fails in a project off the system drive, nvx names that
+  cause after bun's own error.
