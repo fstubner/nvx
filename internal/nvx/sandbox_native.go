@@ -11,11 +11,37 @@ import (
 	"time"
 )
 
-// usePersistentProfile reports whether a run should use a persistent per-tool
-// guest profile instead of an ephemeral one. ToolName is set (in runShim) only
-// for an approved trusted tool, so its presence is the signal.
-func usePersistentProfile(toolName string) bool {
-	return toolName != ""
+// pnpmStoreProfile names the persistent profile every contained pnpm command
+// in a project shares. An npm package name cannot hold a colon, so no trusted
+// tool's profile can be the same one.
+const pnpmStoreProfile = "nvx:pnpm"
+
+// persistentProfileName returns the name of the persistent per-project guest
+// profile a run uses, or "" when it gets an ephemeral one.
+//
+// A trusted tool gets one so its logins survive. ToolName is set (in runShim)
+// only for an approved trusted tool, so its presence is the signal.
+//
+// pnpm gets one so its package store survives. When the project is on the
+// same volume as the home, pnpm keeps the store in the home and records its
+// path in node_modules/.modules.yaml. Every ephemeral home was a new path, so
+// the next install found a different store and stopped. Measured 2026-10-04
+// with pnpm 10.34.6 on Windows, on the second install in a project on C:
+//
+//	ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY  Aborted removal of modules directory due to no TTY
+//
+// The profile is this project's alone. What a contained pnpm run leaves in it
+// reaches only later contained pnpm runs here, and those already read the
+// project's own .npmrc, .pnpmfile.cjs and node_modules, which the same
+// contained code can write.
+func persistentProfileName(config SandboxConfig) string {
+	if config.ToolName != "" {
+		return config.ToolName
+	}
+	if pm, _ := packageManagerBehind(config.Command, config.Args); strings.EqualFold(pm, "pnpm") {
+		return pnpmStoreProfile
+	}
+	return ""
 }
 
 // runNativeSandbox is the hardened default sandbox: platform-specific OS
@@ -33,9 +59,12 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 	LogDetail("Sandbox session: %s", sandboxID)
 
 	var guestHome string
-	if usePersistentProfile(config.ToolName) {
-		scope := projectScopeDir()
-		guestHome, err = ensurePersistentGuestProfile(config.NvxHome, scope, config.ToolName)
+	profile, scope := persistentProfileName(config), ""
+	if profile != "" {
+		scope = projectScopeDir()
+	}
+	if scope != "" {
+		guestHome, err = ensurePersistentGuestProfile(config.NvxHome, scope, profile)
 		if err != nil {
 			LogError("Failed to create persistent tool profile: %v", err)
 			return sandboxDidNotStart(config, "persistent tool profile could not be created", exitRefused)
@@ -45,7 +74,11 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 		// The lease marks this run as live so the package sweep leaves the
 		// home's profile alone while it runs. See writeSessionLease.
 		defer writeSessionLease(guestHome, sandboxID, time.Now())()
-		LogInfo("%q: using a persistent profile for this project (contained; your real home is untouched).", config.ToolName)
+		if config.ToolName != "" {
+			LogInfo("%q: using a persistent profile for this project (contained; your real home is untouched).", config.ToolName)
+		} else {
+			LogDetail("pnpm: using this project's persistent profile, so its package store is there for the next install: %s", guestHome)
+		}
 	} else {
 		guestHome, err = createGuestProfile(config.NvxHome, sandboxID)
 		if err != nil {
