@@ -137,21 +137,19 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
 - **A contained server needs `--expose` to be reachable from your machine**, and a
   contained tool needs `--connect` to reach a service you are already running.
 - **On Windows, `bun` installs inside the sandbox only in projects on the drive
-  Windows is installed on, and `pnpm` does not install there reliably.** Both
-  ask Windows to turn a file handle back into a drive-letter path
+  Windows is installed on.** bun asks Windows to turn the handle of the
+  project's `package.json` back into a drive-letter path
   (`GetFinalPathNameByHandle`), and Windows refuses that inside an
   AppContainer. The drive letters live in an object directory the system owns,
-  and no file permission reaches it, so `nvx setup` does not help. bun 1.4.2
-  rebuilds the path itself for the Windows drive only, so `bun install` works
-  in a project on `C:` and fails with `EBADF` on any other drive (measured
-  2026-10-04 on `C:`, `D:` and `H:`). pnpm has no such fallback, and a first
-  `pnpm install` with pnpm 10 failed with `EPERM realpath` (measured
-  2026-10-04). Use `--no-sandbox` for those two, or npm or yarn instead, which
-  resolve paths in JavaScript and never ask. A session-local drive letter
-  pointing at the same volume is reachable from inside the container once
-  granted, but the refused call does not fall back to it, as
-  `sandbox_local_drive_probe_windows_test.go` measures. Earlier, on 2026-09-17,
-  pnpm 8.7.5 managed a first install and failed on the second.
+  and no file permission reaches it, so `nvx setup` does not help. bun rebuilds
+  the path itself for the Windows drive only, so `bun install` works in a
+  project on `C:` and fails with `EBADF` on any other drive (measured
+  2026-10-04 with bun 1.4.2 on `C:`, `D:` and `H:`). nvx names the cause after
+  such a failure. Use `nvx --no-sandbox bun install`, which runs it
+  uncontained, or npm, yarn or pnpm instead. The fix belongs in bun, and
+  [oven-sh/bun#38365](https://github.com/oven-sh/bun/pull/38365) would make it.
+  pnpm ran into the same refusal through Node's `realpath`, and nvx now
+  answers it for every contained Node process.
 - **On Windows, `yarn` classic fails in a project under your user profile if you
   have a `~/.yarnrc`.** yarn reads every `.yarnrc` on the way up from the
   project to the drive root, and the sandbox refuses the one in your real home;

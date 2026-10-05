@@ -73,7 +73,7 @@ export const compareRows: ComparisonRow[] = [
   //
   // nvx's ticks on Sandboxed installs and Secrets hidden share one mark and
   // one note below, because each has a platform exception on the limitations
-  // page. The first is pnpm and bun on Windows. The second is reads on macOS.
+  // page. The first is bun on Windows. The second is reads on macOS.
   { feature: 'Sandboxed installs', cells: ['✓*', '—', '—', '—', '—', 'opt-in, not Windows'] },
   { feature: 'Network allowlist', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
   { feature: 'Secrets hidden', cells: ['✓*', '—', '—', '—', '—', 'opt-in, not Windows'] },
@@ -89,6 +89,6 @@ export const compareRows: ComparisonRow[] = [
  *  one tool here that is ahead of nvx on integrity. Writing a competitor's
  *  obituary at length reads as score-settling however true it is. */
 export const compareNoteHtml = [
-  '<p>* With platform exceptions. On Windows, bun installs contained only on the drive Windows is installed on, and pnpm does not install contained reliably. On macOS, a contained install can read files outside the project, though not credential files such as <code>~/.ssh</code>. <a href="/docs/limitations/">Known limitations</a> has the rest.</p>',
+  '<p>* With platform exceptions. On Windows, bun installs contained only on the drive Windows is installed on. On macOS, a contained install can read files outside the project, though not credential files such as <code>~/.ssh</code>. <a href="/docs/limitations/">Known limitations</a> has the rest.</p>',
   "<p>Out-of-the-box defaults, checked against each project on 18 September 2026. volta's maintainers announced in November 2025 that it is unmaintained.</p>",
 ].join('');
