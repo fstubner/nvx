@@ -103,8 +103,9 @@ and run scripts. Its defenses are layered:
 3. **Process isolation** — commands that fetch or execute package-authored code
    run inside an OS-native sandbox (Windows AppContainer, Linux Landlock +
    network namespace + seccomp, macOS Seatbelt) with a scrubbed environment and
-   filesystem writes confined to the working directory and an ephemeral guest
-   home.
+   filesystem writes confined to the working directory and a guest home under
+   `~/.nvx`. The guest home is thrown away after each run, except for pnpm and
+   for tools approved as trusted, which keep one per project.
 
    That is installs (`install`, `ci`, `add`, `update`, `rebuild`, `dedupe`,
    `audit fix`) and ad-hoc tool runners (`npx`, `bunx`, `npm exec`, `pnpm dlx`,

@@ -23,7 +23,7 @@ The shims live in `~/.nvx/project-bin/<project hash>`, not inside the project, a
 
 When running in the sandbox:
 * Environment secrets (e.g. `AWS_*`, `GITHUB_*`, `SSH_*`) are scrubbed.
-* Home and temp paths are virtualized to an ephemeral guest profile.
+* Home and temp paths point into a guest profile under `~/.nvx`, never your real home. It is thrown away after each run, except for pnpm, which keeps one per project so its package store is there for the next install, and for tools you approved as trusted.
 * **Writes** go to the guest profile and the project directory. The project's `.git` is the exception. A contained command can read it and cannot write it, because git runs outside the sandbox and would run a hook or config entry left there as you. Everything else in the project stays writable, `package.json`, `node_modules` and lockfiles included, because an install has to write them.
 * **Filesystem** (`isolation.filesystem`): Windows AppContainer; Linux Landlock + namespaces; macOS Seatbelt.
 * **Network** (`isolation.network.mode: proxy`): egress via loopback proxy with allowlist. An unknown host is asked about at an interactive terminal and refused when nobody can answer. Only `NVX_TRUST_YES=true` approves one without asking. `-y`, `--agent-mode` and `NVX_YES` do not.

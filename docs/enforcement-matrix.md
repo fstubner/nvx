@@ -61,7 +61,9 @@ read system libraries and the dyld shared cache, whose locations vary by macOS
 version (e.g. the Cryptexes firmlink on Apple Silicon) and cannot be enumerated
 reliably; a strict read allowlist breaks process launch. Write containment and
 egress control remain enforced, and environment secrets are scrubbed with `$HOME`
-redirected to an ephemeral guest profile.
+redirected to a guest profile under `~/.nvx`. That profile is thrown away after
+each run, except for pnpm and for tools approved as trusted, which keep one
+profile per project.
 
 The user's credential stores are the exception. After the blanket read allow, the
 profile denies reads of `~/.npmrc`, `~/.yarnrc`, `~/.yarnrc.yml`,
