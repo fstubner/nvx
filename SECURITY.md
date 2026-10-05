@@ -215,16 +215,10 @@ These are deliberate trade-offs, and this section documents each one:
   is no longer recorded.
 
 - **On Windows, a loopback exemption left by a pre-0.5.0 `nvx setup` opens every
-  service on 127.0.0.1** to contained code. That includes local databases,
-  daemon ports and other dev servers, whatever the allowlist says. nvx 0.5.0 never
-  registers one and removes it during `nvx setup`. That command needs an
-  Administrator terminal and is otherwise no longer required, so on an upgraded
-  machine the exemption simply persists. nvx cannot remove it without elevation.
-  It warns on every affected launch and `nvx doctor` reports it, both printing the
-  removal command. While it is registered, treat the egress allowlist as
-  unenforced. Only *direct* connections to other hosts stay blocked. Any
-  reachable loopback service that forwards traffic (a debugging proxy, `ssh -D`,
-  a dev-server proxy route) makes egress arbitrary.
+  service on 127.0.0.1** to contained code, whatever the allowlist says. Treat
+  the egress allowlist as unenforced while it is registered. nvx warns on every
+  affected launch, and `nvx doctor` prints the elevated command that removes it.
+  "Limitations in detail" below has the rest.
 - **Windows egress was not restricted at all before 0.5.0.** Earlier versions
   granted the sandbox the `internetClient` capability *and removed the proxy
   environment variables*. A contained process connected directly and the
@@ -244,27 +238,11 @@ These are deliberate trade-offs, and this section documents each one:
   keychains cannot be read. **Other files outside the project can**, other
   projects included.
 - **Your home directory's names are visible on Windows, contents are not.**
-  A contained process can list your profile directory, which is enough to learn
-  which credential stores exist. The directory carries an ACE Windows ships for
-  all AppContainers, and nvx cannot revoke it.
-
-  `C:\` and `C:\Users` are **not** listable by default. They carry no such ACE.
-  They become listable where an elevated `nvx setup` has run, which grants them
-  so that tools walking up to a drive root work. `nvx setup --undo` removes what
-  nvx added. Measured 2026-08-30 in a real container, with an uncontained control
-  of the same script:
-
-  ```
-                         contained        uncontained
-  LIST[C:\]              DENIED:EPERM     OK, 40 entries
-  LIST[C:\Users]         DENIED:EPERM     OK, 14 entries
-  LIST[C:\Users\you]   OK, 203 entries  OK, 203 entries
-  ```
-
-  This entry used to name all three as always-visible, crediting the shipped ACE
-  for all of them. README and `docs/enforcement-matrix.md` were corrected and this
-  file was missed. That was a partial sweep, which is how the same wrong sentence
-  survives in one place after being fixed in two.
+  A contained process can list your profile directory, which shows which
+  credential stores exist. The entry that allows it ships with Windows, and nvx
+  cannot revoke it. `C:\` and `C:\Users` are listable only where an elevated
+  `nvx setup` has granted them. "Limitations in detail" below has the
+  measurements.
 - **On Windows, a profile folder that lost its inheritance protection is open
   to other accounts.** Windows ships `C:\Users` and each profile folder
   protected from the drive root's `Authenticated Users: Modify`. Older nvx
@@ -394,29 +372,41 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   contained commands start behaving as though two projects are one and doctor is
   quiet, look for a `package.json` above them.
 
-- **A contained process can see directory NAMES outside the project, though not
-  their contents.** On Windows it can list **your home directory**, which is
-  enough to learn that `.ssh`, `.aws` or `.1password` exist. File contents in those places
-  stay unreadable.
+- **A contained process can list the names in your home directory, though not
+  read anything in it.** On Windows that is enough to learn that `.ssh`, `.aws`
+  or `.1password` exist. Measured on 2026-09-05, a contained process enumerated
+  208 entries in `%USERPROFILE%`. `~/.npmrc`, `~/.ssh` and `~/.aws/credentials`
+  were all refused with EPERM. That is reconnaissance value, not access.
 
-  That one comes from Windows, not nvx. Your profile directory carries an ACE for
-  ALL APPLICATION PACKAGES that Windows ships and nvx cannot revoke. Deny rules
-  were measured not to override it.
+  The listing comes from Windows, not nvx. Windows puts
+  `ALL APPLICATION PACKAGES:(RX)` on the profile directory by default, and every
+  AppContainer inherits it. nvx grants the folders above a project traverse
+  only, so it adds nothing here. Deny ACEs are no fix nvx can rely on. On
+  2026-08-18 a deny ACE on a file in the project, `.env`, did not keep a
+  contained process out, for the container's SID or for ALL APPLICATION
+  PACKAGES. A deny on the profile itself has not been tried. It would mean
+  changing a folder nvx does not own.
 
-  `C:\` and `C:\Users` are a separate matter, and this entry used to lump them in
-  with the home directory as though the same ACE covered them. They carry no ALL
-  APPLICATION PACKAGES entry. They are listable only where an elevated
-  `nvx setup` has granted them. It does that so tools walking up to a drive root
-  can work. Measured 2026-08-30 in a real container:
+  `C:\` and `C:\Users` are a separate matter. They carry no ALL APPLICATION
+  PACKAGES entry, and they are listable only where an elevated `nvx setup` has
+  granted them, so that tools walking up to a drive root work. Measured
+  2026-08-30 in a real container, with an uncontained control of the same
+  script:
 
   ```
-  LIST[C:\]            DENIED:EPERM     (OK where setup's grant applies)
-  LIST[C:\Users]       DENIED:EPERM     (OK where setup's grant applies)
-  LIST[C:\Users\you] OK, 203 entries  (always — the shipped ACE)
+                         contained        uncontained
+  LIST[C:\]              DENIED:EPERM     OK, 40 entries
+  LIST[C:\Users]         DENIED:EPERM     OK, 14 entries
+  LIST[C:\Users\you]   OK, 203 entries  OK, 203 entries
   ```
 
-  `nvx setup --undo` removes the grants nvx added. The shipped ACE on your
-  profile stays either way.
+  The first two read OK where setup's grant applies. `nvx setup --undo` removes
+  the grants nvx added. The shipped entry on your profile stays either way.
+
+  This entry used to name all three as always visible, crediting the shipped
+  ACE for all of them. README and `docs/enforcement-matrix.md` were corrected
+  and this file was missed. That was a partial sweep, which is how the same
+  wrong sentence survives in one place after being fixed in two.
 
 - **A contained command run outside any project may start in the sandbox home.**
   A directory with no `package.json` above it becomes the command's writable
@@ -466,21 +456,6 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   the entry. To clean one by hand, run
   `icacls <project> /remove:g *S-1-15-2-...` for each such entry `icacls <project>`
   lists.
-
-- **A contained process can list the names in your home directory, though not
-  read anything in it.** Measured on 2026-09-05, a contained process enumerated
-  208 entries in `%USERPROFILE%`. `~/.npmrc`, `~/.ssh` and `~/.aws/credentials`
-  were all refused with EPERM.
-
-  So credentials stay unreadable, and that part of the claim above holds. Which
-  tools you use is visible, though, from the presence of `.ssh`, `.aws`,
-  `.1password` and the rest. That is reconnaissance value, not access.
-
-  nvx grants ancestors traverse-only precisely to avoid this, and that is not
-  enough. Windows puts `ALL APPLICATION PACKAGES:(RX)` on the profile directory by
-  default. Every AppContainer inherits it regardless of what nvx does. Fixing it
-  would mean an explicit deny ACE on a directory nvx does not own. That is not
-  obviously the right trade and has not been made.
 
 - **A contained command sees almost none of your environment.** Containment keeps
   11 environment variables on Windows (7 elsewhere) and drops the rest. A
