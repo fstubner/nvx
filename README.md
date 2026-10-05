@@ -16,9 +16,10 @@
 
 When a coding agent runs `npm install`, it executes code from strangers with your
 credentials within reach. nvx puts that command inside an OS sandbox with a
-throwaway `HOME`, writes confined to the project and that home (plus the system
-temp directories on macOS), and an allowlist for anything it tries to reach over
-the network. It cannot read `~/.ssh` or `~/.npmrc` either.
+throwaway `HOME` and an allowlist for anything it tries to reach over the
+network. It can write only to the project and that home, and on macOS also to
+the system temp directories. It cannot read `~/.ssh` or `~/.npmrc`
+either.
 On macOS other reads are not contained, and the
 [known limitations](https://nvx.run/docs/limitations/) say so plainly.
 
@@ -76,8 +77,8 @@ nvx --strict npm test    # contain your own code too
 nvx doctor               # check interception and containment
 ```
 
-Full reference: **[Commands](https://nvx.run/docs/commands/)** ·
-**[Policy](https://nvx.run/docs/policy/)**
+The full reference is in **[Commands](https://nvx.run/docs/commands/)** and
+**[Policy](https://nvx.run/docs/policy/)**.
 
 ## Documentation
 
