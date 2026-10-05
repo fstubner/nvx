@@ -26,7 +26,8 @@ running system and which are not.
 
 **Where the evidence for each column comes from.** Windows is asserted by
 `scripts/sandbox-enforcement-windows.ps1` and ~20 `NVX_PROBE=1` tests run by hand
-on a real machine before a release. Linux was confirmed on real Linux on
+on a real machine before a release. They also run on a hosted Windows runner in
+CI now (see the CI note below). Linux was confirmed on real Linux on
 2026-09-01 — WSL2, Ubuntu 24.04, kernel 6.18 — rather than on CI's word:
 `sandbox-enforcement-linux.sh` reported `WRITE_OUTSIDE=DENIED WRITE_INSIDE=ALLOWED
 READ_OUTSIDE=DENIED READ_INSIDE=ALLOWED EGRESS=DENIED`, with `unshare -Urn`
@@ -518,18 +519,27 @@ tests of the argument list, which is not the same thing.
 
 ## CI note
 
-Linux and macOS each run an enforcement probe on a hosted runner of that OS (⁵,
-⁸). Windows is the exception: hosted Windows runners refuse to create
-AppContainer children — `CreateProcess` returns "Access is denied" for every
-executable, including `cmd.exe` — so anything that launches a real contained
-process skips there. That is a limitation of the hosted environment, not of the
-provider, and it is the reason the Windows cells say "measured" rather than "CI".
+Linux, macOS and Windows each run an enforcement probe on a hosted runner of that
+OS (⁵, ⁸). Windows was the exception until 2026-09-21: hosted Windows runners
+refused to create AppContainer children. `CreateProcess` returned "Access is
+denied" for every executable, including `cmd.exe`, so anything that launched a
+real contained process skipped there. The cause was the launch asking Windows for
+`CREATE_BREAKAWAY_FROM_JOB` inside a job that forbids it (PR #52, and the
+CHANGELOG entry about AI agent shells), and the fix let the runner create
+AppContainers.
 
-What still runs on the hosted Windows runner is most of the suite: ACL
-derivation, capability SIDs, profile generation and the syscall wrappers. The
-skips are dominated by the ones that need a live contained child — which is to
-say, exactly the ones that would prove containment. The rest are environmental
-(no staged runtime, a directory that inherits nothing) or deliberate.
+CI run 37244525606 (2026-10-04) shows the result. Its Windows probe step ran the
+whole package with `NVX_PROBE=1` and passed with 8 skips, none of them a refusal
+to launch: two internal helper children, three spikes and prototypes gated behind
+`NVX_IPC_SPIKE=1` or `NVX_PROBE_PROTOTYPES=1`, one check that has nothing to do on
+a machine without a loopback exemption, and two probes whose premise the runner
+does not meet (no access for AppContainers to the user profile, and no permission
+to change the ACL of `C:\Windows\System32\cmd.exe`). In the same run
+`sandbox-enforcement-windows.ps1` and both Windows smoke scripts ran their
+assertions to the end and passed.
+
+That does not make every Windows cell CI-backed. A passing run says the probes
+launched and asserted, and says nothing about a cell no probe asserts.
 
 **For the current numbers, read the run rather than this page.** Every CI run
 prints them in its job summary and in the log as one greppable line:
@@ -544,17 +554,17 @@ NVX_PROBE_COUNTS` gets it, and the job summary shows it without opening a log.
 This page used to quote a count instead, and it rotted twice: it said "441 pass,
 21 skip" describing a run that was 442 and 35, and the later correction could not
 be checked by a reviewer at all, because a developer machine *runs* the probes
-that a hosted runner skips. A number nobody can reproduce is a number that goes
+that a hosted runner then skipped. A number nobody can reproduce is a number that goes
 quietly wrong. The skip reasons are the signal worth reading; the totals are just
 how you notice they changed.
 
-`scripts/sandbox-enforcement-windows.ps1` closes that by hand. It asserts the
-same five outcomes as the Linux probe (writes and reads denied outside, both
-allowed inside, egress denied with an empty allowlist) and is run on a real
-Windows machine before a release; see CONTRIBUTING.md. It is wired into CI as
-well, where it detects the runner's limitation and skips, so that if a future
-image can host an AppContainer it begins asserting without anyone remembering to
-enable it.
+`scripts/sandbox-enforcement-windows.ps1` was the by-hand answer to that. It
+asserts the same five outcomes as the Linux probe (writes and reads denied
+outside, both allowed inside, egress denied with an empty allowlist) and is run
+on a real Windows machine before a release; see CONTRIBUTING.md. It is wired
+into CI as well, where it now runs its assertions. It still detects the two
+refusals a host is known to give and skips, so a runner image that refuses again
+shows up as a skip in the step's log.
 
 Two things it deliberately does not cover. Egress denial there is
 direct-connection only: the AppContainer holds no network capability, so the
@@ -756,9 +766,8 @@ then as a raw connection from a client that knows nothing about HTTP_PROXY, whic
 only arrives if the redirect is carrying it. The same raw client ran earlier under
 the default mode and reported a failure, which is the control: without it, success
 here would equally be what a sandbox with an accidental route out looks like. Windows has unit coverage of the two decisions
-(`TestWindowsLoopbackModeRelaysAndHoldsNoCapability`) and no end-to-end run, which
-is the same standing as every other Windows row here: hosted runners refuse to
-create AppContainer children.
+(`TestWindowsLoopbackModeRelaysAndHoldsNoCapability`) and no end-to-end run of the
+mode itself.
 
 ¹⁴ **The project's `.git` is read-only to contained runs.**
 

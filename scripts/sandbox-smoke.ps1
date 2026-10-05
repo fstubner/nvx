@@ -38,7 +38,8 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 # (STARTF_USESTDHANDLES was never set), and every launch stalled ~45s in the
 # ancestor-grant walk. Both would make a launch here look impossible. Whether the
 # runners can actually host an AppContainer is now decided by trying it, and a
-# failure is reported as a failure.
+# failure is reported as a failure. They refused until the breakaway fix of
+# 2026-09-21 and launch now: run 37244525606 ran this script to its last line.
 #
 # Set NVX_SMOKE_SKIP_APPCONTAINER=1 to opt out deliberately on a host known not to
 # support it -- an explicit choice, rather than a silent one keyed off CI.
@@ -103,11 +104,11 @@ if ($installCode -ne 0 -or $defaultCode -ne 0) {
 
 & $nvx init-shims | Out-Null
 
-# Can this host create an AppContainer at all? GitHub-hosted Windows runners cannot:
-# CreateProcess returns "Access is denied" for every executable, including cmd.exe
-# (measured in CI run 32077425413). Probing once and skipping with that reason keeps
-# the environment's limitation from being reported as a product failure -- while
-# still failing normally everywhere the sandbox does work.
+# Can this host create an AppContainer at all? GitHub-hosted Windows runners could
+# not until 2026-09-21: CreateProcess returned "Access is denied" for every
+# executable, including cmd.exe (measured in CI run 32077425413). Probing once and
+# skipping with that reason keeps a host that refuses from being reported as a
+# product failure -- while still failing normally everywhere the sandbox does work.
 $probe = (Invoke-NativeCapture $nvx @('shim', 'node', '-e', 'process.exit(0)')).Output
 if ($probe -match 'AppContainer launch failed') {
     # Only the two shapes a HOST refusal takes, the same narrowed test as

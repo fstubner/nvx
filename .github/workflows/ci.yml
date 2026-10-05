@@ -64,11 +64,12 @@ jobs:
         # 24, not 20, because scripts/sandbox-smoke-egress.ps1 needs
         # --use-env-proxy to exist: Node core ignores HTTP_PROXY without it, so on
         # an older runtime the allowlisted half of that check can never pass and
-        # the script skipped itself before reaching anything about nvx. It now
-        # skips on the real blocker instead -- hosted Windows runners refusing to
-        # create AppContainer children -- which is the difference between a
-        # misleading reason and a true one. Node 20 is also deprecated on the
-        # runners.
+        # the script skipped itself before reaching anything about nvx. Until the
+        # breakaway fix of 2026-09-21 it skipped on the real blocker instead --
+        # hosted Windows runners refusing to create AppContainer children --
+        # which was a true reason where the Node one was misleading. Those
+        # runners launch them now and the script runs to its last assertion
+        # (run 37244525606). Node 20 is also deprecated on the runners.
         node-version: '24'
 
     - name: Verify dependencies
@@ -107,9 +108,11 @@ jobs:
 
     # These drive a real AppContainer launch end to end (piped stdio through a real
     # pipe, an unelevated package-manager run). They were written behind NVX_PROBE=1
-    # because they mutate ACLs and create a throwaway profile. Running them here is
-    # what turns "hosted runners cannot host an AppContainer" from an assumption into
-    # a measurement -- if it is true, this step says so with a real error.
+    # because they mutate ACLs and create a throwaway profile. Running them here
+    # turned "hosted runners cannot host an AppContainer" from an assumption into a
+    # measurement. It held until the breakaway fix of 2026-09-21 and does not now:
+    # run 37244525606 had 8 skips, none of them a refusal to launch. If a runner
+    # image refuses again, this step says so with a real error.
     - name: Windows AppContainer probes
       if: matrix.os == 'windows-latest'
       shell: pwsh
@@ -203,9 +206,12 @@ jobs:
 
         # Linux fails outright when a privileged containment test skips, because
         # there the environment can be fixed (a sysctl) and a skip means a real
-        # hole. Windows cannot: hosted runners refuse to create AppContainer
-        # children, so that one skip is a standing fact about the runner, not a
-        # regression. Every OTHER skip reason is a regression -- a probe that
+        # hole. Windows differs for one reason: a runner that refuses to create
+        # AppContainer children is a skip, not a regression. Hosted runners
+        # refused until 2026-09-21 and launch them now (run 37244525606). The
+        # tolerance stays, so a runner image that refuses again shows up as a
+        # skip with a stated reason, not a red step. Every OTHER skip reason is
+        # a regression -- a probe that
         # stopped running because a premise check fired, a runtime went missing,
         # or someone added a gate nobody reads. Those used to be invisible: the
         # step exited on go test's code, and a skip is exit 0.

@@ -109,8 +109,8 @@ func TestAppContainerCanConnectToAParentCreatedNamedPipe(t *testing.T) {
 			//
 			// A pending blocking ConnectNamedPipe makes CloseHandle wait for I/O that
 			// will never complete. On a host that refuses AppContainer children -- every
-			// GitHub-hosted Windows runner -- requireAppContainerLaunch skips below, the
-			// deferred close then blocked, and the whole package hit Go's 10-minute
+			// GitHub-hosted Windows runner until 2026-09-21 -- requireAppContainerLaunch
+			// skips below, the deferred close then blocked, and the whole package hit Go's 10-minute
 			// timeout: 9m39s in this one subtest. Cancelling only on the success path
 			// was the bug.
 			defer func() {

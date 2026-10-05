@@ -14,9 +14,9 @@ import (
 //
 // requireAppContainerLaunch skips on two refusal texts, "Access is denied" and
 // "The system cannot find the file specified", because GitHub-hosted Windows
-// runners produce them for every executable including cmd.exe. That reasoning is
-// sound for a host that can never create an AppContainer. It is wrong for a host
-// that normally can and just failed -- and the second text is exactly what
+// runners produced them for every executable including cmd.exe until 2026-09-21.
+// That reasoning is sound for a host that can never create an AppContainer. It
+// is wrong for a host that normally can and just failed -- and the second text is exactly what
 // CreateProcess returns on a developer machine that has run out of commit charge.
 //
 // The cost of not telling those apart was measured, not imagined: a run of the

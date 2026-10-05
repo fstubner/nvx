@@ -102,11 +102,13 @@ func TestRelayDoesNotExposeHostLoopbackServices(t *testing.T) {
 
 	sock := windowsEgressSocketPath(guestHomeSocketPrefix(guestHome))
 	if err := proxy.ListenUnix(sock); err != nil {
-		// GitHub-hosted Windows runners cannot create AF_UNIX sockets at all
-		// ("An operation was attempted on something that is not a socket"). That
-		// is an environment limitation, not a product failure, and every other
-		// probe here skips on the equivalent -- this one used to fail the build
-		// instead, which reports the runner's shape as a defect in nvx.
+		// A hosted Windows runner failed to create AF_UNIX sockets on 2026-09-03
+		// ("An operation was attempted on something that is not a socket"; see
+		// CONTRIBUTING.md). Run 37244525606 created them and this probe passed,
+		// so the skip is for a runner that cannot. That is an environment
+		// limitation, not a product failure, and every other probe here skips on
+		// the equivalent -- this one used to fail the build instead, which
+		// reports the runner's shape as a defect in nvx.
 		t.Skipf("this host cannot create AF_UNIX sockets, so the relay cannot be exercised: %v", err)
 	}
 
