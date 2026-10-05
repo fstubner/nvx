@@ -56,14 +56,16 @@ An example global policy:
 to answer, it refuses. A prompt that widens nvx's trust boundary, such as an
 unknown egress host or a project policy that loosens the global one, ignores
 `-y`, `--agent-mode` and `NVX_YES`. Only `NVX_TRUST_YES=true` approves those
-without asking (see [Commands](/docs/commands/#policy-files)). The keys
+without asking (see [Commands](/docs/commands/#policy-files)).
+
+The keys
 `prompts.interactive`, `prompts.non_interactive` and `prompts.network_unknown`
 are accepted and ignored, so setting one changes nothing, even to something
 stricter. `isolation.filesystem.mode` is not a setting, and a policy naming it
 gets an unknown-key warning.
 
 ## Reference
-* **`enforce_ignore_scripts`**: When `true`, nvx refuses to install a package that has hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine. A command that already turns scripts off is not refused, because the package manager runs none of them. That is `--ignore-scripts` on the command line (npm, pnpm, yarn and bun), `npm_config_ignore_scripts=true` in the environment, or `ignore-scripts=true` in the project `.npmrc`. A run inside the sandbox gets no `npm_config_*` variables, so the environment counts only outside it. `--ignore-scripts=false` does not count. The same holds for the install-script prompt, which is not asked when scripts are off. Otherwise the refusal comes before the package manager starts. Name the package in `install_scripts.trusted_packages` to let it through.
+* **`enforce_ignore_scripts`**: When `true`, nvx refuses to install a package that has hook scripts (`preinstall`/`postinstall`/`install`). Supply chain attacks use these heavily to download and execute arbitrary binaries on the host machine. A command that already turns scripts off is not refused, because the package manager runs none of them. That is `--ignore-scripts` on the command line (npm, pnpm, yarn and bun), `npm_config_ignore_scripts=true` in the environment, or `ignore-scripts=true` in the project `.npmrc`. A run inside the sandbox gets no `npm_config_*` variables, so the environment counts only outside it. `--ignore-scripts=false` does not count. The same holds for the install-script prompt, which is not asked when scripts are off. Otherwise the refusal comes before the package manager starts. Name the package in `install_scripts.trusted_packages` to let it through.
 * **Per-check exemptions.** Every install-time check applies to every package
   until a policy names an exception, and each list waives only its own check.
   Naming a package in one never affects another. Adding an entry to any of them is
@@ -80,8 +82,8 @@ gets an unknown-key warning.
     exemptions, because it is arbitrary code at install time. Every run that uses
     one says which package it let through.
   - **`vulnerabilities.allowed_advisories`**: accept an OSV advisory you have
-    assessed, by ID. Per advisory rather than per package, so a finding published
-    after your assessment still stops the install.
+    assessed, by ID. The exemption is per advisory, so a finding published after
+    your assessment still stops the install.
   - **`vulnerabilities.min_severity`**: `low`, `moderate` (or `medium`), `high` or
     `critical`. Advisories below the floor are reported and do not stop the
     install. Unset by default, which stops on every advisory. An advisory nvx
@@ -90,7 +92,7 @@ gets an unknown-key warning.
     the line. An unrecognised value is no floor at all, and is reported at load
     time.
 * **What the audit log holds for these checks.** Every check above that would
-  have prompted is written to `~/.nvx/audit.log`, whether a person answered it,
+  have prompted is written to `~/.nvx/audit.log`. That holds whether a person answered it,
   `-y`, `--agent-mode` or `NVX_YES` approved it without asking, or nobody was there
   and it was refused. `nvx audit` shows these as `check_approved` and
   `check_refused`, with the check, the package and who answered. They are written
@@ -98,25 +100,25 @@ gets an unknown-key warning.
   line to stderr. A refusal prints the policy line that settles that one check,
   and names `-y` and `NVX_YES` last, because they approve every check in the run.
 * **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary). See the [enforcement matrix](https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md) for exact guarantees.
-  - `native` (default): AppContainer (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Zero-config, fail-closed.
-  - `docker`: runs in a Docker container, hardened, with `offline` and `loopback` enforced via `--network none`. Requires Docker running. Does not carry `--connect`, and says so when asked: the relay needs a process of nvx's inside the sandbox, and this provider launches the target command as the container's only process.
+  - `native` (default) uses AppContainer (Windows), Landlock + namespaces (Linux) or Seatbelt (macOS). Zero-config, fail-closed.
+  - `docker`: runs in a Docker container, hardened, with `offline` and `loopback` enforced via `--network none`. Requires Docker running. Does not carry `--connect`, and says so when asked. The relay needs a process of nvx's inside the sandbox, and this provider launches the target command as the container's only process.
 
   Any other name is an error and stops the run. `wsl`, `wslc` and
   `systemd-nspawn` are not providers.
 * **`isolation.network.mode`**: How egress is governed.
-  - `proxy` (default): parent-process HTTP CONNECT + SOCKS5 proxy with policy allowlist. Injects `HTTP_PROXY` / `HTTPS_PROXY`.
+  - `proxy` (default) uses a parent-process HTTP CONNECT + SOCKS5 proxy with a policy allowlist. Injects `HTTP_PROXY` / `HTTPS_PROXY`.
   - `open`: no egress filtering.
   - `offline`: no network at all.
   - `loopback`: `proxy` mode with one addition. The services on your own
-    127.0.0.1 are reachable at their own addresses, over any TCP protocol, and
-    allowlisted remote hosts stay reachable through the proxy. On Windows the
+    127.0.0.1 are reachable at their own addresses, over any TCP protocol.
+    Allowlisted remote hosts stay reachable through the proxy. On Windows the
     loopback reach covers proxy-aware tools' HTTP and HTTPS traffic only, since
     it comes from nvx's proxy. Selecting it in a project policy is a loosening and
     needs approval.
 * **`runtime.versions`**: Pin runtime versions used inside the sandbox (e.g. `"node": "20"`). Inside the sandbox this pin comes before the project's `.nvmrc` or other version file, which comes before the global default. See [which version a command runs](/docs/commands/#which-version-a-command-runs).
-* **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project (`<project>/.nvx/npm_global`) instead of being shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch. Because that directory goes on your PATH, a project file that turns this on counts as a loosening and needs the same approval as an egress host.
+* **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project (`<project>/.nvx/npm_global`) instead of being shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch. That directory goes on your PATH, so a project file that turns this on counts as a loosening. It needs the same approval as an egress host.
 
-Override filesystem provider per shim: `npm --filesystem-provider=docker install`.
+To override the filesystem provider per shim, run `npm --filesystem-provider=docker install`.
 
 ## Corporate networks
 
@@ -132,7 +134,9 @@ The contained npm also needs the registry's host in
 If the registry needs a token to read package metadata, nvx sends the
 `//host/:_authToken=` value from your `.npmrc` with its own request. That request
 runs outside the sandbox. The token is not put in the sandbox's environment or
-written to any log. `${VAR}` in `.npmrc` is filled in from nvx's environment, as
+written to any log.
+
+`${VAR}` in `.npmrc` is filled in from nvx's environment, as
 npm does. Only `_authToken` is read. Without a token, a 401 or 403 counts as a
 lookup that failed. nvx asks before going on, and refuses when nobody can answer.
 
@@ -145,8 +149,8 @@ lookup that failed. nvx asks before going on, and refuses when nobody can answer
 | `api.osv.dev` | The advisory scan, for public-registry packages | Each name and version |
 | `cdn.jsdelivr.net` | Refreshing the popular-package list, once the cached copy is 7 days old | Nothing about your project |
 
-The typosquat check runs on the names you chose: the packages named on the
-command line, or with none named, the dependencies in `package.json`. A
+The typosquat check runs on the names you chose. Those are the packages named
+on the command line or, with none named, the dependencies in `package.json`. A
 dependency that came in with one of them was named by its author and is not
 looked up. Each name is looked up once per run.
 
@@ -159,7 +163,9 @@ records it as `check_skipped` with `check` set to `public_registry_checks`.
 `HTTP_PROXY` without it, the egress proxy sends each connection the allowlist
 permits through that proxy as a CONNECT tunnel. A user and password in the URL
 become its `Proxy-Authorization` header. Hosts in `NO_PROXY` and loopback
-destinations are dialled directly. The allowlist decides first, in nvx, so a
+destinations are dialled directly.
+
+The allowlist decides first, in nvx, so a
 host it refuses is never sent to your proxy. The contained process sees only
 nvx's proxy, never yours or its credentials. nvx's own requests, such as the
 checks above and runtime downloads, use your proxy as any Go program does.

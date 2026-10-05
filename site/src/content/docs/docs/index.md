@@ -27,8 +27,8 @@ You do not change how you type anything. nvx puts shims on `PATH`, so
 Before an install runs, nvx checks what it is about to fetch.
 
 - **Typosquats.** The names you chose, on the command line or as the project's
-  direct dependencies, are compared with a list of popular packages, and the
-  npm download counts tell a lookalike apart from a real package with a similar
+  direct dependencies, are compared with a list of popular packages. The npm
+  download counts tell a lookalike apart from a real package with a similar
   name. Packages that arrive as dependencies of others were named by their
   authors, so they skip this check and get the others.
 - **Known vulnerabilities.** Direct installs, `npx`-style tool runs and the
@@ -66,8 +66,8 @@ None of them certifies a package, which is why containment is the backstop.
   too.
 
 :::caution[Read the enforcement matrix before relying on any of this]
-Guarantees differ by platform, and some rows are measured while others are read
-off a generated profile. The
+Guarantees differ by platform. Some rows are measured and others are read off a
+generated profile. The
 [enforcement matrix](https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md)
 states which is which, and where the evidence for each column came from.
 :::

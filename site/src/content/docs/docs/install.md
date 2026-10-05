@@ -11,7 +11,7 @@ description: Install nvx on Windows, macOS or Linux, and check that it worked.
 - **Linux** on x86_64 or arm64. The sandbox needs kernel 5.13 or later with
   Landlock enabled and unprivileged user namespaces. The network allowlist also
   needs the `ip` command from iproute2. When one is missing, contained commands
-  refuse to run rather than run uncontained.
+  refuse to run, so nothing runs uncontained.
 
 nvx is one static binary and needs nothing installed alongside it.
 
@@ -22,7 +22,7 @@ irm https://nvx.run/install.ps1 | iex
 ```
 
 Releases from 0.7.0 are Authenticode-signed. SmartScreen also judges a download
-by its reputation, which a certificate builds up as people download what it
+by its reputation. A certificate builds that up as people download what it
 signed, so early signed releases can still show "Windows protected your PC".
 Defender has also flagged unsigned builds as malware by machine learning,
 because nvx rewrites permissions and creates sandbox tokens the way some malware
@@ -60,7 +60,7 @@ repairs what it safely can.
 - Adds the shell integration to your profile. That is what makes `nvx use`
   affect your shell and what switches `PATH` on `cd`. Without it the shims still
   run the version each project pins, and `nvx use` does nothing.
-  - `install.sh` adds a three-line block: a comment, a line putting
+  - `install.sh` adds a three-line block. It holds a comment, a line putting
     `~/.nvx/bin` on `PATH`, and `eval "$(nvx env)"`. For bash it writes the
     block to `~/.bashrc` and to your login profile, for zsh to `~/.zshrc`, and
     otherwise to `~/.profile`. For fish it writes its own file,
@@ -89,8 +89,9 @@ npm install -g @fstubner/nvx
 ```
 
 It is not yet published to winget, Scoop or Homebrew. The other route is a
-binary. Every release attaches one per platform with a SHA-256 sidecar, for
-Windows x64, macOS on Apple silicon and Intel, and Linux on x86_64 and arm64.
+binary. Every release attaches one per platform, each with a SHA-256 sidecar.
+The platforms are Windows x64, macOS on Apple silicon and Intel, and Linux on
+x86_64 and arm64.
 
 ## Verify a download
 
@@ -128,7 +129,7 @@ On Windows:
 
 That prints `True` when they match. When the GitHub CLI is installed, signed in
 and 2.49 or newer, `install.sh` and `install.ps1` run the attestation check on
-the download before they install it, and stop if it fails. Without it they say
+the download before they install it. They stop if it fails. Without it they say
 the check was skipped and print the command to run.
 
 ## From source
@@ -150,8 +151,8 @@ does and which hosts nvx contacts.
 ## Uninstall
 
 1. If you ever ran `nvx setup` on Windows, run `nvx setup --undo` from an
-   Administrator terminal to remove the drive-root and `Users` folder grants it
-   added.
+   Administrator terminal. That removes the drive-root and `Users` folder
+   grants it added.
 2. Run `nvx grants reset --all` to withdraw the read and execute permissions
    granted for `allow_read_exec` entries, and to forget approved grants.
 3. Delete `~/.nvx`.

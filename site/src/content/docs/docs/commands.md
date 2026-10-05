@@ -28,8 +28,8 @@ terminal, an IDE task, a git hook or CI. The first of these that applies wins:
 1. Inside the sandbox, the policy's `runtime.versions` pin.
 2. The version this shell has active from `nvx use` or the shell integration.
 3. The version the project asks for in `.nvmrc`, `.node-version`,
-   `.bun-version` or `package.json`, read from the current directory or the
-   nearest one above it, up to your home directory. It has to be installed. The
+   `.bun-version` or `package.json`. The shim looks for it in the current
+   directory or the nearest one above it, up to your home directory. It has to be installed. The
    shim never downloads anything. When the version is missing it runs the
    default and prints the `nvx install` command that adds it.
 4. The global default from `nvx default`.
@@ -113,7 +113,7 @@ global list instead of adding to it, which drops the registry and OSV hosts
 unless you list them again.
 
 :::caution[A policy that widens the sandbox needs your approval]
-A project file lives in a repository, so one line in a pull request could
+A project file lives in a repository. One line in a pull request could
 otherwise hand a contained install a new destination. nvx refuses to honour a
 widening policy until it is trusted for that project. `-y`, `--agent-mode`
 and `NVX_YES` deliberately do not count, because an agent will answer yes to
@@ -234,7 +234,7 @@ Examples:
 ## Exit codes
 
 `0` means the command worked. A non-zero code from `nvx doctor` means something
-needs attention rather than that doctor itself failed, and a contained command
+needs attention. It does not mean doctor itself failed. A contained command
 propagates whatever the wrapped program exited with. `77` means nvx refused to
 run the command, for example a package that failed its pre-install checks.
 `nvx policy check` has a code of its own for each kind of failure, and

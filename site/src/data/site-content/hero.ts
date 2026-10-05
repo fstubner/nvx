@@ -14,7 +14,7 @@ export const hero: Hero = {
   releaseLink: '/changelog/',
   heading: 'Node.js and Bun versions, with a sandbox around every install',
   subhead:
-    'Install and switch runtimes, and nvx follows the version each project pins when you enter its folder. Installs from npm, yarn, pnpm and bun, and tools started with npx or bunx, run inside an OS sandbox that limits where they can write and blocks hosts you did not allow.',
+    'Install and switch runtimes, and nvx follows the version each project pins when you enter its folder. Installs from npm, yarn, pnpm and bun, and tools started with npx or bunx, run inside an OS sandbox. It limits where they can write and blocks hosts you did not allow.',
   quickInstall: 'irm https://nvx.run/install.ps1 | iex',
   quickInstallAlt: 'curl -fsSL https://nvx.run/install.sh | sh',
   installLinkLabel: 'More install options ↓',

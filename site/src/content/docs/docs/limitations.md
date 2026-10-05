@@ -14,7 +14,7 @@ and the evidence for each platform is in the
   `node` run uncontained at the `standard` level, so a compromised dependency your
   own code imports is not sandboxed. A contained install can therefore influence a
   later uncontained command, because the project's own files are writable by
-  design: `package.json` and its scripts, `node_modules`, lockfiles, build config,
+  design. Those include `package.json` and its scripts, `node_modules`, lockfiles, build config,
   and hook folders kept in the project such as `.husky`. The one exception is
   `.git`, which contained runs can read and cannot write.
   `isolation.level: strict` contains those commands, at the cost of breaking
@@ -25,8 +25,8 @@ and the evidence for each platform is in the
 - **Only an `http://` upstream proxy is used.** An `https://` or `socks5://`
   value in `HTTPS_PROXY` is ignored with a warning, and contained connections
   are then made directly. Behind a proxy, a host nvx's own resolver cannot look
-  up is still reachable when the allowlist names it, and it cannot be approved
-  at the prompt.
+  up is still reachable when the allowlist names it. Such a host cannot be
+  approved at the prompt.
 - **The Docker provider cannot do `proxy` mode.** A policy that selects
   `isolation.filesystem.provider: docker` with the default `network.mode: proxy`
   is refused. Docker runs `offline` and `loopback` with no network at all, and
@@ -53,16 +53,16 @@ and the evidence for each platform is in the
 - **`yarn` classic fails in a project under your user profile if you have a
   `~/.yarnrc`.** yarn reads every `.yarnrc` on the way up from the project to the
   drive root. The sandbox refuses the one in your real home, and yarn treats that
-  refusal as fatal. Projects outside the profile are fine. Measured 2026-09-17
-  with yarn 1.22.19.
+  refusal as fatal. Projects outside the profile are fine. Measured with yarn
+  1.22.19.
 - **A contained server needs `--expose` to be reachable from your machine.**
   Windows refuses connections into an AppContainer from outside it.
 - **A contained process cannot create a pipe.** nvx brokers synchronous and
   streaming capture. `child_process.fork` is refused outright, and the error
   names `--no-sandbox`.
 - **A background process your own code started ends with nvx if nvx is stopped
-  before the command finishes**, for example when the program that started nvx
-  exits. A command that finishes on its own leaves it running.
+  before the command finishes.** That happens, for example, when the program that
+  started nvx exits. A command that finishes on its own leaves it running.
 
 ## macOS
 
@@ -101,13 +101,13 @@ and the evidence for each platform is in the
 ## Checks and registries
 
 - **Detection is best-effort.** Typosquat and vulnerability checks reduce risk
-  without certifying a package. Containment is the backstop, not the checks.
+  without certifying a package. Containment is the backstop.
 - **Dependencies are checked for npm installs, and not for everything.** For
   `npm install`, `npm update` and `npm dedupe`, nvx asks npm which packages it
   will install and checks all of them. `npm ci` checks every entry of
   `package-lock.json` for this platform. The other commands are checked on the
   packages they name, the entries of `package-lock.json`, or the versions
-  `package.json` declares, and the dependencies those bring in are not checked.
+  `package.json` declares. The dependencies those bring in are not checked.
   That is `npx`, `npm exec`, `npm create` and `npm init`, every pnpm, yarn and
   bun command, and npm projects that use workspaces or depend on a local folder.
   pnpm, yarn and bun lockfiles are not read.
@@ -119,12 +119,12 @@ and the evidence for each platform is in the
   advisory check.** Both ask a public service about a package by name, so nvx
   does not send them a private name. A registry that proxies the public one,
   such as an Artifactory or Nexus virtual repository, counts as another
-  registry, so these two checks do not run for anything it serves. The
+  registry. These two checks do not run for anything it serves. The
   blocklist, release-age, install-script and lockfile checks still run against
   that registry's metadata. Each run that skips them says so once.
 - **A contained npm reads only the project's `.npmrc`.** It gets a fresh home
-  and none of your `npm_config_*` variables, so a registry or scope set in
-  `~/.npmrc` does not apply inside the sandbox, and nvx checks those packages
+  and none of your `npm_config_*` variables. So a registry or scope set in
+  `~/.npmrc` does not apply inside the sandbox. nvx checks those packages
   against the registry the contained npm will actually use. Put the registry in
   the project's `.npmrc` and its host in `isolation.network.allow_hosts`. Your
   `_authToken` never reaches the sandbox either, so a registry that needs one
@@ -140,8 +140,8 @@ and the evidence for each platform is in the
   only resolves versions, contained, so each package can be checked before the
   second run installs it. An `npm install` whose lockfile already matches
   `package.json`, and `npm ci`, run npm once.
-- **A package published in the last 24 hours is held** for your approval, so an
-  MCP server launched by an editor fails to start rather than prompting.
+- **A package published in the last 24 hours is held** for your approval. An
+  MCP server launched by an editor cannot prompt, so it fails to start.
 - **A contained command sees almost none of your environment.** A tool reading
   `CI` or `NODE_ENV` changes behaviour without erroring. nvx names the variables
   it drops, and `isolation.environment.allow` keeps the ones a project needs.

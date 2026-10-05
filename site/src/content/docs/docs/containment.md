@@ -13,9 +13,11 @@ npm run dev
 node server.js
 ```
 
-Use `nvx --no-sandbox <command>` to bypass isolation for one command. The flag must come *before* the command. **All three containment flags (`--no-sandbox`, `--standard`, `--strict`) work only in that leading position.** Written after the command they belong to the command: nvx notices them, tells you they did not apply, and passes them through untouched. That is deliberate in both directions. A package's own arguments must not be able to turn the sandbox off around itself, and nvx must not quietly reinterpret a word that belongs to another tool. `nvx tsc --strict` passes `--strict` to TypeScript, whose flag it is.
+Use `nvx --no-sandbox <command>` to bypass isolation for one command. The flag must come *before* the command. **All three containment flags (`--no-sandbox`, `--standard`, `--strict`) work only in that leading position.**
 
-After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh **project bin shims**. These route `node_modules/.bin` tools (e.g. `vite`, `eslint`) through nvx, so they use the pinned runtime and are audited. They are **not** contained at the default `standard` level, because a local CLI is code your project chose to install, which nvx classifies the same as your own code. `isolation.level: strict` contains them too.
+Written after the command, they belong to the command. nvx notices them, tells you they did not apply, and passes them through untouched. That is deliberate in both directions. A package's own arguments must not be able to turn the sandbox off around itself. nvx must not quietly reinterpret a word that belongs to another tool. `nvx tsc --strict` passes `--strict` to TypeScript, whose flag it is.
+
+After `npm install`, run `nvx init-shims` (or any npm/yarn/pnpm shim) to refresh **project bin shims**. These route `node_modules/.bin` tools (e.g. `vite`, `eslint`) through nvx, so they use the pinned runtime and are audited. They are **not** contained at the default `standard` level. A local CLI is code your project chose to install, and nvx classifies it the same as your own code. `isolation.level: strict` contains them too.
 
 The shims live in `~/.nvx/project-bin/<project hash>`, not inside the project, and a name that already resolves elsewhere on your `PATH` is never shimmed. Both rules exist because this directory sits ahead of System32 on your interactive `PATH`. Inside the project, a contained install could write a `git` there and have your next `git` run it uncontained. The cost is that a global tool of the same name now wins over the project-local one through nvx. `npx <tool>` still runs the local one.
 
@@ -23,14 +25,14 @@ The shims live in `~/.nvx/project-bin/<project hash>`, not inside the project, a
 
 When running in the sandbox:
 * Environment secrets (e.g. `AWS_*`, `GITHUB_*`, `SSH_*`) are scrubbed.
-* Home and temp paths point into a guest profile under `~/.nvx`, never your real home. It is thrown away after each run, except for pnpm, which keeps one per project so its package store is there for the next install, and for tools you approved as trusted.
-* **Writes** go to the guest profile and the project directory. On macOS the system temp folders (`/private/tmp`, `/private/var/tmp` and `/private/var/folders`) and `/dev` are writable as well. The project's `.git` is the exception. A contained command can read it and cannot write it, because git runs outside the sandbox and would run a hook or config entry left there as you. Everything else in the project stays writable, `package.json`, `node_modules` and lockfiles included, because an install has to write them.
-* **Filesystem** (`isolation.filesystem`): Windows AppContainer, Linux Landlock with namespaces, macOS Seatbelt.
-* **Network** (`isolation.network.mode: proxy`): egress via loopback proxy with allowlist. An unknown host is asked about at an interactive terminal, for that run only, and refused when nobody can answer. Only `NVX_TRUST_YES=true` approves one without asking. `-y`, `--agent-mode` and `NVX_YES` do not. On Windows the sandbox holds no network capability at all. The OS refuses direct connections, DNS does not resolve, and the only route out is nvx's proxy, reached over a UNIX socket. No elevation is required. `network.mode: open` opts out.
+* Home and temp paths point into a guest profile under `~/.nvx`, never your real home. It is thrown away after each run. The exceptions are pnpm, which keeps one per project so its package store is there for the next install, and tools you approved as trusted.
+* **Writes** go to the guest profile and the project directory. On macOS the system temp folders (`/private/tmp`, `/private/var/tmp` and `/private/var/folders`) and `/dev` are writable as well. The project's `.git` is the exception. A contained command can read it and cannot write it. Git runs outside the sandbox, so a hook or config entry left there would run as you. Everything else in the project stays writable, `package.json`, `node_modules` and lockfiles included, because an install has to write them.
+* **Filesystem** (`isolation.filesystem`). Windows uses AppContainer, Linux uses Landlock with namespaces, and macOS uses Seatbelt.
+* **Network** (`isolation.network.mode: proxy`). Egress goes through a loopback proxy with an allowlist. An unknown host is asked about at an interactive terminal, for that run only, and refused when nobody can answer. Only `NVX_TRUST_YES=true` approves one without asking. `-y`, `--agent-mode` and `NVX_YES` do not. On Windows the sandbox holds no network capability at all. The OS refuses direct connections, DNS does not resolve, and the only route out is nvx's proxy, reached over a UNIX socket. No elevation is required. `network.mode: open` opts out.
 
 ## Non-interactive use (CI)
 
-Security prompts (vulnerability warnings, install script confirmations, typosquatting alerts) **fail closed** when no interactive terminal is available. The operation is denied rather than silently approved. In CI pipelines, set `NVX_YES=true` to approve these prompts explicitly. It does not approve a new egress host or a widening project policy. For direct `nvx` commands, leading `-y` / `--yes` is also supported. Package-manager flags after a shim command are forwarded to the package manager.
+Security prompts (vulnerability warnings, install script confirmations, typosquatting alerts) **fail closed** when no interactive terminal is available. The operation is denied. In CI pipelines, set `NVX_YES=true` to approve these prompts explicitly. It does not approve a new egress host or a widening project policy. For direct `nvx` commands, leading `-y` / `--yes` is also supported. Package-manager flags after a shim command are forwarded to the package manager.
 
 ## Verification matrix
 
@@ -55,12 +57,14 @@ means the generated policy says so and nothing has tested the running system.
 
 **What backs the Windows column.** Every "measured" above means a person ran
 it on a real Windows machine before a release. The Windows containment probes
-also run in CI on a hosted Windows runner, and CI fails when a probe skips for
-any reason other than a known host limitation. They include one project's
-sandbox failing to read another's, a denied secret staying hidden, and only
-allowlisted hosts being reachable through the relay. Not every cell maps to a
-probe CI runs, so weigh the Windows column as a person's word, a reproducible
-command (`CONTRIBUTING.md`), and CI's probe run together.
+also run in CI on a hosted Windows runner. CI fails when a probe skips for any
+reason other than a known host limitation.
+
+The probes include one project's sandbox failing to read another's, a denied
+secret staying hidden, and only allowlisted hosts being reachable through the
+relay. Not every cell maps to a
+probe CI runs. Weigh the Windows column as a person's word, a reproducible
+command (`CONTRIBUTING.md`) and CI's probe run together.
 
 **What backs the macOS column.**
 `scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on every CI
@@ -79,8 +83,8 @@ updated with it.
 
 One macOS cell is still not claimed. The probe's outbound TCP attempt is refused,
 and nothing distinguishes a refusal at DNS from one at connect, which is a real
-distinction on macOS. It is left open rather than rounded up.
+distinction on macOS. That cell stays open.
 
 The [enforcement matrix](https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md)
-has the evidence behind every cell: the probe output, the CI runs, the dates and
-the machines each was measured on.
+has the evidence behind every cell. It lists the probe output, the CI runs, the
+dates and the machines each was measured on.
