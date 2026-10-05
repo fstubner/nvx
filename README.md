@@ -33,10 +33,9 @@ IDE task, a git hook or CI. If you use nvm, fnm or volta today, nvx replaces the
 
 ## Why this exists
 
-With modern LLMs, it's now practical to just build the exact tools you want. While
-setting up a clean development machine on Windows and facing the usual version
-manager headaches, I got thinking: *Why not build a modern, fast, secure runtime
-manager from scratch and solve this problem for good?*
+nvx started on a fresh Windows machine and the usual version-manager headaches.
+With LLMs making it practical to build exactly the tool you want, I built one
+that also takes on the part nobody else handles.
 
 Coding agents run terminal commands in your workspace, and installs are where they
 pick up code nobody has read. No tool can promise a package is safe, so the goal is
