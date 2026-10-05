@@ -1,15 +1,14 @@
 ---
 title: Known limitations
-description: What containment does not cover, and the behaviour that surprises people.
+description: What containment does not cover on each platform, what the checks miss, and behaviour to expect.
 ---
 
-A security tool that overstates its reach is worse than one that is narrow and
-honest, so the limits that change what you should expect are listed here. The
-threat model behind them is in [SECURITY.md](https://github.com/fstubner/nvx/blob/main/SECURITY.md), and the per-platform
-evidence each claim rests on -- probe output, dates, the machines it was measured
-on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md).
+These are the limits that change what you should expect from nvx. The threat
+model is in [SECURITY.md](https://github.com/fstubner/nvx/blob/main/SECURITY.md),
+and the evidence for each platform is in the
+[enforcement matrix](https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md).
 
-## What containment does not cover
+## Every platform
 
 - **Your own code is not contained by default.** `npm run build`, `npm test` and
   `node` run uncontained at the `standard` level, so a compromised dependency your
@@ -22,32 +21,96 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   anything that needs unrestricted filesystem or network access.
 - **A `.env` inside the project is readable by a contained install.** The project
   directory has to be readable for the install to work, and `.env` lives in it.
-  Environment *variables* are scrubbed; a file is a file.
-- **On macOS, reads outside your credential stores are not contained.** Writes
-  and egress are. The Seatbelt profile has to allow filesystem reads because the
-  dynamic linker loads system libraries whose locations move between macOS
-  versions. It denies the credential stores by path, so `~/.ssh`, `~/.aws`,
-  `~/.npmrc`, the other registry and cloud credential files, and your keychains
-  cannot be read. Other files can, including other projects and any credential
-  kept somewhere the list does not name.
-- **On Windows, your home directory is listable.** Contents stay unreadable, so
-  `~/.ssh`, `~/.aws` and `~/.npmrc` cannot be read, but their presence is visible.
-  That is an ACE Windows ships on your profile and nvx cannot revoke.
-- **On Linux, a UNIX socket inside the project can be reached.** A contained
-  process sees only the directories it is granted, so host sockets such as
-  Docker's are absent. A socket placed in the project directory, or in a
-  directory added with `allow_read_exec`, can still be connected to.
+  Scrubbing covers environment *variables* only, so the file stays readable.
+- **Only an `http://` upstream proxy is used.** An `https://` or `socks5://`
+  value in `HTTPS_PROXY` is ignored with a warning, and contained connections
+  are then made directly. Behind a proxy, a host nvx's own resolver cannot look
+  up is still reachable when the allowlist names it, and it cannot be approved
+  at the prompt.
+- **The Docker provider cannot do `proxy` mode.** A policy that selects
+  `isolation.filesystem.provider: docker` with the default `network.mode: proxy`
+  is refused. Docker runs `offline` and `loopback` with no network at all, and
+  `open` unfiltered. Use the native provider for an egress allowlist.
+
+## Windows
+
+- **Your home directory is listable.** Contents stay unreadable, so `~/.ssh`,
+  `~/.aws` and `~/.npmrc` cannot be read, but their presence is visible. That is
+  an access rule Windows ships on your profile, and nvx cannot revoke it.
+- **A loopback exemption left by an older `nvx setup` opens every service on
+  127.0.0.1** to contained code, whatever the allowlist says. Current versions
+  never add one. Removing it needs an Administrator terminal, so on an upgraded
+  machine it stays until you run `nvx setup` there. nvx warns on every affected
+  launch, and `nvx doctor` reports it with the removal command. Treat the
+  allowlist as unenforced while it is registered.
+- **`bun install` works contained only in projects on the drive Windows is
+  installed on.** On any other drive it fails with `EBADF`, and nvx names the
+  cause. Use `nvx --no-sandbox bun install`, which runs it uncontained, or use
+  npm, yarn or pnpm. Windows refuses bun's request to turn a file handle back
+  into a path inside an AppContainer.
+  [oven-sh/bun#38365](https://github.com/oven-sh/bun/pull/38365) would fix it
+  in bun.
+- **`yarn` classic fails in a project under your user profile if you have a
+  `~/.yarnrc`.** yarn reads every `.yarnrc` on the way up from the project to the
+  drive root. The sandbox refuses the one in your real home, and yarn treats that
+  refusal as fatal. Projects outside the profile are fine. Measured 2026-09-17
+  with yarn 1.22.19.
+- **A contained server needs `--expose` to be reachable from your machine.**
+  Windows refuses connections into an AppContainer from outside it.
+- **A contained process cannot create a pipe.** nvx brokers synchronous and
+  streaming capture. `child_process.fork` is refused outright, and the error
+  names `--no-sandbox`.
+- **A background process your own code started ends with nvx if nvx is stopped
+  before the command finishes**, for example when the program that started nvx
+  exits. A command that finishes on its own leaves it running.
+
+## macOS
+
+- **Reads outside your credential stores are not contained.** The Seatbelt
+  profile has to allow filesystem reads, because the dynamic linker loads system
+  libraries whose locations move between macOS versions. It denies the credential
+  stores by path, so `~/.ssh`, `~/.aws`, `~/.npmrc`, the other registry and cloud
+  credential files, and your keychains cannot be read. Other files can, including
+  other projects and any credential kept somewhere the list does not name.
+- **The system temp folders are writable.** Besides the project and its
+  throwaway home, the profile allows writes under `/dev`, `/private/tmp`,
+  `/private/var/tmp` and `/private/var/folders`, which holds your `$TMPDIR`. A
+  contained install can leave or change files there that your own programs later
+  read.
+- **DNS lookups are not blocked.** A contained process can still query the
+  system resolver directly. Connections themselves go through the allowlist.
+
+## Linux
+
+- **A UNIX socket inside the project can be reached.** A contained process sees
+  only the directories it is granted, so host sockets such as Docker's are
+  absent. A socket placed in the project directory, or in a directory added with
+  `allow_read_exec`, can still be connected to.
+- **On Ubuntu 23.10 and later, the sandbox may refuse to start.** Ubuntu
+  restricts the user namespaces the sandbox is built on, through the setting
+  `kernel.apparmor_restrict_unprivileged_userns`. Contained commands then fail
+  with "Operation not permitted", and nvx does not run them uncontained instead.
+  `nvx doctor` starts a contained process and names this setting when it is the
+  cause. You have two ways forward. `sudo sysctl -w
+  kernel.apparmor_restrict_unprivileged_userns=0` turns the restriction off for
+  every program on the machine. Or set `isolation.network.mode` to `open`, which
+  gives up the network namespace, so contained code shares your network and the
+  egress allowlist is not enforced. `nvx doctor` says whether `open` starts on
+  your machine.
+
+## Checks and registries
+
 - **Detection is best-effort.** Typosquat and vulnerability checks reduce risk
   without certifying a package. Containment is the backstop, not the checks.
 - **Dependencies are checked for npm installs, and not for everything.** For
   `npm install`, `npm update` and `npm dedupe`, nvx asks npm which packages it
   will install and checks all of them. `npm ci` checks every entry of
-  `package-lock.json` for this platform. The other commands are checked on the packages they name,
-  the entries of `package-lock.json`, or the versions `package.json` declares,
-  and the dependencies those bring in are not checked. That is `npx`, `npm
-  exec`, `npm create` and `npm init`, every pnpm, yarn and bun command, and npm
-  projects that use workspaces or depend on a local folder. pnpm, yarn and bun
-  lockfiles are not read.
+  `package-lock.json` for this platform. The other commands are checked on the
+  packages they name, the entries of `package-lock.json`, or the versions
+  `package.json` declares, and the dependencies those bring in are not checked.
+  That is `npx`, `npm exec`, `npm create` and `npm init`, every pnpm, yarn and
+  bun command, and npm projects that use workspaces or depend on a local folder.
+  pnpm, yarn and bun lockfiles are not read.
 - **Packages from git, a URL or a local path get only the blocklist.** They are
   checked against `blocked_packages` by the name they install under. The
   typosquat, advisory and release-age checks look a package up in the registry,
@@ -65,103 +128,43 @@ on -- is in [docs/enforcement-matrix.md](https://github.com/fstubner/nvx/blob/ma
   against the registry the contained npm will actually use. Put the registry in
   the project's `.npmrc` and its host in `isolation.network.allow_hosts`. Your
   `_authToken` never reaches the sandbox either, so a registry that needs one
-  for downloads cannot serve a contained install. nvx reads registries from `.npmrc`
-  only, so yarn's `.yarnrc.yml` and bun's `bunfig.toml` settings do not change
-  where the checks look.
-- **Only an `http://` upstream proxy is used.** An `https://` or `socks5://`
-  value in `HTTPS_PROXY` is ignored with a warning, and contained connections
-  are then made directly. Behind a proxy, a host nvx's own resolver cannot look
-  up is still reachable when the allowlist names it, but it cannot be approved
-  at the prompt.
-- **On Windows, a loopback exemption left by an `nvx setup` older than 0.5.0
-  opens every service on 127.0.0.1** to contained code, whatever the allowlist
-  says. Newer versions never add one. Removing it needs an Administrator
-  terminal, so on an upgraded machine it stays until you run `nvx setup` there.
-  nvx warns on every affected launch and `nvx doctor` reports it with the
-  removal command. Treat the allowlist as unenforced while it is registered.
-- **The Docker provider cannot do `proxy` mode.** A policy that selects
-  `isolation.filesystem.provider: docker` with the default `network.mode: proxy`
-  is refused. Docker runs `offline` and `loopback` with no network at all, and
-  `open` unfiltered. Use the native provider for an egress allowlist.
+  for downloads cannot serve a contained install. nvx reads registries from
+  `.npmrc` only, so yarn's `.yarnrc.yml` and bun's `bunfig.toml` settings do not
+  change where the checks look.
 
-## What surprises people
+## Behaviour to expect
 
+- **The first contained run in a project takes seconds.** Later ones take a few
+  hundred milliseconds.
 - **An npm install that brings in new packages runs npm twice.** The first run
-  only resolves versions, contained, so that each package can be checked before
-  the second run installs it. An `npm install` whose lockfile already matches
-  `package.json` and `npm ci` run npm once.
-
-- **On Ubuntu 23.10 and later, the Linux sandbox may refuse to start.** Ubuntu
-  restricts the user namespaces the sandbox is built on, through the setting
-  `kernel.apparmor_restrict_unprivileged_userns`. Contained commands then fail
-  with "Operation not permitted", and nvx does not run them uncontained instead.
-  `nvx doctor` starts a contained process and names this setting when it is the
-  cause. You have two ways forward. `sudo sysctl -w
-  kernel.apparmor_restrict_unprivileged_userns=0` turns the restriction off for
-  every program on the machine. Or set `isolation.network.mode` to `open`, which
-  gives up the network namespace, so contained code shares your network and the
-  egress allowlist is not enforced. `nvx doctor` says whether `open` starts on
-  your machine.
-- **A contained command started in your home directory, or above it, starts in
-  the sandbox's home instead.** The working directory is writable inside the
-  sandbox, and granting your home would grant everything in it, `~/.nvx` and
-  your shell profile included. nvx says so when it happens. Run the command from
-  a project folder to work on files there.
-- **A long `NVX_HOME` can stop contained runs.** The sandbox reaches nvx
-  through sockets under `NVX_HOME`, and a socket path must be shorter than 108
-  bytes. On Linux a run that needs one refuses and names the longest
-  `NVX_HOME` that works. On Windows nvx moves the sockets to the sandbox's own
-  folder in `%LOCALAPPDATA%\Packages`, which Windows already grants the
-  sandbox. It refuses only when that path is too long as well, and then names
-  the longest `NVX_HOME` that works.
-- **Git hook installers cannot set themselves up during a contained install.**
-  husky's `prepare` script, simple-git-hooks and lefthook write to `.git`
-  (`.git/config` or `.git/hooks`), which a contained install cannot write, so
-  their setup step fails there. Run it yourself afterwards, for example
-  `npx husky`, or run the install with `nvx --no-sandbox`.
-- **A stray `package.json` above your projects merges them into one sandbox
-  scope.** `nvx doctor` reports it when the manifest sits in your home directory
-  or at a volume root.
-- **`npm install -g` is refused** inside the sandbox, because a global install
-  writes outside the project. `nvx --no-sandbox npm install -g` is an uncontained
-  install, so treat it as one.
+  only resolves versions, contained, so each package can be checked before the
+  second run installs it. An `npm install` whose lockfile already matches
+  `package.json`, and `npm ci`, run npm once.
+- **A package published in the last 24 hours is held** for your approval, so an
+  MCP server launched by an editor fails to start rather than prompting.
 - **A contained command sees almost none of your environment.** A tool reading
   `CI` or `NODE_ENV` changes behaviour without erroring. nvx names the variables
   it drops, and `isolation.environment.allow` keeps the ones a project needs.
-- **On Windows, a contained process cannot create a pipe.** Synchronous and
-  streaming capture are brokered by nvx; `child_process.fork` is refused outright
-  and names `--no-sandbox`.
-- **On Windows, a background process your own code started ends with nvx if nvx
-  is stopped before the command finishes**, for example when the program that
-  started nvx exits. A command that finishes on its own leaves it running.
-- **A contained server needs `--expose` to be reachable from your machine**, and a
-  contained tool needs `--connect` to reach a service you are already running.
-- **On Windows, `bun` installs inside the sandbox only in projects on the drive
-  Windows is installed on.** bun asks Windows to turn the handle of the
-  project's `package.json` back into a drive-letter path
-  (`GetFinalPathNameByHandle`), and Windows refuses that inside an
-  AppContainer. The drive letters live in an object directory the system owns,
-  and no file permission reaches it, so `nvx setup` does not help. bun rebuilds
-  the path itself for the Windows drive only, so `bun install` works in a
-  project on `C:` and fails with `EBADF` on any other drive (measured
-  2026-10-04 with bun 1.4.2 on `C:`, `D:` and `H:`). nvx names the cause after
-  such a failure. Use `nvx --no-sandbox bun install`, which runs it
-  uncontained, or npm, yarn or pnpm instead. The fix belongs in bun, and
-  [oven-sh/bun#38365](https://github.com/oven-sh/bun/pull/38365) would make it.
-  pnpm ran into the same refusal through Node's `realpath`, and nvx now
-  answers it for every contained Node process.
-- **On Windows, `yarn` classic fails in a project under your user profile if you
-  have a `~/.yarnrc`.** yarn reads every `.yarnrc` on the way up from the
-  project to the drive root, and the sandbox refuses the one in your real home;
-  yarn treats that refusal as fatal. Projects outside the profile are fine.
-  Measured 2026-09-17 with yarn 1.22.19.
-- **A package published in the last 24 hours is held** pending your approval, so
-  an MCP server launched by an editor fails to start rather than prompting.
-- **The first contained run in a project takes seconds; later ones take a few
-  hundred milliseconds.**
-- **Windows may still warn about a new nvx download.** Releases from 0.7.0 are
-  Authenticode-signed, but SmartScreen also judges a download by its reputation,
-  which a certificate builds up as people download what it signed, so early
-  signed releases can still show "Windows protected your PC". Defender has also
-  flagged unsigned builds as malware by machine learning, because nvx rewrites
-  permissions and creates sandbox tokens the way some malware does.
+- **`npm install -g` is refused** inside the sandbox, because a global install
+  writes outside the project. `nvx --no-sandbox npm install -g` is an uncontained
+  install, so treat it as one.
+- **Git hook installers cannot set themselves up during a contained install.**
+  husky's `prepare` script, simple-git-hooks and lefthook write to `.git`, which
+  a contained install cannot write. Run their setup yourself afterwards, for
+  example `npx husky`, or run the install with `nvx --no-sandbox`.
+- **A contained tool cannot reach a service you are already running until you
+  allow it.** Use `--connect` for one run, `allow_hosts` for a tool that uses the
+  proxy, or `network.mode: loopback`, which [Policy](/docs/policy/#reference)
+  describes.
+- **A contained command started in your home directory, or above it, starts in
+  the sandbox's home instead.** Granting your home would grant everything in it,
+  `~/.nvx` and your shell profile included. nvx says so when it happens. Run the
+  command from a project folder.
+- **A stray `package.json` above your projects merges them into one sandbox
+  scope.** `nvx doctor` reports it when the manifest sits in your home directory
+  or at a volume root.
+- **A long `NVX_HOME` can stop contained runs.** The sandbox reaches nvx through
+  sockets under `NVX_HOME`, and a socket path must be shorter than 108 bytes. On
+  Linux a run that needs one refuses and names the longest `NVX_HOME` that works.
+  On Windows nvx moves the sockets to the sandbox's own folder in
+  `%LOCALAPPDATA%\Packages`, and refuses only when that path is too long as well.
