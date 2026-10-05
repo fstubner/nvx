@@ -864,8 +864,8 @@ they date quickly; each carries the date and machine it was taken on.
   It matters only where something is waiting with a timeout. If you are wiring a
   contained command into a tool that gives up after a few seconds, run it once by
   hand after installing to absorb the cost.
-- **Windows may flag nvx as malware, and the released binaries are not
-  Authenticode-signed.** Observed on 2026-09-04: Windows Defender quarantined
+- **Windows may flag nvx as malware, and SmartScreen may warn on a new
+  download.** Releases from 0.7.0 on are Authenticode-signed. Observed on 2026-09-04: Windows Defender quarantined
   freshly built nvx binaries as `Trojan:Win32/Bearfoos.A!ml`, three times in one
   minute, and `go build` could not produce an executable at all until a build
   directory exclusion was added.
@@ -877,11 +877,19 @@ they date quickly; each carries the date and machine it was taken on.
   built from, and they are also what malware does.
 
   Releases carry SHA-256 checksums and a SLSA build-provenance attestation, which
-  let you verify a download came from this repository's CI. Neither is an
-  Authenticode signature, and **Defender and SmartScreen do not read them** — so
-  they do nothing to prevent this. Code signing is the actual fix and is not in
-  place; until it is, expect SmartScreen warnings on first run and the
-  possibility of a Defender quarantine.
+  let you verify a download came from this repository's CI. Defender and
+  SmartScreen read neither. From 0.7.0, `nvx.exe` is also Authenticode-signed
+  with a Certum certificate issued to "Open Source Developer Felix Stubner", and
+  timestamped, so the signature stays valid after the certificate expires. The
+  release workflow signs it in a job of its own and checks the signature before
+  any checksum or attestation is made. The first signed build, from a manual run
+  on 2026-10-05, read back as Valid in Windows' `Get-AuthenticodeSignature`.
+
+  A signature does not end SmartScreen warnings at once. SmartScreen judges a
+  download partly by its reputation, and a certificate builds that up as people
+  download and run what it signed, so the first signed releases can still show
+  "Windows protected your PC". A Defender machine-learning verdict like the one
+  above is also still possible on a signed file.
 
   If it happens to you, a false positive can be reported to Microsoft at
   <https://www.microsoft.com/en-us/wdsi/filesubmission>. Reporting is worth more
