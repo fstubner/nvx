@@ -745,7 +745,7 @@ func printHelp() {
 // list in README.md. The two are hand-maintained copies and had already drifted:
 // the README was missing doctor, grants, import, setup and shim.
 func helpText() string {
-	return `nvx - A modern, secure, cross-platform runtime version manager
+	return `nvx - A Node.js and Bun version manager that runs package installs in an OS sandbox
 
 Usage:
   nvx <command> [arguments]
