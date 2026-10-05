@@ -137,3 +137,16 @@ func TestVerificationFindsTheLockfileFromASubdirectory(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
+
+// An npm alias installs left-pad into node_modules/lp and records the real name
+// in "name". Read by path alone, the lockfile entry was verified as `lp`, so the
+// blocklist and advisory lookups asked about a package that was never installed.
+func TestPackagesFromLockfileUseTheAliasTarget(t *testing.T) {
+	inDirWithLock(t, `{"lockfileVersion": 3, "packages": {"": {"name": "example"},
+		"node_modules/lp": {"name": "left-pad", "version": "1.3.0"}}}`)
+
+	got := packagesFromPackageLock()
+	if len(got) != 1 || got[0] != "left-pad@1.3.0" {
+		t.Fatalf("got %v, want [left-pad@1.3.0]", got)
+	}
+}

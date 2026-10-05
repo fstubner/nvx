@@ -172,8 +172,15 @@ func reportEnvScrub(nvxHome string, res envScrubResult) {
 		len(res.Dropped), strings.Join(res.Dropped, ",")))
 
 	// Asked for and not delivered: always worth saying, however ordinary the run.
+	// Recorded too, because a policy asking to pass a credential in is a security
+	// event, and a warning on a terminal nobody watched left no trace.
 	for _, name := range res.Refused {
 		LogWarn("isolation.environment.allow names %s, which holds a credential by convention; it was not passed in.", name)
+	}
+	if len(res.Refused) > 0 {
+		auditLog(nvxHome, "env_pass_refused", map[string]string{
+			"names": strings.Join(res.Refused, ","),
+		})
 	}
 
 	if len(notable) == 0 {

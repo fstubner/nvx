@@ -186,14 +186,46 @@ func remedyFor(reason string) string {
 		return "nvx could not read its own security policy. Check it with `nvx doctor`."
 	case strings.Contains(reason, "cannot be run inside the sandbox"):
 		return "Run this outside the sandbox, or install the package into the project rather than globally."
+	// Before the general policy case. The narrow fix is a policy line, and the
+	// package name is not in the reason (see the note on reportRefusalOverStdio),
+	// so the line carries a placeholder.
+	case strings.Contains(reason, "disallows package install scripts"):
+		return "This is a policy decision rather than a warning, so approving prompts does not affect it. " +
+			"To install without running its scripts, pass --ignore-scripts. " +
+			"To let one package's install scripts run, add it to install_scripts.trusted_packages in ~/.nvx/policy.json, " +
+			`for example {"install_scripts":{"trusted_packages":["<package>"]}}. ` +
+			"To drop the rule for every package, set enforce_ignore_scripts to false."
 	case strings.Contains(reason, "security policy"):
 		return editPolicy
+	// The reasons below come from a prompt, and each has a policy line that
+	// settles just that check. NVX_YES is named last: it approves every check for
+	// the server, not the one that stopped it.
+	case strings.Contains(reason, "typosquat"):
+		return "If the package name is right, add it to typosquatting.trusted_packages in ~/.nvx/policy.json, " +
+			`for example {"typosquatting":{"trusted_packages":["<package>"]}}. ` + mcpBlanketNote
+	case strings.Contains(reason, "release-age"):
+		return "Add the package to release_age.trusted_packages in ~/.nvx/policy.json, " +
+			`for example {"release_age":{"trusted_packages":["<package>","@scope/*"]}}, ` +
+			"or pin the command to a version you have already used. " + mcpBlanketNote
+	case strings.Contains(reason, "install scripts"):
+		return "Add the package to install_scripts.trusted_packages in ~/.nvx/policy.json, " +
+			`for example {"install_scripts":{"trusted_packages":["<package>"]}}. ` + mcpBlanketNote
+	case strings.Contains(reason, "known active vulnerability"):
+		return "Add the advisory IDs nvx printed on this server's error output to vulnerabilities.allowed_advisories in ~/.nvx/policy.json, " +
+			`for example {"vulnerabilities":{"allowed_advisories":["GHSA-xxxx-xxxx-xxxx"]}}, ` +
+			`or set vulnerabilities.min_severity, for example {"vulnerabilities":{"min_severity":"high"}}. ` + mcpBlanketNote
 	default:
-		return "Set NVX_YES=true in this server's environment to approve nvx's warnings for it, " +
-			"or pin the command to a version you have already used. " +
+		// Registry or vulnerability-database lookups that failed: no policy
+		// setting waives those, so there is no narrow key to name.
+		return "A lookup nvx needs failed, and no policy setting waives that. Retry once the network is reachable. " +
+			"Setting NVX_YES=true in this server's environment proceeds without the lookup, and approves every other nvx check for it too. " +
 			"The full reason is on this server's error output and in nvx's audit log."
 	}
 }
+
+// mcpBlanketNote ends a prompt-based remedy.
+const mcpBlanketNote = "Setting NVX_YES=true in this server's environment would approve every nvx check for it, not only this one. " +
+	"The full reason is on this server's error output and in nvx's audit log."
 
 // readPendingJSONRPCRequest reads one line and returns it if it is a JSON-RPC
 // request with an id to answer.

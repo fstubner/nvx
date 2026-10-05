@@ -26,7 +26,8 @@ running system and which are not.
 
 **Where the evidence for each column comes from.** Windows is asserted by
 `scripts/sandbox-enforcement-windows.ps1` and ~20 `NVX_PROBE=1` tests run by hand
-on a real machine before a release. Linux was confirmed on real Linux on
+on a real machine before a release. They also run on a hosted Windows runner in
+CI now (see the CI note below). Linux was confirmed on real Linux on
 2026-09-01 — WSL2, Ubuntu 24.04, kernel 6.18 — rather than on CI's word:
 `sandbox-enforcement-linux.sh` reported `WRITE_OUTSIDE=DENIED WRITE_INSIDE=ALLOWED
 READ_OUTSIDE=DENIED READ_INSIDE=ALLOWED EGRESS=DENIED`, with `unshare -Urn`
@@ -42,7 +43,8 @@ whether the kernel honours it is not.
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
 | Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |
-| Host filesystem read restricted | Yes⁴ | Yes⁸ | No² (confirmed⁵) |
+| Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: credential stores denied, other reads allowed⁵ |
+| Project `.git` read-only, rest of project writable | Yes¹⁴ | Yes¹⁴ | Yes¹⁴ |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
 | Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |
@@ -61,6 +63,18 @@ reliably; a strict read allowlist breaks process launch. Write containment and
 egress control remain enforced, and environment secrets are scrubbed with `$HOME`
 redirected to an ephemeral guest profile.
 
+The user's credential stores are the exception. After the blanket read allow, the
+profile denies reads of `~/.npmrc`, `~/.yarnrc`, `~/.yarnrc.yml`,
+`~/.config/pnpm/rc`, `~/Library/Preferences/pnpm/rc`, `~/.bunfig.toml`,
+`~/.docker/config.json`, `~/.netrc` and `~/.git-credentials`, and of everything
+under `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.kube`,
+`~/.config/gcloud`, `~/.azure` and `~/Library/Keychains`. `~` is the real home,
+and each path is also named with symbolic links resolved, because Seatbelt
+matches the resolved path. None of these is on the dynamic linker's path. Until
+2026-10-01 the profile denied none of them. Every other file outside the project
+stays readable, other projects included, and so does a credential kept anywhere
+the list does not name.
+
 Writes are contained, with named exceptions: the profile grants write access to
 `/dev`, `/private/tmp`, `/private/var/tmp` and `/private/var/folders` so a
 contained process has somewhere to put temporary files. "Writes cannot leave the
@@ -74,11 +88,11 @@ the profile working as designed.
 say it did** -- it claimed "the sensitive material is still protected", which is
 true of writes and false of reads. `$HOME` decides where `~` expands to; it does
 not stop anything opening `/Users/<you>/.ssh/id_rsa` by absolute path, and a
-postinstall script looking for credentials does not need `~` to find them. On
-macOS, credential *reads* are not contained. Say so rather than reasoning around
-it: the write and egress guarantees are real and the read guarantee is absent,
-which is a narrower product than the same sentence describes on Windows and
-Linux.
+postinstall script looking for credentials does not need `~` to find them. That
+is why the credential stores above are denied by path. On macOS, reads outside
+them are not contained. The write and egress guarantees are real and the read
+guarantee covers only the listed stores, which is a narrower product than the
+same sentence describes on Windows and Linux.
 
 ¹ On macOS, egress is gated by the loopback proxy and OS network rules. Linux
 additionally removes all non-loopback interfaces (network namespace), so DNS to
@@ -103,9 +117,16 @@ satisfied by a sandbox that had failed to start, and requiring something to
 is the one that closed the largest gap here — until 2026-08-24 the whole script
 ran with an empty allowlist and could only ever observe refusals.
 
+The script's third phase starts nvx with `HOME` set to a throwaway directory
+holding a planted `.npmrc` and `.ssh/id_test`. A contained read of each must be
+refused by the OS, while a project file and node's own binary must still read,
+each checked by exit code. Contained `npm config get registry` must succeed with
+that `.npmrc` present and must not report the registry planted in it.
+
 `READ_OUTSIDE=ALLOWED` pins the documented weakness in ² deliberately. If the
-profile is ever tightened this fails, which forces README, SECURITY.md,
-PRODUCT.md and this page to be updated in the same change rather than quietly
+profile is ever tightened this fails, which forces the docs site's limitations
+page (`site/src/content/docs/docs/limitations.md`), SECURITY.md, PRODUCT.md and
+this page to be updated in the same change rather than quietly
 going wrong in the flattering direction.
 
 `UDP_EGRESS=DENIED` is refused at **bind**, not at send: sending on an unbound
@@ -185,8 +206,8 @@ every sandbox on the machine" for two days after that stopped being true, which
 is the safe direction to be wrong in and still worth correcting: an acceptance
 pass reproduced the scenario expecting to confirm a hole and found none.
 
-README has disclosed this under Known limitations since 0.5.0; this row said an
-unqualified "Yes" until 2026-08-20, which an acceptance pass caught by writing
+README disclosed this under Known limitations from 0.5.0, and SECURITY.md
+carries it now. This row said an unqualified "Yes" until 2026-08-20, which an acceptance pass caught by writing
 into the nvx repository itself from a sandbox scoped to a different project. That
 repository carried 19 such grants at the time.
 
@@ -339,8 +360,9 @@ opens them, which Windows permits. Measured 2026-08-29 inside a real
 AppContainer -- `spawn` with piped stdio returned its child's output and exit
 code. This file said it "still hangs" for weeks after that stopped being true,
 which matters more here than elsewhere because PRODUCT.md names this file as the
-authority. What remains under Known limitations is narrower: writing to a
-contained child's stdin, which is `null` rather than a stream. The smoke fixture's postinstall now
+authority. Writing to a contained child's stdin works through the same broker
+since 2026-09-04. What remains under Known limitations is narrower: a child given
+an IPC channel (`child_process.fork`) is refused. The smoke fixture's postinstall now
 captures a subprocess and asserts the captured text, so the case that shipped
 broken is the case it tests -- verified by disabling the preload and watching the
 smoke hang.
@@ -405,6 +427,15 @@ whose uid/gid mapping is written through `/proc`, which its own Landlock ruleset
 does not grant. Both smoke scripts were also launching their probes uncontained.
 The rows above were not wrong about the design; nothing was checking them.
 
+On Linux a contained process sees only the paths it is granted, in a root of its
+own. Landlock below ABI v9 does not restrict `connect()` to a UNIX socket by path.
+Measured on WSL2 Ubuntu 24.04, kernel 6.18, before the change, a contained
+process got HTTP 200 from `/var/run/docker.sock` while its writes outside the
+project were denied. A socket inside a granted path stays reachable, which means
+the project, the guest home, and below ABI v9 also the system and runtime
+directories and any `allow_read_exec` root. In `network.mode: open` the host
+resolver sockets in `/run/systemd/resolve` and `/run/nscd` stay visible too.
+
 ⁹ **Two things about Windows containment that surprise people, both measured.**
 
 **An AppContainer shares the host's network stack.** It is not a Linux network
@@ -429,11 +460,12 @@ to connect and never where -- one port, for one run, closed when the command
 exits. `TestAContainedDialReachesTheHostServiceItWasGranted` drives a real
 connection end to end through both halves.
 
-**"For one run" is enforced, not implied.** An AppContainer's loopback is not
-private: Windows permits it within a package, and every nvx sandbox shares one
-package identity, so the in-sandbox listener is reachable from every other nvx
-sandbox running concurrently. Measured 2026-08-28 -- a sandbox in an unrelated
-project with no grant of its own read the granted service, while the same probe
+**"For one run" is checked, and the boundary is the project.** An AppContainer's
+loopback is not private: Windows permits it within a package, and every run of
+one project shares that project's package (¹⁰). Until 2026-08-29 every nvx
+sandbox shared one package, so the in-sandbox listener was reachable from every
+other nvx sandbox running concurrently. Measured 2026-08-28 -- a sandbox in an
+unrelated project with no grant of its own read the granted service, while the same probe
 could reach neither the real port nor an unrelated one. Note the shape: this is
 the hazard the egress relay already defends against with a per-session proxy
 credential (see EgressProxy.token, and the acceptance pass of 2026-08-19 that
@@ -443,7 +475,8 @@ does not, so the peer is identified instead. Every process a run launches is in
 that run's Job Object, so the parent resolves the connection to a process and
 refuses anything outside it -- in the parent, because `GetExtendedTcpTable` is
 ACCESS_DENIED inside an AppContainer. Unverifiable peers are refused, not
-admitted.
+admitted. Runs of one project still share a package and a capability, so treat
+them as one trust domain and do not rely on the peer check to keep them apart.
 
 That is what makes it defensible where the pre-0.5.0 loopback exemption was not:
 `CheckNetIsolation LoopbackExempt` was machine-wide, permanent, opened *every*
@@ -486,18 +519,27 @@ tests of the argument list, which is not the same thing.
 
 ## CI note
 
-Linux and macOS each run an enforcement probe on a hosted runner of that OS (⁵,
-⁸). Windows is the exception: hosted Windows runners refuse to create
-AppContainer children — `CreateProcess` returns "Access is denied" for every
-executable, including `cmd.exe` — so anything that launches a real contained
-process skips there. That is a limitation of the hosted environment, not of the
-provider, and it is the reason the Windows cells say "measured" rather than "CI".
+Linux, macOS and Windows each run an enforcement probe on a hosted runner of that
+OS (⁵, ⁸). Windows was the exception until 2026-09-21: hosted Windows runners
+refused to create AppContainer children. `CreateProcess` returned "Access is
+denied" for every executable, including `cmd.exe`, so anything that launched a
+real contained process skipped there. The cause was the launch asking Windows for
+`CREATE_BREAKAWAY_FROM_JOB` inside a job that forbids it (PR #52, and the
+CHANGELOG entry about AI agent shells), and the fix let the runner create
+AppContainers.
 
-What still runs on the hosted Windows runner is most of the suite: ACL
-derivation, capability SIDs, profile generation and the syscall wrappers. The
-skips are dominated by the ones that need a live contained child — which is to
-say, exactly the ones that would prove containment. The rest are environmental
-(no staged runtime, a directory that inherits nothing) or deliberate.
+CI run 37244525606 (2026-10-04) shows the result. Its Windows probe step ran the
+whole package with `NVX_PROBE=1` and passed with 8 skips, none of them a refusal
+to launch: two internal helper children, three spikes and prototypes gated behind
+`NVX_IPC_SPIKE=1` or `NVX_PROBE_PROTOTYPES=1`, one check that has nothing to do on
+a machine without a loopback exemption, and two probes whose premise the runner
+does not meet (no access for AppContainers to the user profile, and no permission
+to change the ACL of `C:\Windows\System32\cmd.exe`). In the same run
+`sandbox-enforcement-windows.ps1` and both Windows smoke scripts ran their
+assertions to the end and passed.
+
+That does not make every Windows cell CI-backed. A passing run says the probes
+launched and asserted, and says nothing about a cell no probe asserts.
 
 **For the current numbers, read the run rather than this page.** Every CI run
 prints them in its job summary and in the log as one greppable line:
@@ -512,17 +554,17 @@ NVX_PROBE_COUNTS` gets it, and the job summary shows it without opening a log.
 This page used to quote a count instead, and it rotted twice: it said "441 pass,
 21 skip" describing a run that was 442 and 35, and the later correction could not
 be checked by a reviewer at all, because a developer machine *runs* the probes
-that a hosted runner skips. A number nobody can reproduce is a number that goes
+that a hosted runner then skipped. A number nobody can reproduce is a number that goes
 quietly wrong. The skip reasons are the signal worth reading; the totals are just
 how you notice they changed.
 
-`scripts/sandbox-enforcement-windows.ps1` closes that by hand. It asserts the
-same five outcomes as the Linux probe (writes and reads denied outside, both
-allowed inside, egress denied with an empty allowlist) and is run on a real
-Windows machine before a release; see CONTRIBUTING.md. It is wired into CI as
-well, where it detects the runner's limitation and skips, so that if a future
-image can host an AppContainer it begins asserting without anyone remembering to
-enable it.
+`scripts/sandbox-enforcement-windows.ps1` was the by-hand answer to that. It
+asserts the same five outcomes as the Linux probe (writes and reads denied
+outside, both allowed inside, egress denied with an empty allowlist) and is run
+on a real Windows machine before a release; see CONTRIBUTING.md. It is wired
+into CI as well, where it now runs its assertions. It still detects the two
+refusals a host is known to give and skips, so a runner image that refuses again
+shows up as a skip in the step's log.
 
 Two things it deliberately does not cover. Egress denial there is
 direct-connection only: the AppContainer holds no network capability, so the
@@ -585,7 +627,8 @@ whether or not it is loopback, exemption or no exemption. An acceptance pass
 demonstrated it: a listener on `127.0.0.1:51997`, no exemption on the machine, no
 `--connect`, and the payload came back through nvx's own proxy.
 
-That behaviour is intended and is what `README.md` documents
+That behaviour is intended and is what the docs site's policy page
+(`site/src/content/docs/docs/policy.md`) documents
 (`"allow_hosts": ["localhost:5432"]`). A developer whose project talks to a local
 Postgres or a local registry needs it, and the alternative they reach for is
 `--no-sandbox`, which is worse. `PRODUCT.md` scopes the guarantee to "a host
@@ -615,8 +658,8 @@ the same command, the same two-number rule, the same `NVX_CONNECT_<port>`, and
 the same property that nvx picks the destination while the contained process
 picks the moment.
 
-Windows needs a peer check on its tunnel because every sandbox there shares one
-package identity. macOS needs none: a process outside any sandbox can open the
+Windows needs a peer check on its tunnel because every run of one project there
+shares one package identity. macOS needs none: a process outside any sandbox can open the
 service directly already, and another sandbox cannot reach the listener, since
 its own profile permits only its own proxy ports.
 
@@ -723,9 +766,35 @@ then as a raw connection from a client that knows nothing about HTTP_PROXY, whic
 only arrives if the redirect is carrying it. The same raw client ran earlier under
 the default mode and reported a failure, which is the control: without it, success
 here would equally be what a sandbox with an accidental route out looks like. Windows has unit coverage of the two decisions
-(`TestWindowsLoopbackModeRelaysAndHoldsNoCapability`) and no end-to-end run, which
-is the same standing as every other Windows row here: hosted runners refuse to
-create AppContainer children.
+(`TestWindowsLoopbackModeRelaysAndHoldsNoCapability`) and no end-to-end run of the
+mode itself.
+
+¹⁴ **The project's `.git` is read-only to contained runs.**
+
+The working directory is a writable root on every platform, and git never runs
+contained. Until 2026-10-01 a contained install could write `.git/hooks` or
+`.git/config`, and the next `git commit` ran what it left there as the user.
+Now each platform takes `.git` back out of the writable root, along with the git
+directory a `.git` file names when that lies inside the project:
+
+- **Linux**: the supervisor bind-mounts it read-only in its private mount
+  namespace before Landlock applies, and drops `CAP_SYS_ADMIN` from the target
+  so the mount cannot be changed back. `TestGitMetadataReadOnly*` in the
+  privileged CI step.
+- **macOS**: a `(deny file-write* ...)` rule after the profile's allow.
+  `scripts/sandbox-enforcement-macos.sh` asserts it on the macOS runner, with
+  writes to `package.json` and `node_modules` as the positive control.
+- **Windows**: a deny entry for the project's capability did not hold. Measured
+  2026-10-01 with the deny first in `.git`'s list, a contained process still
+  created a hook, rewrote `config` and renamed `.git`. So `.git` stops inheriting
+  from the project, keeps every other entry it had, and gives the capability read
+  and execute only. `TestSandboxCannotWriteGitMetadata` and
+  `TestSandboxCannotWriteGitMetadataFromSubdirectory` (NVX_PROBE=1).
+
+Everything else in the project stays writable, because an install writes it:
+`package.json`, `node_modules`, lockfiles and build output. That is why a
+contained install can still affect `npm test` or `npm run build` run later at the
+`standard` level.
 
 ## Measured costs and platform floors
 
@@ -751,12 +820,15 @@ they date quickly; each carries the date and machine it was taken on.
   that walks to a drive root; if one fails with `EPERM` there, nvx names setup
   after the failure, and `nvx doctor` shows the missing roots as a note. The
   grant is read/execute on the root folder itself, never inherited, for the
-  sandbox's identity only, and its cost is proportional to the volume's size:
-  22 minutes for 5.6 million entries. `nvx setup --undo` takes it back.
+  sandbox's identity only. Setup grants every fixed volume. Each grant used to
+  cost time proportional to the volume's size (22 minutes for 5.6 million
+  entries) because the write walked everything beneath the root. It no longer
+  does: measured 2026-10-04 on a directory holding 20,000 files, 2.67 to 3.01 s
+  with the walk and under 1 ms without, with no file's permissions changed
+  either way. `nvx setup --undo` takes it back.
 - **A contained command costs a few hundred milliseconds, and the first one after a
-  new runtime is staged can be minutes.** The ~38ms dispatch figure above measures
-  the shim, not the sandbox: a contained launch has to prepare an isolated home and
-  check permissions. The first run in a project is slower than the rest, because
+  new runtime is staged can be minutes.** A contained launch has to prepare an
+  isolated home and check permissions, which the shim's own dispatch does not. The first run in a project is slower than the rest, because
   that is when the permission grants are made and remembered.
 
   Measured on Windows 11: ~2.4s for a project's first contained run, ~390ms for
@@ -820,14 +892,17 @@ they date quickly; each carries the date and machine it was taken on.
   on **Linux** it does too, but only since the sandbox began mounting a
   procfs of its own — Bun reads `/proc/self` to size its stack, and before
   that a contained `bun install` failed with "JSON document is too deeply
-  nested" against a valid file. Windows has its own version floor, below.
-- **Bun needs 1.4.x to work inside the Windows sandbox.** Measured 2026-09-06:
-  Bun **1.4.2** runs contained correctly — `bun install`, `bunx`, relative-path
-  reads and writes all work. Bun **1.3.1** fails every relative-path operation
-  with `EBADFD`, and without `nvx setup` cannot start a script at all
-  (`CouldntReadCurrentDirectory`).
+  nested" against a valid file. Windows is below.
+- **Bun does not run inside the Windows sandbox.** Measured 2026-09-17:
+  `bun install` fails on every run, with `ENOENT` on 1.3.1 and `EBADF` on
+  1.4.2, and `bun -e` cannot read its own working directory. The docs site's
+  limitations page (`site/src/content/docs/docs/limitations.md`) has the
+  detail. An earlier measurement, on 2026-09-06, found 1.4.2 running `bun
+  install`, `bunx` and relative-path reads and writes contained, and 1.3.1
+  failing every relative-path operation with `EBADFD`. The later run is the
+  one that stands.
 
-  If a contained Bun misbehaves, check `bun --version` first. Bun added
+  Bun added
   AppContainer support in [oven-sh/bun#33119](https://github.com/oven-sh/bun/pull/33119),
   merged 2026-07-20 and shipped from 1.4.0; the related sandbox report is
   [oven-sh/bun#28220](https://github.com/oven-sh/bun/issues/28220), now closed.
@@ -835,6 +910,12 @@ they date quickly; each carries the date and machine it was taken on.
   AppContainer will not honour, so absolute paths work and relative ones do not —
   Node is unaffected because it holds no such descriptor.
 
-  `nvx install bun@1.4.2` (or later) is the fix. `nvx --no-sandbox` remains the
-  escape hatch for an older Bun, which means running it **without** containment,
-  so treat what it installs accordingly.
+  `nvx --no-sandbox` is the escape hatch, which means running Bun **without**
+  containment, so treat what it installs accordingly. npm and yarn run
+  contained.
+
+  Measured 2026-10-04 with Bun 1.4.2, `bun install` works contained on the
+  system drive and fails with a bare `EBADF` on D: and H:. Bun rebuilds a
+  file's path only for that drive ([oven-sh/bun#38365](https://github.com/oven-sh/bun/pull/38365)
+  is the fix). When a contained `bun install`, `add`, `remove`, `update`, `patch`
+  or `pm` fails in a project off the system drive, nvx now names that cause.

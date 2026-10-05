@@ -160,6 +160,10 @@ func Main() {
 			fmt.Print(text)
 			return
 		}
+		if text := commandSummaryFromHelp(command); text != "" {
+			fmt.Print(text)
+			return
+		}
 	}
 
 	switch command {
@@ -170,8 +174,11 @@ func Main() {
 	case "install", "i":
 
 		if len(os.Args) < 3 {
-			LogError("Please specify a version to install. Example: nvx install 20")
-			os.Exit(1)
+			for _, pv := range projectVersionsOrExit("install") {
+				LogInfo("Installing %s, as %s asks.", pv.spec, filepath.Base(pv.source))
+				runInstall(pv.spec, nvxHome)
+			}
+			return
 		}
 		runInstall(os.Args[2], nvxHome)
 
@@ -183,16 +190,13 @@ func Main() {
 		runUninstall(os.Args[2], nvxHome)
 
 	case "use":
-		useVersion := ""
-		for _, arg := range os.Args[2:] {
-			if !strings.HasPrefix(arg, "-") {
-				useVersion = arg
-				break
-			}
-		}
+		useVersion := useVersionArg(os.Args[2:])
 		if useVersion == "" {
-			LogError("Please specify a version to use. Example: nvx use 20")
-			os.Exit(1)
+			// The first declared runtime: each runtime's switch rewrites PATH
+			// from the shell's current one, so a second would undo the first.
+			pv := projectVersionsOrExit("use")[0]
+			LogInfo("Using %s, as %s asks.", pv.spec, filepath.Base(pv.source))
+			useVersion = pv.spec
 		}
 		os.Exit(runUse(useVersion, nvxHome, shellArgOrExit(os.Args[2:]), shellArgWasGiven(os.Args[2:])))
 
@@ -293,6 +297,13 @@ func Main() {
 		// than on the launch path, where deleting one could race a sandbox about
 		// to execute it.
 		pruneUnusedSupervisors(nvxHome)
+		// What an install killed part-way left: staging directories, partial
+		// downloads and locks whose process is gone.
+		if n := sweepAbandonedInstalls(nvxHome); n == 1 {
+			LogInfo("Removed 1 leftover from an interrupted install.")
+		} else if n > 1 {
+			LogInfo("Removed %d leftovers from an interrupted install.", n)
+		}
 		// Staged copies of commands from outside ~/.nvx/versions whose source
 		// has since changed, on Windows.
 		if copies := pruneStaleCommandCopies(nvxHome, 0); copies == 1 {
@@ -316,13 +327,7 @@ func Main() {
 		LogSuccess("Sandbox cleanup complete.")
 
 	case "doctor":
-		fixPath := false
-		for _, a := range os.Args[2:] {
-			if a == "--fix" {
-				fixPath = true
-			}
-		}
-		os.Exit(runDoctor(nvxHome, fixPath))
+		os.Exit(runDoctor(nvxHome, doctorFixRequested(os.Args[2:])))
 
 	case "report":
 		os.Exit(runReport(os.Args[2:]))
@@ -338,10 +343,8 @@ func Main() {
 		os.Exit(runAuditCommand(os.Args[2:], nvxHome))
 
 	case "setup":
-		// --all-drives restores the pre-2026-09-01 behaviour of granting every
-		// fixed volume. Off by default because the cost of a grant scales with the
-		// size of the volume, and most machines have volumes no project will ever
-		// sit on. Anything unrecognised is refused: see parseSetupArgs.
+		// Grants every fixed volume. --all-drives is still accepted and changes
+		// nothing. Anything unrecognised is refused: see parseSetupArgs.
 		os.Exit(runSetupCommand(os.Args[2:], nvxHome))
 
 	case "__landlock-exec":
@@ -390,6 +393,21 @@ func Main() {
 	}
 }
 
+// projectVersionsOrExit is what `nvx install` and `nvx use` act on when given no
+// version: what the working directory declares. With nothing declared it keeps
+// the old usage error. Version files nvx does not read are named either way.
+func projectVersionsOrExit(verb string) []projectVersion {
+	cwd, _ := os.Getwd()
+	noteIgnoredVersionFiles(cwd)
+	specs := projectVersionSpecs(cwd)
+	if len(specs) == 0 {
+		LogError("Please specify a version to %s. Example: nvx %s 20", verb, verb)
+		LogInfo("Or run it in a project that declares one in .nvmrc, .node-version, .bun-version or package.json engines.")
+		os.Exit(1)
+	}
+	return specs
+}
+
 // isShimCommand reports whether name is a package manager / runtime command that
 // nvx wraps (npm, npx, node, bun, ...).
 func isShimCommand(name string) bool {
@@ -401,6 +419,52 @@ func isShimCommand(name string) bool {
 	return false
 }
 
+// commandSummaryFromHelp returns the entry `nvx help` lists for command, for a
+// command with no page in commandHelpText, or "" when the list has none.
+//
+// `nvx install --help` printed help and `nvx list-remote --help` failed with
+// "Unknown option", because only commands with a page were answered. Read out
+// of helpText so the two cannot disagree.
+func commandSummaryFromHelp(command string) string {
+	var b strings.Builder
+	inCommands, matched := false, false
+	for _, line := range strings.Split(helpText(), "\n") {
+		switch {
+		case line == "Commands:":
+			inCommands = true
+			continue
+		case !inCommands:
+			continue
+		case strings.TrimSpace(line) == "":
+			inCommands = false
+			continue
+		case strings.HasPrefix(line, "   "):
+			// A continuation of the entry above.
+			if matched {
+				b.WriteString(line + "\n")
+			}
+			continue
+		}
+		names := strings.TrimSpace(line)
+		if i := strings.Index(names, "  "); i >= 0 {
+			names = names[:i]
+		}
+		matched = false
+		for _, name := range strings.Split(names, ", ") {
+			if f := strings.Fields(name); len(f) > 0 && f[0] == command {
+				matched = true
+			}
+		}
+		if matched {
+			b.WriteString(line + "\n")
+		}
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "nvx " + command + "\n\n" + b.String() + "\nRun 'nvx help' for every command.\n"
+}
+
 func commandHelpText(command string) string {
 	switch command {
 	case "setup":
@@ -410,13 +474,13 @@ func commandHelpText(command string) string {
 	case "uninstall", "uni":
 		return "nvx uninstall <[runtime@]version>\n\nRemove an installed runtime version. Refuses to remove the active shell\nversion or global default.\n"
 	case "use":
-		return "nvx use <[runtime@]version> [--shell=<powershell|bash|zsh>]\n\nEmit shell commands that switch the current terminal session to the\nrequested runtime version (defaults to Node.js for a bare version).\n"
+		return "nvx use <[runtime@]version> [--shell=<powershell|bash|zsh|fish|cmd>]\n\nEmit shell commands that switch the current terminal session to the\nrequested runtime version (defaults to Node.js for a bare version).\n"
 	case "default":
 		return "nvx default <[runtime@]version>\n\nSet the global default version link for a runtime.\n"
 	case "env":
-		return "nvx env [--shell=<powershell|bash|zsh>]\n\nPrint shell integration code. Installers normally add this to your shell profile.\n"
+		return "nvx env [--shell=<powershell|bash|zsh|fish|cmd>]\n\nPrint shell integration code. Installers normally add this to your shell profile.\n"
 	case "auto":
-		return "nvx auto [--shell=<powershell|bash|zsh>]\n\nDetect .nvmrc, .node-version, package.json engines, or Volta config and switch the current shell when needed.\n"
+		return "nvx auto [--shell=<powershell|bash|zsh|fish|cmd>]\n\nDetect .nvmrc, .node-version, package.json engines, or Volta config and switch the current shell when needed.\n"
 	case "verify-install":
 		return "nvx verify-install <package> [package...]\n\nInternal security verifier used by shims. Checks policy blocklists, typosquatting, install scripts, release age, and OSV vulnerabilities.\n"
 	case "policy":
@@ -424,10 +488,12 @@ func commandHelpText(command string) string {
 nvx policy check [--format=json] [--online]
 nvx policy explain
 
-init creates a global or project .nvx policy file. It includes isolation.level
-("standard" or "strict") -- standard contains installs and ad-hoc tool runs;
-strict also contains your own code. Override per-invocation with
-nvx --strict/--standard.
+init creates a global or project .nvx policy file. The global file lists
+every setting with its default, including isolation.level ("standard" or
+"strict") -- standard contains installs and ad-hoc tool runs; strict also
+contains your own code. Override per-invocation with nvx --strict/--standard.
+The project file sets nothing until you add to it, so it never loosens the
+global policy.
 
 check is the CI gate: it evaluates this project against the policy in force and
 exits with a distinct code per failure class, documented in docs/exit-codes.md.
@@ -508,8 +574,8 @@ exported and counted everything that could be read.
 	return ""
 }
 
-// defaultShell returns the shell whose syntax is emitted when none is specified.
-// defaultShell guesses the shell that will evaluate nvx's output.
+// defaultShell guesses the shell that will evaluate nvx's output, when none is
+// named.
 //
 // On Windows it used to answer "powershell" unconditionally, so `nvx use 20` in
 // Git Bash emitted PowerShell assignments that bash cannot evaluate. Nothing
@@ -517,24 +583,84 @@ exported and counted everything that could be read.
 // v20" -- a success message for something that did not happen. Auto-switch on
 // `cd` never fired there either.
 //
-// MSYSTEM is set by Git Bash and MSYS2 and by little else; a SHELL naming bash or
-// zsh is the fallback for other POSIX emulations. Both are heuristics, and
+// On Windows the process that started nvx is asked first. MSYSTEM and SHELL are
+// inherited by every child, so a cmd.exe opened from Git Bash still has MSYSTEM
+// set and was handed POSIX `export` lines it cannot run. With no recognisable
+// parent, MSYSTEM (set by Git Bash and MSYS2 and by little else) and then a SHELL
+// naming bash, zsh or fish are the fallback. Elsewhere SHELL is the only signal:
+// fish and zsh are named by it, and anything else keeps the bash syntax. zsh is
+// the macOS default login shell, and a zsh user was told to add the integration
+// to ~/.bashrc, where `nvx doctor --fix` put it too. All of it is heuristic, and
 // `--shell=` still overrides, which is what the shell integration snippets pass.
 func defaultShell() string {
 	if runtime.GOOS != "windows" {
-		return "bash"
+		return posixShellFromEnv(os.Getenv("SHELL"))
+	}
+	if sh := shellForParentExe(parentShellExe()); sh != "" {
+		return sh
 	}
 	if os.Getenv("MSYSTEM") != "" {
 		return "bash"
 	}
 	sh := strings.ToLower(os.Getenv("SHELL"))
-	if strings.Contains(sh, "bash") {
+	switch {
+	case strings.Contains(sh, "bash"):
 		return "bash"
-	}
-	if strings.Contains(sh, "zsh") {
+	case strings.Contains(sh, "zsh"):
 		return "zsh"
+	case strings.Contains(sh, "fish"):
+		return "fish"
 	}
 	return "powershell"
+}
+
+// posixShellFromEnv names the shell a SHELL value points at, for the platforms
+// where that variable is the only signal. Anything that is not fish or zsh gets
+// the bash syntax.
+func posixShellFromEnv(shellVar string) string {
+	switch filepath.Base(shellVar) {
+	case "fish":
+		return "fish"
+	case "zsh":
+		return "zsh"
+	}
+	return "bash"
+}
+
+// shellForParentExe maps the file name of the process that started nvx to the
+// shell syntax it reads, or "" when it is not a shell nvx knows.
+func shellForParentExe(name string) string {
+	switch strings.ToLower(name) {
+	case "cmd.exe":
+		return "cmd"
+	case "powershell.exe", "pwsh.exe":
+		return "powershell"
+	case "bash.exe":
+		return "bash"
+	case "zsh.exe":
+		return "zsh"
+	case "fish.exe":
+		return "fish"
+	}
+	return ""
+}
+
+// useVersionArg picks the version out of `nvx use` arguments: the first one
+// that is neither a flag, the value of --shell, nor a shell name parseShellArg
+// reads. `nvx use --shell bash 20` took "bash" as the version.
+func useVersionArg(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--shell" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "-") || knownShells[strings.ToLower(arg)] {
+			continue
+		}
+		return arg
+	}
+	return ""
 }
 
 // parseShellArg extracts the target shell from trailing command arguments.
@@ -561,13 +687,13 @@ func shellArgWasGiven(args []string) bool {
 // knownShells are the shells nvx can emit for. An explicit --shell naming
 // anything else is an error: every emitter's default branch is PowerShell, so
 // `--shell=fish` used to print PowerShell assignments for fish to evaluate.
-var knownShells = map[string]bool{"powershell": true, "pwsh": true, "bash": true, "zsh": true}
+var knownShells = map[string]bool{"powershell": true, "pwsh": true, "bash": true, "zsh": true, "fish": true, "cmd": true}
 
 func parseShellArg(args []string) (string, error) {
 	explicit := func(v string) (string, error) {
 		v = strings.ToLower(strings.TrimSpace(v))
 		if !knownShells[v] {
-			return "", fmt.Errorf("unknown shell %q: use powershell, pwsh, bash or zsh", v)
+			return "", fmt.Errorf("unknown shell %q: use powershell, pwsh, bash, zsh, fish or cmd", v)
 		}
 		return v, nil
 	}
@@ -580,8 +706,7 @@ func parseShellArg(args []string) (string, error) {
 		} else if arg == "--shell" && i+1 < len(args) {
 			return explicit(args[i+1])
 		} else if !strings.HasPrefix(arg, "-") {
-			switch strings.ToLower(arg) {
-			case "powershell", "pwsh", "bash", "zsh":
+			if knownShells[strings.ToLower(arg)] {
 				return strings.ToLower(arg), nil
 			}
 		}
@@ -622,8 +747,8 @@ Commands:
   use <[rt@]version>       Switch the current terminal session to a runtime version
   default <[rt@]version>   Set the global default for a runtime (creates a link)
   list, ls                 List installed runtimes and versions
-  list-remote, ls-remote   List available Node.js versions from nodejs.org
-  env [--shell=<type>]     Print shell integration script (powershell, bash, zsh)
+  list-remote, ls-remote   List Node.js versions on nodejs.org or NVX_NODE_MIRROR
+  env [--shell=<type>]     Print shell integration script (powershell, bash, zsh, fish, cmd)
   auto [--shell=<type>]    Auto-switch runtimes from .nvmrc / .node-version /
                            .bun-version / package.json
   verify-install <pkgs>    Verify package safety before installing (called by wrappers)
@@ -636,14 +761,12 @@ Commands:
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;
                            every run reclaims some automatically)
   setup                    (Windows, Administrator) Grant the sandbox stat access
-                           to the roots of the volumes nvx, your profile and the
-                           current directory live on. Optional: installs and npx
-                           do not need it; only a tool that resolves a path all
-                           the way up to a drive root does, and nvx names this
-                           command after such a failure. Slow on a large volume.
-                           Also removes a loopback exemption an older nvx left;
-                           '--all-drives' covers every fixed volume, which is
-                           slow on large ones. 'setup --undo' reverses it
+                           to the root of every fixed volume. Optional: installs
+                           and npx do not need it; only a tool that resolves a
+                           path all the way up to a drive root does, and nvx
+                           names this command after such a failure. Also removes
+                           a loopback exemption an older nvx left.
+                           'setup --undo' reverses it
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
   grants list              Show this project's approved egress hosts, trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)
@@ -657,7 +780,7 @@ Commands:
   help [command]           Show this list, or detail for one command
 
 Options:
-  --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh'
+  --shell=<type>         Specify shell type: 'powershell', 'bash', 'zsh', 'fish', 'cmd'
   --no-sandbox           Disable sandbox for this shim invocation. Must come
                          BEFORE the command; ignored if passed to it
   --standard             Force standard containment, overriding a project's
@@ -675,7 +798,7 @@ Options:
                          and set as NVX_CONNECT_<host>. Must come BEFORE the
                          command
   --filesystem-provider=<name>  Override isolation.filesystem.provider
-                         (native | docker). Passed TO the command:
+                         (native | docker | sandbox-exec). Passed TO the command:
                          nvx npm --filesystem-provider=...
   -y, --yes              Auto-approve all prompts
   -q, --quiet            Suppress success/info messages (errors and warnings still print)
@@ -697,6 +820,15 @@ Environment:
                          host, trusting a tool or a project policy. -y and
                          --agent-mode deliberately do not
   NVX_HOME=<dir>         Use a different nvx home instead of ~/.nvx
+  NVX_NODE_MIRROR=<url>  Fetch Node.js from this mirror instead of
+                         https://nodejs.org/dist. NVM_NODEJS_ORG_MIRROR and
+                         FNM_NODE_DIST_MIRROR are read too. A mirror is
+                         trusted as nodejs.org is
+  HTTPS_PROXY=<url>      Your own proxy. Contained connections the allowlist
+                         permits go through it (or HTTP_PROXY), apart from
+                         NO_PROXY hosts
+  NO_COLOR=1           No colour codes in output. They are also left out
+                         whenever the output is not a terminal
 
 Examples:
   nvx install lts
@@ -711,7 +843,7 @@ func LogSuccess(format string, a ...interface{}) {
 	if quietFlag {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\x1b[32m✔\x1b[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, paint("32", "✔")+" "+format+"\n", a...)
 }
 
 func LogInfo(format string, a ...interface{}) {
@@ -719,7 +851,7 @@ func LogInfo(format string, a ...interface{}) {
 	if quietFlag {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\x1b[36mℹ\x1b[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, paint("36", "ℹ")+" "+format+"\n", a...)
 }
 
 // LogDetail is what nvx is doing on the way to the result -- a check starting,
@@ -738,7 +870,7 @@ func LogDetail(format string, a ...interface{}) {
 	if quietFlag || !verboseFlag {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\x1b[36mℹ\x1b[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, paint("36", "ℹ")+" "+format+"\n", a...)
 }
 
 func LogWarn(format string, a ...interface{}) {
@@ -759,12 +891,12 @@ func LogWarn(format string, a ...interface{}) {
 	// with a different contract -- see debug_log.go. audit.log still gets the
 	// template alone, so the password that motivated that rule never reaches it.
 	debugCapture("warn", fmt.Sprintf(format, a...))
-	fmt.Fprintf(os.Stderr, "\x1b[33m⚠\x1b[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, paint("33", "⚠")+" "+format+"\n", a...)
 }
 
 func LogError(format string, a ...interface{}) {
 	debugCapture("error", fmt.Sprintf(format, a...))
-	fmt.Fprintf(os.Stderr, "\x1b[31m✘\x1b[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, paint("31", "✘")+" "+format+"\n", a...)
 }
 
 // LogRefusalDetail carries the rest of a refusal: why nvx declined, and what to
@@ -783,7 +915,7 @@ func LogError(format string, a ...interface{}) {
 // errors already ignore both flags for the same reason.
 func LogRefusalDetail(format string, a ...interface{}) {
 	debugCapture("info", fmt.Sprintf(format, a...))
-	fmt.Fprintf(os.Stderr, "\x1b[36mℹ\x1b[0m "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, paint("36", "ℹ")+" "+format+"\n", a...)
 }
 
 func CompareVersions(v1, v2 string) int {
@@ -838,7 +970,10 @@ func resolveLocalVersion(provider RuntimeProvider, query string, nvxHome string)
 	}
 
 	query = strings.TrimSpace(strings.ToLower(query))
-	if query == "latest" || query == "current" {
+	// `node` and `stable` are nvm's names for the newest version, and .nvmrc
+	// files carry them. Only Node reads them: they are not words another runtime
+	// has promised to mean this.
+	if query == "latest" || query == "current" || (provider.Name() == "node" && isLatestAlias(query)) {
 		return getLatestLocal(versions), nil
 	}
 
@@ -860,6 +995,14 @@ func resolveLocalVersion(provider RuntimeProvider, query string, nvxHome string)
 				"install one with 'nvx install lts', or name the version you want")
 		}
 		return getLatestLocal(lts), nil
+	}
+
+	// A bare LTS codename (`iron`), as `nvx install iron` already accepts, when an
+	// installed version is that line.
+	if provider.Name() == "node" {
+		if named := filterByLTSCodename(nvxHome, versions, query); len(named) > 0 {
+			return getLatestLocal(named), nil
+		}
 	}
 
 	// Anything else is a version expression, which covers an exact version, a
@@ -939,8 +1082,38 @@ func runInstall(query string, nvxHome string) {
 	// of quiet no-op this project removed from the policy struct this morning.
 	if installed, rerr := resolveLocalVersion(provider, version, nvxHome); rerr == nil {
 		pregrantRuntimeForSandbox(nvxHome, provider.Name(), installed)
+		noteDefaultAfterInstall(provider, installed, nvxHome)
 	} else {
 		LogDetail("Could not tell which version %q installed (%v); the first contained command will grant it.", version, rerr)
+	}
+}
+
+// noteDefaultAfterInstall makes the first installed version of a runtime its
+// default, and otherwise says how to switch to the one just installed.
+//
+// With no default and no `nvx use` in effect the shim has no version to run, so
+// `node` ran an unrelated system node or failed with "Could not find real
+// executable for node" and no hint (measured 2026-10-01, clean home).
+func noteDefaultAfterInstall(provider RuntimeProvider, installed, nvxHome string) {
+	name := provider.Name()
+	display := runtimeDisplayName(name)
+	link := runtimeCurrentLinkPath(nvxHome, name)
+	spec := installed
+	if name != "node" {
+		spec = name + "@" + installed
+	}
+	// Stat follows the link, so a default whose version was deleted counts as none.
+	if _, err := os.Stat(link); err != nil {
+		if err := CreateLink(link, filepath.Join(nvxHome, "versions", name, installed)); err != nil {
+			LogWarn("Could not make %s the default %s version: %v", installed, display, err)
+			LogInfo("Set it yourself with: nvx default %s", spec)
+			return
+		}
+		LogSuccess("%s %s is now the default %s version, because it is the first one installed.", display, installed, display)
+		return
+	}
+	if getGlobalDefaultVersionFor(nvxHome, name) != installed {
+		LogInfo("To use %s in this shell run 'nvx use %s'. To make it the default for new shells run 'nvx default %s'.", installed, spec, spec)
 	}
 }
 
@@ -969,6 +1142,14 @@ func runUse(query string, nvxHome string, shell string, viaIntegration bool) int
 		return 1
 	}
 	if err != nil {
+		// Looked up before offering. `nvx use 99` offered to download and
+		// install Node.js 99, which does not exist, and only the install that
+		// followed said so.
+		if _, rerr := provider.ResolveVersion(version); errors.Is(rerr, errNoReleaseFound) {
+			LogError("%s %s is not installed, and no published release matches it.", display, version)
+			LogInfo("Run 'nvx list-remote' to see what %s versions exist.", display)
+			return 1
+		}
 		promptMsg := fmt.Sprintf("%s %s is not installed. Would you like to download and install it now?", display, version)
 		if PromptYesNo(promptMsg) {
 			if instErr := provider.Install(version, nvxHome); instErr != nil {
@@ -1005,7 +1186,23 @@ func runUse(query string, nvxHome string, shell string, viaIntegration bool) int
 	// The integration exports NVX_SHELL_INTEGRATION, so its presence is the
 	// question "will this be evaluated". A --shell argument means nvx was invoked
 	// BY the integration, which answers the same question.
-	if !viaIntegration && os.Getenv("NVX_SHELL_INTEGRATION") == "" {
+	//
+	// cmd.exe has no integration to load. Its one way in is the for loop in
+	// evalHint, which reads nvx's output through a pipe, so a piped stdout there
+	// is the loop and not a person.
+	evaluated := viaIntegration || os.Getenv("NVX_SHELL_INTEGRATION") != ""
+	if shell == "cmd" && !stdoutIsTerminal() {
+		evaluated = true
+	}
+	if !evaluated && shell == "cmd" {
+		LogWarn("%s %s is installed, but this window is unchanged. cmd.exe cannot be switched by a program.",
+			display, resolvedVer)
+		LogInfo("Commands that run through nvx already use the version your project's .nvmrc or package.json asks for.")
+		LogInfo("To set the version that new windows start on:  nvx default %s", version)
+		LogInfo("To switch only this window:  %s", evalHint(shell, version))
+		return 1
+	}
+	if !evaluated {
 		LogWarn("%s %s is installed, but this shell is unchanged: nothing is loading nvx's environment here.",
 			display, resolvedVer)
 		LogInfo("Load the shell integration once and it switches by itself from then on:")
@@ -1046,8 +1243,9 @@ func runDefault(query string, nvxHome string) {
 		os.Exit(1)
 	}
 
+	// No PATH advice: the shim directory is the only one that belongs on PATH,
+	// and a runtime directory ahead of it is what doctor reports as shadowing.
 	LogSuccess("Global default %s version set to %s.", runtimeDisplayName(provider.Name()), resolvedVer)
-	LogInfo("Make sure '%s' is added to your environment PATH.", GetVersionBinDir(currentLink))
 }
 
 func runList(nvxHome string) {
@@ -1063,16 +1261,16 @@ func runList(nvxHome string) {
 		activeVer := getActiveShellVersionFor(nvxHome, name)
 		defaultVer := getGlobalDefaultVersionFor(nvxHome, name)
 
-		fmt.Printf("\x1b[36mInstalled %s versions:\x1b[0m\n", runtimeDisplayName(name))
+		fmt.Println(paintOut("36", "Installed "+runtimeDisplayName(name)+" versions:"))
 		for _, v := range versions {
 			prefix := "  "
 			suffix := ""
 			if v == activeVer {
-				prefix = "\x1b[32m* \x1b[0m"
-				suffix += " \x1b[32m(active in this shell)\x1b[0m"
+				prefix = paintOut("32", "* ")
+				suffix += " " + paintOut("32", "(active in this shell)")
 			}
 			if v == defaultVer {
-				suffix += " \x1b[33m(global default)\x1b[0m"
+				suffix += " " + paintOut("33", "(global default)")
 			}
 			fmt.Printf("%s%s%s\n", prefix, v, suffix)
 		}
@@ -1107,7 +1305,7 @@ func runListRemote(query string) {
 		}
 	}
 
-	LogInfo("Fetching remote release list from nodejs.org...")
+	LogInfo("Fetching remote release list from %s...", nodeDistBase())
 	releases, err := FetchReleases()
 	if err != nil {
 		LogError("Error fetching releases: %v", err)
@@ -1163,7 +1361,7 @@ func releasesMatching(query string, releases []Release) []Release {
 }
 
 func printReleaseTable(heading string, releases []Release) {
-	fmt.Println("\n\x1b[36m" + heading + "\x1b[0m")
+	fmt.Println("\n" + paintOut("36", heading))
 	fmt.Printf("%-10s  %-12s  %-15s  %-8s\n", "Version", "Release Date", "LTS Status", "Npm version")
 	fmt.Println(strings.Repeat("-", 55))
 
@@ -1201,6 +1399,45 @@ func envScript(shell, exePath, shimDir string) string {
 	// every cd hook failed with it.
 	qexe := quotePOSIXShell(exe)
 	prepend := shimPathPrependSnippet(shell, shimDir)
+
+	// cmd.exe cannot evaluate output, so there is no function and no hook to
+	// define, and the one thing to print is the PATH line. It is run with
+	//   FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i
+	// and the shims then follow each project's version file with no hook at all.
+	if shell == "cmd" {
+		return prepend
+	}
+
+	if shell == "fish" {
+		// Mirrors the zsh branch: a wrapper that evaluates `use` and `auto`, and
+		// a hook on every directory change that is also run once at load, so a
+		// terminal opened inside a project switches before the first cd. fish
+		// fires --on-variable PWD only on a change, as zsh's chpwd does.
+		qfish := quoteFish(exe)
+		return prepend + fmt.Sprintf(`set -gx NVX_SHELL_INTEGRATION 1
+
+function nvx
+    if contains -- "$argv[1]" use auto
+        set -l __nvx_out (command %s $argv --shell=fish)
+        set -l __nvx_status $status
+        if test -n "$__nvx_out"
+            printf '%%s\n' $__nvx_out | source
+        end
+        return $__nvx_status
+    else
+        command %s $argv
+    end
+end
+
+function __nvx_auto --on-variable PWD
+    set -l __nvx_out (command %s auto --shell=fish)
+    if test -n "$__nvx_out"
+        printf '%%s\n' $__nvx_out | source
+    end
+end
+__nvx_auto
+`, qfish, qfish, qfish)
+	}
 
 	if shell == "bash" || shell == "zsh" {
 		return prepend + fmt.Sprintf(`export NVX_SHELL_INTEGRATION=1
@@ -1249,6 +1486,10 @@ if [[ -n "$ZSH_VERSION" ]]; then
     }
     autoload -U add-zsh-hook
     add-zsh-hook chpwd nvx_chpwd_hook
+    # chpwd only fires on a directory change, so a terminal opened inside a
+    # project would keep the default version until the first cd. bash switches
+    # on its first prompt; run the hook once here to match.
+    nvx_chpwd_hook
 elif [[ -n "$BASH_VERSION" ]]; then
     if [[ ! "$PROMPT_COMMAND" =~ nvx_prompt_hook ]]; then
         PROMPT_COMMAND="nvx_prompt_hook; $PROMPT_COMMAND"
@@ -1505,20 +1746,46 @@ func emitSessionEnv(shell, nvxHome, targetDir string) {
 // pinning its own policy. It is deliberately not NVX_YES: nothing sets it by
 // habit, so setting it is a decision rather than an inheritance.
 func PromptTrustBoundary(message string) bool {
+	return promptTrustBoundaryWithRemedy(message, "")
+}
+
+// promptTrustBoundaryWithRemedy is PromptTrustBoundary for a caller that knows
+// the narrow, reviewable way to grant what it is asking for. A non-interactive
+// denial prints that first, as a refusal detail so -q does not hide it. The
+// only other way through is NVX_TRUST_YES, which the denial still names, last.
+func promptTrustBoundaryWithRemedy(message, remedy string) bool {
 	if os.Getenv("NVX_TRUST_YES") == "true" || os.Getenv("NVX_TRUST_YES") == "1" {
 		LogWarn("NVX_TRUST_YES is set: approving a request that widens nvx's trust boundary. %s", message)
 		return true
 	}
 	if !stdinIsInteractive() {
 		LogWarn("Denying a request that widens nvx's trust boundary, because nobody is here to approve it: %s", message)
-		LogInfo("-y, --agent-mode and NVX_YES deliberately do not approve this. Set NVX_TRUST_YES=true only if you have read what you are trusting.")
+		if remedy != "" {
+			LogRefusalDetail("%s", remedy)
+		}
+		LogRefusalDetail("-y, --agent-mode and NVX_YES deliberately do not approve this. Set NVX_TRUST_YES=true to approve every trust prompt in this run, only if you have read what you are trusting.")
 		return false
 	}
-	return promptConsoleYesNo(message)
+	return promptConsoleYesNo(message, trustBoundaryDenialHint)
 }
+
+// trustBoundaryDenialHint is what a console that cannot be opened says for a
+// trust prompt. The generic hint named -y, which does not approve these.
+const trustBoundaryDenialHint = "-y, --agent-mode and NVX_YES deliberately do not approve this. Set NVX_TRUST_YES=true only if you have read what you are trusting."
 
 // PromptYesNo prints a message to the console TTY and reads a Y/N keypress, bypassing standard redirections.
 func PromptYesNo(message string) bool {
+	return promptYesNoWithHint(message, genericDenialHint)
+}
+
+// genericDenialHint is the advice for a prompt that has no narrower answer: the
+// blanket switches are the only way through it. The pre-install checks pass
+// their own hint, which names the policy line that fixes that one check.
+const genericDenialHint = "Use -y / --yes or set NVX_YES=true to approve automatically."
+
+// promptYesNoWithHint is PromptYesNo with the advice printed on a
+// non-interactive denial supplied by the caller.
+func promptYesNoWithHint(message, hint string) bool {
 	if yesFlag {
 		return true
 	}
@@ -1526,7 +1793,7 @@ func PromptYesNo(message string) bool {
 		return true
 	}
 	if os.Getenv("NVX_NONINTERACTIVE") == "true" || os.Getenv("NVX_NONINTERACTIVE") == "1" {
-		LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
+		LogWarn("Non-interactive environment: denying prompt. %s Prompt was: %s", hint, message)
 		return false
 	}
 
@@ -1545,16 +1812,16 @@ func PromptYesNo(message string) bool {
 	// stays a character device, so an interactive user piping output is unaffected
 	// -- which is the case the CONIN$ path was written for in the first place.
 	if !stdinIsInteractive() {
-		LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
+		LogWarn("Non-interactive environment: denying prompt. %s Prompt was: %s", hint, message)
 		return false
 	}
 
-	return promptConsoleYesNo(message)
+	return promptConsoleYesNo(message, hint)
 }
 
 // promptConsoleYesNo does the console interaction itself, shared by PromptYesNo
 // and PromptTrustBoundary so the two cannot drift in how they read an answer.
-func promptConsoleYesNo(message string) bool {
+func promptConsoleYesNo(message, hint string) bool {
 	var ttyIn, ttyOut *os.File
 	var err error
 
@@ -1565,21 +1832,21 @@ func promptConsoleYesNo(message string) bool {
 	if runtime.GOOS == "windows" {
 		ttyOut, err = os.OpenFile("CONOUT$", os.O_WRONLY, 0)
 		if err != nil {
-			LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
+			LogWarn("Non-interactive environment: denying prompt. %s Prompt was: %s", hint, message)
 			return false
 		}
 		defer ttyOut.Close()
 
 		ttyIn, err = os.OpenFile("CONIN$", os.O_RDONLY, 0)
 		if err != nil {
-			LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
+			LogWarn("Non-interactive environment: denying prompt. %s Prompt was: %s", hint, message)
 			return false
 		}
 		defer ttyIn.Close()
 	} else {
 		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 		if err != nil {
-			LogWarn("Non-interactive environment: denying prompt. Use -y / --yes or set NVX_YES=true to approve automatically. Prompt was: %s", message)
+			LogWarn("Non-interactive environment: denying prompt. %s Prompt was: %s", hint, message)
 			return false
 		}
 		defer tty.Close()
@@ -1625,27 +1892,23 @@ func promptAnswerApproves(buf []byte, n int, err error) bool {
 }
 
 // parsePackageQuery splits a package install query (e.g. lodash@4.17.21 or @types/node@18.0.0)
+//
+// An npm alias, alias@npm:target@range, installs target, so target and its
+// range are what it returns. Checked under the alias name, `myalias@npm:left-pad`
+// passed a blocklist that stopped `left-pad` itself.
 func parsePackageQuery(query string) (string, string) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return "", ""
 	}
 
-	isScoped := false
-	if strings.HasPrefix(query, "@") {
-		isScoped = true
-		query = query[1:]
+	// The name ends at the first "@" after a scope's leading one.
+	name, version := query, ""
+	if i := strings.Index(query[1:], "@"); i >= 0 {
+		name, version = query[:i+1], query[i+2:]
 	}
-
-	parts := strings.Split(query, "@")
-	name := parts[0]
-	if isScoped {
-		name = "@" + name
-	}
-
-	version := ""
-	if len(parts) > 1 {
-		version = parts[1]
+	if strings.HasPrefix(strings.ToLower(version), "npm:") {
+		return parsePackageQuery(version[len("npm:"):])
 	}
 	return name, version
 }
@@ -1657,6 +1920,9 @@ type packageDetails struct {
 	publishTime time.Time
 	hasScripts  bool
 	err         error
+	// The registry's tarball record, fetched for a lockfile entry only.
+	dist    npmDist
+	distErr error
 }
 
 // verifyFetchConcurrency bounds the registry requests prefetchPackageDetails
@@ -1673,39 +1939,91 @@ const verifyFetchConcurrency = 8
 // because its prompts must come one at a time and in order; only the network
 // wait moves ahead of it.
 func prefetchPackageDetails(args []string) map[packageQueryKey]packageDetails {
-	var keys []packageQueryKey
-	seen := map[packageQueryKey]bool{}
-	for _, arg := range args {
-		if nonRegistrySpecKind(arg) != "" {
+	return prefetchVerifyDetails(specTargets(args))
+}
+
+func prefetchVerifyDetails(targets []verifyTarget) map[packageQueryKey]packageDetails {
+	type job struct {
+		key  packageQueryKey
+		dist bool
+	}
+	var jobs []job
+	index := map[packageQueryKey]int{}
+	for _, t := range targets {
+		if targetSourceKind(t) != "" {
 			continue
 		}
-		name, query := parsePackageQuery(arg)
+		name, query := parsePackageQuery(t.spec)
 		k := packageQueryKey{name, query}
-		if name == "" || seen[k] {
+		if name == "" {
 			continue
 		}
-		seen[k] = true
-		keys = append(keys, k)
+		if i, ok := index[k]; ok {
+			jobs[i].dist = jobs[i].dist || t.fromLockfile()
+			continue
+		}
+		index[k] = len(jobs)
+		jobs = append(jobs, job{k, t.fromLockfile()})
 	}
 
-	out := make(map[packageQueryKey]packageDetails, len(keys))
+	out := make(map[packageQueryKey]packageDetails, len(jobs))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, verifyFetchConcurrency)
-	for _, k := range keys {
+	for _, j := range jobs {
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(k packageQueryKey) {
+		go func(j job) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			k := j.key
 			v, pub, scripts, err := resolveNpmPackageDetailsForVerify(k.name, k.query)
+			d := packageDetails{version: v, publishTime: pub, hasScripts: scripts, err: err}
+			if j.dist && err == nil {
+				// A lockfile entry's query is its exact version.
+				d.dist, d.distErr = fetchNpmDistForVerify(k.name, k.query)
+			}
 			mu.Lock()
-			out[k] = packageDetails{v, pub, scripts, err}
+			out[k] = d
 			mu.Unlock()
-		}(k)
+		}(j)
 	}
 	wg.Wait()
 	return out
+}
+
+const blockedReason = "the security policy blocks one of its packages"
+
+// refuseBlocked refuses, and records, a package on blocked_packages.
+func refuseBlocked(policy Policy, nvxHome, name string) bool {
+	if !policy.IsBlocked(name) {
+		return false
+	}
+	LogError("Blocked by security policy: Package %q is blacklisted.", name)
+	recordCheckRefused(nvxHome, checkInfo{check: checkBlockedPackage, pkg: name})
+	return true
+}
+
+// targetPackageName is the package a target installs, or "" for a spec that
+// does not say, such as a bare path.
+func targetPackageName(t verifyTarget) string {
+	if t.name != "" {
+		return t.name
+	}
+	if targetSourceKind(t) != "" {
+		return declaredPackageName(t.spec)
+	}
+	name, _ := parsePackageQuery(t.spec)
+	return name
+}
+
+// targetSourceKind names where a target comes from when that is not the
+// registry, or returns "".
+func targetSourceKind(t verifyTarget) string {
+	if t.sourceKind != "" {
+		return t.sourceKind
+	}
+	return nonRegistrySpecKind(t.spec)
 }
 
 // runVerifyInstall verifies packages against policy blocklists, typosquatting, and the real-time OSV CVE database.
@@ -1723,21 +2041,51 @@ func prefetchPackageDetails(args []string) map[packageQueryKey]packageDetails {
 // note on LogWarn), and this reason is shown to an MCP client and may be logged
 // there. See mcp_refusal.go.
 func runVerifyInstall(args []string, nvxHome string) (int, string) {
+	return runVerifyTargets(specTargets(args), nvxHome)
+}
+
+// runVerifyTargets is runVerifyInstall over targets, which can carry what a
+// lockfile says about each package. It reads the registries an npm run outside
+// the sandbox would use.
+func runVerifyTargets(targets []verifyTarget, nvxHome string) (int, string) {
+	return runVerifyTargetsWith(targets, nvxHome, loadNpmRegistryConfig(projectManifestDir(), false), "")
+}
+
+// runVerifyTargetsWith runs the checks with each package looked up on the
+// registry regs names for it. scriptsOff says where the command turns
+// lifecycle scripts off (see ignoreScriptsSource), or is "" when they run.
+func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegistryConfig, scriptsOff string) (int, string) {
 	policy, err := LoadPolicy(nvxHome)
 	if err != nil {
 		LogError("Failed to load security policy: %v", err)
 		return 1, "its security policy could not be read"
 	}
 
+	setCheckRegistries(regs)
 	popularList := LoadPopularPackages(nvxHome)
 	var osvQueries []OSVQuery
-	details := prefetchPackageDetails(args)
+	scriptsSkipRecorded := false
+	reportPublicOnlyChecksSkipped(nvxHome, targets, regs)
+	details := prefetchVerifyDetails(targets)
+	lookupDownloads := memoizeDownloads(weeklyDownloads)
 
-	for _, arg := range args {
+	for _, t := range targets {
+		arg := t.spec
 		// Classified before the name/version split, which would mangle a git URL
 		// carrying a user@host.
-		if kind := nonRegistrySpecKind(arg); kind != "" {
-			LogWarn("%s is %s rather than a registry package name; the blocklist, typosquat, advisory and release-age checks do not apply to it.", arg, kind)
+		if kind := targetSourceKind(t); kind != "" {
+			// The blocklist names packages, and most of these specs name one:
+			// left-pad@github:user/repo installs as left-pad. Until 2026-10-01 none
+			// of them was compared with it.
+			name := targetPackageName(t)
+			if name == "" {
+				LogWarn("%s is %s rather than a registry package name; the blocklist, typosquat, advisory and release-age checks do not apply to it.", arg, kind)
+				continue
+			}
+			if refuseBlocked(policy, nvxHome, name) {
+				return 1, blockedReason
+			}
+			LogWarn("%s comes from %s rather than the registry. It is not on blocked_packages as %s, and the typosquat, advisory and release-age checks do not apply to it.", arg, kind, name)
 			continue
 		}
 		pkgName, versionQuery := parsePackageQuery(arg)
@@ -1746,23 +2094,40 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 		}
 
 		// 1. Policy Blocklist Check
-		if policy.IsBlocked(pkgName) {
-			LogError("Blocked by security policy: Package %q is blacklisted.", pkgName)
-			return 1, "the security policy blocks one of its packages"
+		if refuseBlocked(policy, nvxHome, pkgName) {
+			return 1, blockedReason
 		}
 
-		// 2. Typosquatting Check
-		if policy.Typosquatting.Enabled && !policy.IsTrustedPackage(pkgName) {
+		// The download counts and OSV describe the public registry, and both
+		// are asked by package name. A package from another registry is not the
+		// one they describe, and its name is not sent to them.
+		public := isPublicNpmRegistry(regs.registryFor(pkgName))
+
+		// 2. Typosquatting Check. A typosquat is a name someone typed wrongly, so
+		// it applies to what the user chose and not to the dependencies a package
+		// brought in. Asking api.npmjs.org about every package in a 415-package
+		// tree got HTTP 429 on 2026-10-04, and the fallback refused `regex`.
+		if public && !t.transitive && policy.Typosquatting.Enabled && !policy.IsTrustedPackage(pkgName) {
 			maxDist := policy.Typosquatting.MaxDistance
 			if maxDist <= 0 {
 				maxDist = 2
 			}
-			if suspect := CheckTyposquattingAuthority(pkgName, popularList, maxDist); suspect != "" {
-				pkgDownloads, _ := GetWeeklyDownloads(pkgName)
-				suspectDownloads, _ := GetWeeklyDownloads(suspect)
+			if verdict := assessTyposquatWith(pkgName, popularList, maxDist, lookupDownloads); verdict.suspect != "" {
+				suspect := verdict.suspect
+				pkgDownloads, suspectDownloads := verdict.pkgDownloads, verdict.suspectDownloads
+				info := checkInfo{check: checkTyposquat, pkg: pkgName, detail: "close to " + suspect,
+					what: fmt.Sprintf("%s looks like a typosquat of %s", pkgName, suspect)}
 
 				var msg string
-				if suspectDownloads > 0 {
+				if verdict.lookupErr != nil {
+					// Said in the question as well as the log: the answer depends on it.
+					// A 429, a proxy block or no network at all lands here, and the
+					// prompt used to read as a measured finding.
+					info.detail += ", weekly-download lookup failed"
+					msg = fmt.Sprintf("Package %q is close to popular package %q (edit distance <= %d), but the weekly-download lookup on api.npmjs.org failed (%v), "+
+						"so this is a name-similarity guess and not a measured typosquat. Proceed anyway?",
+						pkgName, suspect, maxDist, verdict.lookupErr)
+				} else if suspectDownloads > 0 {
 					msg = fmt.Sprintf("Package %q is suspiciously close to popular package %q (edit distance <= %d).\n"+
 						"    - %s: %d weekly downloads\n"+
 						"    - %s: %d weekly downloads\n"+
@@ -1773,7 +2138,7 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 						pkgName, suspect, maxDist)
 				}
 
-				if !PromptYesNo(msg) {
+				if !askCheck(nvxHome, info, msg, typosquatRemedy(pkgName)) {
 					LogError("Installation aborted: the typosquatting warning was not approved.")
 					return 1, "a package looked like a typosquat and the warning was not approved"
 				}
@@ -1783,6 +2148,9 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 		LogDetail("Verifying package %q...", pkgName)
 		d := details[packageQueryKey{pkgName, versionQuery}]
 		resolvedVer, pubTime, hasScripts, err := d.version, d.publishTime, d.hasScripts, d.err
+		if err == nil && t.fromLockfile() {
+			err = d.distErr
+		}
 		if err != nil {
 			// The prompt names the vulnerability scan as well, because skipping it
 			// is what approving here actually does.
@@ -1801,7 +2169,9 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 			// so.
 			msg := fmt.Sprintf("Could not verify registry metadata for %s: %v. "+
 				"Proceed without metadata checks AND without the vulnerability scan for it?", pkgName, err)
-			if !PromptYesNo(msg) {
+			if !askCheck(nvxHome, checkInfo{check: checkRegistryLookup, pkg: pkgName,
+				what: pkgName + " installs without its registry metadata checks or a vulnerability scan"},
+				msg, unreachableRemedy("registry")) {
 				LogError("Installation aborted because registry metadata could not be verified.")
 				return 1, "the registry metadata for a package could not be verified"
 			}
@@ -1813,8 +2183,28 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 			continue
 		}
 
+		// A lockfile entry is installed from its own URL and hash, so they must
+		// be the registry's for the name and version checked here.
+		if t.fromLockfile() {
+			if problem := lockEntryMismatch(t, d.dist); problem != "" {
+				LogError("The lockfile entry for %s@%s does not match the registry: %s.", pkgName, resolvedVer, problem)
+				LogRefusalDetail("npm would install what the entry points at, which may be another package. If the lockfile is your own, delete this entry and run npm install to write it again from the registry.")
+				recordCheckRefused(nvxHome, checkInfo{check: checkLockfileSource, pkg: pkgName, version: resolvedVer, detail: problem})
+				return 1, "a lockfile entry does not match the registry's record of that package"
+			}
+		}
+		hasScripts = hasScripts || t.hasInstallScript
+
 		// 3. Installation Script Execution Check
-		if hasScripts && policy.InstallScriptsTrusted(pkgName) {
+		if hasScripts && scriptsOff != "" {
+			// The package manager runs none of these scripts, so there is nothing
+			// to ask about or refuse, and enforce_ignore_scripts is met by the
+			// request itself. Recorded once, and silent otherwise.
+			if !scriptsSkipRecorded {
+				scriptsSkipRecorded = true
+				recordScriptCheckSkipped(nvxHome, scriptsOff)
+			}
+		} else if hasScripts && policy.InstallScriptsTrusted(pkgName) {
 			// Said out loud every time, and as a warning rather than a detail. The
 			// exemption skips the one prompt standing between a compromised
 			// postinstall and this machine, so the run that used it says so whether
@@ -1825,14 +2215,20 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 			LogWarn("Package %s@%s contains installation scripts (preinstall/postinstall/install).", pkgName, resolvedVer)
 			LogWarn("Malicious packages often execute rogue code during the install phase.")
 			if policy.EnforceIgnoreScripts {
-				LogError("Blocked by security policy: Package scripts are disallowed. Please run with --ignore-scripts.")
+				LogError("Blocked by security policy: %s has install scripts, and enforce_ignore_scripts is on.", pkgName)
+				LogRefusalDetail("To install without running its scripts, pass --ignore-scripts. To let this package's install scripts run, add it to install_scripts.trusted_packages in ~/.nvx/policy.json: "+
+					`{"install_scripts":{"trusted_packages":[%q]}}`+
+					". To drop the rule for every package, set enforce_ignore_scripts to false.", pkgName)
+				recordCheckRefused(nvxHome, checkInfo{check: checkEnforceNoScripts, pkg: pkgName, version: resolvedVer})
 				return 1, "the security policy disallows package install scripts"
 			} else {
 				// Not "on your host": these run contained, and saying otherwise
 				// overstates the risk of approving while understating what the
 				// sandbox is doing for you.
 				msg := fmt.Sprintf("Package %s@%s contains install scripts. Run them (contained)?", pkgName, resolvedVer)
-				if !PromptYesNo(msg) {
+				if !askCheck(nvxHome, checkInfo{check: checkInstallScripts, pkg: pkgName, version: resolvedVer,
+					what: fmt.Sprintf("%s@%s runs its install scripts", pkgName, resolvedVer)},
+					msg, installScriptsRemedy(pkgName)) {
 					LogError("Installation aborted: the install-script warning was not approved.")
 					return 1, "a package runs install scripts and the warning was not approved"
 				}
@@ -1854,16 +2250,21 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 				LogWarn("%s is in typosquatting.trusted_packages, which no longer waives this check.", pkgName)
 				LogInfo("Add it to release_age.trusted_packages to skip the cooling-off window for it.")
 			}
-			if !PromptYesNo(msg) {
+			if !askCheck(nvxHome, checkInfo{check: checkReleaseAge, pkg: pkgName, version: resolvedVer,
+				detail: fmt.Sprintf("published %.1f hours ago", age.Hours()),
+				what:   fmt.Sprintf("%s@%s was published %.1f hours ago, inside the %d-hour release-age window", pkgName, resolvedVer, age.Hours(), windowHours)},
+				msg, releaseAgeRemedy(pkgName)) {
 				LogError("Installation aborted: the release-age warning was not approved.")
 				return 1, "a package version was published inside the release-age cooling-off window"
 			}
 		}
 
-		osvQueries = append(osvQueries, OSVQuery{
-			Package: OSVPackage{Name: pkgName, Ecosystem: "npm"},
-			Version: resolvedVer,
-		})
+		if public {
+			osvQueries = append(osvQueries, OSVQuery{
+				Package: OSVPackage{Name: pkgName, Ecosystem: "npm"},
+				Version: resolvedVer,
+			})
+		}
 	}
 
 	// 5. Batch Vulnerability Scan (CVEs / OSV database)
@@ -1872,7 +2273,9 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 		vulns, err := scanVulnerabilitiesBatchForVerify(osvQueries)
 		if err != nil {
 			msg := fmt.Sprintf("Vulnerability database scan failed: %v. Proceed without CVE checks?", err)
-			if !PromptYesNo(msg) {
+			if !askCheck(nvxHome, checkInfo{check: checkOSVLookup,
+				what: "the install goes ahead without the vulnerability database scan"},
+				msg, unreachableRemedy("vulnerability database")) {
 				LogError("Installation aborted because vulnerability checks could not be completed.")
 				return 1, "its vulnerability checks could not be completed"
 			}
@@ -1881,13 +2284,16 @@ func runVerifyInstall(args []string, nvxHome string) (int, string) {
 			reportAcceptedAdvisories(nvxHome, policy, accepted)
 			LogError("Vulnerability Scan Alert: Found active vulnerabilities!")
 			for pkgKey, list := range remaining {
-				fmt.Fprintf(os.Stderr, "  \x1b[31m●\x1b[0m %s:\n", pkgKey)
+				fmt.Fprintf(os.Stderr, "  %s %s:\n", paint("31", "●"), pkgKey)
 				for _, v := range list {
 					fmt.Fprintf(os.Stderr, "    - %s: %s\n", v.ID, v.Summary)
 				}
 			}
 			fmt.Fprintln(os.Stderr)
-			if !PromptYesNo("Proceed with installation despite active vulnerabilities?") {
+			ids := advisoryIDs(remaining)
+			if !askCheck(nvxHome, checkInfo{check: checkVulnerability, detail: strings.Join(ids, ","),
+				what: "the install goes ahead despite " + strings.Join(ids, ", ")},
+				"Proceed with installation despite active vulnerabilities?", advisoryRemedy(ids)) {
 				LogError("Installation aborted: the vulnerability warning was not approved.")
 				return 1, "a package has a known active vulnerability and the warning was not approved"
 			}

@@ -1,15 +1,28 @@
 # Exit codes
 
 `nvx policy check` is meant to gate a pipeline, so it exits with a different code
-for each kind of failure. Every other nvx command exits `0` for success and `1`
-for anything else, and that is unchanged.
+for each kind of failure. It is not in v0.6.0 and is coming in the next release.
+
+## Every other command
+
+| Code | Means |
+| ---- | ----- |
+| 0    | The command worked. |
+| 1    | The command failed. |
+| 2    | A usage error, such as an unknown `--shell` value or a bad `nvx setup` flag. |
+| 77   | nvx refused to run the command: a global install it will not contain, a package that failed its pre-install checks, or a sandbox it could not establish (`exitRefused` in `internal/nvx/env.go`). v0.6.0 exits 1 for these. |
+| 127  | The command to run was not found. |
+| 129  | nvx stopped the command because the program that started it had exited (`exitParentHungUp`). |
+
+A wrapped command's own exit code is passed through unchanged, so a contained
+`npm install` that fails exits with npm's code.
 
 ## `nvx policy check`
 
 | Code | Class                 | Means                                                                                     |
 | ---- | --------------------- | ----------------------------------------------------------------------------------------- |
 | 0    | (pass)                | Every check that ran found nothing.                                                        |
-| 1    | `internal_error`      | nvx could not finish: an unknown flag, an unreadable home, a registry or OSV lookup that failed. No verdict was reached. |
+| 1    | `internal_error`      | nvx could not finish: an unknown flag, an unreadable home, a package.json or package-lock.json that does not parse, a registry or OSV lookup that failed. No verdict was reached. |
 | 10   | `policy_violation`    | A project policy file is not in force: it loosens an enforced global baseline and was refused, or it loosens settings and has never been trusted. |
 | 11   | `blocked_package`     | A package named in `blocked_packages` is a dependency of this project.                      |
 | 12   | `vulnerability`       | An advisory at or above `vulnerabilities.min_severity` that `vulnerabilities.allowed_advisories` does not accept. Needs `--online`. |
@@ -46,8 +59,8 @@ passed.
 ## Stability
 
 These numbers are a contract. A class may be added, and the existing numbers will
-not be reassigned. `0` and `1` keep the meanings they have everywhere else in nvx,
-so a pipeline that only distinguishes zero from non-zero is unaffected by any of
+not be reassigned. `0` and `1` keep the meanings they have for every other nvx
+command, so a pipeline that only distinguishes zero from non-zero is unaffected by any of
 this.
 
 `TestExitCodesMatchTheirDocumentation` compares this table against the constants

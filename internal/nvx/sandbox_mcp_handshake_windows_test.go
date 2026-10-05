@@ -15,10 +15,10 @@ import (
 
 // An MCP server must be able to complete its handshake while contained.
 //
-// This is the claim `docs/superpowers/specs/2026-08-20-mcp-server-containment-design.md`
-// rests on, and it was measured once by hand against a real server. PRODUCT.md's
-// honesty condition says a containment claim is either backed by a test that fails
-// when it stops holding, or listed as a limitation -- so this is that test.
+// That claim was measured once by hand against a real server before this test
+// existed. PRODUCT.md's honesty condition says a containment claim is either
+// backed by a test that fails when it stops holding, or listed as a
+// limitation -- so this is that test.
 //
 // What it verifies, stated narrowly because the wider claim was checked and did
 // not hold: a contained server completes a real handshake end to end, through the
@@ -220,9 +220,10 @@ function reply(o) { process.stdout.write(JSON.stringify(o) + '\n'); }
 // skipIfHostRefusesAppContainers turns "this machine will not run AppContainers"
 // into a skip rather than a failure.
 //
-// GitHub-hosted Windows runners refuse CreateProcess for an AppContainer child
-// with "Access is denied", which every other probe handles through
-// requireAppContainerLaunch. This test drives nvx as a subprocess instead of
+// GitHub-hosted Windows runners refused CreateProcess for an AppContainer child
+// with "Access is denied" until 2026-09-21 (run 37244525606 launched them), and
+// the skip stays for a runner that refuses again. Every other probe handles that
+// through requireAppContainerLaunch. This test drives nvx as a subprocess instead of
 // calling the launcher, so the refusal arrives as nvx's stderr and a closed
 // stdout, and it failed where its siblings skipped.
 //
@@ -234,7 +235,7 @@ func skipIfHostRefusesAppContainers(t *testing.T, stderr string) {
 	t.Helper()
 	if strings.Contains(stderr, "AppContainer launch failed") &&
 		strings.Contains(stderr, "Access is denied") {
-		t.Skipf("this host cannot create AppContainer children; GitHub-hosted Windows runners "+
-			"are known to refuse, so the probe cannot run here. nvx said:\n%s", tail(stderr))
+		t.Skipf("this host cannot create AppContainer children, so the probe cannot run here. "+
+			"nvx said:\n%s", tail(stderr))
 	}
 }

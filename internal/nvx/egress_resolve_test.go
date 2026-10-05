@@ -17,7 +17,7 @@ func TestANameResolvingToLinkLocalIsRefused(t *testing.T) {
 	metadata := func(string) ([]net.IP, error) {
 		return []net.IP{net.ParseIP("169.254.169.254")}, nil
 	}
-	err := resolvedAddressAllowed("harmless.example.com", metadata)
+	_, err := resolveEgressAddresses("harmless.example.com", metadata)
 	if err == nil {
 		t.Fatal("a name resolving to the cloud metadata endpoint was allowed; " +
 			"the allowlist checked the name and nothing checked the address")
@@ -28,7 +28,7 @@ func TestANameResolvingToLinkLocalIsRefused(t *testing.T) {
 
 	// IPv6 link-local too, or the check only covers half the address space.
 	v6 := func(string) ([]net.IP, error) { return []net.IP{net.ParseIP("fe80::1")}, nil }
-	if err := resolvedAddressAllowed("harmless.example.com", v6); err == nil {
+	if _, err := resolveEgressAddresses("harmless.example.com", v6); err == nil {
 		t.Fatal("an IPv6 link-local answer was allowed")
 	}
 
@@ -37,7 +37,7 @@ func TestANameResolvingToLinkLocalIsRefused(t *testing.T) {
 	mixed := func(string) ([]net.IP, error) {
 		return []net.IP{net.ParseIP("93.184.216.34"), net.ParseIP("169.254.169.254")}, nil
 	}
-	if err := resolvedAddressAllowed("harmless.example.com", mixed); err == nil {
+	if _, err := resolveEgressAddresses("harmless.example.com", mixed); err == nil {
 		t.Fatal("a link-local address after a public one was allowed; nvx would dial whichever the OS picked")
 	}
 }
@@ -67,7 +67,7 @@ func TestTheResolvedAddressCheckStaysNarrow(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			lookup := func(string) ([]net.IP, error) { return tc.ips, nil }
-			err := resolvedAddressAllowed(tc.host, lookup)
+			_, err := resolveEgressAddresses(tc.host, lookup)
 			if tc.want && err != nil {
 				t.Fatalf("%s was refused: %v", tc.host, err)
 			}
@@ -85,7 +85,7 @@ func TestTheResolvedAddressCheckStaysNarrow(t *testing.T) {
 // reports the real failure anyway.
 func TestAResolverFailureIsNotTreatedAsARefusal(t *testing.T) {
 	broken := func(string) ([]net.IP, error) { return nil, errors.New("no such host") }
-	if err := resolvedAddressAllowed("example.com", broken); err != nil {
+	if _, err := resolveEgressAddresses("example.com", broken); err != nil {
 		t.Fatalf("a DNS failure was reported as a containment refusal: %v", err)
 	}
 }

@@ -3,7 +3,7 @@ import type { Platform, PlatformInstall, SectionCopy, TryCommand } from './types
 export const installCopy: SectionCopy = {
   heading: 'Install',
   leadHtml:
-    'One command on every platform. nvx is not yet on winget, Scoop, Homebrew or npm, so the install script and the release binaries are the two routes that exist.',
+    'One command on every platform. nvx is also on npm as <code>@fstubner/nvx</code>, and not yet on winget, Scoop or Homebrew.',
 };
 
 const RELEASE = 'https://github.com/fstubner/nvx/releases/latest/download';
@@ -43,8 +43,11 @@ export const installByPlatform: Record<Platform, PlatformInstall> = {
   },
 };
 
+// One list for every platform, so each command has to parse in bash, zsh and
+// Windows PowerShell 5.1 alike. `&&` is a parse error in PowerShell 5.1, the
+// shell a Windows reader most likely pastes into, and `;` works in all three.
 export const tryCommands: TryCommand[] = [
-  { comment: 'Install a runtime and use it in this shell', command: 'nvx install 22 && nvx use 22' },
+  { comment: 'Install a runtime and use it in this shell', command: 'nvx install 22; nvx use 22' },
   { comment: 'Install packages, contained, with no change to how you type it', command: 'npm install' },
   { comment: 'Check that nvx is intercepting, and that nothing weakens it', command: 'nvx doctor' },
 ];
@@ -54,8 +57,12 @@ export const installBinariesNote =
 
 export const installFromSource = 'go build -o nvx ./cmd/nvx';
 
+// install.sh writes a three-line block (a comment, the PATH line and
+// `eval "$(nvx env)"`) to the profile of the shell it finds, and for bash to
+// both .bashrc and the login profile. install.ps1 sets the user PATH and adds
+// two lines to $PROFILE.
 export const installNotes = [
   'One static binary, no runtime to install alongside it. The install script',
-  'puts nvx on PATH and adds a line to your shell profile. nvx doctor reports',
-  'whether both worked.',
+  'puts nvx on PATH and adds a short nvx block to your shell profile (for bash,',
+  'to .bashrc and your login profile). nvx doctor reports whether both worked.',
 ];

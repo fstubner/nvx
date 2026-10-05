@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -48,10 +47,10 @@ const (
 )
 
 // windowsExposeSocketPath is where the parent listens for tunnels for one port.
-// Mirrors windowsEgressSocketPath: inside the guest home, which already carries
-// the grants the container needs, so no extra ACL work is required.
-func windowsExposeSocketPath(guestHome string, port int) string {
-	return filepath.Join(guestHome, fmt.Sprintf(".nvx-expose-%d.sock", port))
+// Mirrors windowsEgressSocketPath: under the session's socket prefix, which
+// already carries the grants the container needs. See windowsSocketPrefix.
+func windowsExposeSocketPath(prefix string, port int) string {
+	return prefix + fmt.Sprintf("expose-%d.sock", port)
 }
 
 // exposedPortListener is the parent's half: a host loopback listener plus the
@@ -67,8 +66,8 @@ type exposedPortListener struct {
 // publishExposedPort sets up the parent side for one mapping. It returns an
 // error rather than warning and continuing: a developer who asked for a port and
 // did not get it should be told, not left wondering why the browser hangs.
-func publishExposedPort(ctx context.Context, guestHome string, m exposeMapping) (*exposedPortListener, error) {
-	sock := windowsExposeSocketPath(guestHome, m.Container)
+func publishExposedPort(ctx context.Context, sockets string, m exposeMapping) (*exposedPortListener, error) {
+	sock := windowsExposeSocketPath(sockets, m.Container)
 	// A leftover file from a previous run makes bind fail with "address already
 	// in use" even though nothing holds it.
 	_ = os.Remove(sock)
@@ -157,8 +156,8 @@ func (e *exposedPortListener) Close() {
 // startExposeTunnels is the contained side: keep tunnels parked with the parent,
 // and bridge each one to the server inside the container when it carries a
 // request.
-func startExposeTunnels(ctx context.Context, guestHome string, containerPort int) {
-	sock := windowsExposeSocketPath(guestHome, containerPort)
+func startExposeTunnels(ctx context.Context, sockets string, containerPort int) {
+	sock := windowsExposeSocketPath(sockets, containerPort)
 	local := fmt.Sprintf("127.0.0.1:%d", containerPort)
 	for i := 0; i < exposeTunnelPoolSize; i++ {
 		go maintainExposeTunnel(ctx, sock, local)

@@ -60,6 +60,15 @@ func formatProjectGrants(g projectGrants) string {
 	return b.String()
 }
 
+// isGrantsLedgerName reports whether a file in the grants directory is a
+// ledger. The directory also holds each ledger's lock file and, briefly, a save's
+// temp file. `reset --all` read every entry as a ledger until 2026-09-26, so the
+// lock left by the first grant ever recorded made it fail on every run and tell
+// the user to clean up with icacls.
+func isGrantsLedgerName(name string) bool {
+	return strings.HasSuffix(name, ".json")
+}
+
 // runGrants implements `nvx grants list` and `nvx grants reset [--all]`.
 func runGrants(args []string, nvxHome string) int {
 	if len(args) == 0 {
@@ -79,11 +88,15 @@ func runGrants(args []string, nvxHome string) int {
 		// `grants list` is a question, and answering it should not rename a file on
 		// disk. Reported by an acceptance pass after `list` renamed a corrupt record.
 		g := projectGrants{ProjectPath: scope, PolicyPins: map[string]string{}}
+		// A record that exists and cannot be opened is said so too. It printed
+		// "(none)" for every kind of grant, which reads as nothing granted.
 		if data, rerr := os.ReadFile(grantsPath(nvxHome, scope)); rerr == nil {
 			if uerr := json.Unmarshal(data, &g); uerr != nil {
 				LogWarn("This project's grant record could not be read, so this list may be incomplete.")
 				g = projectGrants{ProjectPath: scope, PolicyPins: map[string]string{}}
 			}
+		} else if !os.IsNotExist(rerr) {
+			LogWarn("This project's grant record could not be read, so this list may be incomplete: %v", rerr)
 		}
 		fmt.Print(formatProjectGrants(g))
 		return 0
@@ -119,6 +132,15 @@ func runGrants(args []string, nvxHome string) int {
 					unreadable++
 					continue
 				}
+				if !isGrantsLedgerName(e.Name()) {
+					continue
+				}
+				unlock, lerr := lockGrantsLedger(path)
+				if lerr != nil {
+					LogWarn("Could not lock %s; it was left in place: %v", e.Name(), lerr)
+					unreadable++
+					continue
+				}
 				grants, ok := readGrantsFile(path)
 				if !ok {
 					// Could not be read, so its permissions cannot be withdrawn and
@@ -126,6 +148,7 @@ func runGrants(args []string, nvxHome string) int {
 					// the loss this whole ledger exists to prevent.
 					LogWarn("Could not read %s; it was left in place, and any directory permissions it lists are not withdrawn.", e.Name())
 					unreadable++
+					unlock()
 					continue
 				}
 				out := revokeAllReadExecGrants(grants, revokeSandboxReadExec)
@@ -135,11 +158,13 @@ func runGrants(args []string, nvxHome string) int {
 				if out.Failed > 0 {
 					// Keep the record of whatever could not be withdrawn; removing it
 					// would strand those entries permanently.
+					unlock()
 					continue
 				}
 				if err := os.Remove(path); err != nil {
 					LogWarn("Failed to remove %s: %v", e.Name(), err)
 				}
+				unlock()
 			}
 			if revoked > 0 {
 				LogInfo("Withdrew %d read/execute directory permission(s).", revoked)
@@ -180,6 +205,14 @@ func runGrants(args []string, nvxHome string) int {
 			return 1
 		}
 		path := grantsPath(nvxHome, scope)
+		// Under the ledger's lock, so a record a concurrent run saves between this
+		// read and the removal below is not deleted with it.
+		unlock, lerr := lockProjectGrants(nvxHome, scope)
+		if lerr != nil {
+			LogError("Could not lock this project's grant record: %v", lerr)
+			return 1
+		}
+		defer unlock()
 		grants, readable := readGrantsFile(path)
 		if !readable {
 			if _, statErr := os.Stat(path); statErr == nil {

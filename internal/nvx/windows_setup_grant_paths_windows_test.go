@@ -2,20 +2,19 @@
 
 package nvx
 
-// Which volumes `nvx setup` grants, and which it deliberately leaves alone.
+// Which volumes `nvx setup` grants, and which ones the notices after a failed
+// command name.
 //
-// Setup granted every fixed volume unconditionally until 2026-09-01. The
-// permission is narrow -- root-only RX, non-inheritable -- but the write costs
-// time proportional to the size of the volume, because Windows re-runs
-// auto-inheritance beneath the directory. Measured on the development machine: a
-// 932GB volume with 1GB free on a 5400rpm disk had not finished after 36 minutes,
-// and two more volumes were queued behind it, the last of which was the one
-// holding the user's projects. The volume that mattered was granted last, behind
-// two that held no projects at all.
+// From 2026-09-01 until 2026-10-04 setup granted only the volumes a real path
+// resolves up to, because each grant walked the whole volume: a 932GB volume
+// with 1GB free on a 5400rpm disk had not finished after 36 minutes. The grant
+// no longer walks anything, so setup covers every fixed volume again. The
+// narrower selection stays for the notices, which name only the roots this run
+// could have walked to.
 //
 // These assert the selection, not the permission: that the volumes a real path
-// resolves up to are covered, that the rest are reported rather than silently
-// dropped, and that --all-drives still means all.
+// resolves up to are in the narrow set, that the rest are reported rather than
+// silently dropped, and that setup itself covers every fixed volume.
 
 import (
 	"errors"
@@ -44,27 +43,24 @@ func TestSetupGrantsTheVolumesRealPathsResolveTo(t *testing.T) {
 	// running setup from a project on H: would grant every volume except H:.
 	for _, root := range roots {
 		workDir := filepath.Join(root, "some", "project")
-		grant, skipped := windowsSetupGrantPaths(`C:\Users\someone\.nvx`, workDir, false)
+		grant := windowsSetupGrantPaths(`C:\Users\someone\.nvx`, workDir, false)
 		if !setupPathsContain(grant, root) {
-			t.Errorf("setup run from %s did not grant that volume's root %q; a project there "+
-				"would fail with a bare EPERM. Granted: %v", workDir, root, grant)
-		}
-		if setupPathsContain(skipped, root) {
-			t.Errorf("%q was reported as skipped even though setup was run from it", root)
+			t.Errorf("a run from %s does not list that volume's root %q, so a notice after "+
+				"an EPERM there would not name it. Listed: %v", workDir, root, grant)
 		}
 	}
 }
 
-func TestSetupLeavesUnrelatedVolumesAloneAndSaysSo(t *testing.T) {
+// The notices name only roots this run could have walked to. Naming every
+// fixed volume read as a complete account of a failure, and listed volumes no
+// project was on.
+func TestTheNarrowSetLeavesUnrelatedVolumesOut(t *testing.T) {
 	const nvxHome = `C:\Users\someone\.nvx`
 	const workDir = `C:\Users\someone`
 
-	// Which volumes this machine has that setup has no reason to touch, worked
+	// Which volumes this machine has that the run has no reason to name, worked
 	// out from the SAME inputs the function is given -- never from what it
-	// returned. The first version of this decided there was nothing to check when
-	// the skipped list came back empty, which is precisely the broken state: with
-	// the old grant-everything behaviour restored, the test skipped itself and
-	// reported ok.
+	// returned.
 	needed := map[string]bool{}
 	for _, p := range []string{os.Getenv("SystemDrive") + `\`, os.Getenv("USERPROFILE"), nvxHome, workDir} {
 		if vol := filepath.VolumeName(p); vol != "" {
@@ -78,58 +74,40 @@ func TestSetupLeavesUnrelatedVolumesAloneAndSaysSo(t *testing.T) {
 		}
 	}
 	if len(unrelated) == 0 {
-		t.Skip("every fixed volume on this machine is one setup needs; nothing to leave alone")
+		t.Skip("every fixed volume on this machine is one this run resolves to; nothing to leave out")
 	}
 
-	grant, skipped := windowsSetupGrantPaths(nvxHome, workDir, false)
-
+	grant := windowsSetupGrantPaths(nvxHome, workDir, false)
 	for _, root := range unrelated {
 		if setupPathsContain(grant, root) {
-			t.Errorf("setup granted %q, which holds neither nvx, the profile, nor the working "+
-				"directory. That write costs time proportional to the size of the volume and buys "+
-				"nothing. granted=%v", root, grant)
-		}
-		if !setupPathsContain(skipped, root) {
-			t.Errorf("%q was left ungranted but not reported as skipped, so a project there would "+
-				"fail with an error naming neither nvx nor the volume. skipped=%v", root, skipped)
-		}
-	}
-
-	// Every fixed volume accounted for: granted or named. Neither is the silent case.
-	for _, root := range fixedDriveRoots() {
-		if !setupPathsContain(grant, root) && !setupPathsContain(skipped, root) {
-			t.Errorf("fixed volume %q is neither granted nor reported as skipped; it would be "+
-				"silently ungranted. granted=%v skipped=%v", root, grant, skipped)
+			t.Errorf("%q holds neither nvx, the profile, nor the working directory, and is listed "+
+				"anyway: %v", root, grant)
 		}
 	}
 }
 
-func TestSetupAllDrivesStillCoversEveryFixedVolume(t *testing.T) {
+func TestSetupCoversEveryFixedVolume(t *testing.T) {
 	roots := fixedDriveRoots()
 	if len(roots) == 0 {
 		t.Skip("no fixed drives reported")
 	}
-	grant, skipped := windowsSetupGrantPaths(`C:\Users\someone\.nvx`, `C:\Users\someone`, true)
+	grant := windowsSetupPaths(`C:\Users\someone\.nvx`, `C:\Users\someone`)
 	for _, root := range roots {
 		if !setupPathsContain(grant, root) {
-			t.Errorf("--all-drives did not cover fixed volume %q: %v", root, grant)
+			t.Errorf("plain `nvx setup` did not cover fixed volume %q: %v", root, grant)
 		}
-	}
-	if len(skipped) != 0 {
-		t.Errorf("--all-drives reported %v as skipped; it grants everything by definition", skipped)
 	}
 }
 
 func TestSetupGrantPathsAreDeduplicated(t *testing.T) {
-	grant, _ := windowsSetupGrantPaths(`C:\Users\someone\.nvx`, `C:\Users\someone\project`, true)
+	grant := windowsSetupPaths(`C:\Users\someone\.nvx`, `C:\Users\someone\project`)
 	seen := map[string]int{}
 	for _, p := range grant {
 		seen[strings.ToUpper(filepath.Clean(p))]++
 	}
 	for p, n := range seen {
 		if n > 1 {
-			// Each duplicate is a second expensive write of a permission already
-			// made, on the slowest operation setup performs.
+			// Each duplicate is a second write of a permission already made.
 			t.Errorf("path %q listed %d times; setup would grant it more than once", p, n)
 		}
 	}
@@ -154,7 +132,7 @@ func TestSetupSkipsGrantsAlreadyInPlace(t *testing.T) {
 	}
 	if len(attempted) != 1 || attempted[0] != `H:\` {
 		t.Errorf("expected only the ungranted path to be written, got %v; re-running setup would "+
-			"pay again for volumes already done, which is minutes each on a large disk", attempted)
+			"write again to volumes already done", attempted)
 	}
 }
 

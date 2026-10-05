@@ -3,6 +3,7 @@ package nvx
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -61,6 +62,7 @@ func runDoctorQuietly(t *testing.T, home string) int {
 // under test turns on the sandbox answer rather than on a missing shim.
 func seedDoctorShims(t *testing.T, home string) {
 	t.Helper()
+	assumeProtectedProfile(t)
 	binDir := filepath.Join(home, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -72,5 +74,23 @@ func seedDoctorShims(t *testing.T, home string) {
 			}
 		}
 	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+stubRuntimeDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// stubRuntimeDir is a directory holding a stand-in for each core command, to
+// put after the shim dir on PATH. Doctor is unhealthy when no runtime resolves,
+// so a baseline that should be healthy needs one even on a machine without Node.
+func stubRuntimeDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, cmd := range coreShimCommands() {
+		name := cmd
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("runtime"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }

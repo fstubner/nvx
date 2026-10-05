@@ -3,6 +3,7 @@ package nvx
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func settingRow(t *testing.T, exp policyExplanation, name string) policySettingSource {
@@ -102,5 +103,19 @@ func TestExplainSaysWhenTheBaselineIsEnforced(t *testing.T) {
 	}
 	if row := settingRow(t, exp, "enforced"); row.Value != "true" {
 		t.Errorf("enforced = %q, want true", row.Value)
+	}
+}
+
+// A long value is cut by characters, not bytes. Cutting bytes split a
+// multi-byte character, so `nvx policy explain` printed invalid UTF-8 for a
+// non-ASCII entry.
+func TestPolicyExplainCutsLongValuesByCharacter(t *testing.T) {
+	home := tempDir(t)
+	writePolicyFixture(t, home, "policy.json", `{"blocked_packages": ["`+strings.Repeat("é", 30)+`"]}`)
+	inProjectDir(t, tempDir(t))
+
+	out := captureStdout(t, func() { runPolicyExplain(nil, home) })
+	if !utf8.ValidString(out) {
+		t.Fatalf("policy explain printed invalid UTF-8:\n%q", out)
 	}
 }

@@ -4,7 +4,8 @@ nvx records its security decisions to `~/.nvx/audit.log` (`$NVX_HOME/audit.log`)
 Nothing is ever sent anywhere: there is no uploader in nvx, and this file is read
 by `nvx audit`, by `nvx audit export`, and by whatever you point at it.
 
-`nvx audit export` is the supported way to read it from another program:
+`nvx audit export` is the supported way to read it from another program. It is
+not in v0.6.0 and is coming in the next release.
 
 ```
 nvx audit export --since 7d --event egress_deny --format csv --out evidence.csv
@@ -68,7 +69,11 @@ debugging aid and are written only when `NVX_TRACE=1`.
 | `policy_pin_changed_denied`      | `path`                                                    | That trust was declined, so the file does not apply.                         |
 | `install_scripts_exempt`         | `package`, `version`                                      | A package's install scripts ran without asking, per `install_scripts.trusted_packages`. |
 | `vulnerability_allowed`          | `package`, `advisory`, `severity`, `reason`               | A known advisory did not stop an install. `reason` is `allowlisted` or `below_min_severity`. |
+| `check_approved`                 | `check`, `by`, and optionally `package`, `version`, `detail` | A pre-install check went ahead. `check` is `typosquat`, `release_age`, `install_scripts`, `vulnerability`, `registry_unreachable`, `osv_unreachable`, `resolution_failed` (npm could not say what an install brings in) or `lockfile_unreadable`. `by` is `yes_flag`, `agent_mode` or `nvx_yes` when nobody was asked (stderr also prints a line), or `prompt` when a person answered. |
+| `check_refused`                  | `check`, `by`, and optionally `package`, `version`, `detail` | A pre-install check stopped the install. `check` is one of the above, or `blocked_package`, `enforce_ignore_scripts` or `lockfile_mismatch` (a lockfile entry's tarball URL or hash is not the registry's for its name and version). `by` is `prompt`, `non_interactive` (nobody was there to answer) or `policy` (no prompt exists for it). |
+| `check_skipped`                  | `check`, `by`, `detail`                                   | Some checks did not run for part of an install. `check` is `public_registry_checks`: packages from a registry other than registry.npmjs.org got no typosquat or advisory check, because both send the name to a public service. `by` is `registry`, and `detail` gives the count and the registry hosts. Written once per run. `check` is `install_scripts` when a package with install scripts was not asked about or refused, because the command turns scripts off. `by` is `ignore_scripts_flag`, `ignore_scripts_env` or `ignore_scripts_npmrc`, and `detail` names the source. Written once per run. |
 | `env_scrubbed`                   | `count`, `dropped`                                        | Containment dropped environment variables that a build might have wanted. `dropped` is comma-separated. |
+| `env_pass_refused`               | `names`                                                   | `isolation.environment.allow` named a variable that holds a credential by convention, and it was not passed in. `names` is comma-separated. |
 | `sandbox_not_started`            | `command`, `reason`                                       | nvx declined to run a command, or could not establish the containment it promises. |
 | `connect_peer_refused`           | `host_port`, `reason`                                     | A connection to a published port came from outside this sandbox. `reason` is `not_in_this_sandbox` or `unverifiable`. |
 | `loopback_redirect`              | `address`                                                 | A contained process reached a host service through the loopback tunnel.      |
@@ -81,6 +86,10 @@ debugging aid and are written only when `NVX_TRACE=1`.
 rendering one put a live password in the log once. `nvx audit` replaces the printf
 verbs with `[…]` on the way out; the export does not, so a consumer sees exactly
 what was stored.
+
+In `csv` only, a value that starts with `=`, `+`, `-`, `@`, a tab or a carriage
+return, and is not a plain number, gets a leading `'`. Spreadsheets run such a cell
+as a formula, and the log is a file anything on the machine can append to.
 
 Arguments are never recorded. `action` holds only a subcommand nvx recognises by
 name (`install`, `run`, `add`), because a package spec or a script name can carry a

@@ -61,11 +61,15 @@ func TestAnEndlessConnectRequestIsDroppedNotBuffered(t *testing.T) {
 }
 
 // The cap is generous enough for real requests: a CONNECT with ordinary
-// headers to an allowlisted host gets past the header phase. The host does not
-// resolve here, so the answer is a 502, and that is fine: it proves the request
-// was parsed, authenticated and judged, which is everything the cap sits in
-// front of.
+// headers to an allowlisted host gets past the header phase. The resolver is
+// stubbed to find nothing, so the answer is a 502 and no real host is dialled.
+// That proves the request was parsed, authenticated and judged, which is
+// everything the cap sits in front of.
 func TestAnOrdinaryConnectRequestStillGetsThroughTheHeaderPhase(t *testing.T) {
+	orig := resolveEgressTarget
+	t.Cleanup(func() { resolveEgressTarget = orig })
+	resolveEgressTarget = func(string) ([]net.IP, error) { return nil, nil }
+
 	p := newTestProxy(t, "proxy", []string{"github.com:443"})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -92,7 +96,7 @@ func TestAnOrdinaryConnectRequestStillGetsThroughTheHeaderPhase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no response to an ordinary CONNECT: %v", err)
 	}
-	if !strings.HasPrefix(string(buf[:n]), "HTTP/1.1 ") {
+	if !strings.HasPrefix(string(buf[:n]), "HTTP/1.1 502 ") {
 		t.Fatalf("unexpected response to an ordinary CONNECT: %q", buf[:n])
 	}
 }

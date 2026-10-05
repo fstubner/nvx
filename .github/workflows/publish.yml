@@ -41,8 +41,8 @@ concurrency:
 
 # These jobs hold four publishing tokens between them (npm, the tap, the
 # bucket, winget) and none of them needs GITHUB_TOKEN to write to this repo.
-# Read is what the checkouts need; the npm job adds id-token and attestation
-# read for itself and nothing else wants more.
+# Read is what the checkouts need. The npm job adds id-token for itself, and
+# the npm, Homebrew and Scoop jobs add attestation read for verified_sha.
 permissions:
   contents: read
 
@@ -80,7 +80,8 @@ jobs:
     name: npm
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # id-token for npm --provenance; attestations to read release.yml's.
+    # id-token for npm trusted publishing (OIDC) and provenance;
+    # attestations to read release.yml's.
     permissions:
       contents: read
       id-token: write
@@ -89,9 +90,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TAG }}
+      # Trusted publishing needs npm 11.5.1 or newer, and the runner's
+      # preinstalled npm can be older, so install a known version.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install npm 11.6.2
+        run: npm install -g npm@11.6.2 && npm --version
       - name: Publish @fstubner/nvx
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/release/publish-npm.sh "$TAG"
 
@@ -103,6 +111,10 @@ jobs:
     name: Homebrew tap
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # attestations, so verified_sha can check release.yml's build provenance.
+    permissions:
+      contents: read
+      attestations: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -110,6 +122,7 @@ jobs:
       - name: Update fstubner/homebrew-tap
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          ATTESTATION_GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/release/publish-homebrew.sh "$TAG"
 
   # --- Scoop bucket -----------------------------------------------------
@@ -119,6 +132,10 @@ jobs:
     name: Scoop bucket
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # attestations, so verified_sha can check release.yml's build provenance.
+    permissions:
+      contents: read
+      attestations: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -126,6 +143,7 @@ jobs:
       - name: Update fstubner/scoop-bucket
         env:
           GH_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          ATTESTATION_GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/release/publish-scoop.sh "$TAG"
 
   # --- Winget (microsoft/winget-pkgs) -----------------------------------
@@ -137,10 +155,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      # The `winget-releaser` action fetches the release's asset list via
-      # the GitHub API and bails fast if the matching .exe is not present
-      # yet. On the `workflow_dispatch` path that can easily be true, so
-      # poll the .sha256 sidecar before invoking it. The sidecar is a few
+      # Komac downloads nvx.exe from the release and fails fast if it is not
+      # there yet. On the `workflow_dispatch` path that can easily be true,
+      # so poll the .sha256 sidecar before running it. The sidecar is a few
       # hundred bytes and cheap to HEAD, and release.yml uploads it in the
       # same step as the binary.
       - name: Wait for the Windows release asset
@@ -162,15 +179,9 @@ jobs:
           echo "asset never appeared after 15 minutes" >&2
           exit 1
 
-      # `version` is the PackageVersion that lands in the catalog, and it
-      # must not carry the tag's `v`. The action strips it only when the
-      # input is empty. Its own source reads
-      #
-      #   If ('' -eq '${{ inputs.version }}') { tag_name -replace '^v' }
-      #   Else                                { inputs.version }
-      #
-      # so passing `${{ env.TAG }}` opts out of the stripping and would
-      # submit `v0.6.1` beside an existing `0.6.0`. Winget sorts versions
+      # `--version` is the PackageVersion that lands in the catalog, and it
+      # must not carry the tag's `v`. Passing the tag as it is would submit
+      # `v0.6.1` beside an existing `0.6.0`. Winget sorts versions
       # naturally, so the two do not compare as an upgrade.
       - name: Resolve PackageVersion (tag without the leading v)
         id: pkg
@@ -199,21 +210,42 @@ jobs:
           echo "-> PackageVersion ${version}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
+      # Komac, from one pinned release, checked against its SHA-256 before it
+      # runs with WINGET_TOKEN.
+      #
+      # This was vedantmgoyal9/winget-releaser, pinned by commit. Its own
+      # steps then ran cargo-bins/cargo-binstall from that project's main
+      # branch and `cargo binstall komac` for whatever Komac was newest, so
+      # the pin covered none of the code that held the token. The two komac
+      # commands below are the ones that action ran, with the same inputs.
+      # The digest is the one GitHub records for the asset, and it matches
+      # the release's own SHA256SUMS.
       - name: Submit nvx to microsoft/winget-pkgs
-        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
-        with:
-          identifier: fstubner.nvx
-          version: ${{ steps.pkg.outputs.version }}
-          # `release-tag` defaults to
-          # `github.event.release.tag_name || github.ref_name`, and on a
-          # `workflow_dispatch` the first is null and the second is the
-          # branch the run was dispatched from. The action would then ask
-          # the API for a release tagged `main` and fail, on precisely the
-          # re-run path this workflow's header offers for recovery.
-          release-tag: ${{ env.TAG }}
-          # Anchored so it matches nvx.exe and not nvx.exe.sha256.
-          installers-regex: '^nvx\.exe$'
-          token: ${{ secrets.WINGET_TOKEN }}
+        shell: pwsh
+        env:
+          KOMAC_VERSION: '2.16.0'
+          KOMAC_SHA256: 'bdc45baf028f750da7519cc8a5f2eab5dfef46dfe88650eeb0d0a9bf51446e4f'
+          PACKAGE_VERSION: ${{ steps.pkg.outputs.version }}
+          TAG: ${{ env.TAG }}
+          KOMAC_FORK_OWNER: ${{ github.repository_owner }}
+          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $komac = Join-Path $env:RUNNER_TEMP 'komac.exe'
+          $komacUrl = "https://github.com/russellbanks/Komac/releases/download/v$($env:KOMAC_VERSION)/komac-$($env:KOMAC_VERSION)-x86_64-pc-windows-msvc.exe"
+          Invoke-WebRequest -Uri $komacUrl -OutFile $komac -UseBasicParsing
+          $actual = (Get-FileHash $komac -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:KOMAC_SHA256) {
+            Write-Output "::error::komac $($env:KOMAC_VERSION) has SHA-256 $actual, expected $($env:KOMAC_SHA256). Not running it."
+            exit 1
+          }
+
+          $installer = "https://github.com/fstubner/nvx/releases/download/$($env:TAG)/nvx.exe"
+          & $komac update 'fstubner.nvx' --version $env:PACKAGE_VERSION --submit --urls $installer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Deletes the fork's branches whose pull requests have merged.
+          & $komac cleanup --only-merged
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   # --- Fan-out summary --------------------------------------------------
   #

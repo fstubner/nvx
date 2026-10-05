@@ -58,6 +58,16 @@ func TestReapingJobKillsProcessOnClose(t *testing.T) {
 	t.Fatalf("expected child pid %d to be killed once the job closed, but it is still running", pid)
 }
 
+// A live process this nvx may not open is still running. Pid 4 is the System
+// process, which OpenProcess refuses with ERROR_ACCESS_DENIED to an ordinary
+// user. Reading that refusal as "gone" let cleanup delete the home of a session
+// owned by a process nvx could not open, such as an elevated one.
+func TestProcessIsRunningTreatsAccessDeniedAsRunning(t *testing.T) {
+	if !processIsRunning(4) {
+		t.Error("processIsRunning(4) = false; the System process is always running")
+	}
+}
+
 // A job with no processes assigned must be safe to close: creating the job
 // always succeeds up front, before we know whether CreateProcess itself will.
 func TestReapingJobCloseWithNoProcessAssigned(t *testing.T) {

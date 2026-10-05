@@ -55,7 +55,7 @@ var executorCommands = map[string]bool{
 // a create-* package from the registry and execute it. `npm create vite` is how
 // a large share of projects begin.
 var executorVerbs = map[string][]string{
-	"npm":  {"exec", "create"},
+	"npm":  {"exec", "x", "create"},
 	"pnpm": {"dlx", "create"},
 	"yarn": {"dlx", "create"},
 	"bun":  {"x", "create"},
@@ -68,7 +68,191 @@ var executorVerbs = map[string][]string{
 // `npm rebuild` re-runs every dependency's install scripts. `npm update` fetches
 // new versions and runs theirs. `npm audit fix` -- the command a developer runs
 // *because* of a security advisory -- installs new versions to do it.
-var refreshVerbs = []string{"update", "up", "upgrade", "rebuild", "dedupe", "ddp"}
+//
+// rb (rebuild) and udpate (npm's typo alias for update) were missing until
+// 2026-09-26.
+var refreshVerbs = []string{"update", "up", "upgrade", "udpate", "rebuild", "rb", "dedupe", "ddp"}
+
+// installCommandVerbs are further subcommands, per package manager, that fetch
+// dependencies or run their lifecycle scripts. Unlike the lists above they are
+// matched only where the package manager reads its command (commandVerbIndex),
+// because several also name harmless sub-subcommands such as `npm config
+// edit`, `pnpm store prune` and `bun pm cache rm`.
+//
+// Each of these ran as your own code until 2026-10-01. Measured that day with a
+// dependency whose postinstall writes a marker, from a project holding a
+// lockfile and no node_modules. npm 11.19.0 uninstall, unlink and prune, pnpm
+// 8.3.1 remove, prune and fetch, and bun 1.4.2 remove and patch all ran it.
+// The removal verbs re-install whatever the lockfile lists that is missing.
+// `npm edit` runs `npm rebuild` on the package once the editor exits. The
+// rest come from each tool's help without a measurement, and are contained to
+// be safe. `pnpm approve-builds` runs the builds it approves.
+var installCommandVerbs = map[string][]string{
+	"npm":  {"uninstall", "unlink", "remove", "rm", "r", "un", "prune", "edit"},
+	"pnpm": {"remove", "rm", "uninstall", "un", "unlink", "prune", "fetch", "deploy", "approve-builds", "patch-commit", "patch-remove", "self-update"},
+	"yarn": {"remove", "unlink", "unplug", "upgrade-interactive", "patch", "patch-commit"},
+	"bun":  {"remove", "rm", "patch", "patch-commit"},
+	// `corepack use` and `corepack up` switch the project's package manager and
+	// then run its install.
+	"corepack": {"use", "up"},
+}
+
+// installCommandPairs are install verbs spelled as two words. `bun pm trust` is
+// how bun runs the lifecycle scripts it blocked during install, so it is the
+// one command whose whole purpose is running dependency code.
+var installCommandPairs = map[string][][2]string{
+	"pnpm": {{"env", "use"}, {"env", "add"}},
+	"yarn": {{"workspaces", "focus"}, {"set", "version"}, {"policies", "set-version"}, {"plugin", "import"}},
+	"bun":  {{"pm", "trust"}},
+}
+
+// linkVerbs install only when given something to link. Bare `npm link` runs the
+// current package's own scripts and nothing else (measured). `npm link <dir>`
+// ran that directory's dependency scripts, and `bun link <name>` ran an
+// install of the project.
+var linkVerbs = map[string][]string{
+	"npm":  {"link", "ln"},
+	"pnpm": {"link", "ln"},
+	"yarn": {"link"},
+	"bun":  {"link"},
+}
+
+// adHocCommandVerbs are executorVerbs matched only in the command position.
+// `c` is bun's alias for create, and a single letter is too likely to be some
+// other command's argument to look for it anywhere.
+var adHocCommandVerbs = map[string][]string{
+	"bun": {"c"},
+}
+
+// hasInstallCommandVerb reports whether args is one of tool's install verbs
+// from installCommandVerbs, installCommandPairs or linkVerbs.
+func hasInstallCommandVerb(tool string, args []string) bool {
+	if commandVerbIndex(args, installCommandVerbs[tool]...) >= 0 {
+		return true
+	}
+	if i := commandVerbIndex(args, linkVerbs[tool]...); i >= 0 && nextPositional(args, i) != "" {
+		return true
+	}
+	for _, pair := range installCommandPairs[tool] {
+		if hasCommandPair(args, pair[0], pair[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasCommandPair reports a two-word command such as `bun pm trust`.
+func hasCommandPair(args []string, first, second string) bool {
+	i := commandVerbIndex(args, first)
+	return i >= 0 && strings.EqualFold(nextPositional(args, i), second)
+}
+
+// commandVerbIndex returns the index of the token in args that is one of verbs
+// and sits where the package manager reads its command, or -1.
+//
+// That is the first positional. A flag right before it may have taken it as
+// its value, and then the next positional may be the command too and is
+// checked as well, so an unrecognised value-taking flag cannot hide a verb.
+// The scan stops at the first positional that is certainly the command, and at
+// a script-running verb.
+func commandVerbIndex(args []string, verbs ...string) int {
+	if len(verbs) == 0 {
+		return -1
+	}
+	isVerb := func(tok string) bool {
+		for _, v := range verbs {
+			if strings.EqualFold(tok, v) {
+				return true
+			}
+		}
+		return false
+	}
+	prevWasFlag := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			if i+1 < len(args) && isVerb(args[i+1]) {
+				return i + 1
+			}
+			return -1
+		}
+		if isRunScriptVerb(a) {
+			return -1
+		}
+		if strings.HasPrefix(a, "-") {
+			if flagTakesValue(a) && !strings.Contains(a, "=") && i+1 < len(args) {
+				i++
+				prevWasFlag = false
+				continue
+			}
+			prevWasFlag = !strings.Contains(a, "=")
+			continue
+		}
+		if isVerb(a) {
+			return i
+		}
+		if !prevWasFlag {
+			return -1
+		}
+		prevWasFlag = false
+	}
+	return -1
+}
+
+// nextPositional returns the first non-flag token after args[i], or "".
+func nextPositional(args []string, i int) string {
+	for j := i + 1; j < len(args); j++ {
+		a := args[j]
+		if a == "--" {
+			if j+1 < len(args) {
+				return args[j+1]
+			}
+			return ""
+		}
+		if strings.HasPrefix(a, "-") {
+			if flagTakesValue(a) && !strings.Contains(a, "=") {
+				j++
+			}
+			continue
+		}
+		return a
+	}
+	return ""
+}
+
+// fetchesRemoteSource reports an npm command that fetches a git or URL spec in
+// order to read or pack it. npm prepares a git dependency before packing it,
+// which means installing its dependencies and running its prepare script, so
+// `npm pack github:user/repo` runs that repository's code. A registry name or a
+// local directory does not reach here: a registry tarball carries no scripts to
+// run, and packing your own directory runs your own.
+//
+// `npm diff` takes its specs from --diff and its positionals are path filters,
+// so for diff only the --diff values are read.
+func fetchesRemoteSource(args []string) bool {
+	i := commandVerbIndex(args, "pack", "diff", "view", "info", "show", "v", "cache")
+	if i < 0 {
+		return false
+	}
+	isDiff := strings.EqualFold(args[i], "diff")
+	rest := args[i+1:]
+	for j := 0; j < len(rest); j++ {
+		a := rest[j]
+		switch {
+		case a == "--diff" && j+1 < len(rest):
+			j++
+			a = rest[j]
+		case strings.HasPrefix(a, "--diff="):
+			a = strings.TrimPrefix(a, "--diff=")
+		case strings.HasPrefix(a, "-") || isDiff:
+			continue
+		}
+		if isRemoteSourceSpec(a) {
+			return true
+		}
+	}
+	return false
+}
 
 // subcommandCandidates returns the tokens that could be this invocation's
 // subcommand: the non-flag tokens, up to the point where nothing further is
@@ -167,6 +351,28 @@ func hasExecutorVerb(cmd string, args []string) bool {
 	return false
 }
 
+// isBareYarnInstall reports `yarn` with no subcommand, which is an install:
+// yarn's default command. `yarn` and `yarn --frozen-lockfile` ran as your own
+// code until 2026-09-26, with no sandbox and no pre-install checks. Asking only
+// for its version or help installs nothing.
+func isBareYarnInstall(cmd string, args []string) bool {
+	if !strings.EqualFold(cmd, "yarn") || len(subcommandCandidates(args)) > 0 {
+		return false
+	}
+	for _, a := range args {
+		// subcommandCandidates stops at a script verb and returns nothing, which
+		// would otherwise read `yarn run build` as bare yarn.
+		if isRunScriptVerb(a) {
+			return false
+		}
+		switch strings.ToLower(a) {
+		case "--version", "-v", "--help", "-h":
+			return false
+		}
+	}
+	return true
+}
+
 // hasAuditFix reports the two-token `audit fix`, which installs. Plain `npm
 // audit` only reads, so the verb alone must not count.
 func hasAuditFix(args []string) bool {
@@ -188,6 +394,9 @@ func hasAuditFix(args []string) bool {
 // classifier doesn't recognize would otherwise let an install slip through
 // uncontained.
 func classifyInvocation(cmd string, args []string) invocationClass {
+	// `corepack pnpm add x` and `node .../npm-cli.js install x` are classified
+	// as the package-manager command they run.
+	cmd, args = packageManagerBehind(cmd, args)
 	lower := strings.ToLower(cmd)
 
 	if executorCommands[lower] {
@@ -196,18 +405,27 @@ func classifyInvocation(cmd string, args []string) invocationClass {
 	// The same fetch-and-run operation spelled as a subcommand (npm exec,
 	// pnpm dlx, bun x, npm create). Checked before the install verbs because it
 	// is the stronger classification and some spellings overlap.
-	if hasExecutorVerb(lower, args) {
+	if hasExecutorVerb(lower, args) || commandVerbIndex(args, adHocCommandVerbs[lower]...) >= 0 {
+		return classAdHocTool
+	}
+	if lower == "npm" && fetchesRemoteSource(args) {
 		return classAdHocTool
 	}
 
 	switch lower {
 	case "npm", "yarn", "pnpm":
-		if hasInstallVerb(args, append([]string{"ci"}, refreshVerbs...)...) || hasAuditFix(args) {
+		if hasInstallVerb(args, append(append([]string{}, ciVerbs...), refreshVerbs...)...) ||
+			hasAuditFix(args) || isBareYarnInstall(lower, args) || hasInstallCommandVerb(lower, args) {
 			return classInstall
 		}
 		return classYourCode
 	case "bun":
-		if hasInstallVerb(args, append([]string{"a"}, refreshVerbs...)...) {
+		if hasInstallVerb(args, append([]string{"a"}, refreshVerbs...)...) || hasInstallCommandVerb(lower, args) {
+			return classInstall
+		}
+		return classYourCode
+	case "corepack":
+		if hasInstallCommandVerb(lower, args) {
 			return classInstall
 		}
 		return classYourCode

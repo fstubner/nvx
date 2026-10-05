@@ -40,6 +40,10 @@ import (
 // clear answer is cached: while the exemption is present every launch re-checks,
 // so the warning stops the moment an elevated `nvx setup` removes it, rather than
 // nagging for a day after the user has done what it asked.
+//
+// The cost runs the other way. An exemption ADDED after a clear result was
+// cached goes unwarned for up to this long, because launches in that window
+// trust the cached answer and do not re-check.
 const loopbackExemptRecheckTTL = 24 * time.Hour
 
 type loopbackExemptCheck struct {
@@ -160,6 +164,8 @@ func warnIfSandboxLoopbackExempt(nvxHome, sidStr, mode string) {
 	LogWarn("Sandbox loopback exemption active: contained code can reach any service on 127.0.0.1, and the egress allowlist can be bypassed through one. Run 'nvx doctor' to see how to remove it.")
 }
 
+var procFreeSid = modAdvapi32.NewProc("FreeSid")
+
 // deriveAppContainerSIDString returns the SID string for a profile name without
 // registering the profile. `nvx doctor` diagnoses and must not create anything;
 // DeriveAppContainerSidFromAppContainerName answers for any valid name whether or
@@ -177,7 +183,8 @@ func deriveAppContainerSIDString(profileName string) (string, error) {
 	if hr != 0 || sid == 0 {
 		return "", fmt.Errorf("DeriveAppContainerSidFromAppContainerName(%q) hr=0x%X: %v", profileName, hr, callErr)
 	}
-	defer syscall.LocalFree(syscall.Handle(sid))
+	// The SID this call returns is freed with FreeSid, not LocalFree.
+	defer procFreeSid.Call(sid)
 	return appContainerSidToString(sid)
 }
 
@@ -195,6 +202,9 @@ func deriveAppContainerSIDString(profileName string) (string, error) {
 // is caught at launch, by warnIfSandboxLoopbackExempt with that session's SID.
 func reportSandboxWeakeners(nvxHome string) bool {
 	weakened := reportStrandedSetupGrant(nvxHome)
+	if reportUnprotectedProfile() {
+		weakened = true
+	}
 
 	sidStr, err := deriveAppContainerSIDString(stableSandboxProfile)
 	if err != nil {
@@ -251,7 +261,7 @@ func reportStrandedSetupGrant(nvxHome string) bool {
 	fmt.Println("         an earlier 'nvx setup' granted an identity nvx no longer uses. Installs and")
 	fmt.Println("         npx do not need it; a tool that resolves a path all the way to a drive root")
 	fmt.Println("         might. If one fails with EPERM there, 'nvx setup' from an Administrator")
-	fmt.Println("         terminal, run from that volume, grants it. This is not a failure.")
+	fmt.Println("         terminal grants it. This is not a failure.")
 	return false
 }
 
@@ -275,7 +285,7 @@ func strandedSetupGrantPaths(nvxHome, workDir, recordedSID, currentSID string, h
 	if recordedSID == "" || strings.EqualFold(recordedSID, currentSID) {
 		return nil
 	}
-	paths, _ := windowsSetupGrantPaths(nvxHome, workDir, false)
+	paths := windowsSetupGrantPaths(nvxHome, workDir, false)
 	var missing []string
 	for _, p := range paths {
 		if !hasGrant(p) {

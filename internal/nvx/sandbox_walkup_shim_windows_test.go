@@ -12,6 +12,7 @@ package nvx
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -38,22 +39,22 @@ func TestBothPreloadsLandInNodeOptionsOnce(t *testing.T) {
 	}
 }
 
-// Opt-in verification (NVX_PROBE=1; creates its own AppContainer profile): a
-// contained node process holding no drive-root grant can lstat C:\ and
-// C:\Users with the preload, and cannot without it. The second half is the
-// premise; without it a machine whose roots happen to be granted would pass
-// this for the wrong reason.
-func TestWalkUpShimAnswersForUnreadableAncestors(t *testing.T) {
+// walkupProbe prepares a fresh AppContainer under NVX_PROBE=1 and returns a
+// function that runs script in it, with or without the preload, and returns
+// what the script wrote to the report file named by its first argument.
+func walkupProbe(t *testing.T, profile, script string) func(withShim bool) string {
+	t.Helper()
 	if os.Getenv("NVX_PROBE") != "1" {
 		t.Skip("set NVX_PROBE=1 to run")
 	}
-	const probeProfile = "nvx.sandbox.walkup.probe"
-	sid, err := ensureAppContainerSID(probeProfile)
+	sid, err := ensureAppContainerSID(profile)
 	if err != nil {
 		t.Fatalf("profile: %v", err)
 	}
-	defer syscall.LocalFree(syscall.Handle(sid))
-	defer deleteAppContainerProfile(probeProfile)
+	t.Cleanup(func() {
+		syscall.LocalFree(syscall.Handle(sid))
+		deleteAppContainerProfile(profile)
+	})
 
 	nvxHome := GetHomeDir()
 	guestHome := tempDir(t)
@@ -86,19 +87,12 @@ func TestWalkUpShimAnswersForUnreadableAncestors(t *testing.T) {
 	// The child reports through a file: the launch inherits this process's
 	// stdio, which the test cannot read back.
 	report := filepath.Join(workDir, "report.txt")
-	script := filepath.Join(workDir, "probe.js")
-	if err := os.WriteFile(script, []byte(`
-const fs = require('fs');
-const out = [];
-for (const p of ['C:\\', 'C:\\Users']) {
-  try { fs.lstatSync(p); out.push('ok ' + p); } catch (e) { out.push(e.code + ' ' + p); }
-}
-fs.writeFileSync(process.argv[2], out.join('\n'));
-`), 0o600); err != nil {
+	scriptPath := filepath.Join(workDir, "probe.js")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	run := func(withShim bool) string {
+	return func(withShim bool) string {
 		_ = os.Remove(report)
 		env := scrubEnvironment(guestHome)
 		env = prependPath(env, filepath.Dir(nodePath))
@@ -110,7 +104,7 @@ fs.writeFileSync(process.argv[2], out.join('\n'));
 			}
 			env = addNodeOptionsRequire(env, shim)
 		}
-		_, launchArgs := rewriteWindowsNodeCommand(nodePath, []string{script, report}, nodePath)
+		_, launchArgs := rewriteWindowsNodeCommand(nodePath, []string{scriptPath, report}, nodePath)
 		code, err := launchAppContainerProcess(nodePath, launchArgs, env, workDir, sid, 0,
 			launchCapabilitySIDs(scopeCaps, nil))
 		// The shared decision rather than a skip on any error, which is what this
@@ -123,6 +117,22 @@ fs.writeFileSync(process.argv[2], out.join('\n'));
 		}
 		return string(got)
 	}
+}
+
+// Opt-in verification (NVX_PROBE=1; creates its own AppContainer profile): a
+// contained node process holding no drive-root grant can lstat C:\ and
+// C:\Users with the preload, and cannot without it. The second half is the
+// premise; without it a machine whose roots happen to be granted would pass
+// this for the wrong reason.
+func TestWalkUpShimAnswersForUnreadableAncestors(t *testing.T) {
+	run := walkupProbe(t, "nvx.sandbox.walkup.probe", `
+const fs = require('fs');
+const out = [];
+for (const p of ['C:\\', 'C:\\Users']) {
+  try { fs.lstatSync(p); out.push('ok ' + p); } catch (e) { out.push(e.code + ' ' + p); }
+}
+fs.writeFileSync(process.argv[2], out.join('\n'));
+`)
 
 	without := run(false)
 	if !strings.Contains(without, "EPERM C:\\Users") {
@@ -131,5 +141,80 @@ fs.writeFileSync(process.argv[2], out.join('\n'));
 	with := run(true)
 	if !strings.Contains(with, "ok C:\\") || !strings.Contains(with, "ok C:\\Users") {
 		t.Fatalf("with the preload, an lstat on the drive root or C:\\Users still failed; contained npx would die in npm's realpath:\n%s", with)
+	}
+}
+
+// Opt-in verification (NVX_PROBE=1): the native realpath functions are refused
+// inside an AppContainer on the working directory itself, and the preload
+// answers them through the JavaScript realpath. pnpm 10 resolves the project
+// with fs.promises.realpath, and stopped on "EPERM: operation not permitted,
+// realpath" until the preload did this.
+func TestWalkUpShimAnswersRefusedNativeRealpath(t *testing.T) {
+	run := walkupProbe(t, "nvx.sandbox.realpath.probe", `
+const fs = require('fs');
+const out = [];
+try { fs.realpathSync.native('.'); out.push('ok sync'); } catch (e) { out.push(e.code + ' sync'); }
+fs.realpath.native('.', (err) => {
+  out.push((err ? err.code : 'ok') + ' callback');
+  fs.promises.realpath('.').then(
+    () => out.push('ok promise'),
+    (e) => out.push(e.code + ' promise'),
+  ).then(() => fs.writeFileSync(process.argv[2], out.join('\n')));
+});
+`)
+
+	without := run(false)
+	for _, name := range []string{"sync", "callback", "promise"} {
+		if !strings.Contains(without, "EPERM "+name) {
+			t.Fatalf("premise not met: native realpath (%s) was not refused without the preload, so this test proves nothing:\n%s", name, without)
+		}
+	}
+	with := run(true)
+	for _, name := range []string{"sync", "callback", "promise"} {
+		if !strings.Contains(with, "ok "+name) {
+			t.Fatalf("with the preload, native realpath (%s) still failed; contained pnpm stops on it:\n%s", name, with)
+		}
+	}
+}
+
+// The preload's own walk, which answers a refused synchronous realpath where
+// Node's synchronous one fails too, resolves paths as Node's realpath does:
+// a plain directory, a relative path, and a path through a junction. Run
+// outside a container, where both can be compared.
+func TestWalkUpShimRealpathWalkMatchesNode(t *testing.T) {
+	node := realNodeForTest(t)
+	guestHome := tempDir(t)
+	workDir := tempDir(t)
+	shim, err := writeWalkupShim(guestHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := filepath.Join(workDir, "walk.js")
+	script := `
+const fs = require('fs');
+const path = require('path');
+const shim = require(process.argv[2]);
+fs.mkdirSync('real/inner', { recursive: true });
+fs.symlinkSync(path.resolve('real'), 'link', 'junction');
+const out = [];
+for (const p of ['.', 'real/inner', 'link/inner', path.resolve('link')]) {
+  const want = fs.realpathSync(p);
+  const got = shim.walkRealpathSync(p);
+  out.push((got === want ? 'same ' : 'DIFF ') + p + ' got=' + got + ' want=' + want);
+}
+console.log(out.join('\n'));
+`
+	if err := os.WriteFile(probe, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(node, probe, shim)
+	cmd.Dir = workDir
+	cmd.Env = append(os.Environ(), "USERPROFILE="+guestHome, "HOME="+guestHome, "NODE_OPTIONS=")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("running the walk failed: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "DIFF") || strings.Count(string(out), "same ") != 4 {
+		t.Fatalf("the preload's realpath walk disagrees with Node's realpath:\n%s", out)
 	}
 }

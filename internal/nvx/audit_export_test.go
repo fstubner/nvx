@@ -134,6 +134,36 @@ func TestAuditExportCSVHasAStableHeader(t *testing.T) {
 	}
 }
 
+// A value that a spreadsheet would run as a formula is exported as text. The
+// fields come from a log anything on the machine can append to, so a cwd of
+// =HYPERLINK(...) became a live formula in whoever opened the export.
+func TestAuditExportCSVDoesNotEmitFormulas(t *testing.T) {
+	home := tempDir(t)
+	writeAuditLog(t, home,
+		`{"time":"2026-09-01T00:00:00Z","pid":1,"event":"run","cwd":"=HYPERLINK(\"http://x\")","tool":"@SUM(1)","command":"-2+3","exit":"-1"}`,
+	)
+	out := filepath.Join(home, "export.csv")
+	if code := runAuditExport([]string{"--format", "csv", "--out", out}, home); code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	rows, err := csv.NewReader(strings.NewReader(readExport(t, out))).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	col := map[string]string{}
+	for i, name := range rows[0] {
+		col[name] = rows[1][i]
+	}
+	for _, name := range []string{"cwd", "tool", "command"} {
+		if !strings.HasPrefix(col[name], "'") {
+			t.Errorf("%s exported as %q, which a spreadsheet runs as a formula", name, col[name])
+		}
+	}
+	if col["exit"] != "-1" {
+		t.Errorf("a plain number was altered: exit = %q", col["exit"])
+	}
+}
+
 // A line that cannot be parsed is reported, and the export still says how much
 // of the log it could read.
 //
@@ -168,6 +198,36 @@ func TestAuditExportFailsOnAMalformedLogAndSaysWhatWasReadable(t *testing.T) {
 	body := readExport(t, out)
 	if !strings.Contains(body, "a.example") || !strings.Contains(body, "b.example") {
 		t.Errorf("the readable records were not exported:\n%s", body)
+	}
+}
+
+// An over-long last line with no newline after it is damage, and counted. It
+// came back from the reader as an empty string, which the loop read as the end
+// of the file, so an export of that log reported itself complete.
+func TestAnOverLongLastLineIsCountedAsMalformed(t *testing.T) {
+	home := tempDir(t)
+	body := `{"time":"2026-09-01T00:00:00Z","pid":1,"event":"egress_deny"}` + "\n" + strings.Repeat("x", maxRecordBytes+10)
+	if err := os.WriteFile(filepath.Join(home, "audit.log"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, readable, malformed, err := readAuditEntriesCounted(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readable != 1 || malformed != 1 {
+		t.Fatalf("readable = %d, malformed = %d, want 1 and 1", readable, malformed)
+	}
+}
+
+// `nvx audit --limit 5` is accepted like `--limit=5`, as export accepts both
+// spellings of its flags. It was refused as an unknown option.
+func TestAuditAcceptsLimitAsASeparateValue(t *testing.T) {
+	home := tempDir(t)
+	writeAuditLog(t, home, `{"time":"2026-09-01T00:00:00Z","pid":1,"event":"egress_deny"}`)
+	var code int
+	captureStdout(t, func() { code = runAuditCommand([]string{"--limit", "5"}, home) })
+	if code != 0 {
+		t.Fatalf("nvx audit --limit 5 exited %d", code)
 	}
 }
 

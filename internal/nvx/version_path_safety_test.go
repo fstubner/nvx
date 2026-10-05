@@ -36,6 +36,7 @@ func TestSafeVersionComponentRejectsTraversal(t *testing.T) {
 		"foo/bar",
 		`foo\bar`,
 		"",
+		"...", "....", "v20.", // Windows drops trailing dots from a component
 	} {
 		if err := safeVersionComponent(v); err == nil {
 			t.Errorf("safeVersionComponent(%q) accepted a version that escapes the versions directory", v)

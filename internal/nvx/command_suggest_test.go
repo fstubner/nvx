@@ -60,6 +60,17 @@ func TestTheSuggesterReadsTheRealCommandList(t *testing.T) {
 	}
 }
 
+// The quickstart must not promise read containment on macOS, where the
+// Seatbelt profile allows reads. It said "no access to your keys" everywhere.
+func TestTheQuickstartDoesNotPromiseReadContainmentOnMacOS(t *testing.T) {
+	if strings.Contains(quickstartTextFor("darwin"), "keys") {
+		t.Fatalf("the macOS quickstart promises the keys are unreadable:\n%s", quickstartTextFor("darwin"))
+	}
+	if !strings.Contains(quickstartTextFor("windows"), "keys") {
+		t.Fatal("the Windows quickstart lost its containment line")
+	}
+}
+
 // Every command the quickstart tells a newcomer to type must exist.
 //
 // The quickstart is the first screen after installing, so a line that does not

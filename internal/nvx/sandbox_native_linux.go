@@ -21,7 +21,7 @@ const egressSocketName = ".nvx-egress.sock"
 // A loopback-only netns has no route to any allowlisted host, so the proxy cannot
 // live inside it. UNIX sockets are filesystem objects and are not namespaced by
 // the network namespace, which makes them the one channel that crosses cleanly.
-func prepareEgressSocket(egress *EgressProxy, guestHome string, netCtx *NetworkLaunchContext) error {
+func prepareEgressSocket(egress *EgressProxy, guestHome, nvxHome string, netCtx *NetworkLaunchContext) error {
 	if egress == nil || netCtx == nil || guestHome == "" {
 		return nil
 	}
@@ -35,11 +35,47 @@ func prepareEgressSocket(egress *EgressProxy, guestHome string, netCtx *NetworkL
 		return nil
 	}
 	sock := filepath.Join(guestHome, egressSocketName)
+	if err := linuxSocketTooLong("egress socket", sock, guestHome, nvxHome, netCtx); err != nil {
+		return err
+	}
 	if err := egress.ListenUnix(sock); err != nil {
 		return err
 	}
 	netCtx.EgressSocketPath = sock
 	return nil
+}
+
+// linuxSessionSockets lists the sockets this session can create in guestHome:
+// the egress one, a tunnel per --connect port, and the loopback one in that mode.
+// The egress socket is listed whenever prepareEgressSocket would create it.
+func linuxSessionSockets(guestHome string, netCtx *NetworkLaunchContext) []string {
+	if netCtx == nil {
+		return nil
+	}
+	var socks []string
+	if networkModeRequiresNamespace(netCtx.Mode) && !strings.EqualFold(strings.TrimSpace(netCtx.Mode), "offline") {
+		socks = append(socks, filepath.Join(guestHome, egressSocketName))
+	}
+	for _, m := range netCtx.ConnectPorts {
+		socks = append(socks, linuxConnectSocketPath(guestHome, m.Host))
+	}
+	if loopbackRedirectMode(netCtx.Mode) {
+		socks = append(socks, loopbackSocketPath(guestHome))
+	}
+	return socks
+}
+
+// linuxSocketTooLong refuses sock when it will not bind. The NVX_HOME it advises
+// leaves room for the longest socket this session creates, as the Windows
+// refusal does, so following it cannot meet a second refusal from a longer name.
+func linuxSocketTooLong(what, sock, guestHome, nvxHome string, netCtx *NetworkLaunchContext) error {
+	longest := sock
+	for _, s := range linuxSessionSockets(guestHome, netCtx) {
+		if len(s) > len(longest) {
+			longest = s
+		}
+	}
+	return unixSocketPathTooLong(what, sock, longest, nvxHome)
 }
 
 // platformLaunchNative re-execs nvx as a Landlock child so restrictions are
@@ -54,7 +90,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// Host services this run may reach. Opened here, outside the namespace, and
 	// the in-sandbox port is resolved here too, so both numbers reach the
 	// supervisor already decided.
-	connectEnv, stopConnect, err := openConnectSockets(guestHome, &netCtx)
+	connectEnv, stopConnect, err := openConnectSockets(guestHome, config.NvxHome, &netCtx)
 	if err != nil {
 		LogError("Could not open a path to a host service for the sandbox: %v", err)
 		return 1, refusedToStart("a path to a host service could not be opened")
@@ -67,7 +103,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// half: the socket it carries them to, and the check that only loopback
 	// addresses are dialled.
 	if loopbackRedirectMode(netCtx.Mode) {
-		stopLoopback, lerr := openLoopbackSocket(guestHome, config.NvxHome)
+		stopLoopback, lerr := openLoopbackSocket(guestHome, config.NvxHome, &netCtx)
 		if lerr != nil {
 			LogError("Could not open the loopback path for the sandbox: %v", lerr)
 			return 1, refusedToStart("the loopback path could not be opened")
@@ -135,12 +171,28 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// the supervisor's was missing it.
 	cmd.SysProcAttr = supervisorSysProcAttr(netCtx.Mode)
 
-	if err := cmd.Run(); err != nil {
+	if err := runSupervisor(cmd, guestHome); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode(), nil
+			return childExitCode(exitErr), nil
 		}
 		LogError("Landlock sandbox execution failed: %v", err)
 		return 1, refusedToStart("the landlock sandbox could not be launched")
 	}
 	return 0, nil
+}
+
+// runSupervisor runs the supervisor to completion, passing nvx's own
+// termination on to it and recording its pid beside nvx's in the session
+// records.
+//
+// Before this, the parent used cmd.Run: a SIGTERM to nvx killed nvx and left the
+// supervisor, and with it the contained process, running re-parented to init, and
+// the session marker named only the dead nvx, so the next run's cleanup deleted
+// the guest home underneath it. The supervisor's Pdeathsig (set in
+// supervisorSysProcAttr) covers SIGKILL. Signals that can be caught are forwarded
+// instead, so the contained process gets to shut down.
+func runSupervisor(cmd *exec.Cmd, guestHome string) error {
+	return startChildForwardingSignals(cmd, func(pid int) {
+		recordSupervisorPID(guestHome, pid)
+	})
 }

@@ -34,13 +34,13 @@ func TestAContainedDialReachesTheHostServiceItWasGranted(t *testing.T) {
 	guestHome := shortTempDir(t)
 
 	m := connectMapping{Host: host}
-	parent, err := openConnectPort(ctx, t.TempDir(), guestHome, m)
+	parent, err := openConnectPort(ctx, t.TempDir(), guestHomeSocketPrefix(guestHome), m)
 	if err != nil {
 		t.Fatalf("openConnectPort: %v", err)
 	}
 	defer parent.Close()
 
-	inside, err := startConnectListeners(ctx, guestHome, m)
+	inside, err := startConnectListeners(ctx, guestHomeSocketPrefix(guestHome), m)
 	if err != nil {
 		t.Fatalf("startConnectListeners: %v", err)
 	}
@@ -78,11 +78,11 @@ func TestTheWayOutClosesWhenTheRunDoes(t *testing.T) {
 	guestHome := shortTempDir(t)
 	m := connectMapping{Host: host}
 
-	parent, err := openConnectPort(ctx, t.TempDir(), guestHome, m)
+	parent, err := openConnectPort(ctx, t.TempDir(), guestHomeSocketPrefix(guestHome), m)
 	if err != nil {
 		t.Fatalf("openConnectPort: %v", err)
 	}
-	inside, err := startConnectListeners(ctx, guestHome, m)
+	inside, err := startConnectListeners(ctx, guestHomeSocketPrefix(guestHome), m)
 	if err != nil {
 		t.Fatalf("startConnectListeners: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestTheTunnelRefusesAPeerItCannotPlaceInThisSandbox(t *testing.T) {
 	guestHome := shortTempDir(t)
 	m := connectMapping{Host: host}
 
-	parent, err := openConnectPort(ctx, t.TempDir(), guestHome, m)
+	parent, err := openConnectPort(ctx, t.TempDir(), guestHomeSocketPrefix(guestHome), m)
 	if err != nil {
 		t.Fatalf("openConnectPort: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestTheTunnelRefusesAPeerItCannotPlaceInThisSandbox(t *testing.T) {
 		t.Fatalf("test precondition: sessionJob should be unset, got %v", sessionJob.Load())
 	}
 
-	tun, err := net.DialTimeout("unix", windowsConnectSocketPath(guestHome, m.Host), 5*time.Second)
+	tun, err := net.DialTimeout("unix", windowsConnectSocketPath(guestHomeSocketPrefix(guestHome), m.Host), 5*time.Second)
 	if err != nil {
 		t.Fatalf("dial the tunnel socket: %v", err)
 	}

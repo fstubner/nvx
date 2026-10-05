@@ -5,15 +5,43 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// usePersistentProfile reports whether a run should use a persistent per-tool
-// guest profile instead of an ephemeral one. ToolName is set (in runShim) only
-// for an approved trusted tool, so its presence is the signal.
-func usePersistentProfile(toolName string) bool {
-	return toolName != ""
+// pnpmStoreProfile names the persistent profile every contained pnpm command
+// in a project shares. An npm package name cannot hold a colon, so no trusted
+// tool's profile can be the same one.
+const pnpmStoreProfile = "nvx:pnpm"
+
+// persistentProfileName returns the name of the persistent per-project guest
+// profile a run uses, or "" when it gets an ephemeral one.
+//
+// A trusted tool gets one so its logins survive. ToolName is set (in runShim)
+// only for an approved trusted tool, so its presence is the signal.
+//
+// pnpm gets one so its package store survives. When the project is on the
+// same volume as the home, pnpm keeps the store in the home and records its
+// path in node_modules/.modules.yaml. Every ephemeral home was a new path, so
+// the next install found a different store and stopped. Measured 2026-10-04
+// with pnpm 10.34.6 on Windows, on the second install in a project on C:
+//
+//	ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY  Aborted removal of modules directory due to no TTY
+//
+// The profile is this project's alone. What a contained pnpm run leaves in it
+// reaches only later contained pnpm runs here, and those already read the
+// project's own .npmrc, .pnpmfile.cjs and node_modules, which the same
+// contained code can write.
+func persistentProfileName(config SandboxConfig) string {
+	if config.ToolName != "" {
+		return config.ToolName
+	}
+	if pm, _ := packageManagerBehind(config.Command, config.Args); strings.EqualFold(pm, "pnpm") {
+		return pnpmStoreProfile
+	}
+	return ""
 }
 
 // runNativeSandbox is the hardened default sandbox: platform-specific OS
@@ -31,16 +59,26 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 	LogDetail("Sandbox session: %s", sandboxID)
 
 	var guestHome string
-	if usePersistentProfile(config.ToolName) {
-		scope := projectScopeDir()
-		guestHome, err = ensurePersistentGuestProfile(config.NvxHome, scope, config.ToolName)
+	profile, scope := persistentProfileName(config), ""
+	if profile != "" {
+		scope = projectScopeDir()
+	}
+	if scope != "" {
+		guestHome, err = ensurePersistentGuestProfile(config.NvxHome, scope, profile)
 		if err != nil {
 			LogError("Failed to create persistent tool profile: %v", err)
 			return sandboxDidNotStart(config, "persistent tool profile could not be created", exitRefused)
 		}
 		// Persistent: intentionally NOT cleaned up, so credentials survive to
 		// the next run. Still fully contained; the real home is never used.
-		LogInfo("%q: using a persistent profile for this project (contained; your real home is untouched).", config.ToolName)
+		// The lease marks this run as live so the package sweep leaves the
+		// home's profile alone while it runs. See writeSessionLease.
+		defer writeSessionLease(guestHome, sandboxID, time.Now())()
+		if config.ToolName != "" {
+			LogInfo("%q: using a persistent profile for this project (contained; your real home is untouched).", config.ToolName)
+		} else {
+			LogDetail("pnpm: using this project's persistent profile, so its package store is there for the next install: %s", guestHome)
+		}
 	} else {
 		guestHome, err = createGuestProfile(config.NvxHome, sandboxID)
 		if err != nil {
@@ -69,11 +107,12 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 	// a Linux network namespace has no route out of itself, and a Windows
 	// AppContainer is refused loopback without an elevated exemption. No-op
 	// elsewhere.
-	if err := prepareEgressSocket(egress, guestHome, &netCtx); err != nil {
+	if err := prepareEgressSocket(egress, guestHome, config.NvxHome, &netCtx); err != nil {
 		// "namespace isolation" until 2026-09-03, which named the Linux mechanism
-		// on every platform. The one failure a person actually meets here is a
-		// Windows one -- an NVX_HOME too long for an AF_UNIX path -- and it arrived
-		// under a heading describing something Windows does not do.
+		// on every platform. The failure a person met here was a Windows one --
+		// an NVX_HOME too long for an AF_UNIX path -- and it arrived under a
+		// heading describing something Windows does not do. Windows binds its
+		// socket in platformLaunchNative now. See windowsSocketPrefix.
 		LogError("Could not put the egress proxy where the sandbox can reach it: %v", err)
 		return sandboxDidNotStart(config, "the egress proxy could not be reached from the sandbox", exitRefused)
 	}
@@ -97,6 +136,11 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 		workDir, _ = os.Getwd()
 	}
 	workDir, _ = filepath.Abs(workDir)
+	// Windows decides this where it grants the directory, because its profile
+	// root keeps its own rule; see prepareAppContainerFilesystem.
+	if runtime.GOOS != "windows" {
+		workDir = containedWorkDir(config.NvxHome, guestHome, workDir)
+	}
 
 	LogInfo("Running in native sandbox: %s %s", config.Command, strings.Join(config.Args, " "))
 	code, err := platformLaunchNative(config, guestHome, workDir, cmdPath, cleanEnv, netCtx)
@@ -117,10 +161,9 @@ func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
 		}
 	}
 
-	activeVer := getActiveShellVersionFor(config.NvxHome, rt.Name())
-	if activeVer == "" {
-		activeVer = getGlobalDefaultVersionFor(config.NvxHome, rt.Name())
-	}
+	// Without a policy pin, the version the uncontained shim would run here,
+	// so containing a command never changes which runtime it gets.
+	activeVer := sessionRuntimeVersion(config.NvxHome, rt, projectPinFor(rt))
 	if p := resolvePinnedCommandPath(config.Command, config.NvxHome, activeVer, rt); p != "" {
 		return preferWindowsRuntimeExe(p)
 	}
@@ -149,6 +192,9 @@ type supervisorExecArgs struct {
 	NetworkMode  string
 	ShimCommand  string
 	EgressSocket string
+	// SocketPrefix is how the paths of the tunnel sockets start, given as
+	// --socket-prefix. Windows only; see windowsSocketPrefix.
+	SocketPrefix string
 	// ExposePorts are ports inside the sandbox that the parent is publishing on
 	// the host's loopback, given as --expose=<port> and repeatable. Windows
 	// refuses connections INTO an AppContainer, so reaching them is a reverse
@@ -185,6 +231,8 @@ func parseSupervisorExecArgs(argv []string) (supervisorExecArgs, bool) {
 			a.ShimCommand = strings.TrimPrefix(arg, "--command=")
 		case strings.HasPrefix(arg, "--egress-socket="):
 			a.EgressSocket = strings.TrimPrefix(arg, "--egress-socket=")
+		case strings.HasPrefix(arg, "--socket-prefix="):
+			a.SocketPrefix = strings.TrimPrefix(arg, "--socket-prefix=")
 		case strings.HasPrefix(arg, "--connect="):
 			if m, err := parseConnectSpec(strings.TrimPrefix(arg, "--connect=")); err == nil && m.Inside != 0 {
 				a.ConnectPorts = append(a.ConnectPorts, m)

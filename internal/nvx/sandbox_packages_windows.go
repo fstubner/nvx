@@ -98,7 +98,9 @@ func packagesHeldByLiveSessions(nvxHome string) map[string]bool {
 				continue
 			}
 			home := filepath.Join(root, e.Name())
-			if !guestHomeIsInUse(home, now) {
+			// Tool homes persist between runs, so they are held by a live lease
+			// rather than by the ephemeral home's one-time marker.
+			if !guestHomeIsInUse(home, now) && !homeHasLiveLease(home) {
 				continue
 			}
 			if pkg, ok := readGuestHomePackage(home); ok {

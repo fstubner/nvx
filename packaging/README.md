@@ -10,7 +10,9 @@ manifests, so they should stay accurate enough to review.
 The publish jobs download each release asset, re-hash the bytes, and check
 the result against the uploaded `.sha256` sidecar before pushing anything
 downstream. A sidecar that disagrees with its asset fails the publish rather
-than propagating.
+than propagating. The Homebrew, Scoop and npm jobs then check the asset's
+build provenance from `release.yml` too (`verified_sha` in
+`scripts/release/lib.sh`).
 
 That ordering is the point, and it is easy to get backwards. Reading the
 hash out of the sidecar and writing it into a manifest verifies nothing. The
@@ -18,12 +20,11 @@ sidecar comes from the same origin as the asset, so it can only ever detect
 corruption in transit, never a substituted artifact. The sidecar is the
 claim. The bytes are the evidence.
 
-## npm is not here
+## npm lives in `npm/`
 
-`.github/workflows/release.yml` publishes `@fstubner/nvx` and its five
-per-platform packages as part of the build, because the wrapper ships the
-binaries that build has just produced. Nothing in this directory touches
-npm, and publish.yml has no npm job.
+publish.yml's npm job publishes `@fstubner/nvx` and its five per-platform
+packages with `scripts/release/publish-npm.sh`. Their `package.json` files
+are in `npm/` at the repository root rather than in this directory.
 
 ## How the release pipeline feeds these
 
@@ -85,10 +86,10 @@ separate release-trust work.
 
 ## Release-day checklist
 
-1. Run the `Publish preflight` workflow. It checks the three publishing
+1. Run the `Publish preflight` workflow. It checks the four publishing
    credentials and publishes nothing.
 2. Publish the GitHub release draft for `vX.Y.Z`.
-3. Confirm publish.yml's summary job reports all three registries as
+3. Confirm publish.yml's summary job reports all four registries as
    `success`, and re-run any single job that did not.
 4. Watch for Winget moderator comments on the PR. Homebrew and Scoop land
    without review, Winget does not.

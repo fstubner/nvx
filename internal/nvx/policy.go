@@ -842,13 +842,44 @@ func LoadPolicy(nvxHome string) (Policy, error) {
 			}
 		}
 
-		for _, h := range grants.AllowHosts {
-			policy.Isolation.Network.AllowHosts = append(policy.Isolation.Network.AllowHosts, h)
-		}
+		policy.Isolation.Network.AllowHosts = append(policy.Isolation.Network.AllowHosts, ledgerHostsUnderBaseline(policy, grants.AllowHosts)...)
 	}
 
 	normalizePolicy(&policy)
 	return policy, nil
+}
+
+var enforcedLedgerHostsWarned sync.Once
+
+// ledgerHostsUnderBaseline returns the hosts from the project's grant ledger
+// that may join the allowlist.
+//
+// They were appended after the enforcement check, so under an enforced global
+// policy a host approved once at a prompt widened egress past the baseline on
+// every later run. Under enforcement only a host the baseline already allows
+// is kept, and the rest are dropped with one warning per process.
+func ledgerHostsUnderBaseline(policy Policy, ledger []string) []string {
+	if !policy.Enforced || len(ledger) == 0 {
+		return ledger
+	}
+	allowed := map[string]bool{}
+	for _, h := range append(append([]string{}, policy.Isolation.Network.DefaultAllow...), policy.Isolation.Network.AllowHosts...) {
+		allowed[strings.ToLower(strings.TrimSpace(h))] = true
+	}
+	var kept, dropped []string
+	for _, h := range ledger {
+		if allowed[strings.ToLower(strings.TrimSpace(h))] {
+			kept = append(kept, h)
+		} else {
+			dropped = append(dropped, h)
+		}
+	}
+	if len(dropped) > 0 {
+		enforcedLedgerHostsWarned.Do(func() {
+			LogWarn("The global policy is enforced, so hosts approved earlier for this project are not allowed: %s", strings.Join(dropped, ", "))
+		})
+	}
+	return kept
 }
 
 // ensureProjectPolicyTrust prompts once for any project policy file that would
@@ -891,10 +922,12 @@ func ensureProjectPolicyTrust(nvxHome string) error {
 		if err != nil {
 			return err
 		}
-		if policyLoosens(baseline, candidate) {
+		if loosenings := policyLoosenings(baseline, candidate); len(loosenings) > 0 {
 			cleanPath := filepath.Clean(localPath)
 			if grants.PolicyPins[cleanPath] != hash {
-				if !PromptTrustBoundary("Project policy " + localPath + " loosens nvx security settings. Trust it for this project?") {
+				// The question names what is being loosened. Asked without it, the
+				// only way to answer was to open the file and diff it by hand.
+				if !PromptTrustBoundary(policyTrustQuestion(localPath, loosenings)) {
 					auditLog(nvxHome, "policy_pin_changed_denied", map[string]string{"path": cleanPath})
 					continue
 				}
@@ -990,6 +1023,18 @@ type policyLoosening struct {
 	Field  string
 	Before string
 	After  string
+}
+
+// policyTrustQuestion is the prompt for trusting a project policy file, with
+// one line per setting it loosens.
+func policyTrustQuestion(path string, loosenings []policyLoosening) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Project policy %s loosens nvx security settings:", path)
+	for _, l := range loosenings {
+		fmt.Fprintf(&b, "\n    %s: %s -> %s", l.Field, l.Before, l.After)
+	}
+	b.WriteString("\n  Trust it for this project?")
+	return b.String()
 }
 
 // policyLoosens reports whether the after policy is more permissive than before.

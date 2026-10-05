@@ -28,6 +28,26 @@ func parseLTSQuery(query string) (isLTS bool, codename string) {
 	return false, ""
 }
 
+// isVersionAlias reports whether query names a version by alias (`lts`,
+// `lts/*`, `lts/<codename>`, `latest`, and nvm's `node` and `stable`) rather
+// than by number, so it can only be answered by looking at what is installed.
+func isVersionAlias(query string) bool {
+	if isLTS, _ := parseLTSQuery(query); isLTS {
+		return true
+	}
+	return isLatestAlias(query)
+}
+
+// isLatestAlias reports whether query asks for the newest version. `node` and
+// `stable` are nvm's spellings, which .nvmrc files in the wild carry.
+func isLatestAlias(query string) bool {
+	switch strings.ToLower(strings.TrimSpace(query)) {
+	case "latest", "current", "node", "stable":
+		return true
+	}
+	return false
+}
+
 // ltsCodenameOf returns the LTS codename an install recorded for a Node
 // version, or "" for a release that is not LTS. The marker's presence is the
 // LTS fact; its contents are the codename.

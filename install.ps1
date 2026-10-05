@@ -11,6 +11,14 @@ param(
 
 # Installer script for nvx (Node Version X-platform)
 
+# The body is a script block, run with & so it has a scope of its own. The
+# documented install is `irm ... | iex`, and Invoke-Expression runs a script
+# in the caller's session. Without the block, $ErrorActionPreference = 'Stop'
+# and every variable and function below stayed in the PowerShell window the
+# line was pasted into. -LibraryOnly dot-sources the block instead, because
+# scripts/test-install-*.ps1 need its functions in their own scope.
+$nvxInstaller = {
+
 $ErrorActionPreference = 'Stop'
 
 # Define installation paths
@@ -109,6 +117,42 @@ function Test-NvxAffirmative {
     return $Answer -match '^\s*(y|yes)\s*$'
 }
 
+# Optional second check on a downloaded binary. The .sha256 file comes from the
+# same release as the binary, so it cannot tell a replaced release from a real
+# one. The build attestation is signed by release.yml and checked against
+# GitHub. It needs gh 2.49 or newer (the attestation command) and a signed-in
+# gh, so a gh that cannot run it skips the check instead of failing the install.
+# A gh that runs it and reports a failure throws.
+function Test-NvxProvenance {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$InstalledPath
+    )
+    $hint = "gh attestation verify $InstalledPath --repo fstubner/nvx"
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        Write-Host "Provenance check skipped: gh is not installed. To run it later: $hint"
+        return
+    }
+    # gh writes progress to stderr, which Stop turns into a terminating error.
+    $ErrorActionPreference = 'Continue'
+    & gh attestation verify --help *> $null
+    $canVerify = ($LASTEXITCODE -eq 0)
+    if ($canVerify) {
+        & gh auth status *> $null
+        $canVerify = ($LASTEXITCODE -eq 0)
+    }
+    if (-not $canVerify) {
+        Write-Host "Provenance check skipped: gh is too old or not signed in. To run it later: $hint"
+        return
+    }
+    Write-Host "Verifying build provenance..."
+    $output = & gh attestation verify $Path --repo fstubner/nvx 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        throw "Provenance verification failed: $($output.Trim())"
+    }
+    Write-Host "Build provenance verified."
+}
+
 # Verifies a downloaded nvx.exe against its published SHA-256 and moves it into
 # place, or throws and leaves Destination as it was.
 #
@@ -142,6 +186,7 @@ function Install-NvxDownloadedBinary {
         } else {
             throw "Checksum file not available. Refusing to install without verification."
         }
+        Test-NvxProvenance -Path $DownloadPath -InstalledPath $Destination
         Move-Item -Path $DownloadPath -Destination $Destination -Force
     } finally {
         Remove-Item $DownloadPath, $ChecksumPath -Force -ErrorAction SilentlyContinue
@@ -158,7 +203,61 @@ if (-not (Test-Path $binDir)) {
 }
 
 
-# 1. Update PATH environment variables for User
+# 1. Download and verify the binary, before anything else is changed.
+#
+# First so a failed download leaves no trace: it used to run after the PATH and
+# profile edits, so a network error left a profile that ran `nvx env` in every
+# new PowerShell window and failed there.
+#
+# $PSScriptRoot is empty under `irm ... | iex`, the documented install, and
+# Join-Path refuses an empty path. The line ran unconditionally, so every
+# one-line install stopped here with "Cannot bind argument to parameter 'Path'
+# because it is an empty string", after editing PATH and the profile. Only a
+# local-binary install, run from a file, has a script directory to look in.
+$useLocalBinary = $UseLocalBinary -or $env:NVX_USE_LOCAL_BINARY -eq "1"
+$localBinary = if ($PSScriptRoot) { Join-Path $PSScriptRoot "nvx.exe" } else { $null }
+if ($useLocalBinary -and $localBinary -and (Test-Path $localBinary)) {
+    Write-Host "Copying compiled nvx.exe to bin directory..."
+    Copy-Item -Path $localBinary -Destination (Join-Path $binDir "nvx.exe") -Force
+} else {
+    $downloadUrl = "https://github.com/fstubner/nvx/releases/latest/download/nvx.exe"
+
+    $checksumUrl = "$downloadUrl.sha256"
+    Write-Host "Downloading nvx.exe from $downloadUrl..."
+    # Process-wide, so a scope does not contain it. Put back in the finally
+    # below, or the session that ran `iex` is left TLS 1.2 only.
+    $previousProtocol = [System.Net.ServicePointManager]::SecurityProtocol
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    $binPath = Join-Path $binDir "nvx.exe"
+    $downloadPath = "$binPath.download"
+    $checksumPath = "$binPath.sha256"
+    try {
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath -UseBasicParsing
+        try {
+            Invoke-WebRequest -Uri $checksumUrl -OutFile $checksumPath -UseBasicParsing
+        } catch {
+            # Absent from here on; Install-NvxDownloadedBinary decides whether
+            # that is allowed.
+            Remove-Item $checksumPath -Force -ErrorAction SilentlyContinue
+        }
+        Install-NvxDownloadedBinary -DownloadPath $downloadPath -ChecksumPath $checksumPath `
+            -Destination $binPath `
+            -AllowMissingChecksum:($InsecureSkipChecksum -or $env:NVX_INSECURE_SKIP_CHECKSUM -eq "1")
+    } catch {
+        Remove-Item $downloadPath, $checksumPath -Force -ErrorAction SilentlyContinue
+        # throw, not exit. The documented install is `irm ... | iex`, and exit
+        # inside Invoke-Expression ends the PowerShell session the user typed
+        # it into: the window closed before the error could be read. Measured
+        # 2026-09-25: after `iex` of a script ending in `exit 1` the next
+        # statement never ran; after one ending in throw it did. Run with
+        # -File, an uncaught throw still exits 1.
+        throw "nvx was not installed: $_"
+    } finally {
+        [System.Net.ServicePointManager]::SecurityProtocol = $previousProtocol
+    }
+}
+
+# 2. Update PATH environment variables for User
 if (Set-NvxUserPath -BinDir $binDir) {
     Write-Host "Adding nvx paths to your User environment variables..."
     Send-NvxEnvironmentChange
@@ -166,11 +265,11 @@ if (Set-NvxUserPath -BinDir $binDir) {
 # Update current session path
 $env:PATH = "$binDir;$env:PATH"
 
-# 2. PowerShell execution policy.
+# 3. PowerShell execution policy.
 #
 # Load-bearing rather than a nicety: under Restricted -- the default on Windows
 # client editions -- PowerShell refuses to load $PROFILE at all, so the
-# integration line written in step 3 never runs and nvx never sees a shell.
+# integration line written in step 4 never runs and nvx never sees a shell.
 # RemoteSigned is the narrowest policy that allows it, and the CurrentUser scope
 # leaves the machine policy alone.
 #
@@ -211,7 +310,7 @@ if (Test-NvxProfileBlockedByPolicy -Policy $policy) {
     }
 }
 
-# 3. Add shell integration to PowerShell Profile
+# 4. Add shell integration to PowerShell Profile
 if (-not (Test-Path $PROFILE)) {
     Write-Host "Creating PowerShell profile..."
     $profileDir = Split-Path $PROFILE
@@ -240,76 +339,20 @@ if (-not $alreadyIntegrated) {
 
 }
 
-# 3. Handle Binary Setup
-$localBinary = Join-Path $PSScriptRoot "nvx.exe"
-if (($UseLocalBinary -or $env:NVX_USE_LOCAL_BINARY -eq "1") -and (Test-Path $localBinary)) {
-    Write-Host "Copying compiled nvx.exe to bin directory..."
-    Copy-Item -Path $localBinary -Destination (Join-Path $binDir "nvx.exe") -Force
-} else {
-    $downloadUrl = "https://github.com/fstubner/nvx/releases/latest/download/nvx.exe"
-
-    $checksumUrl = "$downloadUrl.sha256"
-    Write-Host "Downloading nvx.exe from $downloadUrl..."
-    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-    $binPath = Join-Path $binDir "nvx.exe"
-    $downloadPath = "$binPath.download"
-    $checksumPath = "$binPath.sha256"
-    try {
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath -UseBasicParsing
-        try {
-            Invoke-WebRequest -Uri $checksumUrl -OutFile $checksumPath -UseBasicParsing
-        } catch {
-            # Absent from here on; Install-NvxDownloadedBinary decides whether
-            # that is allowed.
-            Remove-Item $checksumPath -Force -ErrorAction SilentlyContinue
-        }
-        Install-NvxDownloadedBinary -DownloadPath $downloadPath -ChecksumPath $checksumPath `
-            -Destination $binPath `
-            -AllowMissingChecksum:($InsecureSkipChecksum -or $env:NVX_INSECURE_SKIP_CHECKSUM -eq "1")
-    } catch {
-        Remove-Item $downloadPath, $checksumPath -Force -ErrorAction SilentlyContinue
-        # throw, not exit. The documented install is `irm ... | iex`, and exit
-        # inside Invoke-Expression ends the PowerShell session the user typed
-        # it into: the window closed before the error could be read. Measured
-        # 2026-09-25: after `iex` of a script ending in `exit 1` the next
-        # statement never ran; after one ending in throw it did. Run with
-        # -File, an uncaught throw still exits 1.
-        throw "nvx was not installed: $_"
-    }
-}
-
-
-
 Write-Host ""
 Write-Host "nvx has been successfully installed!"
 
-# 4. Offer the one-time sandbox setup.
-# Package managers (npm/npx/yarn/pnpm) can only run under the Windows sandbox
-# after a one-time elevated grant. Offer it here (default: skip). It is entirely
-# optional and re-runnable later with 'nvx setup'.
-$nvxExe = Join-Path $binDir "nvx.exe"
-if ($interactive -and (Test-Path $nvxExe)) {
-    Write-Host ""
-    Write-Host "Optional: enable the Windows sandbox for package managers (npm/npx/yarn/pnpm)."
-    Write-Host "This needs a single Administrator approval (UAC). You can also do it later with 'nvx setup'."
-    $answer = Read-Host "Enable the sandbox now? [y/N]"
-    if ($answer -match '^(y|yes)$') {
-        Write-Host "Requesting Administrator approval to run 'nvx setup'..."
-        try {
-            $p = Start-Process -FilePath $nvxExe -ArgumentList 'setup' -Verb RunAs -Wait -PassThru
-            if ($p.ExitCode -eq 0) {
-                Write-Host "Sandbox setup complete."
-            } else {
-                Write-Warning "Sandbox setup did not complete. Run 'nvx setup' from an Administrator terminal to try again."
-            }
-        } catch {
-            Write-Warning "Elevation was declined or failed. Run 'nvx setup' from an Administrator terminal later."
-        }
-    } else {
-        Write-Host "Skipped. Package-manager commands will run without OS isolation until you run 'nvx setup'."
-        Write-Host "(Supply-chain checks still apply, and you can bypass per command with --no-sandbox.)"
-    }
-}
-
 Write-Host ""
 Write-Host "Please open a new PowerShell window to start using nvx."
+}
+
+if ($LibraryOnly) {
+    . $nvxInstaller
+    Remove-Variable nvxInstaller
+    return
+}
+try {
+    & $nvxInstaller
+} finally {
+    Remove-Variable nvxInstaller -ErrorAction SilentlyContinue
+}

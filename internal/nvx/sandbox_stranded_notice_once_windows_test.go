@@ -11,7 +11,7 @@ package nvx
 // only entry npm's walk needs is inside nvx's own home. A two-line warning on
 // every install about a condition that breaks nothing was the loudest thing on
 // the screen, and the person reading it had stopped. The case it was written
-// for is still covered by remindAboutStrandedSetup, after a real failure.
+// for is still covered by remindAboutDriveRoots, after a real failure.
 
 import (
 	"strings"

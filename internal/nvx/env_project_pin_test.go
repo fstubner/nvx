@@ -84,7 +84,7 @@ func TestTheShimSaysWhenTheProjectAsksForAnotherVersion(t *testing.T) {
 
 	node := runtimeForShim("node")
 	got := captureStderrHere(t, func() {
-		warnIfProjectPinsAnotherVersion(nvxHome, node, "v22.23.2", running)
+		warnIfProjectPinsAnotherVersion(nvxHome, node, projectPinFor(node), "v22.23.2", running)
 	})
 	if !strings.Contains(got, ".nvmrc") || !strings.Contains(got, "20") {
 		t.Errorf("the project asked for 20 and v22.23.2 ran; nvx said nothing useful:\n%s", got)
@@ -99,7 +99,7 @@ func TestTheShimSaysWhenTheProjectAsksForAnotherVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if quiet := captureStderrHere(t, func() {
-		warnIfProjectPinsAnotherVersion(nvxHome, node, "v22.23.2", running)
+		warnIfProjectPinsAnotherVersion(nvxHome, node, projectPinFor(node), "v22.23.2", running)
 	}); strings.TrimSpace(quiet) != "" {
 		t.Errorf("a project pinned to 22 running v22.23.2 produced output:\n%s", quiet)
 	}
@@ -109,9 +109,38 @@ func TestTheShimSaysWhenTheProjectAsksForAnotherVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if quiet := captureStderrHere(t, func() {
-		warnIfProjectPinsAnotherVersion(nvxHome, node, "v22.23.2", running)
+		warnIfProjectPinsAnotherVersion(nvxHome, node, projectPinFor(node), "v22.23.2", running)
 	}); strings.TrimSpace(quiet) != "" {
 		t.Errorf("a project declaring no version produced output:\n%s", quiet)
+	}
+}
+
+// A package manager's own version is not the node version. The shim resolves
+// npm to npm's binary, and asking it for -v printed npm's version, so a project
+// pinned to node 22 was told "this command is running 10.9.2".
+func TestThePinWarningDoesNotReadAPackageManagersVersion(t *testing.T) {
+	nvxHome := tempDir(t)
+	proj := tempDir(t)
+	if err := os.WriteFile(filepath.Join(proj, ".nvmrc"), []byte("22\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inProjectDir(t, proj)
+
+	npm := filepath.Join(tempDir(t), "npm")
+	script := "#!/bin/sh\necho 10.9.2\n"
+	if runtime.GOOS == "windows" {
+		npm += ".cmd"
+		script = "@echo 10.9.2\r\n"
+	}
+	if err := os.WriteFile(npm, []byte(script), 0o700); err != nil { // #nosec G306 -- fixture
+		t.Fatal(err)
+	}
+
+	got := captureStderrHere(t, func() {
+		warnIfProjectPinsAnotherVersion(nvxHome, runtimeForShim("npm"), projectPinFor(runtimeForShim("npm")), "", npm)
+	})
+	if strings.Contains(got, "10.9.2") {
+		t.Fatalf("npm's own version was reported as the node version:\n%s", got)
 	}
 }
 
@@ -131,7 +160,7 @@ func TestVersionSatisfiesAcceptsTheRangesProjectsWrite(t *testing.T) {
 		{"v22.23.2", "^20", false},
 		{"v22.23.2", ">=23", false},
 	} {
-		if got := versionSatisfies(tc.running, tc.want); got != tc.ok {
+		if got := versionSatisfies(tempDir(t), tc.running, tc.want); got != tc.ok {
 			t.Errorf("versionSatisfies(%q, %q) = %v, want %v", tc.running, tc.want, got, tc.ok)
 		}
 	}

@@ -4,32 +4,111 @@ package nvx
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
 
-// windowsEgressSocketName is the UNIX socket, inside the guest home, that the
-// parent's egress proxy listens on in addition to its TCP listeners. The guest
-// home is already granted to the AppContainer, so no extra ACL is needed to reach
-// it -- and the name is kept short because of unixSocketPathMax below.
+// Where one session's AF_UNIX sockets go.
+//
+// Every path is a prefix plus a short name. The prefix is the guest home, which
+// the AppContainer is already granted. When NVX_HOME is too long for that, it is
+// the AppContainer's own folder, %LOCALAPPDATA%\Packages\<package>\AC, which
+// Windows grants the package itself when it creates the profile. Neither one
+// widens what the sandbox can reach. Measured 2026-10-01: a 132-character
+// NVX_HOME needed a 174-byte egress socket path, and every proxied run refused.
+//
+// The package is one per project, so its folder is shared by that project's
+// concurrent sessions, and the prefix there carries a session tag.
+
+// windowsEgressSocketName is the socket the parent's egress proxy listens on in
+// addition to its TCP listeners.
 const windowsEgressSocketName = "egress.sock"
 
-// unixSocketPathMax is the size of sockaddr_un.sun_path. Windows uses the same
-// 108-byte field as Unix, and afunix.sys rejects anything longer with
-// WSAEINVAL -- which surfaces from Go as "bind: invalid argument", a message
-// indistinguishable from a permissions failure. The relay probe hit exactly this
-// and it cost a wrong diagnosis, so the length is checked up front and reported
-// as what it is.
-const unixSocketPathMax = 108
-
-// egressSocketPathFits reports whether path can be bound as an AF_UNIX socket.
-// One byte is reserved for the terminating NUL.
-func egressSocketPathFits(path string) bool {
-	return path != "" && len(path) < unixSocketPathMax
+func windowsEgressSocketPath(prefix string) string {
+	return prefix + windowsEgressSocketName
 }
 
-func windowsEgressSocketPath(guestHome string) string {
-	return filepath.Join(guestHome, windowsEgressSocketName)
+// guestHomeSocketPrefix puts the sockets directly in the guest home.
+func guestHomeSocketPrefix(guestHome string) string {
+	return guestHome + string(filepath.Separator)
+}
+
+// windowsSessionSockets lists the socket paths this session binds under prefix.
+func windowsSessionSockets(prefix string, netCtx NetworkLaunchContext) []string {
+	var socks []string
+	if netCtx.egress != nil {
+		socks = append(socks, windowsEgressSocketPath(prefix))
+	}
+	for _, m := range netCtx.ExposePorts {
+		socks = append(socks, windowsExposeSocketPath(prefix, m.Container))
+	}
+	for _, m := range netCtx.ConnectPorts {
+		socks = append(socks, windowsConnectSocketPath(prefix, m.Host))
+	}
+	return socks
+}
+
+// windowsSocketTooLong returns the first of this session's socket paths under
+// prefix that will not bind, or "" when they all fit.
+func windowsSocketTooLong(prefix string, netCtx NetworkLaunchContext) string {
+	for _, sock := range windowsSessionSockets(prefix, netCtx) {
+		if !egressSocketPathFits(sock) {
+			return sock
+		}
+	}
+	return ""
+}
+
+// windowsSocketPrefix chooses the guest home when this session's sockets fit
+// there, and otherwise containerDir when they fit there. With neither, it
+// returns the guest home, so the refusal names NVX_HOME, the setting that fixes
+// it.
+func windowsSocketPrefix(guestHome, containerDir string, netCtx NetworkLaunchContext) string {
+	home := guestHomeSocketPrefix(guestHome)
+	if containerDir == "" || windowsSocketTooLong(home, netCtx) == "" {
+		return home
+	}
+	// Eight characters of the session id. Concurrent sessions of one project
+	// differ there, and the full id would cost eight more bytes of the limit.
+	tag := filepath.Base(guestHome)
+	if len(tag) > 8 {
+		tag = tag[:8]
+	}
+	shared := filepath.Join(containerDir, tag+"-")
+	if windowsSocketTooLong(shared, netCtx) != "" {
+		return home
+	}
+	return shared
+}
+
+// appContainerFolder is the AC folder Windows created for the package, or ""
+// when it is not there.
+func appContainerFolder(pkgName string) string {
+	local := os.Getenv("LOCALAPPDATA")
+	if local == "" || pkgName == "" {
+		return ""
+	}
+	dir := filepath.Join(local, "Packages", pkgName, "AC")
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return ""
+	}
+	return dir
+}
+
+// windowsSocketRoomError returns nil when this session's sockets fit under
+// prefix, and otherwise an error naming the longest NVX_HOME that would work.
+func windowsSocketRoomError(prefix, nvxHome, guestHome string, netCtx NetworkLaunchContext) error {
+	sock := windowsSocketTooLong(prefix, netCtx)
+	if sock == "" {
+		return nil
+	}
+	inHome := windowsSocketTooLong(guestHomeSocketPrefix(guestHome), netCtx)
+	if inHome == "" {
+		inHome = sock
+	}
+	return fmt.Errorf("a socket path is %d bytes, over the %d-byte AF_UNIX limit: %s\n%s",
+		len(sock), unixSocketPathMax-1, sock, nvxHomeAdvice(inHome, nvxHome))
 }
 
 // windowsEgressNeedsRelay reports whether this network mode routes the contained
@@ -74,21 +153,28 @@ func windowsEgressNeedsRelay(mode string) bool {
 // direct TCP to 1.1.1.1:443 is refused and DNS does not resolve, while this socket
 // is reachable. The contained side then re-exposes it as loopback TCP for tools
 // that only understand host:port -- see runAppContainerExecChild.
-func prepareEgressSocket(egress *EgressProxy, guestHome string, netCtx *NetworkLaunchContext) error {
+//
+// On Windows this only records the proxy. bindWindowsEgressSocket puts it on the
+// socket once platformLaunchNative knows where the socket goes.
+func prepareEgressSocket(egress *EgressProxy, guestHome, nvxHome string, netCtx *NetworkLaunchContext) error {
 	if egress == nil || netCtx == nil || guestHome == "" {
 		return nil
 	}
 	if !windowsEgressNeedsRelay(netCtx.Mode) {
 		return nil
 	}
-	sock := windowsEgressSocketPath(guestHome)
-	if !egressSocketPathFits(sock) {
-		return fmt.Errorf(
-			"the egress socket path is %d bytes, over the %d-byte AF_UNIX limit: %s\n"+
-				"Set NVX_HOME to a shorter directory, or set network.mode to \"open\" to run without the egress allowlist",
-			len(sock), unixSocketPathMax-1, sock)
+	netCtx.egress = egress
+	return nil
+}
+
+// bindWindowsEgressSocket listens on the egress socket under prefix, when
+// prepareEgressSocket recorded a proxy for this session.
+func bindWindowsEgressSocket(netCtx *NetworkLaunchContext, prefix string) error {
+	if netCtx.egress == nil {
+		return nil
 	}
-	if err := egress.ListenUnix(sock); err != nil {
+	sock := windowsEgressSocketPath(prefix)
+	if err := netCtx.egress.ListenUnix(sock); err != nil {
 		return err
 	}
 	netCtx.EgressSocketPath = sock

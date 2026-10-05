@@ -80,7 +80,9 @@ func DownloadFile(url, destPath string) error {
 		return fmt.Errorf("failed to save download content: %w", err)
 	}
 
-	fmt.Fprint(os.Stderr, "\r\x1b[K") // Clear line
+	if stderrIsTerminal() {
+		fmt.Fprint(os.Stderr, "\r\x1b[K") // Clear line
+	}
 	return nil
 }
 
@@ -100,15 +102,10 @@ func ComputeSHA256(filePath string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// VerifyNodeChecksum downloads the SHASUMS256.txt for the given Node version,
-// finds the expected SHA-256 for the archive filename, and verifies the downloaded file's hash.
-func VerifyNodeChecksum(version, archivePath, archiveFilename string) error {
-	return VerifyChecksumFromShasums(nodeShasumsURL(version), archivePath, archiveFilename)
-}
-
-// nodeShasumsURL is where nodejs.org publishes the checksums for a release.
+// nodeShasumsURL is where the checksums for a release are published: on
+// nodejs.org, or on the mirror the archive comes from.
 func nodeShasumsURL(version string) string {
-	return fmt.Sprintf("https://nodejs.org/dist/%s/SHASUMS256.txt", version)
+	return fmt.Sprintf("%s/%s/SHASUMS256.txt", nodeDistBase(), version)
 }
 
 // fetchExpectedShasum downloads a SHASUMS256.txt-style manifest (lines of
@@ -140,34 +137,6 @@ func fetchExpectedShasum(shaUrl, archiveFilename string) (string, error) {
 	return expectedSHA, nil
 }
 
-// VerifyChecksumFromShasums downloads a SHASUMS256.txt-style manifest (lines of
-// "<sha256>  <filename>"), looks up archiveFilename, and verifies archivePath's
-// hash against it. It is fail-closed: a missing entry or mismatch is an error.
-//
-// Verifying by path and then extracting by path is two opens of the file, and
-// what is extracted is whatever it holds at the second one. The installers use
-// extractVerifiedArchive instead, which verifies and extracts the same bytes;
-// this remains for callers that only need the check.
-func VerifyChecksumFromShasums(shaUrl, archivePath, archiveFilename string) error {
-	expectedSHA, err := fetchExpectedShasum(shaUrl, archiveFilename)
-	if err != nil {
-		return err
-	}
-
-	// Compute checksum of downloaded file
-	computedSHA, err := ComputeSHA256(archivePath)
-	if err != nil {
-		return fmt.Errorf("failed to compute SHA-256: %w", err)
-	}
-
-	if !strings.EqualFold(computedSHA, expectedSHA) {
-		return fmt.Errorf("checksum verification failed! Expected: %s, Got: %s", expectedSHA, computedSHA)
-	}
-
-	LogSuccess("Checksum verified successfully.")
-	return nil
-}
-
 // verifyExpectedSHA256 checks archivePath against a known hex SHA-256 (e.g. one
 // carried inline in a release index). Fail-closed on mismatch or empty expected.
 func verifyExpectedSHA256(archivePath, expectedHex string) error {
@@ -189,10 +158,8 @@ func verifyExpectedSHA256(archivePath, expectedHex string) error {
 
 // findShasumEntry extracts the expected hash for filename from checksum-file
 // content. Accepted forms: sha256sum lines ("<hash>  <filename>", with optional
-// "*" binary marker or "./" prefix); PowerShell Get-FileHash output ("Hash : <hex>",
-// as published for Deno's Windows assets, validated against the Path line's base
-// name when present); and — for per-asset sidecar files — a lone 64-char hash
-// when the file contains exactly one entry.
+// "*" binary marker or "./" prefix), and, for per-asset sidecar files, a lone
+// 64-char hash when the file contains exactly one entry.
 func findShasumEntry(content, filename string) string {
 	isHex64 := func(s string) bool {
 		if len(s) != 64 {
@@ -205,14 +172,7 @@ func findShasumEntry(content, filename string) string {
 		}
 		return true
 	}
-	baseName := func(p string) string {
-		if i := strings.LastIndexAny(p, `/\`); i >= 0 {
-			return p[i+1:]
-		}
-		return p
-	}
-
-	var loneHash, kvHash, kvPath string
+	var loneHash string
 	entries := 0
 	for _, line := range strings.Split(content, "\n") {
 		parts := strings.Fields(strings.TrimSpace(line))
@@ -229,22 +189,8 @@ func findShasumEntry(content, filename string) string {
 		if len(parts) == 1 && isHex64(parts[0]) {
 			loneHash = parts[0]
 		}
-		// Get-FileHash key/value lines: "Hash : <hex>", "Path : C:\...\asset.zip"
-		if len(parts) >= 3 && parts[1] == ":" {
-			switch strings.ToLower(parts[0]) {
-			case "hash":
-				if isHex64(parts[2]) {
-					kvHash = parts[2]
-				}
-			case "path":
-				kvPath = parts[len(parts)-1]
-			}
-		}
 	}
 
-	if kvHash != "" && (kvPath == "" || strings.EqualFold(baseName(kvPath), filename)) {
-		return kvHash
-	}
 	// A single-hash file (e.g. <asset>.sha256sum) unambiguously refers to the
 	// asset it was fetched for.
 	if entries == 1 && loneHash != "" {
@@ -257,17 +203,46 @@ type progressWriter struct {
 	total      int64
 	downloaded int64
 	lastUpdate time.Time
+	// lastStep is the last milestone printed as a plain line, when stderr is not
+	// a terminal.
+	lastStep int64
 }
 
 func (pw *progressWriter) Write(p []byte) (int, error) {
 	n := len(p)
 	pw.downloaded += int64(n)
 
+	if !stderrIsTerminal() {
+		pw.printPlainProgress()
+		return n, nil
+	}
 	if time.Since(pw.lastUpdate) > 100*time.Millisecond || pw.downloaded == pw.total {
 		pw.lastUpdate = time.Now()
 		pw.printProgress()
 	}
 	return n, nil
+}
+
+// printPlainProgress is the progress for a log or a pipe: a bar redrawn with
+// carriage returns arrives there as thousands of lines of control codes. One
+// plain line per tenth of the download, or per 10 MB when the size is unknown.
+func (pw *progressWriter) printPlainProgress() {
+	mb := float64(pw.downloaded) / (1024 * 1024)
+	if pw.total > 0 {
+		step := pw.downloaded * 10 / pw.total
+		if step <= pw.lastStep {
+			return
+		}
+		pw.lastStep = step
+		fmt.Fprintf(os.Stderr, "Downloading: %d%% (%.1f / %.1f MB)\n", step*10, mb, float64(pw.total)/(1024*1024))
+		return
+	}
+	step := pw.downloaded / (10 * 1024 * 1024)
+	if step <= pw.lastStep {
+		return
+	}
+	pw.lastStep = step
+	fmt.Fprintf(os.Stderr, "Downloading: %.1f MB\n", mb)
 }
 
 func (pw *progressWriter) printProgress() {
@@ -294,11 +269,11 @@ func (pw *progressWriter) printProgress() {
 	mbDownloaded := float64(pw.downloaded) / (1024 * 1024)
 	if pw.total > 0 {
 		mbTotal := float64(pw.total) / (1024 * 1024)
-		fmt.Fprintf(os.Stderr, "\r\x1b[36m📦 Downloading:\x1b[0m [%s] %.1f%% (%.1f / %.1f MB)",
-			bar, percent*100, mbDownloaded, mbTotal)
+		fmt.Fprintf(os.Stderr, "\r%s [%s] %.1f%% (%.1f / %.1f MB)",
+			paint("36", "📦 Downloading:"), bar, percent*100, mbDownloaded, mbTotal)
 	} else {
-		fmt.Fprintf(os.Stderr, "\r\x1b[36m📦 Downloading:\x1b[0m [%s] (%.1f MB)",
-			bar, mbDownloaded)
+		fmt.Fprintf(os.Stderr, "\r%s [%s] (%.1f MB)",
+			paint("36", "📦 Downloading:"), bar, mbDownloaded)
 	}
 }
 
@@ -306,12 +281,6 @@ func (pw *progressWriter) printProgress() {
 // inside the zip (e.g. node-vX/, bun-<target>/).
 func ExtractZip(zipPath, destDir string) error {
 	return extractZip(zipPath, destDir, true)
-}
-
-// ExtractZipFlat extracts a zip whose members are already at the archive root
-// (e.g. Deno's deno[.exe]), without stripping a leading folder.
-func ExtractZipFlat(zipPath, destDir string) error {
-	return extractZip(zipPath, destDir, false)
 }
 
 func extractZip(zipPath, destDir string, strip bool) error {

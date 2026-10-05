@@ -30,7 +30,7 @@ Key areas:
 
 ## Prerequisites
 
-- Go **1.23 or newer** (releases are built with 1.26.4).
+- Go **1.23 or newer** (releases are built with 1.26.6, which `go.mod` names as the toolchain).
 - To exercise sandboxing locally you need the platform primitives:
   - **Linux:** kernel 5.13+ (Landlock), `iproute2` (network namespace).
   - **macOS:** `/usr/bin/sandbox-exec`.
@@ -114,12 +114,14 @@ probe test held a data race indefinitely as a result — a `strings.Builder`
 shared between `os/exec`'s copier goroutines and a poll loop — and it took an
 acceptance pass running both flags together to see it. Both now use `-race`.
 
-This is the one platform gate CI cannot run. GitHub-hosted Windows runners
-refuse to create AppContainer children — `CreateProcess` returns "Access is
-denied" for every executable, including `cmd.exe` — so anything that launches a
-live contained process skips there. The enforcement script detects that and
-skips; the CI step exists to start asserting if a future runner image can host
-one, not to assert today.
+CI runs this gate too, on a hosted Windows runner. Until 2026-09-21 it could
+not: hosted runners refused to create AppContainer children, so anything that
+launched a live contained process skipped there. Since PR #52 they launch them,
+and in run 37244525606 the enforcement script and the probe step both passed
+(the probe step had 8 skips, none of them a refusal to launch). The enforcement
+script still detects a refused launch and skips, so a runner image that refuses
+again shows up as a skip. The by-hand run on a real machine stays part of the
+release checklist.
 
 **A Windows runner whose sockets are broken is a re-run, not a bug.** Seen
 2026-09-03: `listen tcp 127.0.0.1:0: socket: An operation was attempted on
@@ -138,7 +140,8 @@ allowlist to make a flaky runner quiet.
 AppContainers to check that a sandbox cannot read another project, that a deny
 ACE hides a secret, that one session cannot read another's guest home, and that
 the relay does not expose host loopback services — roughly twenty end-to-end
-containment assertions that skip on hosted CI and run here.
+containment assertions. They skipped on hosted CI until 2026-09-21 and run
+there now, so CI and this machine both exercise them.
 
 Expect **0 failures and exactly these 6 top-level skips**. `go test -v` also
 prints a further `--- SKIP` line for the subtest
@@ -156,9 +159,9 @@ following this literally goes looking for a phantom:
 | `TestReportsItsOwnRaceBuildTag` | the child half of the uninstrumented-probe-child check — it only does anything when run as a child with `NVX_REPORT_RACE=1`, so in the parent it is a helper, not a test |
 
 A seventh means something is quietly not being checked — go and look at it rather
-than at this table. Last measured on Windows 11, 2026-09-02, unelevated:
-**468 passing, 6 skipping, 0 failing** on Windows (Linux adds two more: the network-mode readers only build there). Measured on this machine: 163–209s under
--race and 154s without, so the detector costs roughly a quarter, not the double
+than at this table. Last measured on Windows, 2026-09-03:
+**492 passing, 6 skipping, 0 failing**. Separately measured run time:
+163–209s under -race and 154s without, so the detector costs roughly a quarter, not the double
 this line claimed until an acceptance pass measured it.
 
 `TestProxyRelayForwardsBothDirections` is sensitive to machine load, and fails in
@@ -176,7 +179,7 @@ because the obvious next step — bisecting whatever you last changed — produc
 confident wrong answer: removing the newest test file "fixed" it, purely because
 that run happened after the load dropped.
 
-The summary line must read `ok github.com/fstubner/nvx <time>` and nothing else.
+The summary line must read `ok github.com/fstubner/nvx/internal/nvx <time>` and nothing else.
 `[no tests to run]` appended to it means a child process wrote to the test
 binary's stdout and `go test` attributed it to the package — the gate's headline
 then reads exactly like a run in which nothing executed. See
@@ -252,26 +255,30 @@ That is why `docs/enforcement-matrix.md` says **measured** for the Windows
 column and **CI** for the other two. Running both is what keeps the word
 "measured" true.
 
-## Why this is one flat `package main`
+## Why this is one flat package
 
-274 Go files in one directory, ~46,000 lines, no subpackages. This is the first
+`cmd/nvx` holds only the entry point, and everything else is one package,
+`nvx`, in `internal/nvx`. Measured 2026-09-26: 438 Go files in that directory,
+66,854 lines, no subpackages. This is the first
 thing a newcomer wants to change, so here is what is known about it — labelled,
 because part is reconstructed rather than recorded.
 
 **Not recorded:** nobody wrote down an original decision. The repo starts at
-"Initial commit" on 2026-06-29 with the layout already flat, and it grew.
+"Initial commit" on 2026-06-29 with the layout already flat, and it grew. On
+2026-09-12 the entry point moved to `cmd/nvx` and the rest to `internal/nvx`,
+still as one package.
 Do not read the rest of this section as the reason it was chosen.
 
 **What now depends on it**, which is the part that matters if you want to split
 it:
 
-- **153 of 274 files carry a build tag**, in matched sets — 30 `_windows.go`,
-  8 `_linux.go`, 2 `_darwin.go`, plus 12 `_other.go` and 5 `_stub.go`
+- **218 of the 438 files carry a `//go:build` line**, in matched sets of
+  `_windows`, `_linux` and `_darwin` files with `_other` and `_stub`
   fallbacks. Every platform's version of a function must sit in the same
   package as its siblings to substitute for them. A split has to keep each
   matched set together, so the seams have to fall between *concepts*, never
   between platforms.
-- **32 test files re-run the test binary as a contained child**, passing
+- **Test files re-run the test binary as a contained child**, passing
   `-test.run=` to select which assertion executes inside the AppContainer.
   That works because there is one test binary containing both the parent and
   the child halves. Move the sandbox into its own package and each probe needs
@@ -290,7 +297,7 @@ package's internal structure is carried entirely by file naming
 (`sandbox_*`, `probe_*`, `policy_*`). That convention is consistent today and
 is the only thing holding the shape.
 
-If you do split it, say so in a `stack-decision.md` entry with what forced it.
+If you do split it, record what forced it in this section.
 "It is large" is not what forced it.
 
 ## Making changes

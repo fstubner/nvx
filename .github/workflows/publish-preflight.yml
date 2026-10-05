@@ -1,6 +1,8 @@
 name: Publish preflight
 
-# Checks the three publishing credentials WITHOUT publishing anything.
+# Checks the three publishing credentials WITHOUT publishing anything. npm has
+# none to check: it publishes through trusted publishing (OIDC), configured
+# per package on npmjs.com, so no npm token is stored here.
 #
 # publish.yml pushes to each registry the moment that job succeeds, and its
 # own concurrency note says a run that dies halfway "leaves some registries
@@ -33,7 +35,7 @@ jobs:
     timeout-minutes: 5
     steps:
       # One step, not three, so a bad credential does not stop the others
-      # from being checked. Finding out that the other two are fine is the
+      # from being checked. Finding out that the others are fine is the
       # point. Discovering them one release at a time is what this workflow
       # exists to prevent.
       - name: Check all three credentials
@@ -81,9 +83,9 @@ jobs:
           check_gh_repo "SCOOP_BUCKET_TOKEN" "$SCOOP_BUCKET_TOKEN" "fstubner/scoop-bucket"
 
           # ---- winget -----------------------------------------------------
-          # Nobody has push on microsoft/winget-pkgs. The action forks and
-          # opens a PR. So validity is what matters, and the fork is reported
-          # for information. Its absence is fine, the action creates it.
+          # Nobody has push on microsoft/winget-pkgs. Komac forks and opens a
+          # PR. So validity is what matters, and the fork is reported for
+          # information. Its absence is fine, Komac creates it.
           code=$(curl -sS -o /dev/null -w '%{http_code}' \
             -H "Authorization: Bearer ${WINGET_TOKEN}" -H 'Accept: application/vnd.github+json' \
             https://api.github.com/user || echo 000)

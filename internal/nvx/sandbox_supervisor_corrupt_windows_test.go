@@ -60,9 +60,11 @@ func TestOnlyImageErrorsTriggerARestage(t *testing.T) {
 }
 
 // The recovery only works if the code survives the wrapping the launch path does.
-// It was %v before this change, which stringified the errno and lost it.
+// It was %v before this change, which stringified the errno and lost it. This
+// used to build its own wrapping with %w, so the launch path could have gone
+// back to %v with the test still passing. It now uses the launch path's.
 func TestLaunchErrorCarriesTheErrnoThrough(t *testing.T) {
-	wrapped := fmt.Errorf("CreateProcess(AppContainer) exe=%q cwd=%q: %w", "a", "b", syscall.Errno(1392))
+	wrapped := createProcessError("a", "b", syscall.Errno(1392))
 	if !stagedImageIsUnusable(wrapped) {
 		t.Fatal("the errno did not survive wrapping; the recovery cannot fire")
 	}

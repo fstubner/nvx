@@ -57,6 +57,9 @@ func TestEveryOutboundDialIsANamedChokePoint(t *testing.T) {
 				"named; the contained side can only ask for the tunnel, never for a destination."},
 		{"sandbox_connect_linux.go", `d.DialContext(ctx, "unix", sock)`,
 			"--connect tunnel plumbing: a UNIX socket nvx itself created in this run's guest home."},
+		{"egress_upstream.go", `net.DialTimeout("tcp", u.addr, connectDialTimeout)`,
+			"the user's own HTTPS_PROXY or HTTP_PROXY, read from nvx's environment. Never an address a sandboxed " +
+				"process asked for. The destination is sent to it only after the allowlist has decided."},
 		{"sandbox_relay.go", `d.DialContext(ctx, "unix", sockPath)`,
 			"in-container relay to the egress proxy over a UNIX socket nvx created; the proxy then applies the allowlist."},
 	}

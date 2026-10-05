@@ -12,14 +12,15 @@
 # apart. That distinction is not hypothetical here -- a Windows egress test once
 # reported success while the sandbox was blocking its own test server.
 #
-# It also asserts a WEAKNESS on purpose. macOS allows filesystem reads, so a
-# contained process can read credentials by absolute path. That is deliberate
-# (the dynamic linker needs system libraries whose paths vary by OS version, and
-# a strict read allowlist stops processes launching) and it is documented in
-# README, SECURITY.md, PRODUCT.md and docs/enforcement-matrix.md. Pinning it here
-# means that if the profile is ever tightened, this fails and forces those four
-# documents to be updated together -- rather than the docs quietly staying wrong
-# in either direction.
+# It also asserts a WEAKNESS on purpose. macOS allows filesystem reads outside
+# the user's credential stores, so a contained process can read other files by
+# absolute path. That is deliberate (the dynamic linker needs system libraries
+# whose paths vary by OS version, and a strict read allowlist stops processes
+# launching) and it is documented in README, SECURITY.md, PRODUCT.md and
+# docs/enforcement-matrix.md. Pinning it here means that if the profile is ever
+# tightened, this fails and forces those four documents to be updated together
+# -- rather than the docs quietly staying wrong in either direction. The
+# credential stores themselves are denied, and phase 3 asserts that.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -64,13 +65,21 @@ PROJ="$(mktemp -d)"
 OUTSIDE="$HOME/.nvx-enforcement-probe"
 rm -rf "$OUTSIDE"
 mkdir -p "$OUTSIDE"
-trap 'rm -rf "$PROJ" "$OUTSIDE"' EXIT
+# A throwaway home for phase 3, holding planted stand-ins for credential files
+# so the real ones are never read or written.
+FAKE_HOME="$(mktemp -d)"
+trap 'rm -rf "$PROJ" "$OUTSIDE" "$FAKE_HOME"' EXIT
 
 SECRET="$OUTSIDE/credentials"
 printf 'SECRET-CONTENT-DO-NOT-LEAK\n' > "$SECRET"
 FORBIDDEN_WRITE="$OUTSIDE/should-not-exist"
 
 cd "$PROJ"
+# Repository metadata. git runs uncontained, so a contained process must not be
+# able to write it, while reading it still works.
+mkdir -p .git/hooks
+GIT_CONFIG_BODY="$(printf '[core]\n\trepositoryformatversion = 0')"
+printf '%s\n' "$GIT_CONFIG_BODY" > .git/config
 cat > .nvx-policy.json <<'POLICY'
 {
   "isolation": {
@@ -105,6 +114,24 @@ catch (e) { out.push('WRITE_OUTSIDE=DENIED'); }
 // enforcement.
 try { fs.writeFileSync('inside.txt', 'ok'); out.push('WRITE_INSIDE=ALLOWED'); }
 catch (e) { out.push('WRITE_INSIDE=DENIED'); }
+
+// Must be DENIED: the project's .git is read-only to a contained process. A
+// hook or a config entry written there runs as the user on the next commit.
+try { fs.writeFileSync('.git/hooks/pre-commit', '#!/bin/sh\n'); out.push('GIT_HOOK_WRITE=ALLOWED'); }
+catch (e) { out.push('GIT_HOOK_WRITE=DENIED'); }
+try { fs.appendFileSync('.git/config', '[core]\n\thooksPath = elsewhere\n'); out.push('GIT_CONFIG_WRITE=ALLOWED'); }
+catch (e) { out.push('GIT_CONFIG_WRITE=DENIED'); }
+
+// Must be ALLOWED: reading .git, and the files an install writes. Without these
+// a profile that denied the whole project would pass the two checks above.
+try { fs.readFileSync('.git/config', 'utf8'); out.push('GIT_READ=ALLOWED'); }
+catch (e) { out.push('GIT_READ=DENIED'); }
+try {
+  fs.writeFileSync('package.json', '{"name":"probe"}\n');
+  fs.mkdirSync('node_modules/dep', { recursive: true });
+  fs.writeFileSync('node_modules/dep/index.js', 'module.exports = 1;\n');
+  out.push('INSTALL_WRITE=ALLOWED');
+} catch (e) { out.push('INSTALL_WRITE=DENIED'); }
 
 // Documented as ALLOWED on macOS. Asserted so a change in either direction is
 // caught rather than silently diverging from four documents.
@@ -184,6 +211,20 @@ expect "WRITE_OUTSIDE=DENIED" "a contained process wrote outside the project; wr
 expect "WRITE_INSIDE=ALLOWED" "a contained process could not write its own project, so the sandbox is broken rather than strict, and every denial above proves nothing"
 expect "EGRESS=DENIED"        "a contained process reached a host with an empty allowlist; egress control is the other guarantee macOS makes"
 expect "UDP_EGRESS=DENIED"    "a contained process sent a UDP packet to an external host; the profile is (deny default) and that must cover UDP as well as TCP"
+expect "GIT_HOOK_WRITE=DENIED"   "a contained process created a git hook; .git must be read-only inside the project"
+expect "GIT_CONFIG_WRITE=DENIED" "a contained process wrote .git/config; .git must be read-only inside the project"
+expect "GIT_READ=ALLOWED"        "a contained process could not read .git/config; npm and install scripts read it"
+expect "INSTALL_WRITE=ALLOWED"   "a contained process could not write package.json or node_modules, so the .git checks above prove nothing"
+
+# On disk, outside the sandbox: nothing reported as denied landed anyway.
+if [[ -e .git/hooks/pre-commit ]]; then
+  echo "FAIL: .git/hooks/pre-commit exists; a contained process created a git hook." >&2
+  fail=1
+fi
+if [[ "$(cat .git/config)" != "$GIT_CONFIG_BODY" ]]; then
+  echo "FAIL: .git/config changed; a contained process wrote it." >&2
+  fail=1
+fi
 
 # The documented weakness. A change here is not necessarily a regression -- it
 # may be an improvement -- but it must not go unnoticed, because four documents
@@ -191,7 +232,7 @@ expect "UDP_EGRESS=DENIED"    "a contained process sent a UDP packet to an exter
 if ! grep -qx "READ_OUTSIDE=ALLOWED" "$REPORT"; then
   echo "FAIL: reads outside the project are no longer allowed on macOS." >&2
   echo "      That may be an improvement, but README, SECURITY.md, PRODUCT.md and" >&2
-  echo "      docs/enforcement-matrix.md all state that macOS does NOT contain reads." >&2
+  echo "      docs/enforcement-matrix.md all state that macOS allows reads outside the credential stores." >&2
   echo "      Update them in the same change that tightened the profile." >&2
   fail=1
 fi
@@ -276,10 +317,81 @@ case "$OUT2" in
     ;;
 esac
 
+# A contained run started in the home directory must not be able to write it,
+# nor ~/.nvx below it. The working directory is a writable root, and nothing
+# checked which directory it was: measured on this runner before the guard, all
+# such writes landed.
+HOME_WRITE="$OUTSIDE/written-from-home"
+NVX_WRITE="$HOME/.nvx/probe-written-from-home"
+( cd "$HOME" && "$NVX" -y --strict shim node -e \
+    "for(const p of process.argv.slice(1)){try{require('fs').writeFileSync(p,'x')}catch(e){}}" \
+    "$HOME_WRITE" "$NVX_WRITE" >/dev/null 2>&1 ) || true
+for p in "$HOME_WRITE" "$NVX_WRITE"; do
+  if [[ -e "$p" ]]; then
+    echo "FAIL: a contained run started in ~ wrote $p; the working directory reached the home directory or nvx's settings." >&2
+    rm -f "$p"
+    fail=1
+  fi
+done
+
+# Phase 3: the user's credential stores are not readable.
+#
+# The profile allows reads broadly and then denies the credential stores under
+# the real home, which for nvx is whatever HOME says when it starts. So nvx runs
+# here with HOME pointing at a throwaway directory holding a planted .npmrc and
+# SSH key, and NVX_HOME where the runs above had it. mktemp puts that home under
+# /var/folders, a link to /private/var/folders, so this also checks that the
+# deny names the resolved path Seatbelt matches.
+#
+# Each read reports by exit code: 0 read, 3 refused by the OS (EPERM or EACCES),
+# anything else a failure to run at all. The project file and node's own binary
+# are the controls that must still read, or a refusal proves nothing.
+echo "Phase 3: credential files must be unreadable while other reads still work..."
+NVX_HOME_DIR="${NVX_HOME:-$HOME/.nvx}"
+mkdir -p "$FAKE_HOME/.ssh"
+printf '//registry.npmjs.org/:_authToken=PLANTED-NPM-TOKEN\nregistry=https://planted.invalid/\n' > "$FAKE_HOME/.npmrc"
+printf 'PLANTED-SSH-KEY\n' > "$FAKE_HOME/.ssh/id_test"
+printf 'project-file\n' > "$PROJ/project-file.txt"
+
+contained_read() {
+  local rc=0
+  HOME="$FAKE_HOME" NVX_HOME="$NVX_HOME_DIR" "$NVX" -y --strict shim node -e \
+    "const p=process.argv[1]==='SELF'?process.execPath:process.argv[1];try{require('fs').readFileSync(p);process.exit(0)}catch(e){process.exit(e.code==='EPERM'||e.code==='EACCES'?3:4)}" \
+    "$1" >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+expect_read() {
+  local path="$1" want="$2" why="$3" got
+  got="$(contained_read "$path")"
+  echo "  read $path: exit $got"
+  if [[ "$got" != "$want" ]]; then
+    echo "FAIL: a contained read of $path exited $got, expected $want. $why" >&2
+    fail=1
+  fi
+}
+expect_read "$FAKE_HOME/.npmrc"       3 "The user's .npmrc holds registry tokens and must be unreadable"
+expect_read "$FAKE_HOME/.ssh/id_test" 3 "Files under ~/.ssh must be unreadable"
+expect_read "$PROJ/project-file.txt"  0 "The project must stay readable, or the denials above prove nothing"
+expect_read "SELF"                    0 "Node's own binary must stay readable, or the denials above prove nothing"
+
+# Contained npm still works with a user .npmrc present, and does not use it.
+# The guest home has no .npmrc, so the planted registry must not appear.
+npm_rc=0
+NPM_OUT="$(HOME="$FAKE_HOME" NVX_HOME="$NVX_HOME_DIR" "$NVX" -y --strict shim npm config get registry 2>&1)" || npm_rc=$?
+echo "  contained npm config get registry: exit $npm_rc"
+if [[ $npm_rc -ne 0 ]]; then
+  echo "FAIL: contained npm exited $npm_rc with a user .npmrc present:" >&2
+  echo "$NPM_OUT" >&2
+  fail=1
+elif grep -q 'planted.invalid' <<<"$NPM_OUT"; then
+  echo "FAIL: contained npm used the registry from the user's .npmrc. It must only see the guest home's." >&2
+  fail=1
+fi
+
 if [[ $fail -ne 0 ]]; then
   echo "macOS enforcement probe FAILED." >&2
   exit 1
 fi
 
 echo "macOS enforcement probe passed: writes contained, egress denied for TCP and UDP,"
-echo "an allowlisted host reachable through the proxy, reads allowed as documented."
+echo "an allowlisted host reachable through the proxy, credential files unreadable, other reads allowed as documented."

@@ -104,6 +104,22 @@ func TestLookupBinCacheRejectsShimDir(t *testing.T) {
 	}
 }
 
+// A cache hit must name the command it is cached for. The check covered the
+// directory only, so an entry mapping node to some other program in a PATH
+// directory was returned, and nvx would run that program as node.
+func TestLookupBinCacheRejectsAnotherProgramOnPATH(t *testing.T) {
+	nvxHome := tempDir(t)
+	pathDir := tempDir(t)
+	other := filepath.Join(pathDir, exeName("evil"))
+	touchExecutable(t, other)
+	t.Setenv("PATH", pathDir)
+
+	writeCacheEntry(t, nvxHome, "node", other)
+	if got := lookupBinCache(nvxHome, "node"); got != "" {
+		t.Errorf("a cache entry for node returned %q, which is not node", got)
+	}
+}
+
 // TestLookupBinCacheStillRoundTrips guards the cache's actual purpose: the
 // validation must not break a normal store-then-load cycle.
 func TestLookupBinCacheStillRoundTrips(t *testing.T) {

@@ -63,7 +63,7 @@ trust boundary ignore `-y`/`NVX_YES` entirely (see [Commands](/docs/commands/#po
 Policies cascade: the global policy applies everywhere, and local policy files merge over it as you get closer to the working directory (the nearest policy wins on conflicting settings; blocklists and trusted packages are unioned).
 
 ## Reference
-* **`enforce_ignore_scripts`**: When `true`, this forces npm/yarn/pnpm to install packages with `--ignore-scripts`. This blocks execution of hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine.
+* **`enforce_ignore_scripts`**: When `true`, nvx refuses to install a package that has hook scripts (`preinstall`/`postinstall`/`install`), which are heavily used in supply chain attacks to download and execute arbitrary binaries on the host machine. The refusal comes before the package manager starts, so passing `--ignore-scripts` yourself does not change it. Name the package in `install_scripts.trusted_packages` to let it through.
 * **Per-check exemptions.** Every install-time check applies to every package
   until a policy names an exception, and each list waives only its own check —
   naming a package in one never affects another. Adding an entry to any of them is
@@ -88,6 +88,14 @@ Policies cascade: the global policy applies everywhere, and local policy files m
     could not rate stops the install at every floor — the rating comes from a
     network lookup, so a failed one must never be why a finding slipped under the
     line — and an unrecognised value is no floor at all, reported at load time.
+* **What the audit log holds for these checks.** Every check above that would
+  have prompted is written to `~/.nvx/audit.log`, whether a person answered it,
+  `-y`, `--agent-mode` or `NVX_YES` approved it without asking, or nobody was there
+  and it was refused. `nvx audit` shows these as `check_approved` and
+  `check_refused`, with the check, the package and who answered. They are written
+  whatever `NVX_TRACE` says, and an approval nobody was asked about also prints one
+  line to stderr. A refusal prints the policy line that settles that one check,
+  and names `-y` and `NVX_YES` last, because they approve every check in the run.
 * **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary). See the [enforcement matrix](https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md) for exact guarantees.
   - `native` (default): AppContainer (Windows), Landlock + namespaces (Linux), Seatbelt (macOS). Zero-config, fail-closed.
   - `docker`: runs in a container (hardened; `offline`/`loopback` enforced via `--network none`). Requires Docker running. Does not carry `--connect`, and says so when asked: the relay needs a process of nvx's inside the sandbox, and this provider launches the target command as the container's only process.
@@ -98,12 +106,65 @@ Policies cascade: the global policy applies everywhere, and local policy files m
   - `proxy` (default): parent-process HTTP CONNECT + SOCKS5 proxy with policy allowlist; injects `HTTP_PROXY` / `HTTPS_PROXY`.
   - `open`: no egress filtering.
   - `offline`: no network at all.
-  - `loopback`: the services on your own 127.0.0.1 are reachable at their own
-    addresses, over any TCP protocol; everything else is blocked. On Windows it
-    reaches proxy-aware tools' HTTP and HTTPS traffic only, since the reach there
-    comes from nvx's proxy. Selecting it in a project policy is a loosening and
+  - `loopback`: `proxy` mode with one addition. The services on your own
+    127.0.0.1 are reachable at their own addresses, over any TCP protocol, and
+    allowlisted remote hosts stay reachable through the proxy. On Windows the
+    loopback reach covers proxy-aware tools' HTTP and HTTPS traffic only, since
+    it comes from nvx's proxy. Selecting it in a project policy is a loosening and
     needs approval.
-* **`runtime.versions`**: Pin runtime versions used inside the sandbox (e.g. `"node": "20"`).
+* **`runtime.versions`**: Pin runtime versions used inside the sandbox (e.g. `"node": "20"`). Inside the sandbox this pin comes before the project's `.nvmrc` or other version file, which comes before the global default. See [which version a command runs](/docs/commands/#which-version-a-command-runs).
 * **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project (`<project>/.nvx/npm_global`) instead of being shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch. Because that directory goes on your PATH, a project file that turns this on counts as a loosening and needs the same approval as an egress host.
 
 Override filesystem provider per shim: `npm --filesystem-provider=docker install`.
+
+## Corporate networks
+
+**Private registries.** The pre-install checks look each package up on the
+registry npm will fetch it from. For a contained install that is what the
+project's `.npmrc` says in `registry=` and `@scope:registry=`, because a
+contained npm reads nothing else. For a run outside the sandbox,
+`npm_config_registry` and `npm_config_@scope:registry` come first, then the
+project's `.npmrc`, then `~/.npmrc` (or the file `npm_config_userconfig` names).
+The contained npm also needs the registry's host in
+`isolation.network.allow_hosts`.
+
+If the registry needs a token to read package metadata, nvx sends the
+`//host/:_authToken=` value from your `.npmrc` with its own request. That request
+runs outside the sandbox. The token is not put in the sandbox's environment or
+written to any log. `${VAR}` in `.npmrc` is filled in from nvx's environment, as
+npm does. Only `_authToken` is read. Without a token, a 401 or 403 counts as a
+lookup that failed. nvx asks before going on, and refuses when nobody can answer.
+
+**Which hosts the checks contact.** nvx makes these requests itself.
+
+| Host | When | What it is sent |
+| --- | --- | --- |
+| The package's registry | Every registry package checked | The package name, and your token for that registry if `.npmrc` has one |
+| `api.npmjs.org` | The typosquat check, for a public-registry package you chose whose name is close to a popular one | Both names |
+| `api.osv.dev` | The advisory scan, for public-registry packages | Each name and version |
+| `cdn.jsdelivr.net` | Refreshing the popular-package list, once the cached copy is 7 days old | Nothing about your project |
+
+The typosquat check runs on the names you chose: the packages named on the
+command line, or with none named, the dependencies in `package.json`. A
+dependency that came in with one of them was named by its author and is not
+looked up. Each name is looked up once per run.
+
+`api.npmjs.org` and `api.osv.dev` are asked only about packages from
+`registry.npmjs.org`. A package from any other registry skips the typosquat and
+advisory checks, and the run prints one line saying so. `~/.nvx/audit.log`
+records it as `check_skipped` with `check` set to `public_registry_checks`.
+
+**Upstream proxy.** When nvx's own environment sets `HTTPS_PROXY`, or
+`HTTP_PROXY` without it, the egress proxy sends each connection the allowlist
+permits through that proxy as a CONNECT tunnel. A user and password in the URL
+become its `Proxy-Authorization` header. Hosts in `NO_PROXY` and loopback
+destinations are dialled directly. The allowlist decides first, in nvx, so a
+host it refuses is never sent to your proxy. The contained process sees only
+nvx's proxy, never yours or its credentials. nvx's own requests, such as the
+checks above and runtime downloads, use your proxy as any Go program does.
+
+**Node.js mirror.** `NVX_NODE_MIRROR` replaces `https://nodejs.org/dist` for the
+release index, the archives and `SHASUMS256.txt`. `NVM_NODEJS_ORG_MIRROR` and
+`FNM_NODE_DIST_MIRROR` are read too, in that order after it. The checksums come
+from the mirror, so nvx trusts a mirror as it trusts nodejs.org. Use one you
+control, over `https://`. Bun is still downloaded from GitHub.

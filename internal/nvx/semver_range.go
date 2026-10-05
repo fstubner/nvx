@@ -145,10 +145,10 @@ func parseVersionRange(expr string) (versionRange, error) {
 			return versionRange{}, fmt.Errorf("empty alternative in %q", expr)
 		}
 		var group []comparator
-		for _, token := range strings.Fields(alt) {
+		for _, token := range joinBareOperators(strings.Fields(alt)) {
 			cs, err := parseComparator(token)
 			if err != nil {
-				return versionRange{}, err
+				return versionRange{}, fmt.Errorf("cannot read %q in %q: %w", token, expr, err)
 			}
 			group = append(group, cs...)
 		}
@@ -158,6 +158,25 @@ func parseVersionRange(expr string) (versionRange, error) {
 		out.or = append(out.or, group)
 	}
 	return out, nil
+}
+
+// joinBareOperators joins an operator written on its own to the version after
+// it. package.json engines often read ">= 18", which split into ">=" and "18",
+// and ">=" alone failed with "empty version".
+func joinBareOperators(tokens []string) []string {
+	var out []string
+	for i := 0; i < len(tokens); i++ {
+		switch tokens[i] {
+		case ">=", "<=", ">", "<", "=", "^", "~":
+			if i+1 < len(tokens) {
+				out = append(out, tokens[i]+tokens[i+1])
+				i++
+				continue
+			}
+		}
+		out = append(out, tokens[i])
+	}
+	return out
 }
 
 // parseComparator turns one token into the comparators it stands for. A caret,
@@ -349,9 +368,10 @@ func isUnsupportedRange(err error) bool {
 // which is a different answer from "I could not read that version expression"
 // and needs a different response.
 //
-// isUnsupportedRange decides that by exclusion -- anything not starting with
-// "no version matches" is treated as an expression nvx cannot read -- and an
-// empty installation fell on the wrong side of it. `nvx use 20` on a machine
+// isUnsupportedRange used to decide that by the message text -- anything not
+// starting with "no version matches" was treated as an expression nvx cannot
+// read -- and an empty installation fell on the wrong side of it. It now
+// matches this sentinel with errors.Is. `nvx use 20` on a machine
 // where nvx is installed but no runtime is, which is the state every new user
 // is in, printed "no node versions are currently installed" and exited,
 // skipping the branch immediately below that offers to download it. The first

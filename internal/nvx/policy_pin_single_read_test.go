@@ -16,9 +16,11 @@ import (
 // sandbox, so the writer is the thing being contained. SECURITY.md names policy
 // tampering as in scope.
 //
-// Asserted by counting reads of the real file rather than by racing it: a race
-// test would be flaky and would prove only that this particular interleaving is
-// hard to hit, not that the window is gone. One read means there is no window.
+// The fix is structural. readAndHashProjectPolicyFile reads the file once and
+// returns the parsed policy, the bytes and the hash together, so there is no
+// second read to race. This test does not count reads. It checks that what comes
+// back is the file's content and that the hash is still the pin definition
+// hashPolicyFile computes, so existing pins keep matching.
 func TestAPolicyIsHashedFromTheBytesItWasParsedFrom(t *testing.T) {
 	dir := tempDir(t)
 	path := filepath.Join(dir, ".nvx-policy.json")

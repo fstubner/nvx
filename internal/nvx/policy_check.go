@@ -2,6 +2,7 @@ package nvx
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -159,9 +160,16 @@ func evaluatePolicyCheck(nvxHome, cwd string, online bool) policyCheckResult {
 		add("sandbox_unavailable", "isolation.enabled is true and nvx has no OS-native sandbox on %s; every contained command will refuse to run", runtime.GOOS)
 	}
 
-	deps, source := projectDependencies(cwd)
+	deps, source, depsErr := projectDependencies(cwd)
+	if depsErr != nil {
+		add("internal_error", "%v", depsErr)
+	}
 	if source == "" {
-		result.Skipped = append(result.Skipped, "dependency checks (no package.json or package-lock.json here)")
+		if depsErr != nil {
+			result.Skipped = append(result.Skipped, "dependency checks (no dependencies could be read)")
+		} else {
+			result.Skipped = append(result.Skipped, "dependency checks (no package.json or package-lock.json here)")
+		}
 		result.ExitCode = worstPolicyCheckCode(result.Findings)
 		result.OK = len(result.Findings) == 0
 		return result
@@ -187,7 +195,30 @@ func evaluatePolicyCheck(nvxHome, cwd string, online bool) policyCheckResult {
 		return result
 	}
 
-	checkProjectVulnerabilities(policy, deps, &result, add)
+	// Each dependency is looked up on the registry npm would fetch it from.
+	// One served by another registry is not sent to OSV; see npm_registry.go.
+	projectDir := findProjectRoot(cwd)
+	if projectDir == "" {
+		projectDir = cwd
+	}
+	regs := loadNpmRegistryConfig(projectDir, false)
+	setCheckRegistries(regs)
+	var publicDeps []projectDependency
+	private := 0
+	for _, dep := range deps {
+		if isPublicNpmRegistry(regs.registryFor(dep.Name)) {
+			publicDeps = append(publicDeps, dep)
+		} else {
+			private++
+		}
+	}
+	if private > 0 {
+		result.Skipped = append(result.Skipped, fmt.Sprintf("known vulnerabilities for %d dependencies from a registry other than the public one", private))
+	}
+
+	if len(publicDeps) > 0 || private == 0 {
+		checkProjectVulnerabilities(policy, publicDeps, &result, add)
+	}
 	checkProjectReleaseAge(policy, deps, &result, add)
 
 	result.ExitCode = worstPolicyCheckCode(result.Findings)
@@ -333,10 +364,24 @@ type projectDependency struct {
 // projectDependencies reads the project's dependencies, preferring the lockfile
 // for its exact versions and falling back to the manifest. The second return
 // names the file they came from, or is empty when there is nothing to read.
-func projectDependencies(cwd string) ([]projectDependency, string) {
-	direct, ranges := directDependencies(cwd)
-	locked := lockedDependencies(cwd)
+//
+// Both files are read from the project root, the nearest ancestor holding a
+// package.json, which is where the package manager reads them. The error is
+// non-nil when either file exists and cannot be read or parsed. The check used
+// to warn and carry on, so a project whose manifest did not parse passed with
+// exit 0 having checked nothing.
+func projectDependencies(cwd string) ([]projectDependency, string, error) {
+	root := findProjectRoot(cwd)
+	if root == "" {
+		root = cwd
+	}
+	direct, ranges, directErr := directDependencies(root)
+	locked, lockErr := lockedDependencies(root)
+	deps, source := mergeProjectDependencies(direct, ranges, locked)
+	return deps, source, errors.Join(directErr, lockErr)
+}
 
+func mergeProjectDependencies(direct map[string]bool, ranges map[string]string, locked []projectDependency) ([]projectDependency, string) {
 	switch {
 	case len(locked) > 0:
 		byName := make(map[string]bool, len(locked))
@@ -383,12 +428,15 @@ func sortDependencies(deps []projectDependency) {
 // and reads from the process working directory. The version RANGE is what makes
 // a release-age check possible without a lockfile, and a check command should
 // not depend on where it was launched from.
-func directDependencies(cwd string) (map[string]bool, map[string]string) {
+func directDependencies(dir string) (map[string]bool, map[string]string, error) {
 	names := map[string]bool{}
 	ranges := map[string]string{}
-	data, err := os.ReadFile(filepath.Join(cwd, "package.json"))
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return names, ranges, nil
+	}
 	if err != nil {
-		return names, ranges
+		return names, ranges, fmt.Errorf("package.json could not be read: %v", err)
 	}
 	var pkg struct {
 		Dependencies         map[string]string `json:"dependencies"`
@@ -397,34 +445,43 @@ func directDependencies(cwd string) (map[string]bool, map[string]string) {
 		PeerDependencies     map[string]string `json:"peerDependencies"`
 	}
 	if err := json.Unmarshal(withoutUTF8BOM(data), &pkg); err != nil {
-		LogWarn("Failed to parse package.json: %v", err)
-		return names, ranges
+		return names, ranges, fmt.Errorf("package.json does not parse, so its dependencies were not checked: %v", err)
 	}
 	for _, deps := range []map[string]string{pkg.Dependencies, pkg.DevDependencies, pkg.OptionalDependencies, pkg.PeerDependencies} {
 		for name, spec := range deps {
+			// "lp": "npm:left-pad@^1.3.0" installs left-pad.
+			if strings.HasPrefix(spec, "npm:") {
+				name, spec = parsePackageQuery(spec[len("npm:"):])
+			}
 			names[name] = true
 			if ranges[name] == "" {
 				ranges[name] = spec
 			}
 		}
 	}
-	return names, ranges
+	return names, ranges, nil
 }
 
 // lockedDependencies reads the resolved versions out of package-lock.json.
-func lockedDependencies(cwd string) []projectDependency {
-	data, err := os.ReadFile(filepath.Join(cwd, "package-lock.json"))
+func lockedDependencies(dir string) ([]projectDependency, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "package-lock.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("package-lock.json could not be read: %v", err)
 	}
 	var lock packageLockFile
 	if err := json.Unmarshal(withoutUTF8BOM(data), &lock); err != nil {
-		LogWarn("Failed to parse package-lock.json: %v", err)
-		return nil
+		return nil, fmt.Errorf("package-lock.json does not parse, so the locked dependencies were not checked: %v", err)
 	}
 	seen := map[string]bool{}
 	var out []projectDependency
 	addDep := func(name, version string) {
+		// A lockfileVersion 1 alias records "version": "npm:left-pad@1.3.0".
+		if strings.HasPrefix(version, "npm:") {
+			name, version = parsePackageQuery(version[len("npm:"):])
+		}
 		if name == "" || version == "" || seen[name+"@"+version] {
 			return
 		}
@@ -432,7 +489,7 @@ func lockedDependencies(cwd string) []projectDependency {
 		out = append(out, projectDependency{Name: name, Version: version})
 	}
 	for path, pkg := range lock.Packages {
-		addDep(packageNameFromLockPath(path), pkg.Version)
+		addDep(lockEntryPackageName(path, pkg), pkg.Version)
 	}
 	// packageLockDep, not the old shared type. See the note on packageLockFile
 	// in env.go: only the lockfileVersion 1 tree nests, and typing `packages`
@@ -445,5 +502,5 @@ func lockedDependencies(cwd string) []projectDependency {
 		}
 	}
 	walk(lock.Dependencies)
-	return out
+	return out, nil
 }

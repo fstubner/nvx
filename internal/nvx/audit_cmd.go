@@ -37,6 +37,12 @@ func runAuditCommand(args []string, nvxHome string) int {
 	onlyFailures := false
 	summarize := false
 
+	// `--limit 5` as well as `--limit=5`, the same two spellings export takes.
+	args, err := foldValuedFlags(args, []string{"--limit"})
+	if err != nil {
+		LogError("%v", err)
+		return 1
+	}
 	for i := 0; i < len(args); i++ {
 		switch arg := args[i]; {
 		case arg == "--runs":
@@ -188,7 +194,17 @@ func readAuditFile(path string) ([]map[string]string, int, error) {
 	// the history after it is a worse outcome than losing the line.
 	reader := bufio.NewReader(f)
 	for {
-		line, err := readBoundedLine(reader)
+		line, overLong, err := readBoundedLine(reader)
+		// A record too large to be a record is damage, and counted as such
+		// wherever it sits. It used to arrive as "", so an over-long LAST line
+		// with no newline looked like the end of the file and went uncounted.
+		if overLong {
+			malformed++
+			if err != nil {
+				break
+			}
+			continue
+		}
 		if line == "" && err != nil {
 			break
 		}
@@ -201,12 +217,7 @@ func readAuditFile(path string) ([]map[string]string, int, error) {
 			// Counted rather than only skipped. A blank line is the ordinary
 			// trailing newline and is not damage; anything else is a record that
 			// was written and cannot be read, which an export has to declare.
-			//
-			// An empty string here is NOT a blank line: readBoundedLine returns one
-			// for a line it discarded as over-long, and the loop above has already
-			// broken out on the end of the file, so the only way to arrive with "" is
-			// a record too large to be a record.
-			if line == "" || strings.TrimSpace(line) != "" {
+			if strings.TrimSpace(line) != "" {
 				malformed++
 			}
 			if err != nil {
@@ -246,10 +257,9 @@ const maxRecordBytes = 1 << 20
 // ReadSlice hands back at most one buffer at a time and reports ErrBufferFull,
 // which is what makes discarding possible at all.
 //
-// An over-long line returns "" so the caller skips it, having consumed it.
-func readBoundedLine(r *bufio.Reader) (string, error) {
+// An over-long line returns "" and overLong true, having been consumed.
+func readBoundedLine(r *bufio.Reader) (line string, overLong bool, err error) {
 	var b strings.Builder
-	overLong := false
 	for {
 		chunk, err := r.ReadSlice('\n')
 		if !overLong {
@@ -264,9 +274,9 @@ func readBoundedLine(r *bufio.Reader) (string, error) {
 			continue // more of this same line to come; keep consuming it
 		}
 		if overLong {
-			return "", err
+			return "", true, err
 		}
-		return b.String(), err
+		return b.String(), false, err
 	}
 }
 
@@ -327,9 +337,12 @@ func flattenAuditEntry(e map[string]string) map[string]string {
 func securityEventDetail(e map[string]string) string {
 	// `state` and `reason` are the hangup watchdog's. Without them here a
 	// hangup_watch record printed as its event name and nothing else, which is
-	// the same uselessness the instrumentation was added to fix.
+	// the same uselessness the instrumentation was added to fix. `check`,
+	// `package`, `version`, `by` and `detail` are the pre-install check events'
+	// (check_approved, check_refused); without them an approval printed as its
+	// event name alone, which says nothing about what was approved.
 	var parts []string
-	for _, k := range []string{"host", "tool", "project", "path", "mode", "state", "reason"} {
+	for _, k := range []string{"host", "tool", "project", "path", "mode", "state", "reason", "check", "package", "version", "by", "detail", "advisory", "severity"} {
 		if v := e[k]; v != "" {
 			parts = append(parts, k+"="+v)
 		}

@@ -13,9 +13,9 @@
 // end", a temp file is an exact substitute: the caller cannot observe the
 // difference, because it never sees the stream either way.
 //
-// Only the sync APIs are patched. Async spawn() with stdio:'pipe' is a genuine
-// stream that a file cannot stand in for, and it stays broken -- see the Known
-// limitations entry. Nothing here weakens containment: it changes how a contained
+// The sync APIs use temp files. Async spawn() streams through pipes nvx creates
+// outside the container, further down, and exec() and execFile() are rebuilt on
+// that spawn. Nothing here weakens containment: it changes how a contained
 // process talks to its own children, and the temp files live in the guest home.
 //
 // Every patch falls back to the original function if anything at all goes wrong,
@@ -429,12 +429,22 @@ try {
       // limitation, not a new failure.
       let stdinDir = null;
       let stdinTaken = null;
+      // The stdin descriptor this shim opened, and so the only one it may close.
+      // A caller's own numeric fd in slot 0, even 0 itself, stays the caller's.
+      let ownStdinFd = null;
+      const dropStdinDir = function () {
+        if (stdinDir) {
+          try { fs.rmSync(stdinDir, { recursive: true, force: true }); } catch (e) {}
+          stdinDir = null;
+        }
+      };
       if (fds[0] === 'pipe') {
         // The child reads childPipe as its fd 0; this process writes nodePipe,
         // and nvx pumps one into the other.
         const t = claim(freeIn);
         if (t) {
           fds[0] = t.childFd;
+          ownStdinFd = t.childFd;
           stdinTaken = { ch: t.ch, childFd: t.childFd, writeFd: t.nodeFd };
         } else {
           try {
@@ -442,7 +452,9 @@ try {
             const emptyPath = path.join(stdinDir, 'stdin');
             fs.writeFileSync(emptyPath, '');
             fds[0] = fs.openSync(emptyPath, 'r');
+            ownStdinFd = fds[0];
           } catch (e) {
+            dropStdinDir();
             return spawnThroughFiles(command, argv, opts, stdio, wanted);
           }
         }
@@ -458,9 +470,10 @@ try {
           if (stdinTaken) {
             release(freeIn, stdinTaken.ch, stdinTaken.childFd, stdinTaken.writeFd);
             stdinTaken = null;
-          } else if (typeof fds[0] === 'number') {
-            try { fs.closeSync(fds[0]); } catch (e) {}
+          } else if (ownStdinFd !== null) {
+            try { fs.closeSync(ownStdinFd); } catch (e) {}
           }
+          dropStdinDir();
           return spawnThroughFiles(command, argv, opts, stdio, wanted);
         }
         fds[i] = t.childFd;
@@ -517,6 +530,43 @@ try {
         try { child.stdio[0] = inStream; } catch (e) {}
       }
 
+      // 'close' waits for the output, as it does for a real pipe.
+      //
+      // node counts only the stdio streams it created itself before emitting
+      // 'close', and these slots were handed over as descriptors, so 'close'
+      // fired as soon as the child exited -- while nvx was still pumping its
+      // output from one pipe to the other. A caller reading its buffer in
+      // 'close' got part of it: a CI run on 2026-09-26 saw 1 line of 200 from
+      // two of twelve children. Holding 'close' until every substituted reader
+      // has closed restores node's order. It is also when the channels go back
+      // to the pool, below, so a channel is never reused while still being read.
+      const readers = [];
+      for (const t of taken) {
+        const s = t.slot === 1 ? child.stdout : child.stderr;
+        if (s && typeof s.once === 'function') readers.push(s);
+      }
+      if (readers.length) {
+        const realEmit = child.emit;
+        let open = readers.length;
+        let heldClose = null;
+        const readerClosed = function () {
+          open--;
+          if (open === 0 && heldClose) {
+            const args = heldClose;
+            heldClose = null;
+            realEmit.apply(child, args);
+          }
+        };
+        for (const s of readers) s.once('close', readerClosed);
+        child.emit = function (event) {
+          if (event === 'close' && open > 0) {
+            heldClose = Array.prototype.slice.call(arguments);
+            return true;
+          }
+          return realEmit.apply(this, arguments);
+        };
+      }
+
       // This process also holds the child's write end, and while it does the
       // reader never sees EOF: the stream would deliver every byte and then hang
       // forever, which is the bug being fixed wearing a disguise.
@@ -524,11 +574,12 @@ try {
         for (const t of taken) {
           try { fs.closeSync(t.writeFd); } catch (e) {}
         }
-        if (typeof fds[0] === 'number') {
-          try { fs.closeSync(fds[0]); } catch (e) {}
+        if (ownStdinFd !== null) {
+          try { fs.closeSync(ownStdinFd); } catch (e) {}
         }
       });
       child.once('close', function () {
+        dropStdinDir();
         for (const t of taken) free.push(t.ch);
         if (stdinTaken) {
           // Destroy rather than close the fd directly: the socket owns it, and
@@ -539,6 +590,109 @@ try {
       });
       return child;
     };
+
+    // exec() and execFile() do not go through cp.spawn. node's execFile calls
+    // the spawn inside its own module, so the patch above never saw them, and
+    // they took the raw path that blocks inside libuv. Measured 2026-09-26:
+    // `exec('cmd /c echo hi', cb)` in a contained node process never called
+    // back, and a 20s timer set before it never fired either, while the same
+    // call uncontained answered in 300ms. node-gyp finds Python with execFile,
+    // and plenty of install scripts shell out the same way.
+    //
+    // Rebuilt here on the patched spawn, keeping execFile's contract: the
+    // callback gets (error, stdout, stderr), a non-zero exit is an error
+    // carrying code, signal and killed, maxBuffer and timeout stop the child,
+    // and the promisified forms resolve to { stdout, stderr }.
+    const util = require('util');
+    const realExecFile = cp.execFile;
+    const realExec = cp.exec;
+
+    function nvxExecFile(file, args, options, callback) {
+      if (typeof args === 'function') { callback = args; args = []; options = undefined; }
+      else if (args && !Array.isArray(args)) { callback = options; options = args; args = []; }
+      if (typeof options === 'function') { callback = options; options = undefined; }
+      const opts = Object.assign({ encoding: 'utf8', timeout: 0, maxBuffer: 1024 * 1024, killSignal: 'SIGTERM' },
+        options || {});
+      const argv = Array.isArray(args) ? args : [];
+      const child = cp.spawn(file, argv, Object.assign({}, opts, { stdio: 'pipe' }));
+
+      const out = [], err = [];
+      let outLen = 0, errLen = 0, done = false, killed = false, overflow = null, timer = null;
+      function text(chunks) {
+        const buf = Buffer.concat(chunks);
+        return opts.encoding && opts.encoding !== 'buffer' ? buf.toString(opts.encoding) : buf;
+      }
+      function finish(error) {
+        if (done) return;
+        done = true;
+        if (timer) clearTimeout(timer);
+        const stdout = text(out), stderr = text(err);
+        if (typeof callback === 'function') callback(error || null, stdout, stderr);
+      }
+      function collect(chunks, isOut) {
+        return function (chunk) {
+          const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+          chunks.push(b);
+          if (isOut) outLen += b.length; else errLen += b.length;
+          if (!overflow && opts.maxBuffer && (isOut ? outLen : errLen) > opts.maxBuffer) {
+            overflow = new RangeError((isOut ? 'stdout' : 'stderr') + ' maxBuffer length exceeded');
+            overflow.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+            killed = true;
+            try { child.kill(opts.killSignal); } catch (e) {}
+          }
+        };
+      }
+      if (child.stdout) child.stdout.on('data', collect(out, true));
+      if (child.stderr) child.stderr.on('data', collect(err, false));
+      if (opts.timeout > 0) {
+        timer = setTimeout(function () {
+          killed = true;
+          try { child.kill(opts.killSignal); } catch (e) {}
+        }, opts.timeout);
+      }
+      child.once('error', function (e) { finish(e); });
+      child.once('close', function (code, signal) {
+        if (overflow) return finish(overflow);
+        if (code === 0 && !signal) return finish(null);
+        const cmd = [file].concat(argv).join(' ');
+        const e = new Error('Command failed: ' + cmd + '\n' + text(err).toString());
+        e.code = code === null ? signal : code;
+        e.killed = killed;
+        e.signal = signal;
+        e.cmd = cmd;
+        finish(e);
+      });
+      return child;
+    }
+
+    function nvxExec(command, options, callback) {
+      if (typeof options === 'function') { callback = options; options = undefined; }
+      const opts = Object.assign({}, options || {});
+      if (!opts.shell) opts.shell = true;
+      return nvxExecFile(command, [], opts, callback);
+    }
+
+    function promisified(fn) {
+      return function () {
+        const a = Array.prototype.slice.call(arguments);
+        let child;
+        const p = new Promise(function (resolve, reject) {
+          child = fn.apply(null, a.concat(function (error, stdout, stderr) {
+            // Only the promisified form attaches the output to the error, as node does.
+            if (error) { error.stdout = stdout; error.stderr = stderr; reject(error); }
+            else resolve({ stdout: stdout, stderr: stderr });
+          }));
+        });
+        p.child = child;
+        return p;
+      };
+    }
+    nvxExecFile[util.promisify.custom] = promisified(nvxExecFile);
+    nvxExec[util.promisify.custom] = promisified(nvxExec);
+    nvxExecFile.nvxRealExecFile = realExecFile;
+    nvxExec.nvxRealExec = realExec;
+    cp.execFile = nvxExecFile;
+    cp.exec = nvxExec;
   }
 
   // An IPC channel is a named pipe libuv creates INSIDE the container, and an

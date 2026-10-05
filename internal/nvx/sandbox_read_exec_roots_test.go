@@ -26,7 +26,7 @@ func TestReadExecRootsResolveAndReject(t *testing.T) {
 		file,                                  // dropped: a file, not a directory
 		"",                                    // dropped: empty
 		real,                                  // dropped: duplicate
-	})
+	}, "")
 	if len(got) != 1 {
 		t.Fatalf("expected only the one usable directory, got %v", got)
 	}
@@ -39,7 +39,7 @@ func TestReadExecRootsResolveAndReject(t *testing.T) {
 // not installed on this machine is ordinary — the command should still run, just
 // without that grant.
 func TestAMissingReadExecRootIsDroppedNotFatal(t *testing.T) {
-	got := resolveReadExecRoots([]string{filepath.Join(tempDir(t), "nope")})
+	got := resolveReadExecRoots([]string{filepath.Join(tempDir(t), "nope")}, "")
 	if len(got) != 0 {
 		t.Fatalf("expected the missing path to be dropped, got %v", got)
 	}
@@ -52,7 +52,7 @@ func TestReadExecRootsExpandVariables(t *testing.T) {
 	t.Setenv("NVX_TEST_ROOT", dir)
 
 	for _, spelling := range []string{"$NVX_TEST_ROOT", "${NVX_TEST_ROOT}", "%NVX_TEST_ROOT%"} {
-		got := resolveReadExecRoots([]string{spelling})
+		got := resolveReadExecRoots([]string{spelling}, "")
 		if len(got) != 1 || !strings.EqualFold(got[0], dir) {
 			t.Errorf("%s expanded to %v, want [%s]", spelling, got, dir)
 		}
@@ -60,10 +60,45 @@ func TestReadExecRootsExpandVariables(t *testing.T) {
 
 	// ~ resolves to the real home, which is what a policy author means by it —
 	// not the sandbox's throwaway one.
-	if home, err := os.UserHomeDir(); err == nil {
-		got := resolveReadExecRoots([]string{"~"})
-		if len(got) != 1 || !strings.EqualFold(got[0], filepath.Clean(home)) {
-			t.Errorf("~ expanded to %v, want [%s]", got, home)
+	home := tempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	tools := filepath.Join(home, "tools")
+	if err := os.Mkdir(tools, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := resolveReadExecRoots([]string{"~/tools"}, "")
+	if len(got) != 1 || !strings.EqualFold(got[0], tools) {
+		t.Errorf("~/tools expanded to %v, want [%s]", got, tools)
+	}
+}
+
+// An entry that would grant far more than one tool's directory is dropped.
+//
+// `%UNSET%\` expanded to `\` and `$UNSET/` to `/`, so a variable missing on
+// one machine granted read and execute on the whole disk. `~` alone granted
+// the whole home, credential stores included, and it used to be pinned here as
+// allowed.
+func TestReadExecRootsRefuseBroadOrUnresolvedEntries(t *testing.T) {
+	home := tempDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	nvxHome := filepath.Join(home, "sub", ".nvx")
+	if err := os.MkdirAll(nvxHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NVX_TEST_UNSET", "")
+
+	for _, entry := range []string{
+		`%NVX_TEST_UNSET%\`,
+		"$NVX_TEST_UNSET/",
+		"${NVX_TEST_UNSET}/tools",
+		"~",
+		filepath.Join(home, "sub"),
+		filepath.VolumeName(home) + string(filepath.Separator),
+	} {
+		if got := resolveReadExecRoots([]string{entry}, nvxHome); len(got) != 0 {
+			t.Errorf("%q was granted as %v", entry, got)
 		}
 	}
 }

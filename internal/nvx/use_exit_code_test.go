@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,5 +28,38 @@ func TestUseReportsFailureWhenTheShellIsUnchanged(t *testing.T) {
 	}
 	if code := runUse("22", nvxHome, "bash", true); code != 0 {
 		t.Errorf("`nvx use 22 --shell=bash` from the integration exited %d; the switch is evaluated there and 0 is right", code)
+	}
+}
+
+// noSuchReleaseNode is Node whose remote index has nothing for any query, and
+// whose install records that it was asked.
+type noSuchReleaseNode struct {
+	NodeProvider
+	installed *bool
+}
+
+func (noSuchReleaseNode) ResolveVersion(query string) (string, error) {
+	return "", fmt.Errorf("%w matching query: %s", errNoReleaseFound, query)
+}
+
+func (n noSuchReleaseNode) Install(string, string) error {
+	*n.installed = true
+	return nil
+}
+
+// `nvx use 99` does not offer to install a version nobody has published. It
+// asked "Would you like to download and install it now?" about Node.js 99.
+func TestUseDoesNotOfferAVersionThatDoesNotExist(t *testing.T) {
+	installed := false
+	orig := Providers["node"]
+	Providers["node"] = noSuchReleaseNode{installed: &installed}
+	t.Cleanup(func() { Providers["node"] = orig })
+	t.Setenv("NVX_YES", "1")
+
+	if code := runUse("99", tempDir(t), "bash", true); code == 0 {
+		t.Fatal("nvx use 99 succeeded")
+	}
+	if installed {
+		t.Fatal("nvx use 99 went on to install a version that the index does not have")
 	}
 }

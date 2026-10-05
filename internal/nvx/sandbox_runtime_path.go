@@ -68,10 +68,7 @@ func containedRuntimeBinDirs(cmdPath, nvxHome string) []string {
 	sort.Strings(names)
 	for _, name := range names {
 		rt := Providers[name]
-		ver := getActiveShellVersionFor(nvxHome, rt.Name())
-		if ver == "" {
-			ver = getGlobalDefaultVersionFor(nvxHome, rt.Name())
-		}
+		ver := sessionRuntimeVersion(nvxHome, rt, projectPinFor(rt))
 		if ver == "" {
 			continue
 		}

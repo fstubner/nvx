@@ -17,8 +17,8 @@
 When a coding agent runs `npm install`, it executes code from strangers with your
 credentials within reach. nvx puts that command inside an OS sandbox with a
 throwaway `HOME`, writes confined to the project, and an allowlist for anything it
-tries to reach over the network. On Windows and Linux it cannot read `~/.ssh` or
-`~/.npmrc` either. On macOS reads are not contained, and the
+tries to reach over the network. It cannot read `~/.ssh` or `~/.npmrc` either.
+On macOS other reads are not contained, and the
 [known limitations](https://nvx.run/docs/limitations/) say so plainly.
 
 **You do not change how you run anything.** nvx installs shims on `PATH`, so
@@ -27,8 +27,8 @@ write. Other sandboxes need `theirtool run -- npm install`, and an agent will no
 remember to type it.
 
 It is also a Node.js and Bun version manager, because it has to be. The shims that
-intercept the toolchain are the same ones that switch runtimes on `cd`. If you use
-nvm, fnm or volta today, nvx replaces them.
+intercept the toolchain also run the version each project pins, in a terminal, an
+IDE task, a git hook or CI. If you use nvm, fnm or volta today, nvx replaces them.
 
 ## Why this exists
 
@@ -53,8 +53,17 @@ irm https://nvx.run/install.ps1 | iex
 curl -fsSL https://nvx.run/install.sh | sh
 ```
 
+```bash
+# Or from npm, on any platform
+npm install -g @fstubner/nvx
+```
+
 Prebuilt binaries, building from source and what the installer changes are in the
 **[install guide](https://nvx.run/docs/install/)**.
+
+To check a downloaded release asset, run
+`gh attestation verify <file> --repo fstubner/nvx` and compare the `.sha256` file
+beside it. The install guide has the steps for each platform.
 
 ## Usage
 

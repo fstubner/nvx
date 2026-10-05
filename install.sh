@@ -24,7 +24,10 @@ case "$ARCH" in
         ARCH_LABEL="arm64"
         ;;
     *)
-        ARCH_LABEL="amd64"
+        # Releases are built for amd64 and arm64 only. This used to fall back
+        # to amd64, which installs a binary that cannot run on this machine.
+        echo "Error: unsupported CPU architecture '$ARCH'. nvx is released for x86_64 and arm64 only." >&2
+        exit 1
         ;;
 esac
 
@@ -60,6 +63,13 @@ else
         echo "Error: Neither curl nor wget was found. Please install one of them." >&2
         exit 1
     fi
+    # Checked before downloading. Without either tool the hash came out empty,
+    # and the error said the checksum did not match.
+    if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+        echo "Error: Neither sha256sum nor shasum was found, so the download cannot be verified." >&2
+        echo "Install coreutils (for sha256sum) or perl (for shasum)." >&2
+        exit 1
+    fi
 
     # The download goes beside nvx, not over it, and replaces it only once its
     # checksum matches. It used to be written straight to $BIN_DIR/nvx, so a
@@ -93,6 +103,28 @@ else
         rm -f "$DOWNLOAD_PATH" "$SUMS_PATH"
         echo "Error: Checksum file not available. Refusing to install without verification." >&2
         exit 1
+    fi
+
+    # Second, optional check. The .sha256 file comes from the same release as
+    # the binary, so it cannot tell a replaced release from a real one. The
+    # build attestation is signed by release.yml and checked against GitHub.
+    # It needs gh 2.49 or newer (the attestation command) and a signed-in gh,
+    # so a gh that cannot run it skips the check instead of failing the install.
+    VERIFY_HINT="gh attestation verify $BIN_DIR/nvx --repo fstubner/nvx"
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "Provenance check skipped: gh is not installed. To run it later: $VERIFY_HINT"
+    elif ! gh attestation verify --help >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
+        echo "Provenance check skipped: gh is too old or not signed in. To run it later: $VERIFY_HINT"
+    else
+        echo "Verifying build provenance..."
+        if PROVENANCE_OUT=$(gh attestation verify "$DOWNLOAD_PATH" --repo fstubner/nvx 2>&1); then
+            echo "Build provenance verified."
+        else
+            rm -f "$DOWNLOAD_PATH"
+            printf '%s\n' "$PROVENANCE_OUT" >&2
+            echo "Error: Provenance verification failed! nvx was not changed." >&2
+            exit 1
+        fi
     fi
     mv -f "$DOWNLOAD_PATH" "$BIN_DIR/nvx"
 fi
@@ -195,6 +227,31 @@ setup_profile() {
     printf '\n%s\n%s\n%s\n' "$MARKER_LINE" "$PATH_LINE" "$INTEGRATION_LINE" >> "$PROFILE_FILE"
 }
 
+# fish never reads ~/.profile and cannot run the POSIX lines above, so it gets
+# its own file in conf.d, which fish reads at every start and nothing else
+# writes to. PATH is set for every fish, scripts included, and the integration
+# only for interactive ones.
+# `nvx doctor --fix` writes the same text (fishConfDContent in
+# internal/nvx/shell_profile.go), and a Go test compares it with the printf
+# lines below, so change both together.
+setup_fish() {
+    FISH_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/nvx.fish"
+    if [ -f "$FISH_CONF" ] && grep -q "nvx env" "$FISH_CONF"; then
+        return 0
+    fi
+    echo "Adding shell integration to $FISH_CONF..."
+    mkdir -p "$(dirname "$FISH_CONF")"
+    {
+        printf '%s\n' "$MARKER_LINE"
+        printf '%s\n' 'if not contains $HOME/.nvx/bin $PATH'
+        printf '%s\n' '    set -gx PATH $HOME/.nvx/bin $PATH'
+        printf '%s\n' 'end'
+        printf '%s\n' 'if status is-interactive'
+        printf '%s\n' '    nvx env --shell=fish | source'
+        printf '%s\n' 'end'
+    } >> "$FISH_CONF"
+}
+
 case "$SHELL_NAME" in
     bash)
         # Interactive non-login shells (the common case on Linux) read .bashrc;
@@ -209,6 +266,16 @@ case "$SHELL_NAME" in
         # zsh reads .zshrc for every interactive shell, login or not, so one file
         # covers both cases.
         setup_profile "$HOME/.zshrc" "true"
+        ;;
+    fish)
+        # This branch used to write the POSIX lines to ~/.profile anyway and
+        # report the profile as updated.
+        setup_fish
+        echo ""
+        echo "nvx has been successfully installed!"
+        echo "New fish sessions pick it up automatically. To use nvx in THIS shell without restarting it, run:"
+        echo "  source $FISH_CONF"
+        exit 0
         ;;
     *)
         setup_profile "$HOME/.profile" "true"

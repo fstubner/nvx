@@ -45,11 +45,12 @@ $startLocation = Get-Location
 # registers an exemption, so keeping the gate would skip this forever.
 
 # Set-Content -Encoding utf8 writes a BOM under Windows PowerShell 5.1, and nvx's
-# JSON parser rejects it ("invalid character 'ï'"). That made every policy written
-# here unparseable, so `nvx shim` exited non-zero before reaching the network --
-# which is indistinguishable from "egress was blocked" and satisfied the first
-# assertion below for entirely the wrong reason. Write the bytes explicitly instead,
-# so the file is the same under 5.1 and pwsh.
+# JSON parser once rejected it ("invalid character 'ï'"). Every policy written
+# here was then unparseable, so `nvx shim` exited non-zero before reaching the
+# network, which is indistinguishable from "egress was blocked" and satisfied the
+# first assertion below for entirely the wrong reason. nvx strips a leading BOM
+# now (withoutUTF8BOM in policy.go). The bytes are still written explicitly, so
+# the file is the same under 5.1 and pwsh and this check does not lean on that.
 function Write-PolicyFile {
     param([Parameter(ValueFromPipeline = $true)][string]$Json)
     process {
@@ -131,14 +132,21 @@ if ($installCode -ne 0 -or $defaultCode -ne 0) {
 # written by this script, so approving it is the intent.
 $env:NVX_YES = "true"
 
-# Can this host create an AppContainer at all? GitHub-hosted Windows runners cannot
-# (see the sibling smoke script). Probe once and skip with that reason, so the
-# environment's limitation is not reported as a product failure.
+# Can this host create an AppContainer at all? GitHub-hosted Windows runners could
+# not until 2026-09-21 (see the sibling smoke script). Probe once and skip with that
+# reason, so a host that refuses is not reported as a product failure.
 $probe = (Invoke-NativeCapture $nvx @('shim', 'node', '-e', 'process.exit(0)')).Output
 if ($probe -match 'AppContainer launch failed') {
-    Write-Host "This host cannot create AppContainer children; skipping the egress assertions."
+    # Only the two shapes a HOST refusal takes, the same narrowed test as
+    # sandbox-enforcement-windows.ps1, which explains it. Any other launch
+    # failure is a regression and fails here.
+    if ($probe -match 'Access is denied' -or $probe -match 'The system cannot find the file specified') {
+        Write-Host "This host cannot create AppContainer children; skipping the egress assertions."
+        Write-Host ("  " + $probe.Trim())
+        exit 0
+    }
     Write-Host ("  " + $probe.Trim())
-    exit 0
+    Write-Error "the sandbox could not launch, and not in a way this host is known to refuse"
 }
 
 Write-Host "Testing blocked egress via sandboxed node..."

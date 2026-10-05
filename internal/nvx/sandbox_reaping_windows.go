@@ -115,11 +115,19 @@ func openProcessForJob(pid uint32) (syscall.Handle, error) {
 }
 
 // processIsRunning reports whether pid still refers to a live process.
+//
+// Only ERROR_INVALID_PARAMETER means no such process. Any other OpenProcess
+// failure resolves towards "running", as on Unix: ERROR_ACCESS_DENIED is what a
+// live process this nvx may not open returns (measured 2026-09-26 on pid 4 and
+// on csrss), and a wrong "not running" lets cleanup delete a live session's home.
 func processIsRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
 	h, _, err := procOpenProcessForJob.Call(uintptr(processSynchronize), 0, uintptr(pid))
 	if h == 0 {
-		_ = err
-		return false
+		const errorInvalidParameter = syscall.Errno(87)
+		return err != errorInvalidParameter
 	}
 	handle := syscall.Handle(h)
 	defer syscall.CloseHandle(handle)
@@ -145,16 +153,21 @@ func processIsRunning(pid int) bool {
 // nvx's last handle closes, including an os.Exit that runs no defers and a
 // TerminateProcess from outside, which is the property needed here.
 //
-// The tradeoff, stated because it is a behaviour change: a process deliberately
-// detached by a command run through nvx now dies with nvx, since the job does
-// not permit breakaway. That already holds for everything sandboxed, and it is
-// the same bargain -- nvx supervises what it starts, or it leaks it.
+// The job reaps only when nvx stops waiting before the command is done. When the
+// command exits on its own, finish(false) takes kill-on-close off the job before
+// closing it, so whatever the command deliberately left running carries on, as
+// it would without nvx. Killing on every close broke `npm run` scripts that
+// `start` a program and every tool that starts a daemon. On 2026-10-01 a script
+// of `start "" ping.exe -n 20 127.0.0.1` left 1 ping running through plain
+// npm.cmd and 0 through the shim. Allowing breakaway does not help, because
+// neither node's detached:true nor cmd's `start` asks for it. With
+// JOB_OBJECT_LIMIT_BREAKAWAY_OK set the same day, both still left 0.
 //
 // Deliberately does NOT publish the job with setSessionJob: that seam answers
 // "does this tunnel peer belong to my run", and an uncontained command has no
 // tunnel. Reaping is the only thing wanted here.
-func superviseDirectChild(pid int) (cleanup func()) {
-	noop := func() {}
+func superviseDirectChild(pid int) (finish func(reap bool)) {
+	noop := func(bool) {}
 	job, err := createReapingJob()
 	if err != nil {
 		LogWarn("Could not set up process-tree reaping for this command: %v", err)
@@ -180,7 +193,28 @@ func superviseDirectChild(pid int) (cleanup func()) {
 		}
 		return noop
 	}
-	return func() { _ = syscall.CloseHandle(job) }
+	return func(reap bool) {
+		if !reap {
+			stopReapingOnClose(job)
+		}
+		_ = syscall.CloseHandle(job)
+	}
+}
+
+// stopReapingOnClose clears kill-on-close, so closing job leaves the processes
+// still in it running. If that fails, closing the job kills them, as it did
+// before the command could keep anything alive.
+func stopReapingOnClose(job syscall.Handle) {
+	var info jobObjectExtendedLimitInformation
+	ret, _, err := procSetInformationJobObject.Call(
+		uintptr(job),
+		uintptr(jobObjectExtendedLimitInformationClass),
+		uintptr(unsafe.Pointer(&info)),
+		unsafe.Sizeof(info),
+	)
+	if ret == 0 {
+		LogDetail("Could not leave the command's background processes running: SetInformationJobObject: %v", err)
+	}
 }
 
 // superviseProcessTree puts process (and everything it spawns) in a job that
@@ -204,9 +238,13 @@ func superviseProcessTree(process syscall.Handle) (cleanup func()) {
 		LogWarn("Could not enable process-tree reaping for this sandbox session: %v", err)
 		return func() { _ = syscall.CloseHandle(job) }
 	}
-	// Only after a successful assignment, so membership actually means something,
-	// and before the target runs, so no tunnel traffic can arrive while it is
-	// still unset.
+	// Only after a successful assignment, so membership actually means something.
+	//
+	// The target is already running by now. launchAppContainerProcessOnce does
+	// not create it suspended, so it runs from CreateProcess until this
+	// assignment. A process it spawns in that window is outside the job, is not
+	// reaped with it, and fails the tunnel's peer check. Creating it suspended
+	// and resuming it after this would close the window.
 	setSessionJob(job)
 	return func() {
 		setSessionJob(0)

@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **fish and cmd.exe are supported shells.** `nvx env --shell=fish` prints a
+  PATH setup, an `nvx` function that evaluates `use` and `auto`, and a hook on
+  every directory change that also runs once at load, as the zsh one does.
+  `nvx use` prints fish syntax when it is run from fish. `install.sh` writes
+  `~/.config/fish/conf.d/nvx.fish` for fish, where it used to print a manual
+  `fish_add_path` command. `nvx env --shell=cmd` prints a `set "PATH=..."` line
+  that cmd reads with `FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i`.
+  cmd.exe cannot evaluate a program's output, so there is no cmd integration
+  and no AutoRun hook. The shims already run each project's pinned version
+  there.
+
+* **`NVX_NODE_MIRROR` fetches Node.js from a mirror.** nodejs.org was
+  hard-coded, so a network that reaches it only through an internal mirror
+  could not install Node.js. The release index, the archives and
+  `SHASUMS256.txt` all come from the mirror, as with nvm. An existing
+  `NVM_NODEJS_ORG_MIRROR` or `FNM_NODE_DIST_MIRROR` is read too. The checksums
+  come from the same place as the archives, so a mirror is trusted as
+  nodejs.org is.
+
 * **A global policy can now be a baseline a project cannot weaken.** Setting
   `"enforced": true` in `~/.nvx/policy.json` means a project's own
   `.nvx-policy.json` may make a setting stricter and may not make one looser. A
@@ -94,6 +113,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receives only `nvx.exe`, and has no write access to the release. The workflow
   can be run by hand to build, sign and verify without publishing anything.
 
+* **A failed contained `bun install` outside the system drive says why.** Bun's
+  package manager cannot run in the Windows sandbox in a project on a drive other
+  than the one Windows is installed on, and printed only `error: An internal error
+  occurred (EBADF)`. Measured with Bun 1.4.2, `bun install` works on C: and fails on
+  D: and H:. After a failed `bun install`, `add`, `remove`, `update`, `patch` or
+  `pm` in such a project, nvx now adds two lines naming the cause and the two ways
+  out. Those are `nvx --no-sandbox bun ...`, which runs Bun uncontained, or moving
+  the project to the system drive. Bun's fix is in progress as oven-sh/bun#38365.
+* **`nvx setup` covers every fixed drive.** It used to grant only the drives
+  holding Windows, your profile, nvx and the current directory, because each
+  grant was slow on a large drive. Now that a grant is fast, one run covers them
+  all and nobody has to run setup again from each drive. `--all-drives` is
+  still accepted and changes nothing.
+* **nvx is on npm as `@fstubner/nvx`, published through trusted publishing.**
+  `npm install -g @fstubner/nvx` installs the binary for your platform and runs
+  no install script. Releases now publish to npm with the release workflow's
+  GitHub identity rather than a stored npm token, so each version carries npm
+  provenance and there is no `NPM_TOKEN` secret to leak or expire.
+* **The shims run the version the project pins, with or without the shell
+  integration.** In a project whose `.nvmrc` said 20.11, with 22 as the
+  default, `node --version` through the shim printed v22.23.3 and a warning.
+  Only a shell with the integration loaded switched, so IDE tasks, git hooks,
+  cron, CI and editors running `npm run` all got the default. `node`, `npm`,
+  `npx`, `pnpm`, `yarn`, `corepack`, `bun` and `bunx` now read `.nvmrc`,
+  `.node-version`, `.bun-version` and `package.json` the way `nvx auto` does
+  and run the installed version that matches. A version this shell already has
+  active from `nvx use` still wins. A pinned version that is not installed
+  still runs the default, and the warning now names the `nvx install` command
+  that fixes it. Contained runs pick the same version, with the policy's
+  `runtime.versions` ahead of the file. The search for a version file now stops
+  at your home directory.
+
+* **An npm install that brings in new packages now runs npm twice.** The first
+  run only resolves versions, so that each package can be checked before the
+  second run installs it. Measured 2026-10-01 on Windows, five runs each with
+  a 5-dependency project and no lockfile, `nvx npm install` took 5283 to 5573
+  ms, and 9950 ms on the first run. Without the resolution step it took 3064
+  to 3219 ms. `npm ci` and an
+  `npm install` whose lockfile matches `package.json` skip it. Because
+  dependencies are now checked, `enforce_ignore_scripts` refuses a dependency
+  with install scripts, and a dependency inside the release-age window prompts,
+  where before only the packages you named did.
+* **The installers check the download's build attestation when `gh` is present.**
+  `install.sh` and `install.ps1` used to compare the download only with the
+  `.sha256` file from the same release, which a replaced release could replace
+  as well. When the GitHub CLI is installed, signed in and 2.49 or newer, they
+  now also run `gh attestation verify` against `fstubner/nvx` and stop without
+  changing nvx if it fails. Without a usable `gh` they print one line saying the
+  check was skipped and the command to run. The checksum check is unchanged.
+  The install guide now shows how to verify a downloaded asset by hand.
+
 * **The README is a short front page, and the reference moved to the docs
   site.** Containment, policy, known limitations and the FAQ are now docs pages,
   and the full `nvx help` reference is on the Commands page. The tests that held
@@ -122,7 +192,629 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the escape hatch, which nudged an automated caller toward the
   least-contained option and left the person out of the loop.
 
+* **A test whose setup lost a handle now retries, and skips rather than failing
+  if the host keeps refusing.** The same Windows condition that refuses a process
+  also refuses a file write: measured 2026-09-10, a test died at `write
+  ...\windows-setup.json: The handle is invalid` before a single assertion ran,
+  and the identical commit re-run was clean. This is the third face of one host
+  state, after cleanup (`removeAllBestEffort`) and reading the staged probe child
+  (`stageProbeChild`).
+
+  Applied at the two measured call sites only, not to the 135 `t.Fatal(err)`
+  setup sites across 52 Windows test files. A sweep that size would be
+  unreviewable and would make every one of those sites quieter about real
+  defects; machinery earns its place from a failure that happened. A persistent
+  refusal skips with a message saying an assertion was not checked, so a run
+  cannot report success for a probe that never executed.
+
+* **macOS: the `sandbox-exec` provider's availability check now asks about the
+  same path the launcher uses.** It had the path written out a second time, so a
+  test that puts nvx on a machine with no `sandbox-exec` -- the only way to check
+  that nvx refuses rather than running uncontained -- could not reach the provider
+  gate.
+
+* **The tests that need an AF_UNIX socket skip on a long temporary directory
+  rather than failing.** The socket path limit is 104 bytes and includes whatever
+  `TMPDIR` is; under an agent harness's scratch directory that produced a
+  151-byte path and turned six tests red for a reason unrelated to the code. The
+  skip names the limit and the path.
+
+* **Removed the pre-AppContainer low-integrity token path** (five functions and
+  six constants on Windows, plus their no-op Linux twins). Nothing had called any
+  of it since containment moved to AppContainer security capabilities. Code that
+  compiles and looks like the security model, but is not the security model, is
+  the wrong thing to leave in the file someone opens to find out how containment
+  works. Also removed the two helpers that read permissions out of icacls' printed
+  text, superseded by reading the access mask off the entry.
+
+* **`nvx report` and the Docker provider's environment.** SECURITY.md now records
+  that `docker run` takes allowed environment values as `-e KEY=VALUE`, so they
+  are visible in the process list to other processes running as you while the
+  container starts. nvx keeps them out of its own output; the argument list is
+  docker's. The native providers are unaffected.
+
 ### Fixed
+
+* **pnpm installs inside the Windows sandbox.** pnpm 10 resolves the project
+  directory with `fs.promises.realpath`, which asks Windows for the path with
+  its drive letter, and an AppContainer is refused that on every path. A first
+  `pnpm install` stopped with `EPERM: operation not permitted, realpath`. The
+  preload nvx puts in every contained node process now retries a refused native
+  realpath with Node's JavaScript one, which walks the path with `lstat` and
+  `readlink` and reaches the same answer. Measured 2026-10-04 with pnpm
+  10.34.6 on Node 22.23.3: a first install now completes in projects on `C:`
+  and on `H:`.
+
+* **A second `pnpm install` in the sandbox works.** pnpm keeps its package
+  store in the home folder when the project is on the same drive, and records
+  the store's path in `node_modules/.modules.yaml`. Every contained run had a
+  new home, so the next install found a different store and stopped with
+  `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. Contained pnpm commands now
+  share one home per project that is kept between runs, as a trusted tool's
+  is. No other project and no other package manager uses it. Measured
+  2026-10-05 with pnpm 10.34.6 on Windows: two installs in a row now both
+  finish in a project on `C:`. A project already installed by an earlier nvx
+  still records the old path, so delete its `node_modules` folder once.
+
+* **`nvx setup` no longer spends minutes on each large drive.**
+  On 2026-10-04 `nvx setup --all-drives` granted D:\ in 1 second and E:\ in 3,
+  then was still working on F:\ after 33 minutes. The grant is one entry on the
+  drive root that nothing below the root inherits. Writing it made Windows
+  re-check the permissions of every file on the volume, which changed nothing.
+  Setup and `nvx setup --undo` now write the root's own permissions and leave
+  the rest of the volume alone. On a test directory holding 20,000 files the
+  old write took 2.67 to 3.01 seconds and the new one under 1 millisecond, and
+  no file's permissions changed either way. The same write used to drop the
+  directory's auto-inherited mark, and now keeps it as it was.
+* **The typosquat check no longer refuses dependencies you did not choose.**
+  The pre-install checks run over the whole resolved tree, and the typosquat
+  check asked api.npmjs.org for the weekly downloads of every package in it.
+  On 2026-10-04 `npm ci` over a 415-package tree got HTTP 429 from that API,
+  the lookups fell back to name similarity, and the legitimate transitive
+  package `regex` was refused as a typosquat. A typosquat is a name someone
+  typed wrongly, and a dependency's name was written by its author. The check
+  now runs only on the packages named on the command line, or with none named,
+  on the dependencies in `package.json`. The blocklist, release-age,
+  install-script and advisory checks still cover the whole tree. Download
+  lookups are also remembered for the rest of the run.
+* **A command that turns install scripts off is no longer asked about them.**
+  `npm ci --ignore-scripts` in a project depending on chromedriver stopped at
+  the install-script prompt, and `npm install esbuild --ignore-scripts` aborted
+  non-interactively with exit 77, although npm ran none of those scripts. The
+  install-script prompt and the `enforce_ignore_scripts` refusal are now skipped
+  when `--ignore-scripts` is on the command line (also `--ignore-scripts=true`),
+  when `npm_config_ignore_scripts=true` is in the environment, or when the
+  project `.npmrc` sets `ignore-scripts=true`. bun reads only the flag. A run
+  inside the sandbox gets no `npm_config_*` variables, so the environment does
+  not count there. `--ignore-scripts=false` does not count. The skip is
+  recorded once per run as `check_skipped`. The typosquat, release-age, advisory
+  and blocklist checks still run.
+
+* **`nvx use` in cmd.exe no longer prints bash or PowerShell syntax.** Run from
+  a cmd window opened out of Git Bash it printed `export PATH='/c/...'` lines
+  and told you to add a line to `~/.bashrc`, because the `MSYSTEM` variable
+  Git Bash sets is inherited. In any other cmd window it printed PowerShell
+  syntax. nvx now asks which process started it and finds cmd.exe. It says that
+  cmd cannot be switched by a program, that the shims already follow the
+  project's version file, that `nvx default <version>` sets the version for new
+  windows, and gives the one command that switches only that window. The same
+  check makes `nvx env` and `nvx doctor` use cmd syntax there. A PowerShell,
+  bash, zsh or fish parent is recognised the same way.
+* **On Windows, contained runs now work under a long `NVX_HOME`.** The sandbox
+  reaches nvx through sockets that lived under `NVX_HOME`, and a socket path
+  must stay under 108 bytes. Measured on 2026-10-01, a 132-character
+  `NVX_HOME` needed a 174-byte path and every run that used the egress proxy
+  refused with exit 77. The longest that worked was 65 characters. Long
+  values are common on Windows, with profiles redirected to OneDrive or
+  corporate home folders. When the sockets do not fit under `NVX_HOME`, nvx
+  now puts them in the sandbox's own folder in `%LOCALAPPDATA%\Packages`,
+  which Windows already grants the sandbox. The same run then used a 90-byte
+  path and completed. When that folder's path is too long as well, the refusal
+  names the longest `NVX_HOME` that works.
+
+* **Packages from a private registry are now checked on that registry.** The
+  pre-install checks asked registry.npmjs.org about every package. A package
+  served only by a private registry came back 404, and with nobody to answer
+  the prompt the install was refused. nvx now reads the registry npm will use
+  for each package from `.npmrc` and `npm_config_*`, scopes included. A
+  contained install reads the project's `.npmrc` only, as its npm does. When
+  the registry needs a token to read metadata, nvx sends the `_authToken` from
+  your `.npmrc` with its own request. The token does not reach the sandbox or
+  any log. A package from a registry other than registry.npmjs.org skips the
+  typosquat and advisory checks, because both send the name to a public
+  service. The run says so in one line and the audit log records it as
+  `check_skipped`.
+
+* **Contained installs now work behind a corporate proxy.** nvx's egress proxy
+  dialled every allowed host itself, and the contained process got nvx's proxy
+  in place of yours. On a machine that reaches the internet only through a
+  proxy, a contained install could reach nothing. When `HTTPS_PROXY` or
+  `HTTP_PROXY` is set, an allowed connection now goes through that proxy as a
+  CONNECT tunnel, with `Proxy-Authorization` from the URL's user and password.
+  `NO_PROXY` hosts and loopback destinations are dialled directly. The
+  allowlist still decides first, so a host it refuses is never sent to your
+  proxy.
+
+* **On Windows, a program your own code leaves running in the background now
+  outlives the command.** Through nvx it was killed the moment the command
+  exited. That hit `npm run` scripts that `start` a program, `spawn` with
+  `detached: true`, and tools that start a daemon and return. Measured on
+  2026-10-01, an `npm run` script of `start "" ping.exe -n 20 127.0.0.1` left 1
+  ping running with plain npm and 0 through nvx. A node script spawning ping
+  with `detached: true` gave the same 1 and 0. Both now leave 1 through nvx.
+
+  When nvx ends a command itself, because the program that started nvx has gone,
+  or when nvx is killed while the command runs, the command's whole process tree
+  still ends with it. A command nobody is waiting on is still not left behind.
+
+* **The pre-install checks now run on every package an npm install brings in.**
+  They ran on the packages named on the command line, so `npm install tsx`
+  installed esbuild and ran its postinstall with no prompt, while `npm install
+  esbuild` asked first. Its release age was never looked at either. For `npm
+  install`, `npm update` and `npm dedupe`, nvx now runs npm's own resolver
+  first with `--package-lock-only --ignore-scripts`, contained like the
+  install, on a scratch copy of `package.json` and the lockfile. Every package
+  in the tree it writes gets the blocklist, typosquat, release-age,
+  install-script and advisory checks, with the same prompts as a package you
+  named, apart from those already installed at the same version. A failed resolution is asked about like a failed registry lookup, and
+  refused when nobody is there to answer. Projects with npm workspaces or a
+  dependency on a local folder are not resolved, and the run says so.
+
+* **A lockfile entry must now match the registry's record of its name and
+  version.** The checks read each entry's name and version and never its
+  `resolved` URL or `integrity` hash, which are what npm installs from. An
+  entry named left-pad@1.3.0 that pointed at the is-number tarball was checked
+  as left-pad and installed is-number. An entry's hash must now equal the
+  registry's hash for that name and version, or its URL must be the registry's
+  tarball when it has no hash. One that does not is refused. Entries from git, a
+  local path, or a URL the dependency asked for are reported as not
+  registry-checked.
+
+* **Without a lockfile, the checks read the version `package.json` declares.**
+  They read only the names, so esbuild pinned at 0.20.0 was checked as 0.28.2,
+  the newest release. A `file:`, `link:` or `workspace:` dependency was looked
+  up in the registry by name, so a local `evil-pkg` was flagged for an
+  unrelated registry package of that name. Each dependency is now checked at
+  its declared version or range, and local and workspace dependencies are not
+  looked up.
+
+* **`npm update`, `npm dedupe`, `npm rebuild`, `npm exec`, `npm create`, `npm
+  init <initializer>`, `pnpm dlx`, `yarn dlx` and `bun x` now get the
+  pre-install checks.** They were contained and checked nothing. `npm update`
+  and `npm dedupe` are resolved by npm as above. rebuild checks what the lockfile says
+  is installed. The runners check the package they run, as `npx` does, and
+  `create foo` checks `create-foo`. pnpm, yarn and bun update, upgrade, dedupe
+  and rebuild check the packages they name, or the project's declared
+  dependencies.
+
+* **`blocked_packages` now applies to packages that do not come from the
+  registry.** `left-pad@github:user/repo`, `left-pad@https://...` and a
+  registry tarball URL for left-pad all install left-pad, and none was compared
+  with the list. The name a spec installs under is now checked, from the
+  command line, from `package.json` and from the lockfile.
+
+* **An unreadable lockfile no longer sends the checks to `package.json`.** When
+  `package-lock.json` could not be parsed, nvx checked the newest version of
+  each name in `package.json` instead, and refused versions nobody was
+  installing. That is how `npm ci` in a docs site was stopped over
+  @astrojs/starlight 0.42.5 while its lockfile pinned 0.42.1. It is now asked
+  about like a failed registry lookup, and refused when nobody is there to
+  answer.
+
+* **On macOS a contained install can no longer read your credential files.**
+  The macOS sandbox allows filesystem reads so programs can load system
+  libraries, and that included `~/.npmrc`, `~/.ssh`, `~/.aws` and the other
+  places registry tokens, keys and cloud credentials live. Windows and Linux
+  already kept them out of reach. The macOS sandbox now refuses reads of the
+  npm, yarn, pnpm and bun config files, `~/.docker/config.json`, `~/.netrc`,
+  `~/.git-credentials`, and everything under `~/.ssh`, `~/.aws`, `~/.gnupg`,
+  `~/.config/gh`, `~/.kube`, `~/.config/gcloud`, `~/.azure` and
+  `~/Library/Keychains`. Other files outside the project stay readable on macOS.
+* **A contained install can no longer write the project's `.git`.** The project
+  directory was writable as a whole, `.git` included, and git runs outside the
+  sandbox. So a hook or a `.git/config` entry written by an install ran as you on
+  the next `git commit` or `git status`, at the `strict` level too. `.git` is now
+  read-only to contained runs on Linux, macOS and Windows, and so is the git
+  directory a `.git` file names inside the project. Reads still work. A run that
+  cannot protect `.git` refuses to start. Hook installers that run during an
+  install (husky's `prepare`, simple-git-hooks, lefthook) can no longer set
+  themselves up inside the sandbox, so run them yourself afterwards. On Windows
+  `.git` stops inheriting permission changes from the project folder.
+* **More package-manager commands that run dependency code are contained.**
+  nvx contains a package-manager command when it recognises the verb, and
+  several verbs that run dependency install scripts ran uncontained with no
+  pre-install checks. `bun pm trust` and `pnpm approve-builds` run the scripts
+  the install held back. `npm uninstall`, `npm prune`, `pnpm remove`, `pnpm
+  fetch` and `bun remove` re-install whatever the lockfile lists that is
+  missing. `npm link <package>` and `bun link <package>` install as well, and
+  `npm pack` of a git dependency runs its prepare script. These verbs and their
+  aliases in npm, pnpm, yarn and bun are now contained. `corepack` is now
+  wrapped too, and `corepack pnpm add x` or `node "$npm_execpath" install x`
+  is judged as the package-manager command it runs. `npm link`, `pnpm
+  self-update` and `pnpm env use` write outside the project, so a contained run
+  of one is refused before it starts and names the `--no-sandbox` command to use
+  instead.
+* **Killing nvx on Linux now stops the contained process.** The sandbox
+  supervisor was started with no parent-death signal and no signal forwarding, so
+  `kill` or `kill -9` on nvx left the contained process running, and the next nvx
+  run deleted its home directory underneath it. The supervisor now dies with nvx,
+  SIGINT, SIGTERM and SIGHUP reach the contained process so it can shut down, and
+  the session record names the supervisor as well as nvx.
+
+* **A command run outside the sandbox now stops with nvx on Linux and macOS, and
+  reports a signal as 128 plus its number.** `kill` on nvx left the real `node`
+  running, and a runtime ended by SIGTERM exited 255 where a shell shows 143. nvx
+  now passes SIGINT, SIGTERM and SIGHUP on to the runtime, and on Linux the
+  kernel kills the runtime if nvx is killed outright. The same exit code mapping
+  applies to contained commands.
+
+* **`nvx doctor` now tests a real sandbox launch on Linux, and explains a refusal
+  on Ubuntu 23.10 and later.** It used to report a healthy sandbox without
+  starting one. It now runs a contained process, and when the kernel refuses the
+  namespaces it names `kernel.apparmor_restrict_unprivileged_userns`, offers
+  relaxing it or setting `isolation.network.mode` to `open`, and says whether
+  `open` starts on that machine. macOS is unchanged.
+* **On Linux, a contained process can no longer reach the host's UNIX sockets.**
+  Landlock below ABI v9 does not restrict connecting to a UNIX socket by path, so
+  a contained process could open `/var/run/docker.sock` or any other socket on
+  the machine while its writes stayed blocked. The sandbox now sees only the
+  directories it is granted, and every other path on the host is absent from
+  it. nvx's own proxy and `--connect` sockets live in the sandbox's home and keep
+  working. On kernels with Landlock ABI v9, sockets in the system and runtime
+  directories are refused as well.
+
+* **The first `nvx install` now becomes the default version.** With no default
+  set, `node` ran an unrelated system node or failed with "Could not find real
+  executable for node" and no hint. The first version installed for a runtime is
+  now its default. Installing a version that is not the default says how to switch to it, with `nvx use
+  <version>` for this shell and `nvx default <version>` for new shells.
+  `nvx doctor` also exits non-zero when no runtime is available behind `node`,
+  `npm` or `npx`, where it used to report that nvx was intercepting correctly.
+
+* **zsh switches version as soon as a terminal opens inside a project.** The zsh
+  hook only ran on a directory change, so the project's version applied after the
+  first `cd`. The integration now runs the hook once when it loads, which matches
+  bash.
+
+* **A `.nvmrc` with `lts/*` or `lts/<codename>` no longer prints a false "shell
+  integration is not active" warning.** Every `node`, `npm` and `npm run` in such
+  a project warned, even with the right version running. The aliases are now
+  resolved against the installed versions, so a pin that is satisfied gives no
+  warning.
+
+* **`nvx install` and `nvx use` with no version read the project's version file.**
+  They answered "Please specify a version" in a directory whose `.nvmrc` named one.
+  They now read `.nvmrc`, `.node-version`, `.bun-version` and `package.json`
+  the way `nvx auto` does. `node` and `stable` now mean the newest version, as in
+  nvm, and `nvx use iron` accepts an LTS codename for an installed version. When
+  a `.tool-versions` file or `devEngines.runtime` is present, nvx says it does not
+  read it.
+
+* **`nvx default` no longer says to add the `current` link to PATH.** Only the
+  shim directory belongs on PATH, and a runtime directory ahead of it is what
+  `nvx doctor` reports as shadowing the shims.
+
+* **`nvx cleanup` and `nvx install` remove what an interrupted install left.**
+  A killed install left a `.tmp.<pid>` staging directory, its download and a lock,
+  and nothing removed them. Both commands now remove staging directories and
+  downloads whose process is gone, and locks nvx can prove are abandoned. Anything
+  whose process is still running, or whose owner cannot be read, stays.
+
+* **nvx refuses to install the glibc build on Alpine.** On a musl system the
+  install reported success and `node` then failed with `fork/exec ... no such file
+  or directory`. The install now stops and says the system uses musl and that nvx
+  has no musl build. nvx does not download musl builds.
+
+* **Colour codes and the download bar stay out of pipes and logs.** Output is
+  plain when it is not a terminal, and `NO_COLOR` is honoured. A download that is
+  not on a terminal prints a line per tenth of the file instead of a bar redrawn
+  with carriage returns. The text of the messages is unchanged.
+
+* **`-y`, `--agent-mode` and `NVX_YES` no longer approve pre-install checks
+  silently.** The typosquat, release-age, install-script, known-advisory and
+  "could not check" prompts were answered with no output and no audit record, so
+  `nvx audit` read "No audit records yet" after an install that had gone past all
+  of them. Every one of these checks now writes a `check_approved` or
+  `check_refused` record, however it was answered and whatever `NVX_TRACE` says.
+  An approval nobody was asked about also prints one line to stderr that names it.
+
+  A refusal now names the narrowest fix first, as the exact policy line to add,
+  and mentions `-y` and `NVX_YES` last. That covers `typosquatting.trusted_packages`,
+  `release_age.trusted_packages`, `install_scripts.trusted_packages`,
+  `vulnerabilities.allowed_advisories` and `min_severity`, and
+  `isolation.network.allow_hosts` for a refused host. The `enforce_ignore_scripts`
+  refusal used to say to run with `--ignore-scripts`, which does not get past it,
+  and now says what does. The reply sent to an MCP client and SECURITY.md follow
+  the same order.
+
+  A failed weekly-download lookup (a 429, a proxy block, no network) used to fall
+  back to name similarity without saying so. The prompt now says the lookup failed
+  and that the result is a name-similarity guess. A name on nvx's popular-package
+  list is warned about instead of flagged. A name on no list is checked as before.
+
+* **Cleanup no longer removes a running session's files on Windows.** A session
+  whose owning process nvx could not open, such as an elevated one, was read as
+  finished, and its home could be deleted while it ran. A trusted tool's
+  AppContainer profile could also be deleted while the tool was running, once it
+  had gone unused for the retention window. Each trusted-tool run now marks
+  itself as live for as long as it runs.
+
+* **Two runs of one trusted tool no longer share stdio pipes on Windows.** The
+  pipe names came from the tool's home, which is the same for every run, so a
+  second run joined the first one's pipes. Each run now draws its own names, and
+  a name already in use is refused.
+
+* **`nvx setup` checks that the old loopback exemption is really gone.** Any
+  failure to remove it, a timeout included, was reported as nothing to remove.
+  Setup now reads the exemption list and fails while the exemption is still
+  registered. `nvx setup --undo` also removes the grants setup recorded, which
+  included the Users folder on other volumes, and no longer leaves an unused
+  AppContainer profile behind. `nvx doctor` now says leftover sandbox
+  permissions on a project admit sandboxes from nvx builds older than 0.5.0,
+  which is who they admit.
+
+* **`nvx doctor --fix` keeps non-ASCII entries in your User PATH.** It read the
+  PATH through `reg query`, whose output is in the console code page, so
+  `C:\Users\Jürgen\bin` came back with a wrong byte in place of the ü, and the
+  repair wrote that back. It now reads the value directly from the registry.
+
+* **An unreadable grants record is no longer replaced with an empty one.** A
+  record that existed and could not be read was treated as empty, and the next
+  change saved over it, losing the list of permissions nvx had granted. The
+  change now fails instead, and read-only commands warn.
+
+* **The egress proxy refuses a malformed CONNECT port.** `443x` went on as port 0
+  and `99999` as 65535, and the raw request, port included, was printed to the
+  terminal when the dial failed. It now answers 400 and logs only the parsed
+  host and port. The proxy also checks its credential before it judges the host,
+  so an unauthenticated caller can no longer put a warning on your terminal or a
+  line in the audit log.
+
+* **`nvx audit export --format csv` no longer emits spreadsheet formulas.** A
+  value starting with `=`, `+`, `-` or `@` became a live formula when the file
+  was opened in a spreadsheet, and several fields can come from lines anything
+  on the machine appended to the log. Such cells now start with a single quote.
+
+* **A project bin with a dot in its name gets a working shim.** A
+  `node_modules/.bin` entry named `foo.bar` was shimmed as `foo`, which ran a
+  command nothing provides. Only `.cmd`, `.ps1` and `.exe` are trimmed now.
+
+* **`bun@0.8` and other older Bun lines resolve again.** Only the first 100 Bun
+  releases were read, and that page now ends at 1.0.25. The whole list is read.
+
+* **A refused `isolation.environment.allow` entry is recorded in audit.log.** A
+  policy asking to pass a credential into the sandbox was a terminal warning and
+  nothing else. It is now an `env_pass_refused` record, with names only.
+
+* **Smaller Windows fixes.** The hangup watchdog no longer waits on an unrelated
+  process that reused its parent's pid. A contained command's exit no longer
+  waits up to 5 seconds per stuck stdio channel, one after another. A failure to
+  stage the command now has its own reason in the audit log. The icacls command
+  nvx suggests for a widened read/execute entry can be pasted as printed.
+
+* **A package installed under an npm alias is checked as itself.**
+  `npm install myalias@npm:left-pad` was checked as a package called `myalias`,
+  so a blocklist entry for left-pad did not stop it, and the typosquat, advisory
+  and release-age checks asked about a package that does not exist. The same
+  alias in package.json or package-lock.json was read the same way by
+  `npm ci` and by `nvx policy check`. The target package and its version are
+  what gets checked now.
+
+* **`nvx NPM install x` gets the same checks as `nvx npm install x`.** The
+  command name was accepted in any case and ran contained, and the pre-install
+  checks only matched it in lowercase, so they were skipped.
+
+* **`nvx policy check` fails when package.json or package-lock.json does not
+  parse.** It warned and exited 0 having checked no dependency. It now reports
+  an `internal_error` (exit 1). Run from a subdirectory, it also reads the
+  project root's files, as the package manager does, instead of finding none.
+
+* **`-y` and `--agent-mode` no longer approve a persistent tool profile.** The
+  help says only `NVX_TRUST_YES` approves trusting a tool, and this one prompt
+  was answered by the ordinary `-y`.
+
+* **The prompt to trust a project policy says what the file loosens.** It
+  named the file only. It now lists each setting with its value before and
+  after, for example `typosquatting.enabled: true -> false`.
+
+* **A policy key in the wrong case is no longer reported as ignored.**
+  `{"Isolation": {"Enabled": false}}` switched containment off, because JSON
+  keys match in any case, while nvx warned the key was "being ignored". It now
+  says which setting the key applies to and asks for lowercase.
+
+* **`nvx policy init` in a project no longer overrides the global policy.** It
+  wrote every default into `.nvx-policy.json`, so under a stricter global policy
+  the file loosened it, and under an enforced one every command in the project
+  was refused. It also replaced the runtimes' own default hosts. The project
+  file it writes now sets nothing until you add to it.
+
+* **An enforced global policy is not widened by hosts approved earlier.** Hosts
+  a project had approved at a prompt were added after the enforcement check, so
+  they reached the network past the baseline. Under enforcement nvx now drops
+  them and says so once.
+
+* **`allow_read_exec` refuses an entry that would grant a whole drive or home.**
+  An entry using an unset variable collapsed to a filesystem root:
+  `%UNSET%\` became `C:\` and `$UNSET/` became `/`. `~` alone granted the
+  whole home directory. These are now refused with a warning, as is a directory
+  that holds the nvx home.
+
+* **A version range with a space after the operator is accepted.** `">= 18"`,
+  common in package.json engines, failed with "empty version". The error for a
+  range that really cannot be read now names the text.
+
+* **The version-pin warning no longer reports npm's version as node's.** With
+  a `.nvmrc` asking for 22, an `npm` command warned it was "running 10.9.2",
+  which is npm's own version.
+
+* **The quickstart no longer promises read containment on macOS.** It said
+  installs run with "no access to your keys" on every platform. The macOS
+  sandbox does not contain reads, so there it now says what holds.
+
+* **`nvx use --shell bash 20` switches to 20.** It took `bash` as the version.
+
+* **`nvx grants list` says when the grant record cannot be read.** It printed
+  "(none)" for every kind of grant, which reads as nothing granted.
+
+* **The help names every `--filesystem-provider`.** It listed native and
+  docker and left out sandbox-exec, the macOS one.
+
+* **`nvx import` asks about only the versions it would download.** Its prompt
+  counted versions nvx already had.
+
+* **`nvx policy explain` no longer cuts a character in half.** A long value was
+  shortened by bytes, which split a non-ASCII character and printed invalid
+  text.
+
+* **The Docker check has a time limit.** `docker info` ran without one, so a
+  daemon that accepted the connection and never answered held the command
+  with no output. It now gives up after 15 seconds.
+
+* **`npm install --location=global` and `bun add -g` are refused up front.**
+  They are global installs like `npm install -g`, and went into the sandbox
+  instead of getting the same clear refusal.
+
+* **A cached command path must name the command.** The cache of resolved
+  command paths accepted an entry for `node` that pointed at any program in a
+  PATH directory. It now requires the file name to match. Its temporary file
+  also has a unique name, so two nvx processes saving at once cannot rename each
+  other's half-written file into place.
+
+* **`nvx audit --limit 5` works like `--limit=5`.** Export already took both
+  spellings. An over-long last line with no newline after it is now counted as
+  malformed rather than dropped without a word.
+
+* **`nvx use 99` no longer offers to install a version that does not exist.**
+  It asked whether to download and install Node.js 99. It now checks the
+  release index first and says no published release matches.
+
+* **`--help` after any command prints that command's help.**
+  `nvx install --help` printed help and `nvx list-remote --help` failed with
+  "Unknown option". Commands without a page of their own now print their entry
+  from `nvx help`.
+
+* **`nvx doctor` prints its PATH fix in Git Bash syntax under Git Bash.** On
+  Windows it always printed the PowerShell form, which bash cannot run.
+
+* **A contained `spawn` keeps the stdin descriptor its caller passed in.** In
+  the Windows sandbox, `spawn(cmd, args, {stdio: [fd, 'pipe', 'pipe']})` closed
+  `fd` once the child started, so a file the caller opened and handed to the
+  child as stdin could not be read again. The sandbox now closes only the
+  descriptors it opened itself, and removes the temp folder behind an empty
+  stdin when the child closes.
+
+* **Two installs that find the same abandoned lock no longer both proceed.**
+  nvx clears an install lock left by a process that has gone. On Linux and
+  macOS two waiters could both read the dead owner, and the second removed the
+  lock the first had just taken, so both extracted into one directory. Clearing
+  a lock is now serialised.
+
+* **On macOS a SIGTERM sent while nvx starts the sandboxed command reaches that
+  command.** nvx installed its signal handler after starting the child, so a
+  signal in between killed nvx and left the child running. The handler is now
+  in place first.
+
+* **A slow disk no longer reads as a stalled download, and a stall can no
+  longer crash nvx.** The stall timer ran between reads too, so time spent
+  writing the archive counted as the network going quiet. If it fired, a read
+  that then returned data re-armed it, and a second firing crashed the process.
+  The timer now runs only while nvx waits for data, and fires its signal once.
+
+* **A version name ending in a dot is refused.** Windows drops trailing dots
+  from a path component, so `v20.` names the `v20` directory and `...` names the
+  versions folder itself. On Windows, listing `a\...` returned the contents of
+  `a`. No real version ends in a dot.
+
+* **A socket path too long for Linux says so.** A deep `NVX_HOME` made the
+  sandbox's egress and `--connect` sockets fail with a bare "bind: invalid
+  argument". nvx now reports the path's length against the 107-byte limit and
+  says to set `NVX_HOME` to a shorter directory, as it already did on Windows.
+
+* **install.sh refuses a CPU it has no build for.** On armv7l, i686, riscv64
+  or any other CPU it installed the x86_64 binary, which cannot run there. It
+  now stops and names the architecture.
+
+* **install.sh says so when it has no way to check the download.** With
+  neither sha256sum nor shasum installed it reported a checksum mismatch. It
+  now looks for one before downloading and says which to install.
+
+* **install.sh no longer writes lines fish cannot read.** For a fish user it
+  added POSIX lines to `~/.profile`, which fish never reads, and reported the
+  profile as updated. It now prints the `fish_add_path` command to run.
+
+* **The one-line Windows install leaves your PowerShell session as it was.**
+  Run as `irm ... | iex`, install.ps1 left `$ErrorActionPreference = 'Stop'`,
+  a TLS 1.2-only connection setting, and its own variables and functions in
+  the window it was pasted into. It now runs in a scope of its own and puts
+  the TLS setting back.
+
+* **Homebrew and Scoop releases are checked against their build provenance.**
+  Only the npm publish checked that a binary was built by `release.yml`. The
+  Homebrew and Scoop jobs trusted a `.sha256` file from the same release page
+  as the binary, so a binary replaced there together with its checksum would
+  have been published. All three now require the attestation `release.yml`
+  made for the binary.
+
+* **`nvx grants reset --all` works after a grant has been recorded.** It read
+  the lock file kept beside each grant record as a record of its own, failed to
+  parse it, exited 1 and said to remove permissions with icacls by hand, on
+  every run after the first grant. It now skips lock and temp files, and both
+  reset forms hold the record's lock while they read, withdraw and delete it, so
+  a grant saved at the same moment is not deleted with it.
+
+* **`nvx doctor` no longer calls a bypassed command healthy.** It listed
+  `[FAIL] npm -> ... (bypasses nvx)` and then said "nvx is intercepting commands
+  correctly" and exited 0, because it only counted nvx's own runtime folders as
+  shadowing. A system Node earlier on PATH, the usual Windows layout, now makes
+  doctor exit non-zero.
+
+* **Every spelling of an install is contained and checked.** Plain `yarn` and
+  `yarn --frozen-lockfile` (yarn's default command installs), `npm x`,
+  `npm clean-install` and `ic`, `npm it`, `cit` and `sit`, `npm rb`, and npm's
+  `isntal` and `udpate` typo aliases ran as your own code: no sandbox and no
+  pre-install checks. They now run as the install or tool run they are.
+
+* **`exec()` and `execFile()` no longer hang inside the Windows sandbox.** node's
+  own versions call a spawn the sandbox's preload could not reach, so they took
+  the path that blocks forever before the child exists. A contained
+  `exec('cmd /c echo hi', cb)` never called back, and neither did a timer set
+  before it, while the same call uncontained answered in 300ms. node-gyp finds
+  Python this way, and many install scripts shell out the same way. Both are now
+  rebuilt on the sandbox's working spawn, with the same callback, error, timeout,
+  maxBuffer and promisified behaviour as node's. A streamed child's `close` event
+  also waits for its output again: it fired when the child exited, while nvx was
+  still passing the output along, and a CI run saw 1 line of 200 arrive by then.
+
+* **A contained command started in your home directory can no longer write it.**
+  The working directory is writable inside the sandbox, and nothing checked
+  which directory it was. From `~` or `/`, where editors often start MCP servers,
+  a contained process could write `~/.nvx` (its grants and policy, so the next
+  run's trust) and `~/.bashrc`. Measured on Linux and on a macOS runner: from a
+  project all three writes were refused, from the home directory all three
+  landed. nvx now starts such a command in the sandbox's home and says why. The
+  same rule applies on Windows to a directory above the profile or inside
+  `~/.nvx`. The Linux and macOS enforcement scripts check it on every CI run.
+
+* **Windows: granting the sandbox access no longer opens your profile to other
+  accounts.** Every permission nvx wrote on a folder switched that folder's
+  inheritance protection off. Windows ships `C:\Users` and each profile folder
+  protected, so they do not take the drive root's "Authenticated Users: Modify".
+  One `nvx setup` grant on `C:\Users`, or one traverse grant on a profile, lifted
+  that, and every signed-in account on the machine could then read and change the
+  whole profile. nvx now keeps a folder's protection as it found it, and
+  `nvx doctor` reports a profile, or the folder above it, that has lost its
+  protection, with the `icacls ... /inheritance:r` command to restore it when the
+  folder's own entries keep you in.
+
+* **The one-line Windows install works.** `irm https://nvx.run/install.ps1 | iex`
+  stopped every time with "Cannot bind argument to parameter 'Path' because it
+  is an empty string": the script read its own directory, which `iex` does not
+  have. It had already edited PATH and the PowerShell profile by then. The
+  installer now downloads and verifies nvx first and changes nothing if that
+  fails, and CI runs the whole script through `Invoke-Expression`. It also no
+  longer offers `nvx setup` at the end with a warning that package managers "run
+  without OS isolation" until you do. That was false: installs and `npx` run
+  contained without it.
 
 * **The Linux sandbox runs the system's `ip` and `iptables`, not the first ones
   on your PATH.** It set a system-only PATH for the child, which does not change
@@ -279,7 +971,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that used to time out: 22.3 s for the propagating write against 1.07 ms
   without, measured back to back. A first `pnpm install` in a fresh project
   exits 0. A second one still does not, for a reason no permission fixes; see
-  Known limitations in the README.
+  Known limitations on the docs site.
 
 * **A project directory deleted and recreated no longer fails to launch on
   Windows.** nvx remembered for seven days which directories already carried
@@ -422,48 +1114,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   asked about. nvx cannot scan without a version; the prompt and the warning now
   say that is what approving costs.
 
-### Changed
+* **A zsh user is now treated as a zsh user.** With no `--shell` given, nvx on
+  Linux and macOS chose bash unless `SHELL` named fish. Someone on zsh, the
+  macOS default, who ran `nvx use 20` without the integration was told to add
+  the line to `~/.bashrc`, and `nvx doctor --fix` wrote it there, where zsh
+  never reads it. nvx now selects zsh when `SHELL` ends in `zsh`. The hint names
+  `~/.zshrc` and `nvx doctor --fix` writes to it.
 
-* **A test whose setup lost a handle now retries, and skips rather than failing
-  if the host keeps refusing.** The same Windows condition that refuses a process
-  also refuses a file write: measured 2026-09-10, a test died at `write
-  ...\windows-setup.json: The handle is invalid` before a single assertion ran,
-  and the identical commit re-run was clean. This is the third face of one host
-  state, after cleanup (`removeAllBestEffort`) and reading the staged probe child
-  (`stageProbeChild`).
+* **`nvx doctor --fix` writes the same fish file as the installer.** For fish
+  it wrote only the `nvx env --shell=fish | source` line. The installer's
+  `conf.d/nvx.fish` also puts `~/.nvx/bin` on `PATH` first, and without that
+  fish cannot find `nvx` when the line runs. doctor now writes the installer's
+  whole file. A file that already loads nvx, in either form, is left alone, so
+  one an earlier `doctor --fix` wrote keeps the line-only form until you delete
+  it and run `nvx doctor --fix` again.
 
-  Applied at the two measured call sites only, not to the 135 `t.Fatal(err)`
-  setup sites across 52 Windows test files. A sweep that size would be
-  unreviewable and would make every one of those sites quieter about real
-  defects; machinery earns its place from a failure that happened. A persistent
-  refusal skips with a message saying an assertion was not checked, so a run
-  cannot report success for a probe that never executed.
-
-* **macOS: the `sandbox-exec` provider's availability check now asks about the
-  same path the launcher uses.** It had the path written out a second time, so a
-  test that puts nvx on a machine with no `sandbox-exec` -- the only way to check
-  that nvx refuses rather than running uncontained -- could not reach the provider
-  gate.
-
-* **The tests that need an AF_UNIX socket skip on a long temporary directory
-  rather than failing.** The socket path limit is 104 bytes and includes whatever
-  `TMPDIR` is; under an agent harness's scratch directory that produced a
-  151-byte path and turned six tests red for a reason unrelated to the code. The
-  skip names the limit and the path.
-
-* **Removed the pre-AppContainer low-integrity token path** (five functions and
-  six constants on Windows, plus their no-op Linux twins). Nothing had called any
-  of it since containment moved to AppContainer security capabilities. Code that
-  compiles and looks like the security model, but is not the security model, is
-  the wrong thing to leave in the file someone opens to find out how containment
-  works. Also removed the two helpers that read permissions out of icacls' printed
-  text, superseded by reading the access mask off the entry.
-
-* **`nvx report` and the Docker provider's environment.** SECURITY.md now records
-  that `docker run` takes allowed environment values as `-e KEY=VALUE`, so they
-  are visible in the process list to other processes running as you while the
-  container starts. nvx keeps them out of its own output; the argument list is
-  docker's. The native providers are unaffected.
+* **On Linux, the refusal for a long `NVX_HOME` names the longest one that
+  works.** A socket path must be shorter than 108 bytes, and the refusal only
+  said to use a shorter `NVX_HOME`, leaving you to guess how much shorter. It
+  now says `Set NVX_HOME to a directory of at most N characters (it is M)`, as
+  the Windows refusal does. N leaves room for the longest socket the run
+  creates, so following it does not meet a second refusal. The loopback
+  socket used to fail with a bare `bind: invalid argument` and now gets the
+  same check. Where the sockets live on Linux has not changed.
 
 ## [0.6.0] - 2026-09-09
 

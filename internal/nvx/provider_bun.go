@@ -126,43 +126,75 @@ func fetchBunReleases(nvxHome string) ([]string, error) {
 // nvx offline without a network of its own.
 var fetchBunReleaseList = fetchBunReleasesFromGitHub
 
+// bunReleasesURL is the first page of Bun's release list. A variable so a test
+// can serve the pages itself.
+var bunReleasesURL = "https://api.github.com/repos/oven-sh/bun/releases?per_page=100"
+
+// bunReleasePageLimit stops a Link header that never ends from looping for good.
+const bunReleasePageLimit = 50
+
+// fetchBunReleasesFromGitHub reads every page of the release list, following
+// the Link header's rel="next". Only the first 100 releases used to be read, so
+// a query for an older line, bun@0.8 for one, found nothing.
 func fetchBunReleasesFromGitHub() ([]string, error) {
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/oven-sh/bun/releases?per_page=100", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "nvx")
-	req.Header.Set("Accept", "application/vnd.github+json")
-
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch Bun releases: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch Bun releases: HTTP %s", resp.Status)
-	}
-
-	var raw []struct {
-		TagName    string `json:"tag_name"`
-		Draft      bool   `json:"draft"`
-		Prerelease bool   `json:"prerelease"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("failed to parse Bun releases: %w", err)
-	}
-
 	var versions []string
-	for _, r := range raw {
-		if r.Draft || r.Prerelease {
-			continue
+	next := bunReleasesURL
+	for page := 0; next != "" && page < bunReleasePageLimit; page++ {
+		req, err := http.NewRequest("GET", next, nil)
+		if err != nil {
+			return nil, err
 		}
-		if v := bunTagToVersion(r.TagName); v != "" {
-			versions = append(versions, v)
+		req.Header.Set("User-Agent", "nvx")
+		req.Header.Set("Accept", "application/vnd.github+json")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch Bun releases: %w", err)
 		}
+		var raw []struct {
+			TagName    string `json:"tag_name"`
+			Draft      bool   `json:"draft"`
+			Prerelease bool   `json:"prerelease"`
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to fetch Bun releases: HTTP %s", resp.Status)
+		}
+		err = json.NewDecoder(resp.Body).Decode(&raw)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse Bun releases: %w", err)
+		}
+		for _, r := range raw {
+			if r.Draft || r.Prerelease {
+				continue
+			}
+			if v := bunTagToVersion(r.TagName); v != "" {
+				versions = append(versions, v)
+			}
+		}
+		if len(raw) == 0 {
+			break
+		}
+		next = nextPageLink(resp.Header.Get("Link"))
 	}
 	return versions, nil
+}
+
+// nextPageLink returns the rel="next" URL from a GitHub Link header, or "".
+func nextPageLink(header string) string {
+	for _, part := range strings.Split(header, ",") {
+		target, params, ok := strings.Cut(part, ";")
+		if !ok || !strings.Contains(params, `rel="next"`) {
+			continue
+		}
+		target = strings.TrimSpace(target)
+		if strings.HasPrefix(target, "<") && strings.HasSuffix(target, ">") {
+			return target[1 : len(target)-1]
+		}
+	}
+	return ""
 }
 
 func isExactSemver(v string) bool {
@@ -293,11 +325,9 @@ func (b BunProvider) DetectConfig(dir string) (version string, sourceFile string
 			}
 		}
 
-		parent := filepath.Dir(d)
-		if parent == d {
+		if d = nextVersionSearchDir(d); d == "" {
 			break
 		}
-		d = parent
 	}
 	return "", "", nil
 }
@@ -376,6 +406,9 @@ func bunPlatform() (osName string, arch string, err error) {
 }
 
 func (b BunProvider) Install(version string, nvxHome string) error {
+	if err := refuseGlibcBuildOnMusl(); err != nil {
+		return err
+	}
 	resolvedVer, err := b.resolveInstallVersion(version, nvxHome)
 	if err != nil {
 		return err
@@ -390,6 +423,7 @@ func (b BunProvider) Install(version string, nvxHome string) error {
 		return nil
 	}
 
+	sweepAbandonedInstalls(nvxHome)
 	release, err := acquireRuntimeInstallLock(nvxHome, "bun", resolvedVer)
 	if err != nil {
 		return err
@@ -409,7 +443,11 @@ func (b BunProvider) Install(version string, nvxHome string) error {
 	url := base + "/" + asset
 	shaURL := base + "/SHASUMS256.txt"
 
-	tempFile := filepath.Join(GetDownloadsDir(), asset)
+	// Named by version as well as platform, so two versions installing at once
+	// do not write the same file. The install lock is per version.
+	// The pid in the name lets a later sweep tell a killed install's download
+	// from one still in progress.
+	tempFile := filepath.Join(GetDownloadsDir(), fmt.Sprintf("bun-%s-%s-%s.zip.tmp.%d", resolvedVer, osName, arch, os.Getpid()))
 	LogInfo("Installing Bun %s (%s-%s)", resolvedVer, osName, arch)
 	LogInfo("URL: %s", url)
 

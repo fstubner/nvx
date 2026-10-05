@@ -5,7 +5,6 @@ package nvx
 import (
 	"fmt"
 	"strings"
-	"time"
 )
 
 // repairPersistentPath rewrites the User PATH environment variable so the shim
@@ -35,13 +34,12 @@ func repairPersistentPathImpl(nvxHome string, apply bool) (bool, error) {
 		return false, err
 	}
 	if strings.TrimSpace(existing) == "" {
-		// A genuinely empty User PATH is indistinguishable here from a parse
-		// failure (unexpected `reg query` output shape, localized Windows,
-		// etc.). Treating either as "safe to overwrite" would let us replace
+		// A genuinely empty User PATH is not worth repairing, and treating it
+		// as "safe to overwrite" would let us replace
 		// the user's entire persistent PATH with just the shim dir, silently
 		// destroying every other PATH entry they have. Refuse and let the
 		// caller fall back to the per-shell fix hint instead.
-		return false, fmt.Errorf("could not read the current User PATH (empty or unrecognized `reg query` output); leaving it unchanged")
+		return false, fmt.Errorf("the current User PATH is empty, so it was left unchanged")
 	}
 	fixed := rebuildUserPath(existing, shimDir, nvxRuntimeDirs(nvxHome))
 	if existing == fixed {
@@ -81,11 +79,7 @@ func repairPersistentPathImpl(nvxHome string, apply bool) (bool, error) {
 // variable so a test can hand the repair a PATH of its own and check what the
 // repair says about it, without touching the registry.
 var readUserPath = func() (value string, expand bool, err error) {
-	out, err := runWinCmd(15*time.Second, "reg", "query", `HKCU\Environment`, "/v", "Path")
-	if err != nil {
-		return "", false, err
-	}
-	return parseRegPath(string(out)), parseRegExpandable(string(out)), nil
+	return readRegistryStringValue("Environment", "Path")
 }
 
 // setUserPath writes the User PATH back, preserving the type it was stored as.
@@ -97,30 +91,4 @@ var setUserPath = func(value string, expand bool) error {
 	}
 	broadcastEnvironmentChange()
 	return nil
-}
-
-// parseRegExpandable reports whether `reg query` said the value is
-// REG_EXPAND_SZ -- the type Windows ships the User PATH as, and the one that
-// makes %USERPROFILE%\bin resolve.
-func parseRegExpandable(regOut string) bool {
-	return strings.Contains(regOut, "REG_EXPAND_SZ")
-}
-
-// parseRegPath extracts the value from `reg query ... /v Path` output.
-func parseRegPath(regOut string) string {
-	for _, line := range strings.Split(regOut, "\n") {
-		if i := strings.Index(line, "REG_"); i != -1 {
-			rest := line[i:]
-			fields := strings.SplitN(rest, "    ", 2)
-			if len(fields) == 2 {
-				return strings.TrimSpace(fields[1])
-			}
-			// Fallback: value after the type token.
-			toks := strings.Fields(rest)
-			if len(toks) >= 2 {
-				return strings.Join(toks[1:], " ")
-			}
-		}
-	}
-	return ""
 }

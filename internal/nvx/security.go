@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -271,10 +272,54 @@ var weeklyDownloads = GetWeeklyDownloads
 
 // CheckTyposquattingAuthority dynamically compares weekly downloads to detect typosquatting threats
 func CheckTyposquattingAuthority(pkgName string, popularList []string, maxDist int) string {
+	return assessTyposquat(pkgName, popularList, maxDist).suspect
+}
+
+// typosquatVerdict is what assessTyposquat found, with the evidence the prompt
+// shows. lookupErr is set when the verdict rests on name similarity alone
+// because a weekly-download lookup failed.
+type typosquatVerdict struct {
+	suspect          string
+	pkgDownloads     int
+	suspectDownloads int
+	lookupErr        error
+}
+
+// assessTyposquat is CheckTyposquattingAuthority with the evidence kept.
+//
+// The download lookup used to fail into a bare "flag on name similarity", and
+// the prompt that followed said nothing about it. A 429, a proxy block or no
+// network at all therefore looked the same as a measured squat, and a
+// legitimate package was reported as one with no way to tell why.
+func assessTyposquat(pkgName string, popularList []string, maxDist int) typosquatVerdict {
+	return assessTyposquatWith(pkgName, popularList, maxDist, weeklyDownloads)
+}
+
+// memoizeDownloads remembers each lookup, failures included, for as long as the
+// returned function lives. A run uses one, so a popular package that many names
+// sit close to is asked about once, and a rate-limited API is not asked again.
+func memoizeDownloads(lookup func(string) (int, error)) func(string) (int, error) {
+	type result struct {
+		n   int
+		err error
+	}
+	seen := map[string]result{}
+	return func(name string) (int, error) {
+		if r, ok := seen[name]; ok {
+			return r.n, r.err
+		}
+		n, err := lookup(name)
+		seen[name] = result{n, err}
+		return n, err
+	}
+}
+
+// assessTyposquatWith is assessTyposquat with the download lookup supplied.
+func assessTyposquatWith(pkgName string, popularList []string, maxDist int, lookup func(string) (int, error)) typosquatVerdict {
 	pkgName = strings.ToLower(strings.TrimSpace(pkgName))
 	for _, popular := range popularList {
 		if pkgName == popular {
-			return "" // exact match is always authoritative
+			return typosquatVerdict{} // exact match is always authoritative
 		}
 	}
 
@@ -288,8 +333,8 @@ func CheckTyposquattingAuthority(pkgName string, popularList []string, maxDist i
 		}
 
 		// Query downloads to verify authority
-		pkgDownloads, errPkg := weeklyDownloads(pkgName)
-		suspectDownloads, errSus := weeklyDownloads(popular)
+		pkgDownloads, errPkg := lookup(pkgName)
+		suspectDownloads, errSus := lookup(popular)
 
 		if errPkg == nil && errSus == nil {
 			// A package with a real user base of its own is not a squat, whatever
@@ -308,14 +353,37 @@ func CheckTyposquattingAuthority(pkgName string, popularList []string, maxDist i
 			// Authority threshold: if the target is high-popularity
 			// AND it has more than 100x the weekly downloads of the installed package, it's a typosquat
 			if suspectDownloads > popularityFloor && suspectDownloads > 100*pkgDownloads {
-				return popular
+				return typosquatVerdict{suspect: popular, pkgDownloads: pkgDownloads, suspectDownloads: suspectDownloads}
 			}
 		} else {
-			// Fallback if offline/API fails: flag on name similarity
-			return popular
+			lookupErr := errPkg
+			if lookupErr == nil {
+				lookupErr = errSus
+			}
+			// A name on nvx's own popular list is established by construction.
+			// When the fetched list replaced the embedded one, a name only the
+			// embedded list holds (`redis` beside a fetched `ioredis`) reached
+			// this fallback and was called a squat of its neighbour because a
+			// request failed. Warn and move on; the names no list holds keep the
+			// strict result below.
+			if inEmbeddedPopularList(pkgName) {
+				LogWarn("Could not look up weekly downloads (%v), so the typosquat check for %s rests on name similarity alone. It is on nvx's popular-package list, so it is not being flagged.", lookupErr, pkgName)
+				continue
+			}
+			// Fallback if offline/API fails: flag on name similarity, and say so.
+			return typosquatVerdict{suspect: popular, lookupErr: lookupErr}
 		}
 	}
-	return ""
+	return typosquatVerdict{}
+}
+
+func inEmbeddedPopularList(name string) bool {
+	for _, popular := range EmbeddedPopularPackages {
+		if name == popular {
+			return true
+		}
+	}
+	return false
 }
 
 // popularityFloor is the weekly-download count above which a package is treated
@@ -435,6 +503,10 @@ type OSVVuln struct {
 	Severity string `json:"-"`
 }
 
+// osvQueryBatchURL is OSV's batch endpoint. A variable so a test can point it at
+// a local server.
+var osvQueryBatchURL = "https://api.osv.dev/v1/querybatch"
+
 // ScanVulnerabilitiesBatch queries the OSV API for multiple packages in a single batch request
 func ScanVulnerabilitiesBatch(packages []OSVQuery) (map[string][]OSVVuln, error) {
 	if len(packages) == 0 {
@@ -448,7 +520,7 @@ func ScanVulnerabilitiesBatch(packages []OSVQuery) (map[string][]OSVVuln, error)
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post("https://api.osv.dev/v1/querybatch", "application/json", bytes.NewBuffer(data))
+	resp, err := client.Post(osvQueryBatchURL, "application/json", bytes.NewBuffer(data))
 	if err != nil {
 		return nil, fmt.Errorf("OSV API connection failed: %w", err)
 	}
@@ -587,30 +659,90 @@ type NpmRegistryMetadata struct {
 
 type NpmVersionDetails struct {
 	Scripts map[string]string `json:"scripts"`
+	Dist    struct {
+		Tarball   string `json:"tarball"`
+		Integrity string `json:"integrity"`
+		Shasum    string `json:"shasum"`
+	} `json:"dist"`
 }
 
 var resolveNpmPackageDetailsForVerify = ResolveNpmPackageDetails
 var scanVulnerabilitiesBatchForVerify = ScanVulnerabilitiesBatch
+var fetchNpmDistForVerify = fetchNpmDist
 
-// ResolveNpmPackageDetails queries npm registry for latest version, publish age, and installation script status
-func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, publishTime time.Time, hasScripts bool, err error) {
+// packuments holds each registry document fetched in this process. The checks
+// read a package's metadata and then its tarball record, and a lockfile names
+// the same package at several versions. One request serves all of them. Keyed
+// by registry as well as name, because a name on another registry is another
+// package.
+var packuments sync.Map // registry + "\x00" + name -> *packumentResult
+
+type packumentResult struct {
+	once sync.Once
+	meta NpmRegistryMetadata
+	err  error
+}
+
+func fetchNpmPackument(pkgName string) (NpmRegistryMetadata, error) {
+	regs := currentCheckRegistries()
+	registry := regs.registryFor(pkgName)
+	v, _ := packuments.LoadOrStore(registry+"\x00"+pkgName, &packumentResult{})
+	r := v.(*packumentResult)
+	r.once.Do(func() { r.meta, r.err = fetchNpmPackumentUncached(registry, regs.tokenFor(registry), pkgName) })
+	return r.meta, r.err
+}
+
+// fetchNpmPackumentUncached asks registry for a package's document. token is
+// the user's _authToken for that registry, or "". It goes in this request's
+// header and nowhere else: not in an error, a log line or an environment.
+func fetchNpmPackumentUncached(registry, token, pkgName string) (NpmRegistryMetadata, error) {
+	var meta NpmRegistryMetadata
 	client := &http.Client{Timeout: 8 * time.Second}
-	// #nosec G704 -- the host is a hardcoded literal, so this cannot be pointed at
-	// another server; only the path segment varies, and EscapeScopedPackage runs it
-	// through url.PathEscape first. gosec's taint analysis does not model the
-	// hardcoded-host case.
-	resp, err := client.Get(fmt.Sprintf("https://registry.npmjs.org/%s", EscapeScopedPackage(pkgName)))
+	req, err := http.NewRequest(http.MethodGet, registry+EscapeScopedPackage(pkgName), nil)
 	if err != nil {
-		return "", time.Time{}, false, err
+		return meta, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	// #nosec G704 -- the host is the registry the user's own npm configuration
+	// names for this package. Only the path segment varies, and
+	// EscapeScopedPackage runs it through url.PathEscape first.
+	resp, err := client.Do(req)
+	if err != nil {
+		return meta, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", time.Time{}, false, fmt.Errorf("registry returned HTTP %s", resp.Status)
+		host := registryHost(registry)
+		if token == "" && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+			return meta, fmt.Errorf("registry %s returned HTTP %s, and .npmrc has no _authToken for it", host, resp.Status)
+		}
+		return meta, fmt.Errorf("registry %s returned HTTP %s", host, resp.Status)
 	}
-
-	var meta NpmRegistryMetadata
 	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return NpmRegistryMetadata{}, err
+	}
+	return meta, nil
+}
+
+// fetchNpmDist returns the registry's tarball record for one published
+// version. A version the registry does not have comes back empty.
+func fetchNpmDist(pkgName, version string) (npmDist, error) {
+	meta, err := fetchNpmPackument(pkgName)
+	if err != nil {
+		return npmDist{}, err
+	}
+	d := meta.Versions[version].Dist
+	return npmDist{tarball: d.Tarball, integrity: d.Integrity, shasum: d.Shasum}, nil
+}
+
+// ResolveNpmPackageDetails queries npm registry for latest version, publish age, and installation script status
+func ResolveNpmPackageDetails(pkgName, versionQuery string) (version string, publishTime time.Time, hasScripts bool, err error) {
+	meta, err := fetchNpmPackument(pkgName)
+	if err != nil {
 		return "", time.Time{}, false, err
 	}
 

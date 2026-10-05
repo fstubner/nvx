@@ -92,6 +92,36 @@ func TestThePackageSweepReclaimsOnlyOrphans(t *testing.T) {
 	}
 }
 
+// A running trusted tool holds its package. Its home is persistent, so it has no
+// ephemeral owner marker and is older than the unowned grace. Without a lease
+// the sweep saw it as idle and deleted its profile once the retention window
+// passed, while it ran.
+func TestARunningToolHomeHoldsItsPackage(t *testing.T) {
+	nvxHome := tempDir(t)
+	home, err := ensurePersistentGuestProfile(nvxHome, tempDir(t), "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := nvxPackagePrefix + "eeeeeeeeeeeeeeee"
+	writeGuestHomePackage(home, pkg)
+	release := writeSessionLease(home, "0123456789abcdef", time.Now())
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	if err := os.Chtimes(home, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if !packagesHeldByLiveSessions(nvxHome)[pkg] {
+		t.Fatal("a tool home with a live lease does not hold its package")
+	}
+	release()
+	if err := os.Chtimes(home, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if packagesHeldByLiveSessions(nvxHome)[pkg] {
+		t.Fatal("a tool home still holds its package after its run released it")
+	}
+}
+
 // A package used recently must survive, or every run in a project would
 // re-register the profile it is about to use again.
 func TestThePackageSweepDoesNotChurnThroughActiveProjects(t *testing.T) {

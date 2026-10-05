@@ -228,7 +228,8 @@ setTimeout(() => { say('HUNG closed=' + closed); process.exit(9); }, 90000);
 // `npx vitest` stranding processes forever -- would come back silently.
 //
 // nvx prints "AppContainer launch failed" when the host refuses the launch, and
-// a hosted Windows runner refuses every one. That, and only that, is a skip.
+// a hosted Windows runner refused every one until 2026-09-21. That, and only
+// that, is a skip.
 func failUnlessHostRefusedLaunch(t *testing.T, out string, readErr error, what string) {
 	t.Helper()
 	if strings.Contains(out, "AppContainer launch failed") {
@@ -236,4 +237,69 @@ func failUnlessHostRefusedLaunch(t *testing.T, out string, readErr error, what s
 	}
 	t.Fatalf("%s wrote no report although the sandbox launched, so this is the feature and not the "+
 		"host: %v\nnvx said:\n%s", what, readErr, out)
+}
+
+// exec() and execFile() complete inside the sandbox.
+//
+// node's own versions call a spawn inside the child_process module that the
+// preload cannot reach, so they took the raw path and blocked in libuv before
+// the child existed. Measured 2026-09-26: a contained exec never called back,
+// and neither did a timer set before it. The preload now rebuilds both on the
+// patched spawn; this drives them through the real binary so the three parts --
+// broker, environment and preload -- are checked together, as above.
+func TestContainedExecAndExecFileComplete(t *testing.T) {
+	if os.Getenv("NVX_PROBE") != "1" {
+		t.Skip("set NVX_PROBE=1 to run (builds nvx and launches a real AppContainer)")
+	}
+
+	dir := tempDir(t)
+	nvxExe := filepath.Join(dir, "nvx.exe")
+	if out, err := exec.Command("go", "build", "-o", nvxExe, "github.com/fstubner/nvx/cmd/nvx").CombinedOutput(); err != nil {
+		t.Skipf("cannot build nvx for this test: %v\n%s", err, out)
+	}
+
+	const script = `const cp = require('child_process');
+const util = require('util');
+const fs = require('fs');
+const out = process.argv[2];
+const say = m => { try { fs.appendFileSync(out, m + '\n'); } catch (e) {} };
+cp.exec('echo from-exec', (e, o) => {
+  say('exec=' + (e ? 'error ' + e.message : o.trim()));
+  cp.execFile(process.execPath, ['-e', 'process.stdout.write("from-execFile")'], (e2, o2) => {
+    say('execFile=' + (e2 ? 'error ' + e2.message : o2));
+    util.promisify(cp.exec)('echo from-promise').then(r => {
+      say('promise=' + r.stdout.trim());
+      say('DONE');
+      process.exit(0);
+    });
+  });
+});
+`
+	scriptPath := filepath.Join(dir, "exec.js")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reportPath := filepath.Join(dir, "report.txt")
+
+	// Out here for the reason given above: when this defect is present the
+	// script's own timers never run.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, nvxExe, "--strict", "shim", "node", scriptPath, reportPath)
+	cmd.Dir = dir
+	out, _ := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("the contained command never finished within 90s: exec or execFile blocked before "+
+			"the child existed, which strands the process forever.\nnvx said:\n%s", out)
+	}
+	report, err := os.ReadFile(reportPath)
+	if err != nil {
+		failUnlessHostRefusedLaunch(t, string(out), err, "the contained process")
+	}
+	got := string(report)
+	for _, want := range []string{"exec=from-exec", "execFile=from-execFile", "promise=from-promise", "DONE"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in the contained report:\n%s", want, got)
+		}
+	}
 }

@@ -39,44 +39,10 @@ func isLinkLocal(ip net.IP) bool {
 	return ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
 
-// resolvedAddressAllowed reports whether connecting to host is acceptable once
-// its address is known, given that the policy already permitted the name.
-//
-// An IP the client asked for directly is allowed: the allowlist matched that text,
-// so a human wrote it somewhere and has decided. Only a NAME is resolved and
-// judged, because a name is the thing whose address the policy author did not
-// see.
-func resolvedAddressAllowed(host string, lookup func(string) ([]net.IP, error)) error {
-	if ip := net.ParseIP(host); ip != nil {
-		return nil
-	}
-	ips, err := lookup(host)
-	if err != nil {
-		// Resolution failure is the dial's problem to report, not a policy verdict.
-		// Refusing here would turn every transient DNS error into "blocked", which
-		// reads as a containment decision it is not.
-		return nil
-	}
-	for _, ip := range ips {
-		if isLinkLocal(ip) {
-			return fmt.Errorf("%s resolves to the link-local address %s, which nvx does not reach through a name; "+
-				"allowlist that address literally if it is really what you want", host, ip)
-		}
-	}
-	return nil
-}
-
-// checkResolvedAddress is resolvedAddressAllowed against the real resolver,
-// replaceable so a test can supply an answer without needing DNS that returns
-// one.
-var checkResolvedAddress = func(host string) error {
-	return resolvedAddressAllowed(host, net.LookupIP)
-}
-
 // resolveEgressAddresses resolves host ONCE and returns the addresses nvx will
 // dial, or an error naming why it will not.
 //
-// The point is the "once". checkResolvedAddress resolved a name to vet it and
+// The point is the "once". The check before it resolved a name to vet it and
 // then handed the NAME to net.Dial, which resolved it again -- so the address
 // that was judged and the address that was reached were two separate DNS
 // answers. A record with a short TTL answers benign to the first and

@@ -14,26 +14,27 @@ import (
 // reference, since the README handed its reference sections to the site.
 const commandReferenceDoc = "../../site/src/content/docs/docs/commands.md"
 
-// Both are hand-maintained, and the README's copy fell behind: a reader
-// following it asked for a command with flags nvx no longer took, or missed one
-// that existed. Nothing catches that -- documentation renders perfectly while
+// Both are hand-maintained, and the copy that lived in the README fell behind: a
+// reader following it asked for a command with flags nvx no longer took, or
+// missed one that existed. Nothing catches that -- documentation renders perfectly while
 // being wrong, and the only reader who would notice is the one it misleads.
 // This compares the two lists mechanically, so the next command added in one
 // place fails here rather than in someone's terminal.
-func TestTheREADMECommandListMatchesNvxHelp(t *testing.T) {
-	readme, err := os.ReadFile(commandReferenceDoc)
+func TestTheCommandReferenceMatchesNvxHelp(t *testing.T) {
+	doc, err := os.ReadFile(commandReferenceDoc)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fromHelp := commandsInBlock(helpText())
-	fromREADME := commandsInBlock(string(readme))
+	fromDoc := commandsInBlock(string(doc))
 
-	if len(fromHelp) == 0 || len(fromREADME) == 0 {
-		t.Fatalf("could not find a command list to compare (help=%d, README=%d); the block's shape changed", len(fromHelp), len(fromREADME))
+	if len(fromHelp) == 0 || len(fromDoc) == 0 {
+		t.Fatalf("could not find a command list to compare (help=%d, %s=%d); the block's shape changed",
+			len(fromHelp), commandReferenceDoc, len(fromDoc))
 	}
-	if strings.Join(fromHelp, " ") != strings.Join(fromREADME, " ") {
-		t.Fatalf("the README's command list and `nvx help` disagree.\nonly in help:   %v\nonly in README: %v",
-			missingFrom(fromHelp, fromREADME), missingFrom(fromREADME, fromHelp))
+	if strings.Join(fromHelp, " ") != strings.Join(fromDoc, " ") {
+		t.Fatalf("the command list in %s and `nvx help` disagree.\nonly in help: %v\nonly in the doc: %v",
+			commandReferenceDoc, missingFrom(fromHelp, fromDoc), missingFrom(fromDoc, fromHelp))
 	}
 }
 

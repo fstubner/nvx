@@ -8,7 +8,8 @@ nvx does two jobs with one binary.
 **It manages runtimes.** Install, switch and pin Node.js and Bun per project, and
 switch automatically on `cd` from a `.nvmrc`, `.node-version` or `package.json`.
 Switching is scoped to the shell you run it in, so another terminal is unaffected
-until it reads the same pin.
+until it reads the same pin. The shims read the pin too, so an IDE task, a git
+hook or CI runs the project's version without any shell setup.
 
 **It contains what those runtimes install.** `npm install` executes code from
 strangers with your credentials within reach. nvx runs it inside the platform's
@@ -23,12 +24,15 @@ You do not change how you type anything. nvx puts shims on `PATH`, so
 
 Before an install runs, nvx checks what it is about to fetch.
 
-- **Typosquats.** Package names are compared with a list of popular packages,
-  and the npm download counts tell a lookalike apart from a real package with a
-  similar name.
+- **Typosquats.** The names you chose, on the command line or as the project's
+  direct dependencies, are compared with a list of popular packages, and the
+  npm download counts tell a lookalike apart from a real package with a similar
+  name. Packages that arrive as dependencies of others were named by their
+  authors, so they skip this check and get the others.
 - **Known vulnerabilities.** Direct installs, `npx`-style tool runs and the
   packages in `package-lock.json` are checked against the OSV database. Without
-  a lockfile, the names in `package.json` are checked instead.
+  a `package-lock.json`, which pnpm, yarn and bun do not write, only the names
+  in `package.json` are checked, without versions.
 - **Fresh releases.** A version published inside a configurable window, 24
   hours by default, is held for your approval.
 

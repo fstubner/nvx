@@ -15,14 +15,73 @@ irm https://nvx.run/install.ps1 | iex
 curl -fsSL https://nvx.run/install.sh | sh
 ```
 
-Read a script before piping it to a shell. This one creates `~/.nvx`, puts a
-single binary in `~/.nvx/bin`, and adds one line to your shell profile.
+Read a script before piping it to a shell. Each creates `~/.nvx` and puts a
+single binary in `~/.nvx/bin`. `install.sh` then adds a three-line block to your
+shell profile: a comment, a line putting `~/.nvx/bin` on `PATH`, and
+`eval "$(nvx env)"`. For bash it writes the block to `~/.bashrc` and to your
+login profile, `~/.zshrc` for zsh, and `~/.profile` otherwise. For fish it
+writes its own file, `~/.config/fish/conf.d/nvx.fish`, in fish syntax, and
+touches nothing else. `install.ps1` adds `~/.nvx/bin` to your user `PATH` and
+one integration line, with a comment above it, to your PowerShell `$PROFILE`.
+
+cmd.exe has no profile, so nothing is written for it. With `~/.nvx/bin` on your
+user `PATH` the shims run each project's pinned version in a cmd window.
+`nvx use` cannot switch a cmd window by itself, and says so. `nvx default
+<version>` sets the version new windows start on, and
+[Commands](/docs/commands/#shells) has the one-line command that switches a
+single window.
 
 ## Prebuilt binaries
 
-nvx is not yet published to winget, Scoop, Homebrew or npm. The other route is a
+nvx is on npm as `@fstubner/nvx`. It installs only the binary for your
+platform and runs no install script:
+
+```sh
+npm install -g @fstubner/nvx
+```
+
+It is not yet published to winget, Scoop or Homebrew. The other route is a
 binary: every release attaches one per platform with a SHA-256 sidecar, for
 Windows x64, macOS on Apple silicon and Intel, and Linux on x86_64 and arm64.
+
+## Verify a download
+
+Each release asset carries a signed build attestation, made by the release
+workflow in this repository. With the GitHub CLI (2.49 or newer, signed in with
+`gh auth login`), check the file you downloaded:
+
+```sh
+gh attestation verify nvx-linux-amd64 --repo fstubner/nvx
+```
+
+Use your own file name. If the command reports a failure, do not run the file.
+
+The `.sha256` file beside each asset holds the file's SHA-256. It comes from the
+same release page as the binary, so it catches a damaged download and does not
+prove who built the file. Compare it from the directory holding both files.
+
+On Linux:
+
+```sh
+sha256sum -c nvx-linux-amd64.sha256
+```
+
+On macOS:
+
+```sh
+shasum -a 256 -c nvx-darwin-arm64.sha256
+```
+
+On Windows:
+
+```powershell
+(Get-FileHash nvx.exe -Algorithm SHA256).Hash -ieq ((Get-Content nvx.exe.sha256) -split '\s+')[0]
+```
+
+That prints `True` when they match. When the GitHub CLI is installed, signed in
+and 2.49 or newer, `install.sh` and `install.ps1` run the attestation check on
+the download before they install it, and stop if it fails. Without it they say
+the check was skipped and print the command to run.
 
 ## From source
 
@@ -34,12 +93,22 @@ go build -o nvx ./cmd/nvx
 
 - Puts `~/.nvx/bin` at the front of your user `PATH`.
 - Adds the shell integration line to your profile. That line is what makes
-  `nvx use` affect your shell and what switches runtimes on `cd`; without it
-  nvx still installs runtimes, but switching does nothing.
+  `nvx use` affect your shell and what switches `PATH` on `cd`. Without it the
+  shims still run the version each project pins, and `nvx use` does nothing.
 - On Windows, **asks before changing your PowerShell execution policy.**
   Declining still installs nvx — the shell integration then needs
   `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` before a profile can
   load at all.
+
+## Behind a corporate proxy or mirror
+
+nvx reads `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` like other tools, and
+contained installs go through the same proxy once nvx's allowlist has approved
+the host. To fetch Node.js from an internal mirror, set `NVX_NODE_MIRROR` to its
+`dist` URL. An existing `NVM_NODEJS_ORG_MIRROR` or `FNM_NODE_DIST_MIRROR` works
+too. The pre-install checks use the registry your `.npmrc` names. See
+[Corporate networks](/docs/policy/#corporate-networks) for what each of these
+does and which hosts nvx contacts.
 
 ## Check it worked
 
@@ -59,5 +128,10 @@ repairs what it safely can.
 
 ## Uninstall
 
-Remove `~/.nvx`, take `~/.nvx/bin` off your `PATH`, and delete the integration
-line from your shell profile.
+1. If you ever ran `nvx setup` on Windows, run `nvx setup --undo` from an
+   Administrator terminal to remove the drive-root grants it added.
+2. Run `nvx grants reset --all` to withdraw the read and execute permissions
+   granted for `allow_read_exec` entries, and to forget approved grants.
+3. Delete `~/.nvx`.
+4. Remove the nvx lines from your shell profile, or from `$PROFILE` on Windows.
+5. On Windows, remove `%USERPROFILE%\.nvx\bin` from your user `Path` variable.

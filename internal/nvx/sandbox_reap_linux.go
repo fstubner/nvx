@@ -18,14 +18,15 @@ import "syscall"
 // It also makes the supervisor the reaper of last resort for orphaned
 // descendants; see reapUntilChildExits.
 //
-// One consequence to know about before reading /proc in the supervisor: nothing
-// remounts it, so /proc there is still the host's and shows the PARENT
-// namespace's pids. Any /proc/<pid> path built from a pid the supervisor
-// observes names a different process, or none at all. That is how a denied write
-// to /proc/<child>/uid_map came back as ENOENT and read as a missing runtime for
-// a long time (see applyLinuxNamespaces). Remounting is not available either: a
-// mount here would be the host's, because the supervisor has no mount namespace
-// of its own. Use wait4 and pidfds, not /proc, in this process.
+// One consequence to know about before reading /proc in the supervisor: it
+// starts out as the host's and shows the PARENT namespace's pids. Any
+// /proc/<pid> path built from a pid the supervisor observes then names a
+// different process, or none at all. That is how a denied write to
+// /proc/<child>/uid_map came back as ENOENT and read as a missing runtime for a
+// long time (see applyLinuxNamespaces). mountPrivateProc replaces it with the
+// sandbox's own procfs partway through the supervisor's setup, and only when
+// that mount succeeds, so /proc here depends on when and whether it ran. Use
+// wait4 and pidfds, not /proc, in this process.
 //
 // CLONE_NEWNET is conditional because network.mode=open deliberately keeps host
 // networking, whereas process-tree teardown is always wanted.
@@ -41,6 +42,13 @@ func supervisorCloneFlags(networkMode string) uintptr {
 // flags above plus the user namespace that makes them possible for an ordinary
 // user, with this user mapped to root inside it.
 //
+// Pdeathsig SIGKILL is what ties the supervisor's life to nvx's. SIGKILL reaches
+// PID 1 of a namespace from outside it, and PID 1 dying takes the namespace's
+// whole tree with it. Without it, `kill nvx` left the contained process running,
+// re-parented to init, and a later nvx run deleted its guest home from under it.
+// It fires when the forking THREAD exits, so launch from a locked thread; see
+// startChildForwardingSignals.
+//
 // It exists so there is one definition rather than two. The teardown test used to
 // build its own SysProcAttr from supervisorCloneFlags alone, and when
 // CLONE_NEWUSER was added to the real launch the test kept the old shape --
@@ -49,6 +57,7 @@ func supervisorCloneFlags(networkMode string) uintptr {
 // fine by then; nothing said so.
 func supervisorSysProcAttr(networkMode string) *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{
+		Pdeathsig:  syscall.SIGKILL,
 		Cloneflags: syscall.CLONE_NEWUSER | supervisorCloneFlags(networkMode),
 		UidMappings: []syscall.SysProcIDMap{
 			{ContainerID: 0, HostID: syscall.Getuid(), Size: 1},

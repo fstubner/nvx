@@ -24,8 +24,9 @@ The shims live in `~/.nvx/project-bin/<project hash>`, not inside the project, a
 When running in the sandbox:
 * Environment secrets (e.g. `AWS_*`, `GITHUB_*`, `SSH_*`) are scrubbed.
 * Home and temp paths are virtualized to an ephemeral guest profile.
+* **Writes** go to the guest profile and the project directory. The project's `.git` is the exception. A contained command can read it and cannot write it, because git runs outside the sandbox and would run a hook or config entry left there as you. Everything else in the project stays writable, `package.json`, `node_modules` and lockfiles included, because an install has to write them.
 * **Filesystem** (`isolation.filesystem`): Windows AppContainer; Linux Landlock + namespaces; macOS Seatbelt.
-* **Network** (`isolation.network.mode: proxy`): egress via loopback proxy with allowlist; unknown hosts prompt interactively (fail-closed in CI unless `NVX_YES=true`).
+* **Network** (`isolation.network.mode: proxy`): egress via loopback proxy with allowlist. An unknown host is asked about at an interactive terminal and refused when nobody can answer. Only `NVX_TRUST_YES=true` approves one without asking. `-y`, `--agent-mode` and `NVX_YES` do not.
 
 ## Non-interactive use (CI)
 
@@ -44,13 +45,14 @@ system.
 |-----------|------------------|----------------|----------------|
 | Host profile write blocked | Yes — measured | Yes — CI (Landlock) | Yes — CI (Seatbelt) |
 | Workdir write allowed | Yes — measured | Yes — CI | Yes — CI |
-| Host profile read blocked | Yes — measured | Yes — CI (Landlock allowlist) | **No** — CI confirms reads are allowed |
-| Egress blocked when not allowlisted | Yes — measured | Yes — CI | Yes — CI |
+| Project `.git` write blocked, read allowed | Yes — measured | Yes — CI (read-only bind mount) | Yes — CI (Seatbelt deny rule) |
+| Host profile read blocked | Yes — measured | Yes — CI (Landlock allowlist) | **Partial**. CI confirms credential stores are denied and other reads are allowed |
+| Egress blocked when not allowlisted | Yes — measured\* | Yes — CI | Yes — CI |
 | Allowlisted host reachable through the proxy | Yes — measured (AppContainer + parent proxy over a UNIX socket) | Yes — CI (loopback-only netns + parent proxy over a UNIX socket) | Yes — CI (Seatbelt + loopback proxy) |
 | Raw TCP/UDP bypass blocked at OS | Yes — measured (no network capability granted) | Yes — CI (netns + seccomp UDP deny) | Yes — CI (TCP and UDP; which layer refuses TCP is untested) |
 | Fail-closed if FS/network primitive missing | Yes — measured | Yes — CI (Landlock 5.13+, iproute2 for netns) | Yes — CI (refuses to run without `sandbox-exec`) |
 | A contained server reachable from the host | Only via `--expose` | Yes | Yes |
-| One named host service reachable from the sandbox | Only via `--connect` | Only via `--connect`, except in `offline`/`loopback` | Only via `--connect` |
+| One named host service reachable from the sandbox | Via `allow_hosts` for proxy-aware clients, or `--connect` | Via `allow_hosts` for proxy-aware clients, or `--connect` except in `offline` | Via `allow_hosts` for proxy-aware clients, or `--connect` |
 
 **What backs the Windows column, and what does not.** Every "measured" above means
 a person ran it on a real Windows machine before a release. **No automated check

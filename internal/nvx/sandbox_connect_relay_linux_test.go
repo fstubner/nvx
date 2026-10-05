@@ -27,7 +27,7 @@ func TestConnectHalvesCarryTrafficToTheHostService(t *testing.T) {
 		Mode:         "proxy",
 		ConnectPorts: []connectMapping{{Host: service}},
 	}
-	env, stopParent, err := openConnectSockets(guestHome, &netCtx)
+	env, stopParent, err := openConnectSockets(guestHome, "", &netCtx)
 	if err != nil {
 		t.Fatalf("the parent could not open the tunnel socket: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestConnectHalvesCarryTrafficToTheHostService(t *testing.T) {
 func TestConnectSocketLivesInTheGuestHome(t *testing.T) {
 	guestHome := tempDir(t)
 	netCtx := NetworkLaunchContext{ConnectPorts: []connectMapping{{Host: 9222, Inside: 19222}}}
-	_, stop, err := openConnectSockets(guestHome, &netCtx)
+	_, stop, err := openConnectSockets(guestHome, "", &netCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestConnectReplacesAStaleSocketFile(t *testing.T) {
 	}
 
 	netCtx := NetworkLaunchContext{ConnectPorts: []connectMapping{{Host: 9222, Inside: 19222}}}
-	_, stop, err := openConnectSockets(guestHome, &netCtx)
+	_, stop, err := openConnectSockets(guestHome, "", &netCtx)
 	if err != nil {
 		t.Fatalf("a leftover socket file stopped the run: %v", err)
 	}

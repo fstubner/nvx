@@ -51,6 +51,25 @@ type commandResolution struct {
 	viaShim  bool   // resolved path lives inside the nvx shim dir
 }
 
+// bypassing lists the wrapped commands a shell would run from somewhere other
+// than the shim dir.
+//
+// Doctor printed "[FAIL] npm -> ... (bypasses nvx)" for each of these and then
+// "nvx is intercepting commands correctly", exiting 0: the verdict counted only
+// shadowing by nvx's own runtime dirs, and a system Node install ahead of the
+// shim dir -- the usual Windows layout, where the Machine PATH comes before the
+// User PATH -- is not one of those. A command that is not installed at all is
+// not a bypass.
+func (r doctorReport) bypassing() []string {
+	var names []string
+	for _, c := range r.commands {
+		if c.resolved != "" && !c.viaShim {
+			names = append(names, c.name)
+		}
+	}
+	return names
+}
+
 // pathShadow is a raw-runtime PATH entry that precedes the shim dir.
 type pathShadow struct {
 	dir   string
@@ -71,6 +90,12 @@ type doctorReport struct {
 	// PATHEXT-based check alone would call it healthy while bash runs the real
 	// npm unwrapped.
 	missingExeShims []string
+	// noRuntime lists wrapped commands the shim could not hand off to: no
+	// default version, and nothing on PATH outside nvx's shims. They fail with
+	// "Could not find real executable". Only Node's commands, and the commands
+	// of a runtime that has an installed version, are checked, since a machine
+	// that never installed Bun is not broken for lacking it.
+	noRuntime []string
 }
 
 // dirsEqual reports whether two directory paths are the same after cleaning
@@ -145,6 +170,30 @@ func resolveDirForScope(path string) string {
 	return clean
 }
 
+// shellPathFixLine is the one line that puts shimDir first on PATH in the
+// shell doctor is running in. On Windows it printed PowerShell syntax even in
+// Git Bash, where `$env:PATH = ...` is not a command. defaultShell tells the
+// two apart the same way `nvx use` does.
+func shellPathFixLine(goos, shell, shimDir string) string {
+	switch {
+	case shell == "fish":
+		// A list in fish, so no colon-joined string. On Windows the directory is
+		// in the POSIX form fish there reads, as for bash.
+		if goos == "windows" {
+			shimDir = ToBashPath(shimDir)
+		}
+		return "set -gx PATH " + quoteFish(shimDir) + " $PATH"
+	case shell == "cmd":
+		return `set "PATH=` + shimDir + `;%PATH%"`
+	case goos != "windows":
+		return fmt.Sprintf(`export PATH="%s:$PATH"`, shimDir)
+	case shell == "bash" || shell == "zsh":
+		return fmt.Sprintf(`export PATH="%s:$PATH"`, ToBashPath(shimDir))
+	default:
+		return fmt.Sprintf(`$env:PATH = "%s;$env:PATH"`, shimDir)
+	}
+}
+
 // dirWithin reports whether path is at or below base after cleaning.
 func dirWithin(path, base string) bool {
 	rel, err := filepath.Rel(base, path)
@@ -214,8 +263,35 @@ func diagnosePath(pathEnv, nvxHome string, shimCmds []string) doctorReport {
 			resolved: resolved,
 			viaShim:  resolved != "" && dirsEqual(filepath.Dir(resolved), shimDir),
 		})
+		if !runtimeBehindShim(c, pathEnv, nvxHome) {
+			rep.noRuntime = append(rep.noRuntime, c)
+		}
 	}
 	return rep
+}
+
+// runtimeBehindShim reports whether the shim for cmd has a real runtime to run:
+// the global default version, or a command on PATH outside nvx's shim
+// directories. A runtime nobody installed anything for is not expected to
+// resolve. Measured 2026-10-01: with shims and no default, doctor said
+// "intercepting" and exited 0 while `node` failed outright.
+func runtimeBehindShim(cmd, pathEnv, nvxHome string) bool {
+	rt := runtimeForShim(cmd)
+	if rt.Name() != "node" {
+		if versions, _ := rt.ListLocal(nvxHome); len(versions) == 0 {
+			return true
+		}
+	}
+	if def := getGlobalDefaultVersionFor(nvxHome, rt.Name()); def != "" && rt.ResolveBinary(cmd, nvxHome, def) != "" {
+		return true
+	}
+	var rest []string
+	for _, e := range filepath.SplitList(pathEnv) {
+		if !dirsEqual(e, filepath.Join(nvxHome, "bin")) && !directoryHoldsNvxShims(e) {
+			rest = append(rest, e)
+		}
+	}
+	return resolveCommandOnPath(cmd, strings.Join(rest, string(filepath.ListSeparator))) != ""
 }
 
 // shimPathPrependSnippet returns shell code that removes any existing shim-dir
@@ -246,7 +322,45 @@ func powershellASCIIPath(p string) string {
 		base64.StdEncoding.EncodeToString([]byte(p)) + `'))`
 }
 
+// cmdShimPathLine is the cmd.exe form of the same step: one `set` line holding
+// path with any entry for shimDir removed and shimDir put first. cmd has no
+// functions to define, so it is computed here from the PATH nvx was run with
+// rather than by the shell. Entries compare case-insensitively and ignoring a
+// trailing backslash, as Windows does.
+func cmdShimPathLine(path, shimDir string) string {
+	same := func(a, b string) bool {
+		return strings.EqualFold(strings.TrimRight(a, `\`), strings.TrimRight(b, `\`))
+	}
+	parts := []string{shimDir}
+	for _, p := range strings.Split(path, ";") { // not SplitList: cmd's separator on any host
+		if p != "" && !same(p, shimDir) {
+			parts = append(parts, p)
+		}
+	}
+	return cmdSetLine("PATH", strings.Join(parts, ";"))
+}
+
 func shimPathPrependSnippet(shell, shimDir string) string {
+	if shell == "fish" {
+		dir := shimDir
+		if runtime.GOOS == "windows" {
+			dir = ToBashPath(shimDir)
+		}
+		// Rebuilt as a list without the shim dir, then put back in front: the
+		// same "once, and first" the POSIX form gives, and it holds when the
+		// integration is loaded twice.
+		return "set -l __nvx_bin " + quoteFish(dir) + "\n" +
+			"set -l __nvx_rest\n" +
+			"for __nvx_p in $PATH\n" +
+			"    if test \"$__nvx_p\" != \"$__nvx_bin\"\n" +
+			"        set -a __nvx_rest $__nvx_p\n" +
+			"    end\n" +
+			"end\n" +
+			"set -gx PATH $__nvx_bin $__nvx_rest\n"
+	}
+	if shell == "cmd" {
+		return cmdShimPathLine(os.Getenv("PATH"), shimDir)
+	}
 	if shell == "bash" || shell == "zsh" {
 		dir := shimDir
 		if runtime.GOOS == "windows" {
@@ -287,6 +401,17 @@ var reportSandboxLaunchFn = reportSandboxLaunch
 // reportSetupGrantsFn is the same seam for the elevated-grant check, which reads
 // the machine's real ACLs and so cannot be driven from a test either.
 var reportSetupGrantsFn = reportSetupGrants
+
+// doctorFixRequested reports whether `nvx doctor` was given --fix among args,
+// the arguments after "doctor".
+func doctorFixRequested(args []string) bool {
+	for _, a := range args {
+		if a == "--fix" {
+			return true
+		}
+	}
+	return false
+}
 
 func runDoctor(nvxHome string, fix bool) int {
 	// Diagnose BEFORE writing anything.
@@ -339,8 +464,8 @@ func runDoctor(nvxHome string, fix bool) int {
 	// unreadable policy, then fell through to the second check and exited 0
 	// anyway. Closing over rep is deliberate: --fix reassigns it.
 	healthyNow := func() bool {
-		return rep.shimDirOnPath && len(rep.shadowedBy) == 0 &&
-			len(rep.missingExeShims) == 0 && !weakened && !policyBroken && !sandboxBroken
+		return rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.bypassing()) == 0 &&
+			len(rep.missingExeShims) == 0 && len(rep.noRuntime) == 0 && !weakened && !policyBroken && !sandboxBroken
 	}
 
 	// Runs whichever way the interception verdict goes: a machine whose PATH is
@@ -409,11 +534,7 @@ func runDoctor(nvxHome string, fix bool) int {
 	// changed their PATH for no reason.
 	if !rep.shimDirOnPath || len(rep.shadowedBy) > 0 || len(rep.missingExeShims) > 0 {
 		LogInfo("To fix the current shell now, run:")
-		if runtime.GOOS == "windows" {
-			LogInfo(`  $env:PATH = "%s;$env:PATH"`, shimDirPath(nvxHome))
-		} else {
-			LogInfo(`  export PATH="%s:$PATH"`, shimDirPath(nvxHome))
-		}
+		LogInfo("  %s", shellPathFixLine(runtime.GOOS, defaultShell(), shimDirPath(nvxHome)))
 	}
 
 	// After a --fix pass the shims may now be complete even though PATH still is
@@ -523,6 +644,12 @@ func formatDoctorReport(rep doctorReport) string {
 		b.WriteString("         Shims are nvx.exe under each command's name; an older nvx wrote .cmd/.ps1\n")
 		b.WriteString("         files instead, which Git Bash does not resolve, so these run unwrapped there.\n")
 		b.WriteString("         Fix: nvx init-shims\n")
+	}
+
+	if len(rep.noRuntime) > 0 {
+		b.WriteString("  [FAIL] no runtime to run for: " + strings.Join(rep.noRuntime, ", ") + "\n")
+		b.WriteString("         No default version is set and nothing else on PATH provides them.\n")
+		b.WriteString("         Fix: nvx install lts (the first install becomes the default)\n")
 	}
 
 	if len(rep.commands) > 0 {

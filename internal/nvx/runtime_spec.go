@@ -131,3 +131,49 @@ func runtimeFromVersionDir(nvxHome, versionDir string) string {
 	}
 	return ""
 }
+
+// projectPin is the version a project declares for one runtime and the file
+// that declares it. Both are empty when nothing does.
+type projectPin struct {
+	query  string
+	source string
+}
+
+// projectPinFor reads the version file that applies to rt in the working
+// directory, found the way `nvx auto` finds it.
+func projectPinFor(rt RuntimeProvider) projectPin {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return projectPin{}
+	}
+	query, source, err := rt.DetectConfig(cwd)
+	if err != nil || query == "" {
+		return projectPin{}
+	}
+	return projectPin{query: query, source: source}
+}
+
+// sessionRuntimeVersion is the installed version of rt that a shimmed command
+// runs when the policy pins none. In order: the version this shell has active,
+// the version the project pins when it is installed, then the global default.
+//
+// The shell comes first because `nvx use` and the shell integration both work
+// by putting a version on PATH, and in that shell a bare `node` runs it without
+// passing through the shim at all. The project's file comes next so a shim
+// started where no integration runs (an IDE task, a git hook, cron, CI) gets
+// the version the project asks for. Measured 2026-10-01 before this existed:
+// with .nvmrc at 20.11 and the default at 22, `node --version` through the shim
+// printed v22.23.3. A pin that is not installed falls through to the default,
+// and warnIfProjectPinsAnotherVersion says how to install it. The shim never
+// installs anything itself.
+func sessionRuntimeVersion(nvxHome string, rt RuntimeProvider, pin projectPin) string {
+	if v := getActiveShellVersionFor(nvxHome, rt.Name()); v != "" {
+		return v
+	}
+	if pin.query != "" {
+		if v, err := resolveLocalVersion(rt, pin.query, nvxHome); err == nil {
+			return v
+		}
+	}
+	return getGlobalDefaultVersionFor(nvxHome, rt.Name())
+}

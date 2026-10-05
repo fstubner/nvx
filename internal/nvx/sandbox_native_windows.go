@@ -38,7 +38,7 @@ var nodeSandboxPreserveFlags = []string{"--preserve-symlinks-main", "--preserve-
 // container.
 func rewriteWindowsNodeCommand(cmdPath string, args []string, nodeExeFallback string) (string, []string) {
 	switch strings.ToLower(filepath.Base(cmdPath)) {
-	case "npm.cmd", "npx.cmd":
+	case "npm.cmd", "npx.cmd", "corepack.cmd":
 		nodeExe, cliPath, ok := windowsNpmCliLaunch(cmdPath, nodeExeFallback)
 		if !ok {
 			return cmdPath, args
@@ -64,10 +64,7 @@ func rewriteWindowsNodeCommand(cmdPath string, args []string, nodeExeFallback st
 // rewrite simply declines rather than guessing.
 func resolveSandboxNodeExe(nvxHome string) string {
 	rt := runtimeForShim("node")
-	ver := getActiveShellVersionFor(nvxHome, rt.Name())
-	if ver == "" {
-		ver = getGlobalDefaultVersionFor(nvxHome, rt.Name())
-	}
+	ver := sessionRuntimeVersion(nvxHome, rt, projectPinFor(rt))
 	if ver == "" {
 		return ""
 	}
@@ -320,6 +317,22 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1, refusedToStart("the sandbox temp directory could not be created")
 	}
 
+	// The sockets the sandbox reaches nvx through. Chosen after the profile is
+	// registered, because the place they go when NVX_HOME is long is the folder
+	// Windows creates with it. See windowsSocketPrefix.
+	sockets := windowsSocketPrefix(guestHome, appContainerFolder(pkgName), netCtx)
+	if sockets != guestHomeSocketPrefix(guestHome) {
+		LogDetail("NVX_HOME is too long to hold the sandbox's sockets, so they are in %s", filepath.Dir(sockets))
+	}
+	if err := windowsSocketRoomError(sockets, config.NvxHome, guestHome, netCtx); err != nil {
+		LogError("Could not place the sockets the sandbox reaches nvx through: %v", err)
+		return 1, refusedToStart("the sandbox's sockets do not fit the AF_UNIX path limit")
+	}
+	if err := bindWindowsEgressSocket(&netCtx, sockets); err != nil {
+		LogError("Could not put the egress proxy where the sandbox can reach it: %v", err)
+		return 1, refusedToStart("the egress proxy could not be reached from the sandbox")
+	}
+
 	// Package-manager workflows used to require the elevated `nvx setup` grants,
 	// because node resolved its entry point by realpath'ing up to the drive root
 	// -- a stat an AppContainer cannot do there. NODE_OPTIONS now carries
@@ -352,7 +365,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	cmdPath, launchArgs, err := containedCommand(config, cmdPath)
 	if err != nil {
 		LogError("%v", err)
-		return 1, refusedToStart("the sandbox writable roots could not be granted")
+		return 1, refusedToStart("the command could not be staged where the sandbox can run it")
 	}
 
 	cleanEnv = containedEnv(cleanEnv, guestHome, cmdPath, config.NvxHome)
@@ -367,7 +380,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	if sidStr, err := appContainerSidToString(sid); err == nil {
 		// The guest home is named after the sandbox id, which is what makes the
 		// pipe names unique between concurrent sessions.
-		broker, channelNames, stdinNames := provisionStdioChannels(sidStr, stdioSessionID(filepath.Base(guestHome)))
+		broker, channelNames, stdinNames := provisionStdioChannels(sidStr, newStdioSessionID())
 		if broker != nil {
 			defer broker.Close()
 			cleanEnv = addStdioChannelsEnv(cleanEnv, channelNames)
@@ -405,7 +418,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	exposeCtx, cancelExpose := context.WithCancel(context.Background())
 	defer cancelExpose()
 	for _, m := range netCtx.ExposePorts {
-		e, perr := publishExposedPort(exposeCtx, guestHome, m)
+		e, perr := publishExposedPort(exposeCtx, sockets, m)
 		if perr != nil {
 			LogError("Could not publish port %d from the sandbox: %v", m.Container, perr)
 			return 1, refusedToStart("a port could not be published from the sandbox")
@@ -421,7 +434,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// the in-sandbox port, so the supervisor is told both numbers rather than
 	// deciding either -- the contained side never chooses where it can dial.
 	for i, m := range netCtx.ConnectPorts {
-		c, cerr := openConnectPort(exposeCtx, config.NvxHome, guestHome, m)
+		c, cerr := openConnectPort(exposeCtx, config.NvxHome, sockets, m)
 		if cerr != nil {
 			LogError("Could not open a path to 127.0.0.1:%d for the sandbox: %v", m.Host, cerr)
 			return 1, refusedToStart("a path to a host service could not be opened")
@@ -442,7 +455,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 
 	if useRelay || len(netCtx.ExposePorts) > 0 || len(netCtx.ConnectPorts) > 0 {
 		cmdPath, launchArgs, err = wrapWithEgressSupervisor(
-			sid, config.NvxHome, guestHome, launchDir, netCtx, cmdPath, launchArgs,
+			sid, config.NvxHome, guestHome, sockets, launchDir, netCtx, cmdPath, launchArgs,
 		)
 		if err != nil {
 			// Fail closed: falling back to a direct connection would silently
@@ -493,6 +506,10 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	if exitCode != 0 && isPackageManagerCommand(config.Command) {
 		remindAboutDriveRoots(config.NvxHome, workDir)
 	}
+	// bun's own error for this is a bare EBADF. See sandbox_bun_ebadf_hint.
+	if exitCode != 0 {
+		noteBunOffSystemDrive(config.Command, config.Args, workDir, exitCode)
+	}
 	return exitCode, nil
 }
 
@@ -517,7 +534,7 @@ func remindAboutDriveRoots(nvxHome, workDir string) {
 	if err != nil {
 		return
 	}
-	roots, _ := windowsSetupGrantPaths(nvxHome, workDir, false)
+	roots := windowsSetupGrantPaths(nvxHome, workDir, false)
 	var missing []string
 	for _, r := range roots {
 		if !driveRootHasGrant(sidStr, r) {
@@ -528,7 +545,7 @@ func remindAboutDriveRoots(nvxHome, workDir string) {
 		return
 	}
 	LogDetail("If the error above is an EPERM on %s, that is a drive root the sandbox cannot read; "+
-		"'nvx setup' from an Administrator terminal, run from that volume, grants it. Nothing else needs "+
+		"'nvx setup' from an Administrator terminal grants it. Nothing else needs "+
 		"elevation, and an EPERM inside ~/.nvx is a different problem that nvx retries itself.",
 		strings.Join(missing, " or "))
 }
@@ -557,7 +574,7 @@ func windowsSandboxNetwork(mode string) (capabilitySIDs []string, useRelay bool)
 // supervisor, which hosts the egress relay and then spawns the real target. It
 // returns the supervisor's path and argument list.
 func wrapWithEgressSupervisor(
-	sid uintptr, nvxHome, guestHome, workDir string,
+	sid uintptr, nvxHome, guestHome, sockets, workDir string,
 	netCtx NetworkLaunchContext, cmdPath string, args []string,
 ) (string, []string, error) {
 	// The egress socket is required only when the relay is the reason we are here.
@@ -582,6 +599,7 @@ func wrapWithEgressSupervisor(
 		"--nvx-home=" + nvxHome,
 		"--network-mode=" + netCtx.Mode,
 		"--egress-socket=" + netCtx.EgressSocketPath,
+		"--socket-prefix=" + sockets,
 	}
 	// Only the container port crosses: inside the sandbox the host mapping is
 	// meaningless, and the tunnel socket is named by the container port.
@@ -594,6 +612,16 @@ func wrapWithEgressSupervisor(
 	}
 	supervisorArgs = append(supervisorArgs, "--", cmdPath)
 	return supervisor, append(supervisorArgs, args...), nil
+}
+
+// driveRootHasGrant asks whether setup's identity can read a drive root. Setup
+// writes read/execute on the folder itself; this asked for modify until
+// 2026-09-02, which never matched, so a completed setup still read as missing
+// and the notice below fired on every package-manager run of a machine that had
+// nothing wrong with it. A variable so a test can stand in for the machine's
+// real drive roots, which are whatever the last elevated setup left them.
+var driveRootHasGrant = func(sidStr, root string) bool {
+	return appContainerHasGrantFor(sidStr, root, grantReadExec)
 }
 
 // noteMissingElevatedGrants notes, with --verbose only, which drive roots the
@@ -622,16 +650,6 @@ func wrapWithEgressSupervisor(
 // The "already told you" marker is keyed by identity as well as path, so an
 // upgrade that changes which identity needs the grant re-arms the notice rather
 // than inheriting a tick from the old one.
-// driveRootHasGrant asks whether setup's identity can read a drive root. Setup
-// writes read/execute on the folder itself; this asked for modify until
-// 2026-09-02, which never matched, so a completed setup still read as missing
-// and the notice below fired on every package-manager run of a machine that had
-// nothing wrong with it. A variable so a test can stand in for the machine's
-// real drive roots, which are whatever the last elevated setup left them.
-var driveRootHasGrant = func(sidStr, root string) bool {
-	return appContainerHasGrantFor(sidStr, root, grantReadExec)
-}
-
 func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 	sidStr, err := deriveCapabilitySIDString(setupCapabilityName)
 	if err != nil {
@@ -648,7 +666,7 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 	// complete account of why a contained command had failed, when the failure
 	// measured on 2026-09-01 was inside nvx's own home and no amount of elevated
 	// setup would have touched it.
-	roots, _ := windowsSetupGrantPaths(nvxHome, workDir, false)
+	roots := windowsSetupGrantPaths(nvxHome, workDir, false)
 
 	// A machine that ran setup before per-project packages has the grant on an
 	// identity nothing carries now. That case is not advisory -- it BREAKS `npx`,
@@ -684,7 +702,7 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 	// needs an entry on is inside nvx's own home. A warning that fires on every
 	// install about a condition that breaks nothing is one the person stops
 	// reading, and it was the loudest line on the screen. The failure case is
-	// still covered: remindAboutStrandedSetup says it again, after a
+	// still covered: remindAboutDriveRoots says it again, after a
 	// package-manager command has actually failed.
 	for _, r := range missing {
 		markDriveRootNoticeSeen(nvxHome, sidStr, r)
@@ -692,13 +710,13 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 
 	if stranded {
 		LogDetail("An earlier 'nvx setup' granted %s to a sandbox identity nvx no longer uses, so that grant no longer applies.", strings.Join(missing, " or "))
-		LogDetail("Re-run 'nvx setup' from an Administrator terminal, in this directory, to move it; " +
+		LogDetail("Re-run 'nvx setup' from an Administrator terminal to move it; " +
 			"only a tool that resolves a path all the way to that root would notice.")
 		return
 	}
 
 	LogDetail("The sandbox cannot read %s. Installs and npx do not need it.", strings.Join(missing, " or "))
-	LogDetail("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal, run in this directory so it covers this volume.")
+	LogDetail("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal.")
 }
 
 func driveRootNoticeFile(nvxHome string) string {

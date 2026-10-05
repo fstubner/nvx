@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -126,12 +127,24 @@ func isPlainWord(s string) bool {
 // `nvx help` still prints everything, and the last line here says so, so
 // nothing is hidden -- only ordered.
 func quickstartText() string {
+	return quickstartTextFor(runtime.GOOS)
+}
+
+// quickstartTextFor is quickstartText for one platform. The containment line
+// differs because macOS Seatbelt does not contain reads outside the credential
+// stores (docs/enforcement-matrix.md, note 2), so "no access to your keys or
+// other projects" was false there.
+func quickstartTextFor(goos string) string {
+	contained := "Runs contained: no access to your keys or other projects"
+	if goos == "darwin" {
+		contained = "Runs contained: it cannot write outside the project"
+	}
 	return `nvx - a runtime version manager that sandboxes what it installs
 
 Getting started:
   nvx install 22          Install Node.js 22 (or 'lts', or 'bun@1.2')
   nvx use 22              Switch this terminal to it
-  npm install <package>   Runs contained: no access to your keys or other projects
+  npm install <package>   ` + contained + `
 
 Already have a project?
   nvx auto                Switch to what .nvmrc / .node-version / engines asks for

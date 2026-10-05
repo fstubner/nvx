@@ -86,7 +86,7 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 		if err := grantSandboxModify(capSID, guestHome); err != nil {
 			return nil, "", err
 		}
-		removeStaleAppContainerGrant(packageSIDStr, guestHome)
+		removeStaleAppContainerGrant(guestHome)
 		if err := labelLowIntegrity(guestHome); err != nil {
 			return nil, "", fmt.Errorf("integrity label for %q: %w", guestHome, err)
 		}
@@ -97,7 +97,22 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	// (its ACL write propagates over the whole profile tree) and already grants ALL
 	// APPLICATION PACKAGES for stat/traverse. Sandbox writes go to the guest home
 	// regardless, so a failed workdir grant should not abort the run.
-	if workDir != "" && !isProfileRoot(workDir) {
+	// The repository's git metadata is made read-only to this project's
+	// capability before the working directory is granted, and a failure stops
+	// the launch: a run that may write .git can leave code that git later runs
+	// as the user. See gitMetadataPaths and restrictGitMetadataToReadOnly.
+	if workDir != "" && !isProfileRoot(workDir) && !workDirReachesControlPlane(nvxHome, workDir) {
+		if err := restrictGitMetadataToReadOnly(capSID, workDir); err != nil {
+			return nil, "", fmt.Errorf("make this repository's .git read-only for the sandbox: %w", err)
+		}
+	}
+
+	if workDir != "" && !isProfileRoot(workDir) && workDirReachesControlPlane(nvxHome, workDir) {
+		// Above the profile or inside ~/.nvx: granting it would grant nvx's own
+		// settings or the whole profile. See workDirReachesControlPlane.
+		launchDir = guestHome
+		warnWorkDirNotWritable(workDir)
+	} else if workDir != "" && !isProfileRoot(workDir) {
 		if findProjectRoot(workDir) != "" {
 			// A project: write access to it is what the command is for, so this
 			// waits however long the tree takes.
@@ -105,7 +120,7 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 				LogWarn("Could not grant the sandbox write access to %q: %v", workDir, err)
 				LogInfo("Commands that write the current folder may fail here; run from a project subfolder, or use --no-sandbox.")
 			}
-			removeStaleAppContainerGrant(packageSIDStr, workDir)
+			removeStaleAppContainerGrant(workDir)
 		} else if !grantNonProjectWorkdir(nvxHome, capSID, packageSIDStr, workDir) {
 			// The command cannot even start in a directory the sandbox may not
 			// enter, so it starts in the sandbox's home. See grantNonProjectWorkdir.

@@ -3,7 +3,7 @@ import type { FaqItem, SectionCopy } from './types';
 export const faqCopy: SectionCopy = {
   heading: 'Questions',
   leadHtml:
-    'Including the ones whose honest answer is a limitation. The full list is in <a href="https://github.com/fstubner/nvx#known-limitations">Known limitations</a>.',
+    'Including the ones whose honest answer is a limitation. The full list is in <a href="/docs/limitations/">Known limitations</a>.',
 };
 
 // `a` is plain text and goes into the FAQ structured data and /llms.txt;
@@ -25,9 +25,9 @@ export const faq: FaqItem[] = [
     // v2 (2026-09-02) added the same per-directory auto-switching and
     // auto-install this answer used to claim as a Windows gap, so the
     // comparison here is now about containment, not about switching.
-    a: 'Yes. nvx installs, switches, pins and auto-switches on cd just as they do. On Windows, that includes NVM for Windows, a separate project despite the name. What nvx adds beyond any of them is containment. Every install runs inside an OS sandbox with a scrubbed environment and an egress allowlist, on all three platforms.',
+    a: 'Yes. nvx installs, switches, pins and auto-switches on cd just as they do. On Windows, that includes NVM for Windows, a separate project despite the name. What nvx adds beyond any of them is containment. Installs run inside an OS sandbox with a scrubbed environment and an egress allowlist, on Windows, macOS and Linux. The platforms differ in the details. macOS contains reads of credential stores only, and on Windows pnpm is contained for a first install only and bun cannot run contained. Known limitations lists the rest.',
     aHtml:
-      '<p>Yes. nvx installs, switches, pins and auto-switches on <code>cd</code> just as they do. On Windows, that includes NVM for Windows, a separate project despite the name. What nvx adds beyond any of them is containment. Every install runs inside an OS sandbox with a scrubbed environment and an egress allowlist, on all three platforms.</p>',
+      '<p>Yes. nvx installs, switches, pins and auto-switches on <code>cd</code> just as they do. On Windows, that includes NVM for Windows, a separate project despite the name. What nvx adds beyond any of them is containment. Installs run inside an OS sandbox with a scrubbed environment and an egress allowlist, on Windows, macOS and Linux.</p><p>The platforms differ in the details. macOS contains reads of credential stores only, and on Windows <code>pnpm</code> is contained for a first install only and <code>bun</code> cannot run contained. <a href="/docs/limitations/">Known limitations</a> lists the rest.</p>',
   },
   {
     group: 'Basics',
@@ -46,9 +46,9 @@ export const faq: FaqItem[] = [
   {
     group: 'Containment',
     q: 'Is macOS protected the same way as Windows and Linux?',
-    a: 'No. On Windows and Linux a contained install cannot read your home directory, so SSH keys, cloud credentials and your npm token are out of reach. On macOS the Seatbelt profile allows filesystem reads, so those files can be read by absolute path. macOS still enforces write containment and egress control.',
+    a: 'No. On Windows and Linux a contained install cannot read your home directory. On macOS the Seatbelt profile allows filesystem reads and denies the known credential stores by path. SSH keys, cloud credentials and your npm token are out of reach on all three. On macOS other files in your home, other projects included, can still be read by absolute path. macOS still enforces write containment and egress control.',
     aHtml:
-      '<p><strong>No.</strong> On Windows and Linux a contained install cannot read your home directory, so SSH keys, cloud credentials and your npm token are out of reach. On macOS the Seatbelt profile allows filesystem reads, so those files <em>can</em> be read by absolute path. macOS still enforces write containment and egress control.</p>',
+      '<p><strong>No.</strong> On Windows and Linux a contained install cannot read your home directory. On macOS the Seatbelt profile allows filesystem reads and denies the known credential stores by path. SSH keys, cloud credentials and your npm token are out of reach on all three. On macOS other files in your home, other projects included, <em>can</em> still be read by absolute path. macOS still enforces write containment and egress control.</p>',
   },
   {
     // npm v12 shipped on 2026-07-08 with lifecycle scripts blocked by default.

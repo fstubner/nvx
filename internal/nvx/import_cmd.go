@@ -91,24 +91,16 @@ func runImport(source string, nvxHome string) int {
 	// not a trust-boundary one: it downloads checksum-verified runtimes from the
 	// same place `nvx install` does, so it is not in the class that deliberately
 	// refuses -y.
-	pending := make([]string, 0, len(discovered))
-	for ver, src := range discovered {
-		pending = append(pending, fmt.Sprintf("v%s (found in %s)", strings.TrimPrefix(strings.ToLower(ver), "v"), src))
-	}
-	sort.Strings(pending)
-	for _, p := range pending {
-		LogInfo("  %s", p)
-	}
-	if !PromptYesNo(fmt.Sprintf("Download and install %d Node.js version(s) into nvx?", len(pending))) {
-		LogInfo("Nothing was installed.")
-		return 0
-	}
-
+	//
+	// Versions nvx already has are sorted out first, so the count asked about
+	// is the count that will be downloaded. It counted every version found.
 	provider := Providers["node"]
 	installedCount := 0
 	alreadyInstalled := 0
 	failedCount := 0
 
+	type importItem struct{ ver, src string }
+	var toInstall []importItem
 	for ver, src := range discovered {
 		cleanVer := strings.TrimPrefix(strings.ToLower(ver), "v")
 		cleanVer = strings.TrimPrefix(cleanVer, "node-")
@@ -126,7 +118,23 @@ func runImport(source string, nvxHome string) int {
 			LogInfo("Node.js v%s (from %s) is already installed in nvx.", cleanVer, src)
 			continue
 		}
+		toInstall = append(toInstall, importItem{cleanVer, src})
+	}
+	if len(toInstall) == 0 {
+		LogSuccess("Import complete: 0 installed, %d already present.", alreadyInstalled)
+		return 0
+	}
+	sort.Slice(toInstall, func(i, j int) bool { return toInstall[i].ver < toInstall[j].ver })
+	for _, it := range toInstall {
+		LogInfo("  v%s (found in %s)", it.ver, it.src)
+	}
+	if !PromptYesNo(fmt.Sprintf("Download and install %d Node.js version(s) into nvx?", len(toInstall))) {
+		LogInfo("Nothing was installed.")
+		return 0
+	}
 
+	for _, it := range toInstall {
+		cleanVer, src := it.ver, it.src
 		LogInfo("Installing Node.js v%s, found in %s...", cleanVer, src)
 		err := provider.Install(cleanVer, nvxHome)
 		if err != nil {
@@ -185,13 +193,13 @@ func importFnm(discovered map[string]string) {
 // fnmInstallationDirs lists where fnm keeps installed Node versions: a
 // node-versions directory under its base directory, one vX.Y.Z per version.
 //
-// This scanned ~/.fnm, ~/.local/share/fnm/current and %LOCALAPPDATA%nm
+// This scanned ~/.fnm, ~/.local/share/fnm/current and %LOCALAPPDATA%\fnm
 // directly, so on fnm's standard layout it read the base directory's own
 // entries (node-versions, aliases) and found no version at all. The bases below
 // are fnm's own, from src/directories.rs and src/config.rs at 86adc96: FNM_DIR
 // when set, then the platform data directory's fnm (XDG_DATA_HOME or
 // ~/.local/share on Linux, %APPDATA% on Windows), then the legacy ~/.fnm, and on
-// macOS ~/Library/Application Support/fnm. %LOCALAPPDATA%nm is kept because
+// macOS ~/Library/Application Support/fnm. %LOCALAPPDATA%\fnm is kept because
 // the scan looked there before; a directory that does not exist costs nothing.
 func fnmInstallationDirs() []string {
 	var bases []string

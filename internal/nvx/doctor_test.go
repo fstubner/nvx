@@ -397,7 +397,7 @@ func TestDoctorDiagnosesAPolicyItCannotRead(t *testing.T) {
 	if err := generateShims(nvxHome); err != nil {
 		t.Skipf("cannot generate shims in this environment: %v", err)
 	}
-	t.Setenv("PATH", shimDirPath(nvxHome))
+	t.Setenv("PATH", shimDirPath(nvxHome)+string(os.PathListSeparator)+stubRuntimeDir(t))
 
 	wd, err := os.Getwd()
 	if err != nil {
@@ -408,6 +408,7 @@ func TestDoctorDiagnosesAPolicyItCannotRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	assumeProtectedProfile(t)
 	// The baseline has to be healthy or the comparison below proves nothing --
 	// runDoctor returns non-zero for several reasons.
 	if code := runDoctor(nvxHome, false); code != 0 {
@@ -440,5 +441,21 @@ func TestDoctorDiagnosesAPolicyItCannotRead(t *testing.T) {
 	// stderr of the refused command, which is what an MCP client discards.
 	if !strings.Contains(string(out), ".nvx-policy.json") {
 		t.Fatalf("did not name the unreadable policy file:\n%s", out)
+	}
+}
+
+// doctor's one-line PATH fix is in the syntax of the shell it runs in. On
+// Windows it was PowerShell even under Git Bash, where `$env:PATH = ...` is not
+// a command.
+func TestDoctorPathFixMatchesTheShell(t *testing.T) {
+	shim := `C:\Users\me\.nvx\bin`
+	if got := shellPathFixLine("windows", "bash", shim); got != `export PATH="/c/Users/me/.nvx/bin:$PATH"` {
+		t.Errorf("Git Bash on Windows got %q", got)
+	}
+	if got := shellPathFixLine("windows", "powershell", shim); !strings.HasPrefix(got, "$env:PATH") {
+		t.Errorf("PowerShell got %q", got)
+	}
+	if got := shellPathFixLine("linux", "bash", "/home/me/.nvx/bin"); got != `export PATH="/home/me/.nvx/bin:$PATH"` {
+		t.Errorf("Linux got %q", got)
 	}
 }

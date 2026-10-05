@@ -3,6 +3,7 @@
 package nvx
 
 import (
+	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
@@ -110,36 +111,30 @@ func TestParentProcessIsIdentifiable(t *testing.T) {
 	}
 }
 
-// A console or a file is not evidence that anyone is waiting on us, so the
-// watchdog must not arm there -- otherwise an interactive `nvx npm test` could
-// be killed by a check that was never meaningful for that handle shape.
-func TestHangupWatchDoesNotArmOnANonPipeStdin(t *testing.T) {
-	nul, err := syscall.Open("NUL", syscall.O_RDWR, 0)
-	if err != nil {
-		t.Skipf("cannot open NUL to stand in for a non-pipe stdin: %v", err)
+// A pid that names a process newer than this one is not our parent. The parent
+// pid comes from a snapshot, and if the parent exits before it is opened the pid
+// can be reused. The watchdog then waited on an unrelated process. A child this
+// test starts stands in for the reused pid, since it is newer by construction.
+func TestAParentNewerThanThisProcessIsRefused(t *testing.T) {
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", "Start-Sleep -Seconds 30")
+	if err := cmd.Start(); err != nil {
+		t.Skipf("cannot start a helper process: %v", err)
 	}
-	defer syscall.CloseHandle(nul)
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
 
-	if fileType, _, _ := procGetFileType.Call(uintptr(nul)); fileType == fileTypePipe {
-		t.Skip("NUL reported itself as a pipe on this host, so it cannot stand in for a non-pipe")
-	}
-
-	prev, _ := syscall.GetStdHandle(syscall.STD_INPUT_HANDLE)
-	const stdInputHandle = uintptr(0xFFFFFFF6)
-	procSetStdHandleTest.Call(stdInputHandle, uintptr(nul))
-	defer procSetStdHandleTest.Call(stdInputHandle, uintptr(prev))
-
-	fired := make(chan struct{}, 1)
-	watchStdinForHangup(tempDir(t), func() { fired <- struct{}{} })
-
-	select {
-	case <-fired:
-		t.Fatal("the watchdog armed on a non-pipe stdin and fired")
-	default:
+	if h, ok := openIfOlderThanSelf(uint32(cmd.Process.Pid)); ok {
+		syscall.CloseHandle(h)
+		t.Fatal("a process created after this one was accepted as its parent")
 	}
 }
 
-// The watchdog has to say why it declined.
+// The watchdog has to say why it declined, and a non-pipe stdin must not arm it.
+//
+// A console or a file is not evidence that anyone is waiting on us, so arming
+// there could kill an interactive `nvx npm test`. A separate test used to check
+// that by waiting for the watchdog to fire and looking at once, which could not
+// fail, because the first poll is 15 seconds away. The not-armed record below is what
+// shows it.
 //
 // It used to log only when it fired, so "declined" and "never armed" looked
 // identical from outside. That left 15 processes which outlived their client

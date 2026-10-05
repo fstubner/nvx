@@ -51,24 +51,25 @@ jobs:
 
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: ${{ matrix.go }}
 
     - name: Set up Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         # 24, not 20, because scripts/sandbox-smoke-egress.ps1 needs
         # --use-env-proxy to exist: Node core ignores HTTP_PROXY without it, so on
         # an older runtime the allowlisted half of that check can never pass and
-        # the script skipped itself before reaching anything about nvx. It now
-        # skips on the real blocker instead -- hosted Windows runners refusing to
-        # create AppContainer children -- which is the difference between a
-        # misleading reason and a true one. Node 20 is also deprecated on the
-        # runners.
+        # the script skipped itself before reaching anything about nvx. Until the
+        # breakaway fix of 2026-09-21 it skipped on the real blocker instead --
+        # hosted Windows runners refusing to create AppContainer children --
+        # which was a true reason where the Node one was misleading. Those
+        # runners launch them now and the script runs to its last assertion
+        # (run 37244525606). Node 20 is also deprecated on the runners.
         node-version: '24'
 
     - name: Verify dependencies
@@ -107,9 +108,11 @@ jobs:
 
     # These drive a real AppContainer launch end to end (piped stdio through a real
     # pipe, an unelevated package-manager run). They were written behind NVX_PROBE=1
-    # because they mutate ACLs and create a throwaway profile. Running them here is
-    # what turns "hosted runners cannot host an AppContainer" from an assumption into
-    # a measurement -- if it is true, this step says so with a real error.
+    # because they mutate ACLs and create a throwaway profile. Running them here
+    # turned "hosted runners cannot host an AppContainer" from an assumption into a
+    # measurement. It held until the breakaway fix of 2026-09-21 and does not now:
+    # run 37244525606 had 8 skips, none of them a refusal to launch. If a runner
+    # image refuses again, this step says so with a real error.
     - name: Windows AppContainer probes
       if: matrix.os == 'windows-latest'
       shell: pwsh
@@ -203,9 +206,12 @@ jobs:
 
         # Linux fails outright when a privileged containment test skips, because
         # there the environment can be fixed (a sysctl) and a skip means a real
-        # hole. Windows cannot: hosted runners refuse to create AppContainer
-        # children, so that one skip is a standing fact about the runner, not a
-        # regression. Every OTHER skip reason is a regression -- a probe that
+        # hole. Windows differs for one reason: a runner that refuses to create
+        # AppContainer children is a skip, not a regression. Hosted runners
+        # refused until 2026-09-21 and launch them now (run 37244525606). The
+        # tolerance stays, so a runner image that refuses again shows up as a
+        # skip with a stated reason, not a red step. Every OTHER skip reason is
+        # a regression -- a probe that
         # stopped running because a premise check fired, a runtime went missing,
         # or someone added a gate nobody reads. Those used to be invisible: the
         # step exited on go test's code, and a skip is exit 0.
@@ -289,32 +295,21 @@ jobs:
         ./scripts/sandbox-smoke.ps1
         ./scripts/sandbox-smoke-egress.ps1
 
-    # The Windows counterpart of the Linux and macOS enforcement steps. It will
-    # skip here: hosted Windows runners refuse to create AppContainer children,
-    # CreateProcess returning "Access is denied" for every executable including
-    # cmd.exe. The step exists so that stops being a standing assumption -- if a
-    # future runner image can host one, this starts asserting on its own rather
-    # than waiting for someone to notice.
+    # The Windows counterpart of the Linux and macOS enforcement steps. Hosted
+    # Windows runners refused to create AppContainer children, CreateProcess
+    # returning "Access is denied" for every executable including cmd.exe, and
+    # this step skipped. Since the breakaway fix of 2026-09-21 (see the probe
+    # step above) they can, and the script asserts here. It still skips on the
+    # two refusals a host is known to give, so a runner image that refuses
+    # again shows up as a skip in this step's log.
     #
-    # Until then Windows enforcement is gated by hand before a release
-    # (CONTRIBUTING.md), which is what the word "measured" in the Windows column
-    # of docs/enforcement-matrix.md refers to.
+    # CONTRIBUTING.md still gates Windows enforcement by hand on a real machine
+    # before a release.
     - name: Windows containment enforcement
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: ./scripts/sandbox-enforcement-windows.ps1
 
-    # The unit-test step above already exercises Landlock, the syscall table and
-    # reaping -- those need no privileges and pass on a hosted runner. The netns
-    # egress test does not: it needs CAP_SYS_ADMIN for unshare and `ip` from
-    # iproute2, so it skipped silently and the one path that proves a contained
-    # process can reach the outside proxy went unverified.
-    # install.sh shipped for months writing only `eval "$(nvx env)"` into the shell
-    # profile, never putting nvx on PATH -- so every new shell printed
-    # "nvx: command not found" and nvx never activated. Nothing tested the
-    # installer, which is why it went unnoticed. Runs on macOS too: that is where
-    # bash is a LOGIN shell and reads .bash_profile rather than .bashrc, the case
-    # the profile-selection logic exists for.
     # The installer's PATH write, against a scratch registry key. That one line
     # already shipped a defect -- it replaced every %VAR% entry with that day's
     # expansion and stored the result as plain text, so nothing expanded again
@@ -338,6 +333,13 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: ./scripts/test-install-checksum.ps1
+    # The whole installer, the documented way: through Invoke-Expression. The
+    # tests above reach its functions from a file, where $PSScriptRoot is set;
+    # under iex it is not, and every one-line install failed on it.
+    - name: Installer one-liner test
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/test-install-iex.ps1
     # Only when something above already failed, and only on Windows.
     #
     # Five of 34 CI runs on 2026-09-07/08 failed here with socket creation or
@@ -356,6 +358,12 @@ jobs:
       if: failure() && matrix.os == 'windows-latest'
       shell: pwsh
       run: ./scripts/check-network-stack.ps1
+    # install.sh shipped for months writing only `eval "$(nvx env)"` into the shell
+    # profile, never putting nvx on PATH -- so every new shell printed
+    # "nvx: command not found" and nvx never activated. Nothing tested the
+    # installer, which is why it went unnoticed. Runs on macOS too: that is where
+    # bash is a LOGIN shell and reads .bash_profile rather than .bashrc, the case
+    # the profile-selection logic exists for.
     - name: Installer shell-profile test
       if: matrix.os != 'windows-latest'
       shell: bash
@@ -366,7 +374,23 @@ jobs:
       if: matrix.os != 'windows-latest'
       shell: bash
       run: sh scripts/test-install-download.sh
+    # The npm wrapper's exit status, against a stub binary.
+    - name: npm wrapper test
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: sh scripts/test-npm-wrapper.sh
+    # The publish scripts' shared checks. They run only during a release, so a
+    # regression in them would otherwise surface on release day.
+    - name: Release script tests
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash
+      run: bash scripts/release/lib_test.sh
 
+    # The unit-test step above already exercises Landlock, the syscall table and
+    # reaping -- those need no privileges and pass on a hosted runner. The netns
+    # egress test does not: it needs CAP_SYS_ADMIN for unshare and `ip` from
+    # iproute2, so it skipped silently and the one path that proves a contained
+    # process can reach the outside proxy went unverified.
     - name: Linux containment tests (privileged)
       if: matrix.os == 'ubuntu-latest'
       shell: bash
@@ -388,7 +412,11 @@ jobs:
         # user namespace, so the private /proc the Bun fix depends on cannot be
         # mounted. Leaving it out of this filter would mean it runs nowhere -- the
         # exact shape of the drift that once left 31 of 41 probes matching nothing.
-        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone|TestContainedProcess' ./internal/nvx 2>&1 | tee /tmp/priv.log
+        # TestGitMetadata... skips unprivileged for the same reason: it needs the
+        # mount namespace that makes .git read-only.
+        # The same prefix selects TestContainedProcessCannotReachHostUnixSockets,
+        # which runs the real supervisor and so needs root here for the same reason.
+        sudo -E env "PATH=$PATH" go test -v -timeout 8m -run 'TestNetns|TestReap|TestSupervisorClone|TestContainedProcess|TestNvxTermination|TestGitMetadata' ./internal/nvx 2>&1 | tee /tmp/priv.log
         # A failure, not a warning. This said "it is verifying nothing" and then
         # let the job go green, so the condition it names could persist
         # indefinitely -- which is what happened on Linux before 2026-08-23, when
@@ -411,10 +439,31 @@ jobs:
         # hardening lets an unprivileged user namespace be created but refuses
         # CAP_NET_ADMIN inside it, so nvx's loopback setup gets EPERM and the
         # sandbox fails closed. Without this both scripts skip themselves, which
-        # is honest but verifies nothing.
-        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
-        ./scripts/sandbox-smoke.sh
-        ./scripts/sandbox-smoke-egress.sh
+        # is honest but verifies nothing. No `|| true`: a sysctl that fails here
+        # is the start of a skip.
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        # doctor's own control launch must agree that the sandbox starts here. Its
+        # exit code is not asserted, since other checks (PATH, shims) are not set up
+        # on a runner; the line it prints about the sandbox is.
+        { ./nvx doctor || true; } 2>&1 | tee /tmp/doctor.log
+        if ! grep -q 'the sandbox starts' /tmp/doctor.log; then
+          echo "::error::nvx doctor did not report a sandbox that starts, on a host where the sandbox smoke is about to run"
+          exit 1
+        fi
+        # Each script skips with exit 0 when a runtime will not install or the
+        # host cannot host the sandbox, which is right on a developer machine
+        # and verifies nothing here. So the step requires the line each prints
+        # only when it ran to the end, as the Docker step below does.
+        ./scripts/sandbox-smoke.sh 2>&1 | tee /tmp/smoke.log
+        if ! grep -q '^Linux sandbox smoke passed\.' /tmp/smoke.log; then
+          echo "::error::the Linux sandbox smoke did not run to completion; it is verifying nothing"
+          exit 1
+        fi
+        ./scripts/sandbox-smoke-egress.sh 2>&1 | tee /tmp/egress.log
+        if ! grep -q '^Egress smoke passed' /tmp/egress.log; then
+          echo "::error::the Linux egress smoke did not run to completion; it is verifying nothing"
+          exit 1
+        fi
 
     # The smoke scripts check that the sandbox runs and that blocked egress
     # fails. This one asserts the filesystem guarantees with absolute paths --
@@ -438,7 +487,7 @@ jobs:
         # fails closed. That is the distribution's hardening, not an nvx bug, and
         # an ephemeral runner is the right place to relax it; a real user on 24.04
         # meets the same wall, which is worth knowing separately.
-        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
         # Unprivileged on purpose: it is the configuration nvx is built for, and
         # the sysctl above is what makes it possible here. Earlier revisions of
         # this step blamed both AppArmor and root-owned files for the runtime
@@ -446,7 +495,15 @@ jobs:
         # nested user namespace, and the uid/gid mapping that goes with one is
         # written through /proc, which the supervisor's own Landlock ruleset does
         # not grant. See applyLinuxNamespaces.
-        ./scripts/sandbox-enforcement-linux.sh
+        #
+        # The full passed line, egress included. The script also passes with
+        # "Egress NOT asserted" when it finds no network namespace, and it skips
+        # with exit 0 when the runtime install fails. Neither is a result here.
+        ./scripts/sandbox-enforcement-linux.sh 2>&1 | tee /tmp/enforcement.log
+        if ! grep -q '^Linux enforcement probe passed: writes contained, reads restricted, egress denied\.' /tmp/enforcement.log; then
+          echo "::error::the Linux enforcement probe skipped some or all of its assertions"
+          exit 1
+        fi
 
     # The docker provider had no coverage at all until this step: no test called
     # its launch function, and nothing here mentioned docker. Its argument list
@@ -502,16 +559,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version: '1.26.6'
         cache: false
 
     - name: Run govulncheck
-      uses: golang/govulncheck-action@v1
+      uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
 
     # Pinned by commit, like release.yml's third-party actions: @master ran
     # whatever that branch held on the day, inside a job with this repo's code.

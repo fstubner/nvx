@@ -127,3 +127,43 @@ func TestAThisFolderEntryLeavesDescendantsAndInheritanceAlone(t *testing.T) {
 		t.Error("a directory created after the write inherits nothing; the write broke inheritance from its parent")
 	}
 }
+
+// Replacing or removing an inheritable entry has to reach the descendants that
+// inherited it. The this-folder write skips them, so for that case it must
+// hand over to the write that walks them.
+func TestAThisFolderWriteOverAnInheritableEntryReachesDescendants(t *testing.T) {
+	const sid = "S-1-15-3-1024-1313131313-2424242424-3535353535-1616161616-2727272727-3838383838-1919191919"
+	for _, mask := range []uint32{aclMaskTraverse, 0} {
+		dir := tempDir(t)
+		child := filepath.Join(dir, "child")
+		if err := os.MkdirAll(child, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := grantACL(dir, sid, aclMaskReadExec, nvxInheritFlags); err != nil {
+			t.Fatalf("inheritable grant: %v", err)
+		}
+		if !childCarriesInherited(t, child, sid) {
+			t.Fatal("test setup: the child did not inherit the entry")
+		}
+		if err := writeThisFolderEntry(dir, sid, mask); err != nil {
+			t.Fatalf("mask %#x: %v", mask, err)
+		}
+		if childCarriesInherited(t, child, sid) {
+			t.Errorf("mask %#x: the child still carries an inherited copy of an entry its parent no longer has", mask)
+		}
+	}
+}
+
+func childCarriesInherited(t *testing.T, path, sid string) bool {
+	t.Helper()
+	entries, err := readDACL(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Inherited && sidsEqual(e.SID, sid) {
+			return true
+		}
+	}
+	return false
+}

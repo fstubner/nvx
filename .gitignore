@@ -1,6 +1,6 @@
 # Binaries. Anchored to the repo root: unanchored `nvx` also matched the
 # directory npm/nvx/, so the wrapper package was never committed and a fresh
-# checkout had no npm/nvx for release.yml to publish from.
+# checkout had no npm/nvx for publish.yml to publish from.
 /nvx
 /nvx.exe
 *.exe

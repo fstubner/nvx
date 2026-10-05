@@ -326,11 +326,23 @@ func writeExecutableFile(path string, data []byte) error {
 // installAliases covers the install/add spellings accepted by npm, yarn, and
 // pnpm, including npm's typo aliases (isntall etc.) which would otherwise
 // bypass verification.
+//
+// install-test and install-ci-test install and then run the test script, so
+// they are installs with every alias npm gives them (it; cit, sit,
+// clean-install-test). They and isntal were missing until 2026-09-26, and each
+// ran as your own code: no sandbox and no pre-install checks.
 var installAliases = map[string]bool{
 	"install": true, "i": true, "in": true, "ins": true, "inst": true,
 	"insta": true, "instal": true, "isnt": true, "isnta": true,
-	"isntall": true, "add": true,
+	"isntal": true, "isntall": true, "add": true,
+	"install-test": true, "it": true,
+	"install-ci-test": true, "cit": true, "sit": true, "clean-install-test": true,
 }
+
+// ciVerbs are npm's clean-install and its aliases: an install from the lockfile
+// with no package arguments. Only "ci" was known until 2026-09-26, so `npm
+// clean-install` and `npm ic` ran as your own code.
+var ciVerbs = []string{"ci", "clean-install", "ic", "install-clean", "isntall-clean"}
 
 // findInstallVerbIndex scans args for a token matching installAliases or one
 // of extraVerbs, and returns its index, or -1 if none is found. It does NOT
@@ -433,9 +445,15 @@ func installPackagesArg(args []string, extraVerbs ...string) []string {
 	if subIdx == -1 {
 		return nil
 	}
+	return positionalsAfter(args, subIdx)
+}
+
+// positionalsAfter returns the non-flag tokens after args[verbIdx], which are
+// the packages a package-manager verb names.
+func positionalsAfter(args []string, verbIdx int) []string {
 	var pkgs []string
 	passthrough := false
-	for _, arg := range args[subIdx+1:] {
+	for _, arg := range args[verbIdx+1:] {
 		if !passthrough && arg == "--" {
 			// After the verb, "--" ends flag parsing: everything from here is a
 			// package spec, dashes included. Measured: `npm install -- --weird-name`
@@ -474,8 +492,10 @@ var globalInstallFlags = map[string]bool{"-g": true, "--global": true}
 // un-contained — runShim checks this to fail with a clear message instead of
 // a confusing permission error partway through.
 func isGlobalInstall(cmdName string, args []string) bool {
+	// bun installs globally with the same -g/--global flags, into the real
+	// home's .bun, which the sandbox does not grant either.
 	switch strings.ToLower(cmdName) {
-	case "npm", "yarn", "pnpm":
+	case "npm", "yarn", "pnpm", "bun":
 	default:
 		return false
 	}
@@ -489,19 +509,56 @@ func isGlobalInstall(cmdName string, args []string) bool {
 	if strings.EqualFold(cmdName, "yarn") && hasLeadingSubcommand(args, "global") {
 		return true
 	}
+	if globalOnlyCommand(cmdName, args) != "" {
+		return true
+	}
 
-	if !hasInstallVerb(args, "ci") {
+	// `pnpm link -g` and `bun link -g` register the current package in the
+	// global store, the same location an install with -g writes.
+	if !hasInstallVerb(args, append([]string{"link", "ln"}, ciVerbs...)...) {
 		return false
 	}
-	for _, arg := range args {
+	for i, arg := range args {
 		if arg == "--" {
 			return false
 		}
 		if globalInstallFlags[arg] {
 			return true
 		}
+		// npm's newer spelling of -g, in both its forms.
+		if arg == "--location=global" || (arg == "--location" && i+1 < len(args) && args[i+1] == "global") {
+			return true
+		}
 	}
 	return false
+}
+
+// globalOnlyCommand names a command that always writes outside the project,
+// whatever its flags, or returns "".
+//
+// `npm link` in either form writes a symlink into the global prefix (measured
+// with npm 11.19.0), so it cannot work contained. `pnpm self-update` and `pnpm
+// env use` install pnpm and Node.js into PNPM_HOME. `npm link <package>` and
+// these two are contained since 2026-10-01, because they fetch or run code nvx
+// did not see. Refusing them up front tells the user to reach for
+// --no-sandbox, where a contained run would fail partway through.
+func globalOnlyCommand(cmdName string, args []string) string {
+	switch strings.ToLower(cmdName) {
+	case "npm":
+		if i := commandVerbIndex(args, "link", "ln"); i >= 0 {
+			return "npm " + strings.ToLower(args[i])
+		}
+	case "pnpm":
+		if commandVerbIndex(args, "self-update") >= 0 {
+			return "pnpm self-update"
+		}
+		for _, sub := range []string{"use", "add"} {
+			if hasCommandPair(args, "env", sub) {
+				return "pnpm env " + sub
+			}
+		}
+	}
+	return ""
 }
 
 // hasLeadingSubcommand reports whether name is the first non-flag token in args.
@@ -524,30 +581,12 @@ func hasLeadingSubcommand(args []string, name string) bool {
 	return false
 }
 
+// detectShimPackagesForVerification lists the package specs the pre-install
+// checks run on for a command, reading the project where the command names
+// none. npm's own resolution, which verifyBeforeRun adds, is not part of it.
 func detectShimPackagesForVerification(cmdName string, args []string) []string {
-	switch strings.ToLower(cmdName) {
-	case "npm", "yarn", "pnpm":
-		if pkgs := detectInstallPackages(args); len(pkgs) > 0 {
-			return pkgs
-		}
-		if hasInstallVerb(args, "ci") {
-			if pkgs := packagesFromPackageLock(); len(pkgs) > 0 {
-				return pkgs
-			}
-			return packagesFromPackageJSON()
-		}
-	case "bun":
-		// bun add/install/i/a [pkg...]; "a" is Bun's short alias for add.
-		if pkgs := installPackagesArg(args, "a"); len(pkgs) > 0 {
-			return pkgs
-		}
-		if hasInstallVerb(args, "a") {
-			return packagesFromPackageJSON()
-		}
-	case "npx", "bunx":
-		return detectExecutorPackages(args)
-	}
-	return nil
+	targets, _ := detectTargets(cmdName, args, hostNodePlatform())
+	return targetSpecs(targets)
 }
 
 func detectExecutorPackages(args []string) []string {
@@ -618,16 +657,46 @@ type packageLockFile struct {
 	Dependencies map[string]packageLockDep   `json:"dependencies"`
 }
 
-// A `packages` entry. Its own `dependencies` is deliberately not decoded: the
-// resolved version of every one of them already appears as its own entry in
-// `packages`, keyed by path.
+// A `packages` entry. The resolved version of each of its dependencies appears
+// as its own entry, keyed by path. Its dependency maps are read for the specs
+// they declare, which say whether a URL in `resolved` was asked for.
 type packageLockEntry struct {
 	Version string `json:"version"`
+	// Name is present when it differs from the path, which is what an npm alias
+	// does: `node_modules/lp` holding left-pad carries "name": "left-pad".
+	Name string `json:"name"`
+	// Where npm fetches the package, and the hash it checks the download
+	// against. The checks read only name and version until 2026-10-01, so an
+	// entry could name one package and fetch another.
+	Resolved         string     `json:"resolved"`
+	Integrity        string     `json:"integrity"`
+	Link             bool       `json:"link"`
+	HasInstallScript bool       `json:"hasInstallScript"`
+	OS               stringList `json:"os"`
+	CPU              stringList `json:"cpu"`
+
+	Dependencies         map[string]string `json:"dependencies"`
+	DevDependencies      map[string]string `json:"devDependencies"`
+	OptionalDependencies map[string]string `json:"optionalDependencies"`
+	PeerDependencies     map[string]string `json:"peerDependencies"`
+}
+
+// lockEntryPackageName is the package a `packages` entry installs. The path
+// names the directory, and under an alias that is the alias, so reading the
+// path alone checked left-pad as `lp` and the blocklist never saw it.
+func lockEntryPackageName(path string, entry packageLockEntry) string {
+	name := packageNameFromLockPath(path)
+	if name != "" && entry.Name != "" {
+		return entry.Name
+	}
+	return name
 }
 
 // A node in the lockfileVersion 1 `dependencies` tree, which nests.
 type packageLockDep struct {
 	Version      string                    `json:"version"`
+	Resolved     string                    `json:"resolved"`
+	Integrity    string                    `json:"integrity"`
 	Dependencies map[string]packageLockDep `json:"dependencies"`
 }
 
@@ -651,44 +720,11 @@ func projectManifestDir() string {
 }
 
 func packagesFromPackageLock() []string {
-	data, err := os.ReadFile(filepath.Join(projectManifestDir(), "package-lock.json"))
-	if err != nil {
+	lock, ok, _ := readProjectLockfile(projectManifestDir())
+	if !ok {
 		return nil
 	}
-	var lock packageLockFile
-	if err := json.Unmarshal(data, &lock); err != nil {
-		LogWarn("Failed to parse package-lock.json for verification: %v", err)
-		return nil
-	}
-	seen := map[string]bool{}
-	var pkgs []string
-	for path, pkg := range lock.Packages {
-		name := packageNameFromLockPath(path)
-		if name == "" || pkg.Version == "" {
-			continue
-		}
-		query := name + "@" + pkg.Version
-		if !seen[query] {
-			seen[query] = true
-			pkgs = append(pkgs, query)
-		}
-	}
-	addLockDependencies(lock.Dependencies, seen, &pkgs)
-	sort.Strings(pkgs)
-	return pkgs
-}
-
-func addLockDependencies(deps map[string]packageLockDep, seen map[string]bool, out *[]string) {
-	for name, dep := range deps {
-		if dep.Version != "" {
-			query := name + "@" + dep.Version
-			if !seen[query] {
-				seen[query] = true
-				*out = append(*out, query)
-			}
-		}
-		addLockDependencies(dep.Dependencies, seen, out)
-	}
+	return targetSpecs(lockTargets(lock, nodePlatform{}, ""))
 }
 
 func packageNameFromLockPath(path string) string {
@@ -700,34 +736,27 @@ func packageNameFromLockPath(path string) string {
 	return path[idx+len(marker):]
 }
 
+// packagesFromPackageJSON lists the dependencies package.json declares, each
+// with its declared spec: name@1.2.3, name@^1.0.0, name@file:../x.
+//
+// Names alone were returned until 2026-10-01, so the checks looked at the
+// newest version of each rather than the declared one (esbuild pinned at
+// 0.20.0 was checked as 0.28.2), and asked the registry about local and
+// workspace dependencies by name.
 func packagesFromPackageJSON() []string {
-	data, err := os.ReadFile(filepath.Join(projectManifestDir(), "package.json"))
-	if err != nil {
-		return nil
-	}
-	var pkg struct {
-		Dependencies         map[string]string `json:"dependencies"`
-		DevDependencies      map[string]string `json:"devDependencies"`
-		OptionalDependencies map[string]string `json:"optionalDependencies"`
-		PeerDependencies     map[string]string `json:"peerDependencies"`
-	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		LogWarn("Failed to parse package.json for verification: %v", err)
+	m, ok := readManifestDeps(projectManifestDir())
+	if !ok {
 		return nil
 	}
 	seen := map[string]bool{}
 	var pkgs []string
-	for _, deps := range []map[string]string{
-		pkg.Dependencies,
-		pkg.DevDependencies,
-		pkg.OptionalDependencies,
-		pkg.PeerDependencies,
-	} {
-		for name := range deps {
-			if !seen[name] {
-				seen[name] = true
-				pkgs = append(pkgs, name)
+	for _, deps := range m.depMaps() {
+		for name, spec := range deps {
+			if seen[name] {
+				continue
 			}
+			seen[name] = true
+			pkgs = append(pkgs, manifestDepSpec(name, spec))
 		}
 	}
 	sort.Strings(pkgs)
@@ -803,6 +832,10 @@ func endActiveChild() bool {
 // runShim runs a wrapped command, contained or not. It wraps runShimTraced so
 // that every exit path -- refusal, sandbox, direct -- lands in one run record.
 func runShim(cmdName string, args []string, nvxHome string) int {
+	// isShimCommand accepts `nvx NPM install x` case-insensitively, and the
+	// verification switch below matches exact lowercase names. Without this the
+	// command ran contained with every pre-install check skipped.
+	cmdName = strings.ToLower(cmdName)
 	trace := beginRunTrace(nvxHome, cmdName, args)
 	code := runShimTraced(trace, cmdName, args, nvxHome)
 	// A child killed because the client went away did not fail on its own terms;
@@ -864,28 +897,38 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	// that block is inside shouldSandbox, which is where the refusal belongs: a
 	// global install is fine when isolation is off.
 	contain := shouldSandbox(cmdName, args, policy, opts)
-	if contain && isGlobalInstall(cmdName, args) {
+	// The package manager that will really run, when the command reaches it
+	// through corepack or its entry script: `corepack pnpm add -g x` is a global
+	// install and `node npm-cli.js install x` needs x checked.
+	pmCmd, pmArgs := packageManagerBehind(cmdName, args)
+	if contain && isGlobalInstall(pmCmd, pmArgs) {
 		trace.note(runModeRefused, "global install cannot be contained")
-		refuseContainedGlobalInstall(cmdName)
+		refuseContainedGlobalInstall(cmdName, pmCmd, pmArgs)
 		reportRefusalOverStdio("a global install cannot be run inside the sandbox", "")
 		return exitRefused
 	}
 
-	switch cmdName {
+	switch strings.ToLower(pmCmd) {
 	case "npm", "yarn", "pnpm", "npx", "bun", "bunx":
-		if pkgs := detectShimPackagesForVerification(cmdName, args); len(pkgs) > 0 {
-			// Returning rather than exiting here is what lets runShim record the
-			// abort. A blocked or refused install is a run, and the one a later
-			// review most wants to find.
-			if code, reason := runVerifyInstall(pkgs, nvxHome); code != 0 {
-				trace.note(runModeRefused, "blocked by pre-install verification: "+reason)
-				// Say so to an MCP client if one is waiting. Without this the client
-				// sees a process that closed the pipe without answering and reports
-				// "Connection closed" -- the same message an unrelated transport bug
-				// produces, which is exactly how this was misdiagnosed once already.
-				reportRefusalOverStdio(reason, firstPackageLabel(pkgs))
-				return exitRefused
-			}
+		// Returning rather than exiting here is what lets runShim record the
+		// abort. A blocked or refused install is a run, and the one a later
+		// review most wants to find.
+		if code, reason, label := verifyBeforeRun(verifyRequest{
+			pmCmd: pmCmd, pmArgs: pmArgs, nvxHome: nvxHome, contain: contain,
+			launch: SandboxConfig{
+				NvxHome:            nvxHome,
+				FilesystemProvider: opts.filesystemProvider,
+				ReadExecRoots:      resolveReadExecRoots(policy.Isolation.Filesystem.AllowReadExec, nvxHome),
+				PassEnv:            policy.Isolation.Environment.Allow,
+			},
+		}); code != 0 {
+			trace.note(runModeRefused, "blocked by pre-install verification: "+reason)
+			// Say so to an MCP client if one is waiting. Without this the client
+			// sees a process that closed the pipe without answering and reports
+			// "Connection closed" -- the same message an unrelated transport bug
+			// produces, which is exactly how this was misdiagnosed once already.
+			reportRefusalOverStdio(reason, label)
+			return exitRefused
 		}
 	}
 	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" {
@@ -914,10 +957,10 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		if opts.payloadBareProvider {
 			LogInfo("--filesystem-provider needs its value attached, as --filesystem-provider=native. Written with a space, nvx cannot tell the value from one of %s's own arguments, so it is passed through untouched.", cmdName)
 		}
-		if isGlobalInstall(cmdName, args) {
+		if isGlobalInstall(pmCmd, pmArgs) {
 			// Normally unreachable: the same check runs before verification above.
 			// Kept so the rule holds if that early return is ever moved.
-			refuseContainedGlobalInstall(cmdName)
+			refuseContainedGlobalInstall(cmdName, pmCmd, pmArgs)
 			return exitRefused
 		}
 		toolName := ""
@@ -932,7 +975,7 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 			Args:               args,
 			FilesystemProvider: opts.filesystemProvider,
 			ToolName:           toolName,
-			ReadExecRoots:      resolveReadExecRoots(policy.Isolation.Filesystem.AllowReadExec),
+			ReadExecRoots:      resolveReadExecRoots(policy.Isolation.Filesystem.AllowReadExec, nvxHome),
 			PassEnv:            policy.Isolation.Environment.Allow,
 			// The mode above is what nvx INTENDED. This is how it turned out: a
 			// sandbox that never started leaves the command unrun, and a record
@@ -974,11 +1017,33 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		}
 	}
 
-	rt := runtimeForShim(cmdName)
-	activeVer := getActiveShellVersionFor(nvxHome, rt.Name())
-	if activeVer == "" {
-		activeVer = getGlobalDefaultVersionFor(nvxHome, rt.Name())
+	cmd, err := directCommand(cmdName, args, nvxHome, true)
+	if err != nil {
+		LogError("Could not find real executable for %s", cmdName)
+		return 1
 	}
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := runDirectChild(cmd); err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			return childExitCode(exitError)
+		}
+		LogError("Failed to execute %s: %v", cmdName, err)
+		return 1
+	}
+	return 0
+}
+
+// directCommand builds the uncontained launch of cmdName the way a shim
+// resolves it: the pinned runtime first, then the project's own bin, then PATH
+// without nvx's shims. warnPin says whether to warn when the project pins
+// another runtime version, which only the command itself should do.
+func directCommand(cmdName string, args []string, nvxHome string, warnPin bool) (*exec.Cmd, error) {
+	rt := runtimeForShim(cmdName)
+	pin := projectPinFor(rt)
+	activeVer := sessionRuntimeVersion(nvxHome, rt, pin)
 
 	binaryPath := resolvePinnedCommandPath(cmdName, nvxHome, activeVer, rt)
 	if binaryPath == "" {
@@ -990,12 +1055,13 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		var err error
 		binaryPath, err = lookPathSkippingNvxShims(cmdName, nvxHome)
 		if err != nil {
-			LogError("Could not find real executable for %s", cmdName)
-			return 1
+			return nil, err
 		}
 	}
 	binaryPath = preferWindowsRuntimeExe(binaryPath)
-	warnIfProjectPinsAnotherVersion(nvxHome, rt, activeVer, binaryPath)
+	if warnPin {
+		warnIfProjectPinsAnotherVersion(nvxHome, rt, pin, activeVer, binaryPath)
+	}
 
 	// Windows: launch npm/npx as node.exe rather than through cmd.exe, and let
 	// the child find the real runtime for its own nested `node`/`bun` calls
@@ -1018,33 +1084,7 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	// a shim is for; launchPath comes from nvx's own resolution, not from input.
 	cmd := exec.Command(launchPath, launchArgs...)
 	cmd.Env = childEnv // nil inherits, exactly as before
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	// Start/Wait rather than Run, so the hangup watchdog has something to stop.
-	if err := cmd.Start(); err != nil {
-		LogError("Failed to execute %s: %v", cmdName, err)
-		return 1
-	}
-	// Reap this child if nvx stops waiting on it, by any route. The hangup
-	// watchdog below is the polite one; this is the backstop that also covers
-	// nvx being killed outright, which is how the leak this fixes was actually
-	// produced -- nvx was gone a second after its client, before the watchdog's
-	// first poll, and the child ran on for ever.
-	defer superviseDirectChild(cmd.Process.Pid)()
-
-	setActiveChildKiller(func() { _ = cmd.Process.Kill() })
-	defer setActiveChildKiller(nil)
-
-	if err := cmd.Wait(); err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			return exitError.ExitCode()
-		}
-		LogError("Failed to execute %s: %v", cmdName, err)
-		return 1
-	}
-	return 0
+	return cmd, nil
 }
 
 // ToBashPath converts a Windows path to Git Bash path format (e.g. C:\Users -> /c/Users)
@@ -1060,7 +1100,7 @@ func ToBashPath(winPath string) string {
 
 // FormatPathForShell formats the PATH string for the specific shell
 func FormatPathForShell(shell, rawPath string) string {
-	if shell == "bash" || shell == "zsh" {
+	if shell == "bash" || shell == "zsh" || shell == "fish" {
 		if runtime.GOOS == "windows" {
 			parts := filepath.SplitList(rawPath)
 			var bashParts []string
@@ -1076,10 +1116,47 @@ func FormatPathForShell(shell, rawPath string) string {
 }
 
 func shellEnvAssignment(shell, key, value string) string {
-	if shell == "bash" || shell == "zsh" {
+	switch shell {
+	case "bash", "zsh":
 		return "export " + key + "=" + quotePOSIXShell(value) + "\n"
+	case "fish":
+		// PATH is a list in fish. Handed one colon-joined string it is split
+		// anyway, but a list says what is meant and survives a fish that does not.
+		if key == "PATH" {
+			parts := strings.Split(value, ":")
+			for i, p := range parts {
+				parts[i] = quoteFish(p)
+			}
+			return "set -gx PATH " + strings.Join(parts, " ") + "\n"
+		}
+		return "set -gx " + key + " " + quoteFish(value) + "\n"
+	case "cmd":
+		return cmdSetLine(key, value)
 	}
 	return "$env:" + key + " = " + quotePowerShell(value) + "\n"
+}
+
+// quoteFish single-quotes value for fish, where only \ and ' are special inside
+// single quotes.
+func quoteFish(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	return "'" + strings.ReplaceAll(value, "'", `\'`) + "'"
+}
+
+// cmdSetLine renders `set "KEY=value"`, the form that survives spaces, & ( ) and
+// ^ in a value. It is written to be run by `FOR /f ... DO %i`, which takes the
+// line literally, so a % is left as it is. Measured 2026-10-01 in cmd.exe: with
+// `DO CALL %i` a doubled %% stayed doubled and a pair such as %x% was expanded
+// as a variable, so CALL is not used.
+//
+// A double quote or a line break cannot be carried by this form, and Windows
+// paths hold neither. A value with one is skipped with a `rem` line, which
+// is a no-op when run, rather than emitted half-quoted.
+func cmdSetLine(key, value string) string {
+	if strings.ContainsAny(value, "\"\r\n") {
+		return "rem nvx: " + key + " was not set because its value cannot be quoted for cmd.exe\n"
+	}
+	return `set "` + key + "=" + value + "\"\n"
 }
 
 func quotePOSIXShell(value string) string {
@@ -1141,7 +1218,8 @@ func firstVersionLine(content []byte) string {
 	return ""
 }
 
-// DetectVersionConfig scans the current directory and ascends to root looking for Node version indicators
+// DetectVersionConfig scans the current directory and ascends to the root, or
+// to the user's home when it starts below it, looking for Node version indicators.
 func DetectVersionConfig(startDir string) (version string, sourceFile string, err error) {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
@@ -1181,11 +1259,9 @@ func DetectVersionConfig(startDir string) (version string, sourceFile string, er
 			}
 		}
 
-		parent := filepath.Dir(dir)
-		if parent == dir {
+		if dir = nextVersionSearchDir(dir); dir == "" {
 			break
 		}
-		dir = parent
 	}
 
 	return "", "", nil
@@ -1199,8 +1275,15 @@ func DetectVersionConfig(startDir string) (version string, sourceFile string, er
 // normally is -- but a source build that ran `init-shims` leaves shims pointing at
 // the build tree with no nvx.exe installed, and then this advice cannot be
 // followed. See installedNvxHint.
-func refuseContainedGlobalInstall(cmdName string) {
-	LogError("nvx refused: global installs (-g) can't run inside the sandbox.")
+//
+// pmCmd and pmArgs are the package-manager command actually being run (see
+// packageManagerBehind). cmdName is what the user typed, for the retry hint.
+func refuseContainedGlobalInstall(cmdName, pmCmd string, pmArgs []string) {
+	if what := globalOnlyCommand(pmCmd, pmArgs); what != "" {
+		LogError("nvx refused: `%s` installs outside the project, and that can't run inside the sandbox.", what)
+	} else {
+		LogError("nvx refused: global installs (-g) can't run inside the sandbox.")
+	}
 	LogRefusalDetail("Anything installed globally runs uncontained on every future nvx invocation on this machine. A contained install must not be able to plant something that later runs un-contained, so the sandbox never grants that write.")
 	LogRefusalDetail("If you are an automated agent: prefer `npx <package>` (contained, per run) or a project-local install. Do not pass --no-sandbox on your own. Tell the person you work for that this install would run uncontained on every future invocation, and let them decide.")
 	LogRefusalDetail("To install globally anyway, without OS isolation:  %s --no-sandbox %s ...", installedNvxHint(), cmdName)
@@ -1373,46 +1456,38 @@ func copyWholeFile(src, dst string) error {
 // warnIfProjectPinsAnotherVersion says so when the project declares a runtime
 // version and the command is about to run a different one.
 //
-// nvx switches versions through the shell integration: the hook sets PATH on
-// `cd`, and the shim then runs whatever that made active. Without the hook
-// loaded there is nothing to switch, so the shim resolves the global default
-// or, failing that, whatever `node` is on PATH -- which may be any version at
-// all.
+// The shim runs the project's pinned version when it is installed (see
+// sessionRuntimeVersion), so this is left with two cases. The pin is not
+// installed and the default ran, which `nvx install` fixes. Or this shell has
+// another version active, which `nvx use` put there and someone meant, so it is
+// stated and left alone.
 //
-// An acceptance pass found the consequence on 2026-09-03: in a project whose
+// An acceptance pass found the cost of silence on 2026-09-03: in a project whose
 // .nvmrc pinned 22, with only v22.23.2 installed, `nvx node -v` ran an ambient
-// v24.14.1 and said nothing. `nvx use` already warns loudly when its output is
-// not evaluated; the shim, which is what people actually run all day, did not.
-// For a version manager, silently running the version the project pinned
-// AGAINST is the core job going wrong.
-//
-// A warning and not a switch, deliberately. Which version wins when a shell
-// says one thing and a file says another is a real decision -- someone who ran
-// `nvx use 24` in this shell meant it -- and quietly overriding them would be a
-// different bug of the same kind. This states the disagreement and leaves it
-// to the person.
-func warnIfProjectPinsAnotherVersion(nvxHome string, rt RuntimeProvider, activeVer, binaryPath string) {
+// v24.14.1 and said nothing. For a version manager, silently running the
+// version the project pinned AGAINST is the core job going wrong.
+func warnIfProjectPinsAnotherVersion(nvxHome string, rt RuntimeProvider, pin projectPin, activeVer, binaryPath string) {
 	// Node only: .nvmrc and friends name Node versions, and a bun run has no
 	// business being judged against them.
-	if rt == nil || rt.Name() != "node" || binaryPath == "" {
+	if rt == nil || rt.Name() != "node" || binaryPath == "" || pin.query == "" {
 		return
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-	want, source, err := DetectVersionConfig(cwd)
-	if err != nil || want == "" {
-		return
-	}
+	want := pin.query
 	running := runtimeVersionOfBinary(nvxHome, binaryPath, activeVer)
-	if running == "" || versionSatisfies(running, want) {
+	if running == "" || versionSatisfies(nvxHome, running, want) {
 		return
 	}
-	LogWarn("%s asks for %s %s, but this command is running %s.",
-		filepath.Base(source), rt.Name(), want, running)
-	LogInfo("nvx switches versions through the shell integration, which is not active here. " +
-		"Load it (see 'nvx env'), or run 'nvx use " + want + "' in this shell.")
+	file := filepath.Base(pin.source)
+	LogWarn("%s asks for %s %s, but this command is running %s.", file, rt.Name(), want, running)
+	_, err := resolveLocalVersion(rt, want, nvxHome)
+	switch {
+	case err == nil:
+		LogInfo("This shell has %s active. Run 'nvx use' to switch it to the version %s asks for.", running, file)
+	case isUnsupportedRange(err):
+		LogInfo("nvx cannot read that version: %v", err)
+	default:
+		LogInfo("%s %s is not installed. Run 'nvx install %s' and the next run uses it.", runtimeDisplayName(rt.Name()), want, want)
+	}
 }
 
 // runtimeVersionOfBinary names the version a resolved runtime binary belongs
@@ -1433,6 +1508,12 @@ func runtimeVersionOfBinary(nvxHome, binaryPath, activeVer string) string {
 		return activeVer
 	}
 	// Not nvx-managed and no active version: ask the binary itself, cheaply.
+	// Only node itself. The shim resolves npm, npx and yarn to their own
+	// binaries, whose -v is their own version, so a project pinned to node 22
+	// was told this command was "running 10.9.2".
+	if name := strings.ToLower(strings.TrimSuffix(filepath.Base(binaryPath), filepath.Ext(binaryPath))); name != "node" {
+		return ""
+	}
 	// #nosec G702 -- binaryPath is the runtime nvx itself resolved; asking it
 	// for its version is the point.
 	out, err := exec.Command(binaryPath, "-v").Output()
@@ -1443,11 +1524,19 @@ func runtimeVersionOfBinary(nvxHome, binaryPath, activeVer string) string {
 }
 
 // versionSatisfies reports whether the running version answers what the project
-// asked for. The project's request may be a range ("^22", ">=20 <23") or a bare
-// version, so it goes through the same matcher `nvx use` does.
-func versionSatisfies(running, want string) bool {
+// asked for. The project's request may be a range ("^22", ">=20 <23"), a bare
+// version, or an alias (`lts/*`, `lts/jod`, `node`), so it goes through the same
+// matcher `nvx use` does. An alias names whichever installed version it would
+// select, and only that one satisfies it. Aliases used to fall through to the
+// range reader, which rejected them, so every command in a project whose .nvmrc
+// said `lts/*` warned even with the right version running.
+func versionSatisfies(nvxHome, running, want string) bool {
 	if strings.EqualFold(strings.TrimPrefix(running, "v"), strings.TrimPrefix(want, "v")) {
 		return true
+	}
+	if isVersionAlias(want) {
+		resolved, err := resolveLocalVersion(Providers["node"], want, nvxHome)
+		return err == nil && strings.EqualFold(resolved, running)
 	}
 	match, err := highestMatching(want, []string{running})
 	return err == nil && match != ""

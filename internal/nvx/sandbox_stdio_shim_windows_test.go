@@ -142,3 +142,153 @@ console.log('F', f.status, f.stdout === null);
 		}
 	}
 }
+
+// exec() and execFile() are rebuilt on the patched spawn inside the sandbox,
+// because node's own versions call a spawn the patch cannot reach and hung
+// there. The rebuilt versions must keep execFile's contract, so the same script
+// runs with and without the shim and the two outputs must agree.
+//
+// A channel list that cannot be opened sends every child through the shim's
+// file fallback, which is the patched path without needing nvx's pipes, so this
+// runs outside a sandbox.
+func TestShimmedExecKeepsTheExecFileContract(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH")
+	}
+	dir := tempDir(t)
+	shim, err := writeStdioShim(dir)
+	if err != nil {
+		t.Fatalf("writeStdioShim: %v", err)
+	}
+	script := filepath.Join(dir, "exec.js")
+	body := `
+const cp = require('child_process');
+const util = require('util');
+const node = process.execPath;
+const steps = [
+  cb => cp.exec('echo hi', (e, o, se) => { console.log('A', e, JSON.stringify(o.trim())); cb(); }),
+  cb => cp.execFile(node, ['-e', 'process.stdout.write("O");process.stderr.write("E")'], (e, o, se) => { console.log('B', e, JSON.stringify(o), JSON.stringify(se)); cb(); }),
+  cb => cp.execFile(node, ['-e', 'process.stderr.write("BOOM");process.exit(4)'], (e, o, se) => { console.log('C', e.code, e.killed, JSON.stringify(e.stderr)); cb(); }),
+  cb => util.promisify(cp.execFile)(node, ['-e', 'process.stdout.write("P")']).then(r => { console.log('D', JSON.stringify(r)); cb(); }),
+  cb => cp.execFile(node, ['-e', 'setTimeout(()=>{},5000)'], { timeout: 300 }, e => { console.log('E', e.killed); cb(); }),
+  cb => cp.execFile(node, ['-e', 'process.stdout.write("x".repeat(4096))'], { maxBuffer: 100 }, e => { console.log('F', e.code); cb(); }),
+  cb => cp.execFile(node, ['-e', 'process.stdout.write("BUF")'], { encoding: 'buffer' }, (e, o) => { console.log('G', Buffer.isBuffer(o), o.toString()); cb(); }),
+];
+(function next(i) { if (i < steps.length) steps[i](() => next(i + 1)); })(0);
+`
+	if err := os.WriteFile(script, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(withShim bool) string {
+		cmd := exec.Command(node, script)
+		cmd.Dir = dir
+		if withShim {
+			cmd.Env = append(os.Environ(),
+				"NODE_OPTIONS=--require "+strings.ReplaceAll(shim, `\`, `/`),
+				`NVX_STDIO_CHANNELS=\\.\pipe\nvx-none-a|\\.\pipe\nvx-none-b`)
+		}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("node probe (shim=%v) failed: %v\n%s", withShim, err, out)
+		}
+		return string(out)
+	}
+	plain, shimmed := run(false), run(true)
+	if plain != shimmed {
+		t.Errorf("the rebuilt exec/execFile changed observable behaviour.\nwithout shim:\n%s\nwith shim:\n%s", plain, shimmed)
+	}
+	if !strings.Contains(shimmed, `A null "hi"`) || !strings.Contains(shimmed, `F ERR_CHILD_PROCESS_STDIO_MAXBUFFER`) {
+		t.Errorf("unexpected output:\n%s", shimmed)
+	}
+}
+
+// A descriptor the caller passes in slot 0 belongs to the caller. The patched
+// spawn used to close whatever number sat there once the child started, so a
+// file the caller opened and handed to the child as stdin lost its descriptor.
+// (fd 0 itself is not checked. libuv on Windows turns a close of fds 0 to 2
+// into a no-op, so that case cannot fail here.) The temp directory behind the
+// empty-file stdin also has to go when the child closes.
+//
+// Both paths that closed it are run. Live channels reach the 'spawn' handler,
+// and a dead channel name reaches the claim failure that falls back to files.
+func TestShimmedSpawnLeavesTheCallersStdinDescriptorAlone(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not on PATH")
+	}
+	dir := tempDir(t)
+	shim, err := writeStdioShim(dir)
+	if err != nil {
+		t.Fatalf("writeStdioShim: %v", err)
+	}
+	input := filepath.Join(dir, "input.txt")
+	if err := os.WriteFile(input, []byte("HELLO"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, "stdin.js")
+	body := `
+const fs = require('fs'), cp = require('child_process'), os = require('os');
+const node = process.execPath;
+function still(fd) {
+  try { const b = Buffer.alloc(5); fs.readSync(fd, b, 0, 5, 0); return b.toString(); } catch (e) { return e.code; }
+}
+const steps = [
+  cb => {
+    const fd = fs.openSync(process.argv[2], 'r');
+    const c = cp.spawn(node, ['-e', 'process.stdin.pipe(process.stdout)'], { stdio: [fd, 'pipe', 'ignore'] });
+    let out = '';
+    c.stdout.on('data', d => out += d);
+    c.on('close', () => { console.log('A', JSON.stringify(out), still(fd)); cb(); });
+  },
+  cb => {
+    const c = cp.spawn(node, ['-e', 'process.stdout.write("C")'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    c.stdout.resume();
+    c.on('close', () => { console.log('C', fs.readdirSync(os.tmpdir()).filter(n => n.startsWith('nvx-cap-')).length); cb(); });
+  },
+];
+(function next(i) { if (i < steps.length) steps[i](() => next(i + 1)); })(0);
+`
+	if err := os.WriteFile(script, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sddl := "D:(A;;GA;;;WD)" // both ends are this test's own processes
+	var live []string
+	broker := &stdioBroker{}
+	defer broker.Close()
+	for i := 0; i < 2; i++ {
+		ch, err := newStdioChannel("shimstdintest", i, sddl, false)
+		if err != nil {
+			t.Skipf("cannot create pipes on this host: %v", err)
+		}
+		broker.channels = append(broker.channels, ch)
+		go ch.pump()
+		live = append(live, ch.childPipe+"|"+ch.nodePipe)
+	}
+
+	for _, tc := range []struct{ name, channels string }{
+		{"live channels", strings.Join(live, ";")},
+		{"dead channel", `\\.\pipe\nvx-none-a|\\.\pipe\nvx-none-b`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			cmd := exec.Command(node, script, input)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(),
+				"NODE_OPTIONS=--require "+strings.ReplaceAll(shim, `\`, `/`),
+				nvxStdioChannelsEnv+"="+tc.channels,
+				nvxStdinChannelsEnv+"=",
+				"TEMP="+tmp, "TMP="+tmp)
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("node probe failed: %v\n%s", err, out)
+			}
+			for _, want := range []string{`A "HELLO" HELLO`, `C 0`} {
+				if !strings.Contains(string(out), want) {
+					t.Errorf("missing %q in output:\n%s", want, out)
+				}
+			}
+		})
+	}
+}

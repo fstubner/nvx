@@ -68,9 +68,13 @@ export const compareRows: ComparisonRow[] = [
   // it. Every sandbox.deny_* setting defaults to false, it covers `mise run`
   // and `mise exec` rather than an install, and mise's own docs say it is
   // unavailable on Windows.
-  { feature: 'Sandboxed installs', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
+  //
+  // nvx's ticks on Sandboxed installs and Secrets hidden carry a mark to the
+  // notes below, because each has a platform exception on the limitations
+  // page. The first is pnpm and bun on Windows. The second is reads on macOS.
+  { feature: 'Sandboxed installs', cells: ['✓†', '—', '—', '—', '—', 'opt-in, not Windows'] },
   { feature: 'Network allowlist', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
-  { feature: 'Secrets hidden', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
+  { feature: 'Secrets hidden', cells: ['✓‡', '—', '—', '—', '—', 'opt-in, not Windows'] },
   { feature: 'Policy file in repo', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
 ];
 
@@ -85,6 +89,8 @@ export const compareRows: ComparisonRow[] = [
  *  obituary at length reads as score-settling however true it is. */
 export const compareNoteHtml = [
   "<p>* NVM for Windows is a separate, Windows-only project with no shared code, and it does not sandbox installs.</p>",
+  '<p>† On Windows, pnpm runs contained for a first install only, and bun cannot run contained at all. npm and yarn are unaffected. <a href="/docs/limitations/">Known limitations</a> has the detail.</p>',
+  '<p>‡ Environment variables are scrubbed on every platform. On macOS a contained install can still read files outside the project by absolute path, so <code>~/.ssh</code> is not out of reach there.</p>',
   "<p>volta's maintainers announced in November 2025 that it is unmaintained. nvx is not a package manager, so it does not resolve dependencies or write lockfiles. It runs the one you already use.</p>",
   '<p>Out-of-the-box defaults, checked against each project on 18 September 2026.</p>',
 ].join('');

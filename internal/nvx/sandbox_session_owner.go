@@ -16,10 +16,50 @@ import (
 // record with it.
 const sessionOwnerFile = ".nvx-session"
 
-// sessionOwner is written once, at guest-home creation, and only ever read.
+// sessionOwner is written at guest-home creation, and gains SupervisorPID once
+// the sandbox has started.
+//
+// SupervisorPID is the contained process tree's root, recorded once it has
+// started. A session is in use while EITHER pid runs: the supervisor can outlive
+// the nvx that started it for as long as the kernel takes to tear its namespace
+// down, and nvx outlives the supervisor while it copies logs out and removes the
+// home. Zero means no supervisor was recorded.
 type sessionOwner struct {
-	PID        int    `json:"pid"`
-	StartedUTC string `json:"started_utc"`
+	PID           int    `json:"pid"`
+	StartedUTC    string `json:"started_utc"`
+	SupervisorPID int    `json:"supervisor_pid,omitempty"`
+}
+
+// running reports whether the session this record describes is still alive.
+func (o sessionOwner) running() bool {
+	if o.PID == os.Getpid() || processIsRunning(o.PID) {
+		return true
+	}
+	return o.SupervisorPID > 0 && processIsRunning(o.SupervisorPID)
+}
+
+// recordSupervisorPID adds the contained tree's root pid to this process's own
+// records in home: the ephemeral session marker and any lease it holds.
+//
+// Records naming another nvx process are left alone, since a persistent home is
+// shared by concurrent runs. Best-effort, like the writers.
+func recordSupervisorPID(home string, pid int) {
+	paths, _ := filepath.Glob(filepath.Join(home, sessionLeasePrefix+"*"))
+	paths = append(paths, filepath.Join(home, sessionOwnerFile))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var owner sessionOwner
+		if json.Unmarshal(data, &owner) != nil || owner.PID != os.Getpid() {
+			continue
+		}
+		owner.SupervisorPID = pid
+		if updated, err := json.Marshal(owner); err == nil {
+			_ = os.WriteFile(path, updated, 0600)
+		}
+	}
 }
 
 // writeSessionOwner records this process as the owner of guestHome.
@@ -53,6 +93,51 @@ func readSessionOwner(guestHome string) (sessionOwner, bool) {
 	return owner, true
 }
 
+// sessionLeasePrefix names the per-run owner records in a persistent tool home.
+//
+// A tool home outlives its runs and several runs of the same tool can share it
+// at once, so the single write-once marker above cannot describe it. Each run
+// writes its own lease, named by its random sandbox id, and removes it when it
+// ends. Without one, a trusted tool running for longer than the package
+// retention window lost its AppContainer profile underneath it.
+const sessionLeasePrefix = ".nvx-lease-"
+
+// writeSessionLease records this process as a current user of a persistent
+// home, and returns the function that removes the record again. Best-effort for
+// the same reason as writeSessionOwner.
+func writeSessionLease(home, sandboxID string, now time.Time) (release func()) {
+	path := filepath.Join(home, sessionLeasePrefix+sandboxID)
+	data, err := json.Marshal(sessionOwner{
+		PID:        os.Getpid(),
+		StartedUTC: now.UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return func() {}
+	}
+	_ = os.WriteFile(path, data, 0600)
+	return func() { _ = os.Remove(path) }
+}
+
+// homeHasLiveLease reports whether any lease in home names a running process.
+// A lease left by a run that was killed names a dead process and holds nothing.
+func homeHasLiveLease(home string) bool {
+	matches, _ := filepath.Glob(filepath.Join(home, sessionLeasePrefix+"*"))
+	for _, m := range matches {
+		data, err := os.ReadFile(m)
+		if err != nil {
+			continue
+		}
+		var owner sessionOwner
+		if json.Unmarshal(data, &owner) != nil || owner.PID <= 0 {
+			continue
+		}
+		if owner.running() {
+			return true
+		}
+	}
+	return false
+}
+
 // unownedGuestHomeGrace is how long a guest home with no readable owner marker
 // is left alone.
 //
@@ -79,10 +164,8 @@ const unownedGuestHomeGrace = time.Hour
 // cheaper mistake.
 func guestHomeIsInUse(guestHome string, now time.Time) bool {
 	if owner, ok := readSessionOwner(guestHome); ok {
-		if owner.PID == os.Getpid() {
-			return true // this very process, e.g. cleanup called mid-session
-		}
-		return processIsRunning(owner.PID)
+		// Includes this very process, e.g. cleanup called mid-session.
+		return owner.running()
 	}
 
 	info, err := os.Stat(guestHome)

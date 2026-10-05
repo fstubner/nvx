@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -51,7 +52,16 @@ func TestAStaleTyposquatDictionaryIsUsedRatherThanDiscarded(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The stale cache is refreshed in the background. Answered locally, so the
+	// test never reaches jsDelivr, and waited for, so the URL is not restored
+	// while that goroutine may still read it.
+	fetched := noPopularPackagesServer(t)
 	got := LoadPopularPackages(nvxHome)
+	select {
+	case <-fetched:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the background refresh of a stale dictionary never ran")
+	}
 	found := false
 	for _, name := range got {
 		if name == sentinel {
@@ -64,6 +74,26 @@ func TestAStaleTyposquatDictionaryIsUsedRatherThanDiscarded(t *testing.T) {
 			"a stale cache is discarded and the typosquat check silently becomes a different check",
 			len(got), len(big))
 	}
+}
+
+// noPopularPackagesServer points popularPackagesURL at a local server that has
+// no dictionary to give, for the length of the test. The returned channel is
+// closed when the first request arrives.
+func noPopularPackagesServer(t *testing.T) <-chan struct{} {
+	t.Helper()
+	fetched := make(chan struct{})
+	var once sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(fetched) })
+		http.Error(w, "no dictionary here", http.StatusServiceUnavailable)
+	}))
+	orig := popularPackagesURL
+	popularPackagesURL = srv.URL
+	t.Cleanup(func() {
+		srv.Close()
+		popularPackagesURL = orig
+	})
+	return fetched
 }
 
 // ...but an unusable cache still falls back, or a corrupt file would disable the
@@ -82,8 +112,9 @@ func TestAnUnusableTyposquatCacheFallsBack(t *testing.T) {
 			if err := os.WriteFile(cachePath, []byte(tc.body), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			// Nothing usable on disk, and no network in a test: the embedded list is
-			// the only correct answer, and it must not be empty.
+			// Nothing usable on disk and nothing to fetch: the embedded list is the
+			// only correct answer, and it must not be empty.
+			noPopularPackagesServer(t)
 			got := LoadPopularPackages(nvxHome)
 			if len(got) == 0 {
 				t.Fatal("no dictionary at all; the typosquat check would pass everything")
@@ -145,18 +176,23 @@ func TestAShortPopularPackageListIsNotCached(t *testing.T) {
 // map. The caller already handles an error by asking whether to proceed without
 // CVE checks, so an error is the honest answer and the path exists.
 func TestAShortOSVAnswerIsAnErrorNotACleanResult(t *testing.T) {
-	// Decode a batch response carrying fewer results than were asked for, and
-	// assert the shape the fix depends on: results count is what tells them apart.
-	var resp OSVResponseBatch
-	if err := json.Unmarshal([]byte(`{"results":[{"vulns":[]}]}`), &resp); err != nil {
-		t.Fatal(err)
+	// One result for two queries, the case that used to be silently dropped.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[{"vulns":[]}]}`)
+	}))
+	defer srv.Close()
+	orig := osvQueryBatchURL
+	osvQueryBatchURL = srv.URL
+	defer func() { osvQueryBatchURL = orig }()
+
+	queries := []OSVQuery{
+		{Package: OSVPackage{Name: "left-pad", Ecosystem: "npm"}, Version: "1.3.0"},
+		{Package: OSVPackage{Name: "lodash", Ecosystem: "npm"}, Version: "4.17.20"},
 	}
-	if len(resp.Results) != 1 {
-		t.Fatalf("decoded %d results, want 1", len(resp.Results))
-	}
-	// Two queries against one result is the case that used to be silently dropped.
-	if len(resp.Results) >= 2 {
-		t.Fatal("fixture does not reproduce the short-answer case")
+	got, err := ScanVulnerabilitiesBatch(queries)
+	if err == nil {
+		t.Fatalf("OSV answered one of two queries and the scan reported %d findings with no error; "+
+			"the caller prints that as a clean scan", len(got))
 	}
 }
 
