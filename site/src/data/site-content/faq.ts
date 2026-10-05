@@ -3,12 +3,12 @@ import type { FaqItem, SectionCopy } from './types';
 export const faqCopy: SectionCopy = {
   heading: 'Questions',
   leadHtml:
-    'Including the ones whose honest answer is a limitation. The full list is in <a href="/docs/limitations/">Known limitations</a>.',
+    'Common questions about nvx. What it does not cover is listed in full in <a href="/docs/limitations/">Known limitations</a>.',
 };
 
 // `a` is plain text and goes into the FAQ structured data and /llms.txt;
 // `aHtml` is the rendered version and may add links and <code>. Keep the two
-// saying the same thing — a search result quoting the plain answer and a page
+// saying the same thing. A search result quoting the plain answer and a page
 // showing a different one is the failure this pairing exists to avoid.
 export const faq: FaqItem[] = [
   {
@@ -17,6 +17,17 @@ export const faq: FaqItem[] = [
     a: 'nvx installs, switches and pins Node.js and Bun versions on Windows, macOS and Linux, and runs package installs inside an OS sandbox. It is one static binary with no dependencies.',
     aHtml:
       '<p>nvx installs, switches and pins Node.js and Bun versions on Windows, macOS and Linux, and runs package installs inside an OS sandbox. It is one static binary with no dependencies.</p>',
+  },
+  {
+    group: 'Basics',
+    // From the release assets (release.yml builds these five), the Landlock
+    // error in sandbox_landlock_linux.go, the `ip` lookup in
+    // sandbox_network_linux.go and seatbeltExecPath. No Windows or macOS
+    // version floor is stated because none has been established.
+    q: 'What does it need to run?',
+    a: 'Windows on x64, macOS on Apple silicon or Intel, or Linux on x86_64 or arm64. nvx is one static binary and needs nothing installed alongside it. On Linux the sandbox needs kernel 5.13 or later with Landlock enabled and unprivileged user namespaces, and the network allowlist needs the ip command from iproute2. When one is missing, contained commands refuse to run rather than run uncontained, and nvx doctor checks whether a contained process can start. On macOS the sandbox uses sandbox-exec, which ships with macOS.',
+    aHtml:
+      '<p>Windows on x64, macOS on Apple silicon or Intel, or Linux on x86_64 or arm64. nvx is one static binary and needs nothing installed alongside it.</p><p>On Linux the sandbox needs kernel 5.13 or later with Landlock enabled and unprivileged user namespaces, and the network allowlist needs the <code>ip</code> command from iproute2. When one is missing, contained commands refuse to run rather than run uncontained, and <code>nvx doctor</code> checks whether a contained process can start. On macOS the sandbox uses <code>sandbox-exec</code>, which ships with macOS.</p>',
   },
   {
     group: 'Basics',
@@ -39,16 +50,16 @@ export const faq: FaqItem[] = [
   {
     group: 'Containment',
     q: 'What can a contained install actually reach?',
-    a: 'Your project directory, its lockfile and node_modules. Environment variables are scrubbed, writes cannot leave the project, and outbound network access is limited to an allowlist that defaults to the npm registry and the OSV vulnerability API.',
+    a: "Your project directory, including its lockfile and node_modules, and a throwaway home directory of its own. Environment variables are scrubbed. It can write to the project and that home, and on macOS also to the system temp folders. It can read the project's .git and cannot write it. Outbound connections are limited to an allowlist that by default names the npm registry and the OSV vulnerability API, and GitHub's download hosts for Bun.",
     aHtml:
-      '<p>Your project directory, its lockfile and <code>node_modules</code>. Environment variables are scrubbed, writes cannot leave the project, and outbound network access is limited to an allowlist that defaults to the npm registry and the OSV vulnerability API.</p>',
+      "<p>Your project directory, including its lockfile and <code>node_modules</code>, and a throwaway home directory of its own. Environment variables are scrubbed. It can write to the project and that home, and on macOS also to the system temp folders. It can read the project's <code>.git</code> and cannot write it. Outbound connections are limited to an allowlist that by default names the npm registry and the OSV vulnerability API, and GitHub's download hosts for Bun.</p>",
   },
   {
     group: 'Containment',
     q: 'Is macOS protected the same way as Windows and Linux?',
-    a: 'No. On Windows and Linux a contained install cannot read your home directory. On macOS the Seatbelt profile allows filesystem reads and denies the known credential stores by path. SSH keys, cloud credentials and your npm token are out of reach on all three. On macOS other files in your home, other projects included, can still be read by absolute path. macOS still enforces write containment and egress control.',
+    a: 'No. On Windows and Linux a contained install cannot read your home directory. On macOS the Seatbelt profile allows filesystem reads and denies the known credential stores by path. SSH keys, cloud credentials and your npm token are out of reach on all three. On macOS other files in your home, other projects included, can still be read by absolute path. Writes and outbound connections are contained on macOS too. The difference is that the system temp folders are writable there.',
     aHtml:
-      '<p><strong>No.</strong> On Windows and Linux a contained install cannot read your home directory. On macOS the Seatbelt profile allows filesystem reads and denies the known credential stores by path. SSH keys, cloud credentials and your npm token are out of reach on all three. On macOS other files in your home, other projects included, <em>can</em> still be read by absolute path. macOS still enforces write containment and egress control.</p>',
+      '<p><strong>No.</strong> On Windows and Linux a contained install cannot read your home directory. On macOS the Seatbelt profile allows filesystem reads and denies the known credential stores by path. SSH keys, cloud credentials and your npm token are out of reach on all three. On macOS other files in your home, other projects included, <em>can</em> still be read by absolute path. Writes and outbound connections are contained on macOS too. The difference is that the system temp folders are writable there.</p>',
   },
   {
     // npm v12 shipped on 2026-07-08 with lifecycle scripts blocked by default.
@@ -71,22 +82,39 @@ export const faq: FaqItem[] = [
   {
     group: 'Containment',
     q: 'What happens when an install tries to reach a host I have not allowed?',
-    a: 'nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing -y or --agent-mode, or setting NVX_YES, deliberately does not count, because an agent will answer yes to anything.',
+    a: 'At an interactive terminal nvx asks whether to allow that host, and a yes lasts for that run only. With nobody to answer, it refuses the connection and names the host. To allow a host for good, add it to isolation.network.allow_hosts in a policy file. nvx will not honour a project file that widens the allowlist until you have approved that file. Passing -y or --agent-mode, or setting NVX_YES, approves neither the host nor the file, because an agent will answer yes to anything.',
     aHtml:
-      '<p>nvx blocks the connection and names the host it blocked. Allowing it means adding it to a project policy file, and nvx will not honour a policy that widens the allowlist until you have approved it. Passing <code>-y</code> or <code>--agent-mode</code>, or setting <code>NVX_YES</code>, deliberately does not count, because an agent will answer yes to anything.</p>',
+      '<p>At an interactive terminal nvx asks whether to allow that host, and a yes lasts for that run only. With nobody to answer, it refuses the connection and names the host.</p><p>To allow a host for good, add it to <code>isolation.network.allow_hosts</code> in a policy file. nvx will not honour a project file that widens the allowlist until you have approved that file. Passing <code>-y</code> or <code>--agent-mode</code>, or setting <code>NVX_YES</code>, approves neither the host nor the file, because an agent will answer yes to anything.</p>',
   },
   {
     group: 'Using it',
     q: 'What does the sandbox cost in speed?',
-    a: 'Measured dispatch overhead is about 75 ms on Windows, from three runs on one machine. It has not been established on Linux or macOS, so no figure is quoted for them. Either way it sits next to commands like npm install that you already wait on.',
+    // Figures as docs/enforcement-matrix.md cites them, under "Measured costs
+    // and platform floors". The 75 ms is scripts/bench.py, which runs with
+    // isolation off, so it is the shim's dispatch and nothing more.
+    a: "On Windows a contained command costs a few hundred milliseconds to about a second, and a project's first contained run takes a few seconds. Measured on Windows 11: about 2.4 s for a project's first contained run and about 390 ms for each one after. On a second Windows 11 machine on 2026-08-29: 2.9 s first and 785 ms steady, the median of 8 runs. A command that is not contained pays only the shim's dispatch, about 75 ms on Windows from three runs on one machine. No figure has been established on Linux or macOS.",
     aHtml:
-      '<p>Measured dispatch overhead is about <strong>75 ms on Windows</strong>, from three runs on one machine. It has not been established on Linux or macOS, so no figure is quoted for them. Either way it sits next to commands like <code>npm install</code> that you already wait on.</p>',
+      "<p>On Windows a contained command costs <strong>a few hundred milliseconds to about a second</strong>, and a project's first contained run takes a few seconds. Measured on Windows 11: about 2.4 s for a project's first contained run and about 390 ms for each one after. On a second Windows 11 machine on 2026-08-29: 2.9 s first and 785 ms steady, the median of 8 runs.</p><p>A command that is not contained pays only the shim's dispatch, about 75 ms on Windows from three runs on one machine. No figure has been established on Linux or macOS. The <a href=\"https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md#measured-costs-and-platform-floors\">enforcement matrix</a> has the measurements.</p>",
   },
   {
     group: 'Using it',
     q: 'Can I install it from winget, Homebrew, Scoop or npm?',
-    a: 'npm, yes: npm install -g @fstubner/nvx installs the binary for your platform and runs no install script. winget, Homebrew and Scoop not yet. The install script and the prebuilt release binaries work on all three platforms.',
+    a: 'npm, yes. npm install -g @fstubner/nvx installs the binary for your platform and runs no install script. winget, Homebrew and Scoop not yet. The install script and the prebuilt release binaries work on all three platforms.',
     aHtml:
-      '<p>npm, yes: <code>npm install -g @fstubner/nvx</code> installs the binary for your platform and runs no install script. winget, Homebrew and Scoop not yet. The install script and the prebuilt release binaries work on all three platforms.</p>',
+      '<p>npm, yes. <code>npm install -g @fstubner/nvx</code> installs the binary for your platform and runs no install script. winget, Homebrew and Scoop not yet. The install script and the prebuilt release binaries work on all three platforms.</p>',
+  },
+  {
+    group: 'Using it',
+    q: 'Can I use it in CI?',
+    a: "Yes. Once nvx install has added the project's version, the shims run it with no shell setup, so a CI step only needs ~/.nvx/bin on PATH. With no terminal attached every prompt is refused, so a check that would ask fails the step instead of waiting. NVX_YES=true approves the install-time checks, and each approval is printed and recorded. It does not approve a new egress host or a project policy that widens the sandbox. nvx policy check gives CI a distinct exit code for each kind of failure.",
+    aHtml:
+      "<p>Yes. Once <code>nvx install</code> has added the project's version, the shims run it with no shell setup, so a CI step only needs <code>~/.nvx/bin</code> on <code>PATH</code>. With no terminal attached every prompt is refused, so a check that would ask fails the step instead of waiting.</p><p><code>NVX_YES=true</code> approves the install-time checks, and each approval is printed and recorded. It does not approve a new egress host or a project policy that widens the sandbox. <code>nvx policy check</code> gives CI a distinct exit code for each kind of failure.</p>",
+  },
+  {
+    group: 'Using it',
+    q: 'How do I uninstall it?',
+    a: 'Take back what nvx granted, then delete it. On Windows, if you ever ran nvx setup, run nvx setup --undo from an Administrator terminal. Run nvx grants reset --all. Then delete ~/.nvx, remove the nvx lines from your shell profile, and take ~/.nvx/bin off your PATH. Installation has the steps in order.',
+    aHtml:
+      '<p>Take back what nvx granted, then delete it. On Windows, if you ever ran <code>nvx setup</code>, run <code>nvx setup --undo</code> from an Administrator terminal. Run <code>nvx grants reset --all</code>. Then delete <code>~/.nvx</code>, remove the nvx lines from your shell profile, and take <code>~/.nvx/bin</code> off your <code>PATH</code>. <a href="/docs/install/#uninstall">Installation</a> has the steps in order.</p>',
   },
 ];

@@ -14,7 +14,7 @@ export const hero: Hero = {
   releaseLink: '/changelog/',
   heading: 'Node.js and Bun versions, with a sandbox around every install',
   subhead:
-    'Install and switch runtimes, and nvx follows the version each project pins when you enter its folder. Installs from npm, yarn, pnpm and bun, and tools started with npx or bunx, run inside an OS sandbox that confines writes to the project and blocks hosts you did not allow.',
+    'Install and switch runtimes, and nvx follows the version each project pins when you enter its folder. Installs from npm, yarn, pnpm and bun, and tools started with npx or bunx, run inside an OS sandbox that limits where they can write and blocks hosts you did not allow.',
   quickInstall: 'irm https://nvx.run/install.ps1 | iex',
   quickInstallAlt: 'curl -fsSL https://nvx.run/install.sh | sh',
   installLinkLabel: 'More install options ↓',
@@ -51,7 +51,7 @@ found 0 vulnerabilities`,
   heroTerminalLabel:
     'A terminal entering a project pinned to a Node.js version that is not installed. nvx asks whether to install it, verifies the checksum, installs it and switches to it, then a package installs inside the native sandbox',
   heroImage: '/assets/hero.png',
-  heroImageAlt: 'A terminal entering a project pinned to a Node.js version that is not installed; nvx installs and switches to it, then npm install runs inside the native sandbox',
+  heroImageAlt: 'A terminal entering a project pinned to a Node.js version that is not installed. nvx installs and switches to it, then npm install runs inside the native sandbox',
   heroImageWidth: 1200,
   heroImageHeight: 618,
   sourceUrl: 'https://github.com/fstubner/nvx',
