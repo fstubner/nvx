@@ -231,6 +231,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   10.34.6 on Node 22.23.3: a first install now completes in projects on `C:`
   and on `H:`.
 
+* **A second `pnpm install` in the sandbox works.** pnpm keeps its package
+  store in the home folder when the project is on the same drive, and records
+  the store's path in `node_modules/.modules.yaml`. Every contained run had a
+  new home, so the next install found a different store and stopped with
+  `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. Contained pnpm commands now
+  share one home per project that is kept between runs, as a trusted tool's
+  is. No other project and no other package manager uses it. Measured
+  2026-10-05 with pnpm 10.34.6 on Windows: two installs in a row now both
+  finish in a project on `C:`. A project already installed by an earlier nvx
+  still records the old path, so delete its `node_modules` folder once.
+
 * **`nvx setup` no longer spends minutes on each large drive.**
   On 2026-10-04 `nvx setup --all-drives` granted D:\ in 1 second and E:\ in 3,
   then was still working on F:\ after 33 minutes. The grant is one entry on the
