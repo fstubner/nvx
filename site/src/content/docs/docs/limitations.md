@@ -108,8 +108,9 @@ and the evidence for each platform is in the
   `package-lock.json` for this platform. The other commands are checked on the
   packages they name, the entries of `package-lock.json`, or the versions
   `package.json` declares. The dependencies those bring in are not checked.
-  That is `npx`, `npm exec`, `npm create` and `npm init`, every pnpm, yarn and
-  bun command, and npm projects that use workspaces or depend on a local folder.
+  That is `npx`, `npm exec`, `npm create` and `npm init`, and every pnpm, yarn
+  and bun command. The same goes for npm projects that use workspaces or depend
+  on a local folder.
   pnpm, yarn and bun lockfiles are not read.
 - **Packages from git, a URL or a local path get only the blocklist.** They are
   checked against `blocked_packages` by the name they install under. The

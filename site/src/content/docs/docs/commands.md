@@ -21,8 +21,8 @@ Run `nvx help <command>` for any of these.
 
 ### Which version a command runs
 
-A command run through the shims (`node`, `npm`, `npx`, `pnpm`, `yarn`,
-`corepack`, `bun`, `bunx`) picks its runtime version the same way in a
+The shims are `node`, `npm`, `npx`, `pnpm`, `yarn`, `corepack`, `bun` and
+`bunx`. A command run through them picks its runtime version the same way in a
 terminal, an IDE task, a git hook or CI. The first of these that applies wins:
 
 1. Inside the sandbox, the policy's `runtime.versions` pin.
@@ -83,14 +83,14 @@ FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i
 | `nvx policy init` | Write a project `.nvx-policy.json` that sets nothing yet, with empty `blocked_packages` and `allow_hosts` to add to. `--global` writes `~/.nvx/policy.json` with the defaults instead. |
 | `nvx policy check` | Check this project against the policy in force, for CI. It never prompts, and exits with a distinct code per kind of failure. It makes no network request unless you pass `--online`. `--format=json` prints the verdict as data. |
 | `nvx policy explain` | Show each setting's effective value and which file it came from. |
-| `nvx audit` | What nvx recorded: blocked hosts, pre-install checks that were approved or refused and how they were answered (including approvals by `-y`, `--agent-mode` and `NVX_YES`), and runs when `NVX_TRACE=1`. |
+| `nvx audit` | What nvx recorded: blocked hosts, pre-install checks that were approved or refused and how they were answered, and runs when `NVX_TRACE=1`. Approvals by `-y`, `--agent-mode` and `NVX_YES` are recorded too. |
 | `nvx audit export` | Export that record as json, jsonl or csv, filtered with `--since` and `--event`, to a file with `--out`. |
 | `nvx grants list` | This project's recorded grants: trusted tools, trusted project policy files, directories granted read and execute access for `allow_read_exec`, and egress hosts recorded by older versions. |
 | `nvx grants reset` | Forget this project's grants, or every project's with `--all`. Read and execute permissions nvx granted are withdrawn. |
 | `nvx env` | Print the shell integration snippet. `--shell=<name>` picks the syntax: powershell, bash, zsh, fish or cmd. |
 | `nvx report` | A diagnostic bundle to attach to a bug report. Nothing is uploaded. |
 | `nvx cleanup` | Reclaim disk from interrupted runs now. Every run reclaims some automatically, so this is rarely needed. |
-| `nvx setup` | Windows only, from an Administrator terminal. Grants the sandbox read and list access to the root folder of every fixed drive, and to the `Users` folder on the system drive and on the drives holding your profile, nvx's home and the current folder. Each grant covers that folder only, nothing inside it. Installs and `npx` do not need it. A tool that resolves a path all the way up to a drive root does, and nvx names this command after such a failure. It also removes a loopback exemption an older nvx left. `nvx setup --undo` reverses it. |
+| `nvx setup` | Windows only, from an Administrator terminal. Grants the sandbox read and list access to the root folder of every fixed drive. The same goes for the `Users` folder on the system drive, and on each drive holding your profile, nvx's home or the current folder. Each grant covers that folder only, nothing inside it. Installs and `npx` do not need it. A tool that resolves a path all the way up to a drive root does, and nvx names this command after such a failure. It also removes a loopback exemption an older nvx left. `nvx setup --undo` reverses it. |
 
 ## Policy files
 

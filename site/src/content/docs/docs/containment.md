@@ -5,7 +5,7 @@ description: What a contained command can and cannot reach on each platform, and
 
 ## Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `corepack`, `bun` and `bunx` are all intercepted**, and the ones that execute code you did not write (package installs and `npx`-style tool runners) are sandboxed. **On Windows, `npm`, `npx`, `yarn` and `pnpm` run inside the sandbox. `bun` installs there only in projects on the drive Windows is installed on, see [Known limitations](/docs/limitations/).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level. `isolation.level: strict` extends containment to it. There is no separate sandbox subcommand. Run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `corepack`, `bun` and `bunx` are all intercepted**. The ones that execute code you did not write (package installs and `npx`-style tool runners) are sandboxed. **On Windows, `npm`, `npx`, `yarn` and `pnpm` run inside the sandbox. `bun` installs there only in projects on the drive Windows is installed on, see [Known limitations](/docs/limitations/).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level. `isolation.level: strict` extends containment to it. There is no separate sandbox subcommand. Run commands normally:
 
 ```bash
 npm install
@@ -68,13 +68,13 @@ command (`CONTRIBUTING.md`) and CI's probe run together.
 
 **What backs the macOS column.**
 `scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on every CI
-build and asserts the denials, not just that the command ran. It requires
+build. It asserts the denials, not just that the command ran. It requires
 `WRITE_OUTSIDE=DENIED`, `WRITE_INSIDE=ALLOWED`, `READ_OUTSIDE=ALLOWED`,
 `EGRESS=DENIED`, `UDP_EGRESS=DENIED`, and an allowlisted host tunnelling through
 the proxy with `CONNECT=200`. A further phase plants a `.npmrc` and an SSH key in
 a throwaway home and requires the OS to refuse a contained read of each.
 
-The allowlisted host matters more than its size suggests. Every other assertion
+Every other assertion
 runs with an empty allowlist, so all of them would also pass against a sandbox
 that had failed to start. Requiring an allowlisted host to *succeed* is what
 separates enforcement from breakage. The read weakness is asserted too, on

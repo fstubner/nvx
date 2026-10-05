@@ -53,9 +53,9 @@ An example global policy:
 ```
 
 **Prompt behaviour is fixed.** At an interactive terminal nvx asks. With nobody
-to answer, it refuses. A prompt that widens nvx's trust boundary, such as an
-unknown egress host or a project policy that loosens the global one, ignores
-`-y`, `--agent-mode` and `NVX_YES`. Only `NVX_TRUST_YES=true` approves those
+to answer, it refuses. Some prompts widen nvx's trust boundary, such as one for an
+unknown egress host or a project policy that loosens the global one. These
+ignore `-y`, `--agent-mode` and `NVX_YES`. Only `NVX_TRUST_YES=true` approves those
 without asking (see [Commands](/docs/commands/#policy-files)).
 
 The keys
@@ -65,7 +65,7 @@ stricter. `isolation.filesystem.mode` is not a setting, and a policy naming it
 gets an unknown-key warning.
 
 ## Reference
-* **`enforce_ignore_scripts`**: When `true`, nvx refuses to install a package that has hook scripts (`preinstall`/`postinstall`/`install`). Supply chain attacks use these heavily to download and execute arbitrary binaries on the host machine. A command that already turns scripts off is not refused, because the package manager runs none of them. That is `--ignore-scripts` on the command line (npm, pnpm, yarn and bun), `npm_config_ignore_scripts=true` in the environment, or `ignore-scripts=true` in the project `.npmrc`. A run inside the sandbox gets no `npm_config_*` variables, so the environment counts only outside it. `--ignore-scripts=false` does not count. The same holds for the install-script prompt, which is not asked when scripts are off. Otherwise the refusal comes before the package manager starts. Name the package in `install_scripts.trusted_packages` to let it through.
+* **`enforce_ignore_scripts`**: When `true`, nvx refuses to install a package that has hook scripts (`preinstall`/`postinstall`/`install`). Supply chain attacks often use these to download and execute arbitrary binaries on the host machine. A command that already turns scripts off is not refused, because the package manager runs none of them. That is `--ignore-scripts` on the command line (npm, pnpm, yarn and bun), `npm_config_ignore_scripts=true` in the environment, or `ignore-scripts=true` in the project `.npmrc`. A run inside the sandbox gets no `npm_config_*` variables, so the environment counts only outside it. `--ignore-scripts=false` does not count. The same holds for the install-script prompt, which is not asked when scripts are off. Otherwise the refusal comes before the package manager starts. Name the package in `install_scripts.trusted_packages` to let it through.
 * **Per-check exemptions.** Every install-time check applies to every package
   until a policy names an exception, and each list waives only its own check.
   Naming a package in one never affects another. Adding an entry to any of them is
@@ -116,7 +116,7 @@ gets an unknown-key warning.
     it comes from nvx's proxy. Selecting it in a project policy is a loosening and
     needs approval.
 * **`runtime.versions`**: Pin runtime versions used inside the sandbox (e.g. `"node": "20"`). Inside the sandbox this pin comes before the project's `.nvmrc` or other version file, which comes before the global default. See [which version a command runs](/docs/commands/#which-version-a-command-runs).
-* **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project (`<project>/.nvx/npm_global`) instead of being shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch. That directory goes on your PATH, so a project file that turns this on counts as a loosening. It needs the same approval as an egress host.
+* **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project, in `<project>/.nvx/npm_global`. They are not shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch. That directory goes on your PATH, so a project file that turns this on counts as a loosening. It needs the same approval as an egress host.
 
 To override the filesystem provider per shim, run `npm --filesystem-provider=docker install`.
 
@@ -159,9 +159,9 @@ looked up. Each name is looked up once per run.
 advisory checks, and the run prints one line saying so. `~/.nvx/audit.log`
 records it as `check_skipped` with `check` set to `public_registry_checks`.
 
-**Upstream proxy.** When nvx's own environment sets `HTTPS_PROXY`, or
-`HTTP_PROXY` without it, the egress proxy sends each connection the allowlist
-permits through that proxy as a CONNECT tunnel. A user and password in the URL
+**Upstream proxy.** nvx uses one when its own environment sets `HTTPS_PROXY`,
+or `HTTP_PROXY` without it. The egress proxy sends each connection the
+allowlist permits through that proxy as a CONNECT tunnel. A user and password in the URL
 become its `Proxy-Authorization` header. Hosts in `NO_PROXY` and loopback
 destinations are dialled directly.
 

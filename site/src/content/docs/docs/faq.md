@@ -4,10 +4,9 @@ description: How switching, networking, mixed runtimes and agent use work in pra
 ---
 
 ## How does auto-swapping work alongside concurrent terminal sessions?
-Traditional managers change system-wide paths or symbolic links, which can disrupt active builds running in other windows. `nvx` avoids this by configuring the paths (`PATH`, `NPM_CONFIG_PREFIX`) strictly at the **shell session level**. When you change versions in one shell (or navigate to a directory triggering auto-swap), only that shell’s environment is updated. Other concurrent processes are completely unaffected.
+Some version managers change system-wide paths or symbolic links, which can disrupt active builds running in other windows. `nvx` avoids this by configuring the paths (`PATH`, `NPM_CONFIG_PREFIX`) strictly at the **shell session level**. When you change versions in one shell (or navigate to a directory triggering auto-swap), only that shell’s environment is updated. Other concurrent processes are completely unaffected.
 
 ## How does the sandbox handle local servers, ports and networking?
-Web development requires running local dev servers (e.g. listening on port `3000`) and calling external backend APIs or databases.
 * **Native sandbox.** Outbound TCP goes through the nvx allowlist proxy (HTTP_PROXY / SOCKS5) under `network.mode: proxy`. Host services on `localhost` are reachable via `allow_hosts`.
 
   **On Windows, a dev server started inside the sandbox needs `--expose` to be reachable from your browser.** The bind succeeds and the server reports itself listening, but Windows blocks connections into an AppContainer from outside it. This is the same restriction the egress relay exists to work around, and the loopback exemption does not change it. It affects `nvx npx vite`, `npx serve` and anything else that serves a port.
@@ -21,12 +20,12 @@ Web development requires running local dev servers (e.g. listening on port `3000
 * **Docker provider.** The image is chosen from the active runtime (`node:<v>` or `oven/bun:<v>`). For a multi-language stack, supply your own image via a Dockerfile or `docker-compose`.
 
 ## Does nvx handle TypeScript and bundler commands?
-Yes. Since `nvx` hooks into the active runtime context, any globally or locally installed tool (`tsc`, `ts-node`, `vite`, `webpack`) executes within the selected Node.js environment automatically.
+Yes. Any globally or locally installed tool (`tsc`, `ts-node`, `vite`, `webpack`) runs on the selected Node.js version.
 
 ## How does automatic command wrapping protect me when using AI coding agents?
-When AI coding agents (like Gemini, Claude, or Copilot) interact with your workspace, they typically run standard commands such as `npm install <package>` or `npx <command>`. Because `nvx` automatically wraps these typical binaries inside the shell session, those commands are transparently intercepted. The packages are checked against typosquatting and vulnerability (OSV) registries, and executors run inside the native sandbox. The agent needs no special configuration or wrapper commands.
+AI coding agents (like Gemini, Claude, or Copilot) typically run standard commands such as `npm install <package>` or `npx <command>` in your workspace. The `nvx` shims on `PATH` intercept those commands. The packages are checked against typosquatting and vulnerability (OSV) registries, and those commands run inside the native sandbox. The agent needs no special configuration or wrapper commands.
 
-This is defense in depth that raises the bar against common supply-chain patterns (typosquats, known-vulnerable versions, install-script execution). It reduces risk substantially and is not a guarantee against a determined or novel attacker. See [SECURITY.md](https://github.com/fstubner/nvx/blob/main/SECURITY.md) for the threat model and its limits.
+This is defense in depth against common supply-chain patterns (typosquats, known-vulnerable versions, install-script execution). It reduces risk and is not a guarantee against a determined or novel attacker. See [SECURITY.md](https://github.com/fstubner/nvx/blob/main/SECURITY.md) for the threat model and its limits.
 
 ## What does nvx add to the time a command takes?
 

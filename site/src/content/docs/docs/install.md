@@ -128,8 +128,8 @@ On Windows:
 ```
 
 That prints `True` when they match. When the GitHub CLI is installed, signed in
-and 2.49 or newer, `install.sh` and `install.ps1` run the attestation check on
-the download before they install it. They stop if it fails. Without it they say
+and 2.49 or newer, `install.sh` and `install.ps1` run the attestation check
+before they install the download. They stop if it fails. Without it they say
 the check was skipped and print the command to run.
 
 ## From source
