@@ -114,12 +114,14 @@ probe test held a data race indefinitely as a result — a `strings.Builder`
 shared between `os/exec`'s copier goroutines and a poll loop — and it took an
 acceptance pass running both flags together to see it. Both now use `-race`.
 
-This is the one platform gate CI cannot run. GitHub-hosted Windows runners
-refuse to create AppContainer children — `CreateProcess` returns "Access is
-denied" for every executable, including `cmd.exe` — so anything that launches a
-live contained process skips there. The enforcement script detects that and
-skips; the CI step exists to start asserting if a future runner image can host
-one, not to assert today.
+CI runs this gate too, on a hosted Windows runner. Until 2026-09-21 it could
+not: hosted runners refused to create AppContainer children, so anything that
+launched a live contained process skipped there. Since PR #52 they launch them,
+and in run 37244525606 the enforcement script and the probe step both passed
+(the probe step had 8 skips, none of them a refusal to launch). The enforcement
+script still detects a refused launch and skips, so a runner image that refuses
+again shows up as a skip. The by-hand run on a real machine stays part of the
+release checklist.
 
 **A Windows runner whose sockets are broken is a re-run, not a bug.** Seen
 2026-09-03: `listen tcp 127.0.0.1:0: socket: An operation was attempted on
@@ -138,7 +140,8 @@ allowlist to make a flaky runner quiet.
 AppContainers to check that a sandbox cannot read another project, that a deny
 ACE hides a secret, that one session cannot read another's guest home, and that
 the relay does not expose host loopback services — roughly twenty end-to-end
-containment assertions that skip on hosted CI and run here.
+containment assertions. They skipped on hosted CI until 2026-09-21 and run
+there now, so CI and this machine both exercise them.
 
 Expect **0 failures and exactly these 6 top-level skips**. `go test -v` also
 prints a further `--- SKIP` line for the subtest

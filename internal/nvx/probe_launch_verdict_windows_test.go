@@ -93,8 +93,8 @@ func TestARefusedLaunchOnACapableHostIsAFailureNotASkip(t *testing.T) {
 }
 
 // The complement, and the reason the skip still exists: on a host that really
-// cannot create AppContainer children -- a GitHub-hosted Windows runner -- these
-// probes must still skip rather than turn CI red.
+// cannot create AppContainer children -- a GitHub-hosted Windows runner did
+// until 2026-09-21 -- these probes must still skip rather than turn CI red.
 func TestARefusedLaunchOnAnIncapableHostStillSkips(t *testing.T) {
 	withCapability(t, false, "the control launch of cmd.exe was refused: Access is denied.")
 	v := decide(errors.New(`CreateProcess(AppContainer): Access is denied.`))

@@ -150,13 +150,14 @@ func stageProbeChild(t *testing.T, guestHome, name string) string {
 // requireAppContainerLaunch decides whether a failed AppContainer launch is this
 // environment's limitation or a real defect.
 //
-// GitHub-hosted Windows runners cannot create AppContainer children at all:
-// CreateProcess returns "Access is denied" for every executable, including
+// GitHub-hosted Windows runners used to refuse to create AppContainer children:
+// CreateProcess returned "Access is denied" for every executable, including
 // C:\Windows\System32\cmd.exe. That was long asserted in the smoke scripts as a
 // blanket `exit 0` on CI; running these probes there in CI run 32077425413
-// confirmed it, so it is now measured rather than assumed.
+// confirmed it, so it was measured rather than assumed. It stopped being true
+// on 2026-09-21 (the breakaway fix, PR #52), and run 37244525606 launched them.
 //
-// A skip is therefore correct on such a host -- but only for THAT error. Skipping on
+// A skip is still correct on a host that refuses -- but only for THAT error. Skipping on
 // any launch failure, which two of these probes previously did, would silently
 // swallow a genuine regression in the launcher. Anything else is a failure.
 func requireAppContainerLaunch(t launchT, err error) {

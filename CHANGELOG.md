@@ -107,6 +107,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **A failed contained `bun install` outside the system drive says why.** Bun's
+  package manager cannot run in the Windows sandbox in a project on a drive other
+  than the one Windows is installed on, and printed only `error: An internal error
+  occurred (EBADF)`. Measured with Bun 1.4.2, `bun install` works on C: and fails on
+  D: and H:. After a failed `bun install`, `add`, `remove`, `update`, `patch` or
+  `pm` in such a project, nvx now adds two lines naming the cause and the two ways
+  out. Those are `nvx --no-sandbox bun ...`, which runs Bun uncontained, or moving
+  the project to the system drive. Bun's fix is in progress as oven-sh/bun#38365.
+* **`nvx setup` covers every fixed drive.** It used to grant only the drives
+  holding Windows, your profile, nvx and the current directory, because each
+  grant was slow on a large drive. Now that a grant is fast, one run covers them
+  all and nobody has to run setup again from each drive. `--all-drives` is
+  still accepted and changes nothing.
 * **nvx is on npm as `@fstubner/nvx`, published through trusted publishing.**
   `npm install -g @fstubner/nvx` installs the binary for your platform and runs
   no install script. Releases now publish to npm with the release workflow's
@@ -216,6 +229,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **pnpm installs inside the Windows sandbox.** pnpm 10 resolves the project
+  directory with `fs.promises.realpath`, which asks Windows for the path with
+  its drive letter, and an AppContainer is refused that on every path. A first
+  `pnpm install` stopped with `EPERM: operation not permitted, realpath`. The
+  preload nvx puts in every contained node process now retries a refused native
+  realpath with Node's JavaScript one, which walks the path with `lstat` and
+  `readlink` and reaches the same answer. Measured 2026-10-04 with pnpm
+  10.34.6 on Node 22.23.3: a first install now completes in projects on `C:`
+  and on `H:`.
+
+* **A second `pnpm install` in the sandbox works.** pnpm keeps its package
+  store in the home folder when the project is on the same drive, and records
+  the store's path in `node_modules/.modules.yaml`. Every contained run had a
+  new home, so the next install found a different store and stopped with
+  `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. Contained pnpm commands now
+  share one home per project that is kept between runs, as a trusted tool's
+  is. No other project and no other package manager uses it. Measured
+  2026-10-05 with pnpm 10.34.6 on Windows: two installs in a row now both
+  finish in a project on `C:`. A project already installed by an earlier nvx
+  still records the old path, so delete its `node_modules` folder once.
+
+* **`nvx setup` no longer spends minutes on each large drive.**
+  On 2026-10-04 `nvx setup --all-drives` granted D:\ in 1 second and E:\ in 3,
+  then was still working on F:\ after 33 minutes. The grant is one entry on the
+  drive root that nothing below the root inherits. Writing it made Windows
+  re-check the permissions of every file on the volume, which changed nothing.
+  Setup and `nvx setup --undo` now write the root's own permissions and leave
+  the rest of the volume alone. On a test directory holding 20,000 files the
+  old write took 2.67 to 3.01 seconds and the new one under 1 millisecond, and
+  no file's permissions changed either way. The same write used to drop the
+  directory's auto-inherited mark, and now keeps it as it was.
 * **The typosquat check no longer refuses dependencies you did not choose.**
   The pre-install checks run over the whole resolved tree, and the typosquat
   check asked api.npmjs.org for the weekly downloads of every package in it.

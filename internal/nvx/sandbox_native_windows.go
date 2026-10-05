@@ -506,6 +506,10 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	if exitCode != 0 && isPackageManagerCommand(config.Command) {
 		remindAboutDriveRoots(config.NvxHome, workDir)
 	}
+	// bun's own error for this is a bare EBADF. See sandbox_bun_ebadf_hint.
+	if exitCode != 0 {
+		noteBunOffSystemDrive(config.Command, config.Args, workDir, exitCode)
+	}
 	return exitCode, nil
 }
 
@@ -530,7 +534,7 @@ func remindAboutDriveRoots(nvxHome, workDir string) {
 	if err != nil {
 		return
 	}
-	roots, _ := windowsSetupGrantPaths(nvxHome, workDir, false)
+	roots := windowsSetupGrantPaths(nvxHome, workDir, false)
 	var missing []string
 	for _, r := range roots {
 		if !driveRootHasGrant(sidStr, r) {
@@ -541,7 +545,7 @@ func remindAboutDriveRoots(nvxHome, workDir string) {
 		return
 	}
 	LogDetail("If the error above is an EPERM on %s, that is a drive root the sandbox cannot read; "+
-		"'nvx setup' from an Administrator terminal, run from that volume, grants it. Nothing else needs "+
+		"'nvx setup' from an Administrator terminal grants it. Nothing else needs "+
 		"elevation, and an EPERM inside ~/.nvx is a different problem that nvx retries itself.",
 		strings.Join(missing, " or "))
 }
@@ -662,7 +666,7 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 	// complete account of why a contained command had failed, when the failure
 	// measured on 2026-09-01 was inside nvx's own home and no amount of elevated
 	// setup would have touched it.
-	roots, _ := windowsSetupGrantPaths(nvxHome, workDir, false)
+	roots := windowsSetupGrantPaths(nvxHome, workDir, false)
 
 	// A machine that ran setup before per-project packages has the grant on an
 	// identity nothing carries now. That case is not advisory -- it BREAKS `npx`,
@@ -706,13 +710,13 @@ func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
 
 	if stranded {
 		LogDetail("An earlier 'nvx setup' granted %s to a sandbox identity nvx no longer uses, so that grant no longer applies.", strings.Join(missing, " or "))
-		LogDetail("Re-run 'nvx setup' from an Administrator terminal, in this directory, to move it; " +
+		LogDetail("Re-run 'nvx setup' from an Administrator terminal to move it; " +
 			"only a tool that resolves a path all the way to that root would notice.")
 		return
 	}
 
 	LogDetail("The sandbox cannot read %s. Installs and npx do not need it.", strings.Join(missing, " or "))
-	LogDetail("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal, run in this directory so it covers this volume.")
+	LogDetail("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal.")
 }
 
 func driveRootNoticeFile(nvxHome string) string {

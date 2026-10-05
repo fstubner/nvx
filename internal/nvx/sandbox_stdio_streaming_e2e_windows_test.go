@@ -228,7 +228,8 @@ setTimeout(() => { say('HUNG closed=' + closed); process.exit(9); }, 90000);
 // `npx vitest` stranding processes forever -- would come back silently.
 //
 // nvx prints "AppContainer launch failed" when the host refuses the launch, and
-// a hosted Windows runner refuses every one. That, and only that, is a skip.
+// a hosted Windows runner refused every one until 2026-09-21. That, and only
+// that, is a skip.
 func failUnlessHostRefusedLaunch(t *testing.T, out string, readErr error, what string) {
 	t.Helper()
 	if strings.Contains(out, "AppContainer launch failed") {

@@ -122,16 +122,22 @@ const (
 // daclIsProtected reports whether a security descriptor's DACL is protected:
 // the directory does not take its parent's inheritable entries.
 func daclIsProtected(sd *byte) bool {
+	return daclControl(sd)&seDaclProtected != 0
+}
+
+// daclControl returns a security descriptor's control bits, or 0 when they
+// cannot be read.
+func daclControl(sd *byte) uint16 {
 	if sd == nil {
-		return false
+		return 0
 	}
 	var control uint16
 	var revision uint32
 	if ret, _, _ := procGetSecurityDescriptorControl.Call(uintptr(unsafe.Pointer(sd)),
 		uintptr(unsafe.Pointer(&control)), uintptr(unsafe.Pointer(&revision))); ret == 0 {
-		return false
+		return 0
 	}
-	return control&seDaclProtected != 0
+	return control
 }
 
 // keepDACLProtection is the SetNamedSecurityInfo flag that leaves a DACL's
@@ -415,14 +421,18 @@ func writeDACLEntryDropping(path, sidStr string, mask uint32, flags uint8, drop 
 //
 // Because nothing is re-derived, the list is written complete: every existing
 // entry is carried over as it is, inherited ones included, and the descriptor
-// is marked auto-inherited so the entries keep their meaning and later
-// propagation from above still applies. Explicit entries stay ahead of
-// inherited ones, and denies ahead of allows, which is the order Windows
-// expects and the order an access check reads.
+// keeps the auto-inherited and protected marks it had, so the entries keep
+// their meaning and later propagation from above still applies. Explicit
+// entries stay ahead of inherited ones, and denies ahead of allows, which is
+// the order Windows expects and the order an access check reads.
 //
-// Not for inheritable entries, and not for removals: either would leave
-// descendants carrying an inherited copy of something the parent no longer
-// says. Callers that need those go through writeDACLEntry.
+// A mask of 0 removes sidStr's entry, and writes nothing when there is none.
+// Removing a this-folder entry is as local as adding one.
+//
+// Not for inheritable entries. Replacing or removing one without the walk
+// would leave descendants carrying an inherited copy of something the parent
+// no longer says, so when sidStr already holds an inheritable entry here the
+// write goes through writeDACLEntry, which does the walk.
 func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 	sid, err := sidFromString(sidStr)
 	if err != nil {
@@ -449,6 +459,7 @@ func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 		size uint16
 	}
 	var explicitDeny, explicitAllow, inherited []rawACE
+	ours, oursInheritable := false, false
 	if dacl != nil {
 		for i := uint16(0); i < dacl.AceCount; i++ {
 			var ace *accessAllowedACE
@@ -461,6 +472,10 @@ func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 				inherited = append(inherited, raw)
 			case ace.Header.AceType == accessAllowedAceType || ace.Header.AceType == accessDeniedAceType:
 				if eq, _, _ := procEqualSid.Call(uintptr(unsafe.Pointer(aceSID(ace))), uintptr(unsafe.Pointer(sid))); eq != 0 {
+					ours = true
+					if ace.Header.AceFlags&(objectInheritACE|containerInheritACE) != 0 {
+						oursInheritable = true
+					}
 					continue // ours; replaced below
 				}
 				if ace.Header.AceType == accessDeniedAceType {
@@ -474,8 +489,18 @@ func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 		}
 	}
 
+	if oursInheritable {
+		return writeDACLEntry(path, sidStr, mask, 0)
+	}
+	if mask == 0 && !ours {
+		return nil
+	}
+
 	sidLen, _, _ := procGetLengthSid.Call(uintptr(unsafe.Pointer(sid)))
-	size := int(unsafe.Sizeof(win32ACL{})) + int(unsafe.Sizeof(accessAllowedACE{})) + int(sidLen)
+	size := int(unsafe.Sizeof(win32ACL{}))
+	if mask != 0 {
+		size += int(unsafe.Sizeof(accessAllowedACE{})) + int(sidLen)
+	}
 	for _, group := range [][]rawACE{explicitDeny, explicitAllow, inherited} {
 		for _, k := range group {
 			size += int(k.size)
@@ -502,10 +527,12 @@ func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 	if err := carry(explicitAllow); err != nil {
 		return err
 	}
-	if ret, _, e := procAddAccessAllowedAceEx.Call(
-		uintptr(newACL), aclRevision, 0, uintptr(mask),
-		uintptr(unsafe.Pointer(sid))); ret == 0 {
-		return fmt.Errorf("add a permission on %s: %v", path, e)
+	if mask != 0 {
+		if ret, _, e := procAddAccessAllowedAceEx.Call(
+			uintptr(newACL), aclRevision, 0, uintptr(mask),
+			uintptr(unsafe.Pointer(sid))); ret == 0 {
+			return fmt.Errorf("add a permission on %s: %v", path, e)
+		}
 	}
 	if err := carry(inherited); err != nil {
 		return err
@@ -514,6 +541,7 @@ func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 	const (
 		securityDescriptorRevision = 1
 		securityDescriptorMinLen   = 40 // SECURITY_DESCRIPTOR_MIN_LENGTH on 64-bit
+		seDaclAutoInheritReq       = 0x0100
 		seDaclAutoInherited        = 0x0400
 	)
 	desc := make([]byte, securityDescriptorMinLen)
@@ -523,12 +551,20 @@ func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 	if ret, _, e := procSetSecurityDescriptorDacl.Call(uintptr(unsafe.Pointer(&desc[0])), 1, uintptr(newACL), 0); ret == 0 {
 		return fmt.Errorf("attach the permission list for %s: %v", path, e)
 	}
-	control := uintptr(seDaclAutoInherited)
+	// Both marks as they were. Windows keeps auto-inherited only when
+	// AUTO_INHERIT_REQ comes with it. This used to set the mark alone, and the
+	// directory came back without it: control 0x8404 before, 0x8004 after, on a
+	// temp directory, measured 2026-10-04. A drive root that never had the mark
+	// is left without it. F:\ and G:\ here carry none.
+	var control uintptr
+	if daclControl(sd)&seDaclAutoInherited != 0 {
+		control |= seDaclAutoInherited | seDaclAutoInheritReq
+	}
 	if daclIsProtected(sd) {
 		control |= seDaclProtected
 	}
 	if ret, _, e := procSetSecurityDescriptorControl.Call(uintptr(unsafe.Pointer(&desc[0])),
-		seDaclAutoInherited|seDaclProtected, control); ret == 0 {
+		seDaclAutoInherited|seDaclAutoInheritReq|seDaclProtected, control); ret == 0 {
 		return fmt.Errorf("mark the permission list on %s as inherited: %v", path, e)
 	}
 	if ret, _, e := procSetFileSecurityW.Call(uintptr(unsafe.Pointer(p)), daclSecurityInformation, uintptr(unsafe.Pointer(&desc[0]))); ret == 0 {
@@ -624,6 +660,14 @@ func aclWriteDropping(path, sidStr string, mask uint32, flags uint8, drop func(s
 }
 
 func grantACLWithin(path, sidStr string, mask uint32, flags uint8, timeout time.Duration, drop func(string) bool) error {
+	return aclWriteWithin(path, timeout, func() error {
+		return aclWriteDropping(path, sidStr, mask, flags, drop)
+	})
+}
+
+// aclWriteWithin runs write, a permission write on path, under the bounds
+// described above.
+func aclWriteWithin(path string, timeout time.Duration, write func() error) error {
 	key := strings.ToLower(filepath.Clean(path))
 	if _, stalled := aclStalledPaths.Load(key); stalled {
 		return fmt.Errorf("setting permissions on %s stalled earlier in this process; not retried", path)
@@ -646,7 +690,7 @@ func grantACLWithin(path, sidStr string, mask uint32, flags uint8, timeout time.
 	done := make(chan error, 1)
 
 	go func() {
-		err := aclWriteDropping(path, sidStr, mask, flags, drop)
+		err := write()
 		if state.CompareAndSwap(pending, delivered) {
 			done <- err
 			return
@@ -677,14 +721,6 @@ func grantACLWithin(path, sidStr string, mask uint32, flags uint8, timeout time.
 // revokeACL removes every explicit entry for sidStr from path.
 func revokeACL(path, sidStr string) error {
 	return writeDACLEntry(path, sidStr, 0, 0)
-}
-
-// revokeACLWithin is revokeACL with a deadline: a revoke is a DACL write with
-// an empty mask, so it is bounded the way grantACLWithin bounds a grant, and an
-// abandoned one is accounted for the same way. `nvx setup --undo` uses it; the
-// unbounded form there let an undo over a large profile appear to hang.
-func revokeACLWithin(path, sidStr string, timeout time.Duration) error {
-	return grantACLWithin(path, sidStr, 0, 0, timeout, nil)
 }
 
 // aclEntryFor returns the explicit entry for sidStr on path, if there is one.

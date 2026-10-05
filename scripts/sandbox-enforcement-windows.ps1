@@ -115,14 +115,15 @@ try {
     & $nvx init-shims | Out-Null
 
     # Can this host create an AppContainer at all? GitHub-hosted Windows runners
-    # cannot -- CreateProcess returns "Access is denied" for every executable,
-    # including cmd.exe. Probing once and skipping with that reason keeps the
-    # environment's limitation from being reported as a product failure, while
-    # still failing normally everywhere the sandbox does work.
+    # could not until 2026-09-21 -- CreateProcess returned "Access is denied" for
+    # every executable, including cmd.exe. Probing once and skipping with that
+    # reason keeps a host that refuses from being reported as a product failure,
+    # while still failing normally everywhere the sandbox does work.
     #
-    # This is why Windows is the one platform whose enforcement is not gated in
-    # hosted CI, and why the matrix says "measured" for it rather than "CI". Run
-    # this script on a real Windows machine before cutting a release.
+    # Hosted runners launch them now and this script asserts in CI (run
+    # 37244525606 printed all five outcomes and passed). Keep the skip for a runner
+    # image that refuses again, and still run this script on a real Windows machine
+    # before cutting a release.
     $launch = (Invoke-NativeCapture $nvx @('shim', 'node', '-e', 'process.exit(0)')).Output
     if ($launch -match 'AppContainer launch failed') {
         # Only the two shapes a HOST refusal takes, not any launch failure.
