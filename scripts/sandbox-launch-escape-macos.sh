@@ -30,8 +30,8 @@ fi
 [[ -x "$NVX" ]] || { echo "Build nvx first: go build -o nvx ./cmd/nvx" >&2; exit 1; }
 
 PROJ="$(mktemp -d)"
-# Outside every write root the profile grants, for the reason given in
-# sandbox-enforcement-macos.sh: mktemp lands under /private/var/folders.
+# Outside every write root the profile grants. mktemp lands under
+# /private/var/folders, which the profile granted until 2026-10-06.
 OUTSIDE="$HOME/.nvx-launchservices-probe"
 rm -rf "$OUTSIDE"; mkdir -p "$OUTSIDE"
 trap 'rm -rf "$PROJ" "$OUTSIDE"; launchctl remove nvx.probe.control 2>/dev/null; launchctl remove nvx.probe.contained 2>/dev/null' EXIT
