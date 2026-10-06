@@ -104,8 +104,10 @@ install and run scripts. Its defenses are layered:
 3. **Process isolation.** Commands that fetch or execute package-authored code
    run inside an OS-native sandbox. The sandbox is Windows AppContainer, Linux
    Landlock + network namespace + seccomp, or macOS Seatbelt. It has a scrubbed
-   environment. It can write only to the working directory and an ephemeral
-   guest home, which holds its temp directory. On macOS it may also write a
+   environment. It can write only to the working directory and a guest home
+   under `~/.nvx`, which holds its temp directory. The guest home is thrown away
+   after each run, except for pnpm and for tools approved as trusted, which keep
+   one per project. On macOS it may also write a
    few named device files such as `/dev/null` and `/dev/tty`.
 
    That is installs (`install`, `ci`, `add`, `update`, `rebuild`, `dedupe`,
@@ -120,8 +122,13 @@ install and run scripts. Its defenses are layered:
    non-interactive). When nvx's own environment sets `HTTPS_PROXY` or
    `HTTP_PROXY`, an allowed connection is forwarded through that proxy. The
    egress proxy dials `NO_PROXY` and loopback destinations directly. The allowlist decides
-   before anything is forwarded. The upstream proxy resolves the name itself,
-   so nvx's link-local check covers only what nvx's own resolver returned.
+   before anything is forwarded. The proxy may be `http://`, `https://`,
+   `socks5://` or `socks5h://`. nvx verifies an `https://` proxy's certificate
+   against the system roots before it sends any credential. Any other scheme is
+   ignored with a warning, and connections are then made directly. An
+   `http://`, `https://` or `socks5h://` proxy resolves the name itself, so
+   nvx's link-local check covers only what nvx's own resolver returned. A
+   `socks5://` proxy is sent the addresses nvx resolved and checked.
 
 **Design stance.** Security-relevant failures **fail closed**. If a sandbox
 primitive is unavailable or a policy cannot be parsed, nvx refuses to run the
@@ -152,8 +159,9 @@ These are deliberate trade-offs, and this section documents each one:
   last check is what distinguishes enforcement from a sandbox that has simply
   failed to start.
 
-  What macOS does not do is contain reads outside the credential stores. See the
-  entry below. A macOS runner also confirms that an allowlisted host completes
+  On macOS reads are denied under the home directory and nvx's home, apart from
+  what a run needs, and allowed elsewhere on the disk. See the entry below. A
+  macOS runner also confirms that an allowlisted host completes
   through the proxy, that UDP is refused, and that nvx fails closed without
   `sandbox-exec`. One cell stays unclaimed. Nothing yet shows which layer refuses
   the outbound connection the probe observes being refused, DNS or connect.
@@ -232,11 +240,12 @@ These are deliberate trade-offs, and this section documents each one:
   directory has to be readable for an install to work, and `.env` lives in it.
   Environment *variables* are scrubbed, and a file is a file. Secrets outside the
   project, such as `~/.ssh`, `~/.aws` and `~/.npmrc`, stay unreachable on Windows
-  and Linux. On macOS the Seatbelt profile allows filesystem reads and denies the
-  credential stores by path (see `docs/enforcement-matrix.md` note 2). Those
-  three, the other registry and cloud credential files listed there, and the
-  keychains cannot be read. **Other files outside the project can**, other
-  projects included.
+  and Linux. On macOS the Seatbelt profile denies reads under the home
+  directory and nvx's home, apart from the project, the guest home, nvx's
+  runtimes and `allow_read_exec` roots. It denies the credential stores by path
+  on top of that (see `docs/enforcement-matrix.md` note 2). Other projects in the
+  home cannot be read. **Files outside the home can**, such as other apps' temp
+  files under `/private/var/folders`.
 - **Your home directory's names are visible on Windows, contents are not.**
   A contained process can list your profile directory, which shows which
   credential stores exist. The entry that allows it ships with Windows, and nvx

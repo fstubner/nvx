@@ -49,6 +49,21 @@ func sandboxWritableRoots(guestHome, workDir string) []string {
 	return roots
 }
 
+// sandboxRuntimeReadRoots are the parts of nvxHome a contained process may read
+// and execute, and nothing else under it. Linux grants exactly these, and macOS
+// reopens exactly these after denying reads of nvxHome. See
+// landlockReadOnlyRules for what the rest of nvxHome holds.
+func sandboxRuntimeReadRoots(nvxHome string) []string {
+	if nvxHome == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(nvxHome, "versions"), // runtimes: read+exec is the point
+		filepath.Join(nvxHome, "bin"),      // shims: PATH still resolves nested node/npm here
+		filepath.Join(nvxHome, "current"),  // symlink into versions
+	}
+}
+
 // gitMetadataPaths returns the repository metadata inside workDir that a
 // contained process may read but never write: workDir/.git, and, where that is
 // a file naming the real git directory (a linked worktree, a submodule, a

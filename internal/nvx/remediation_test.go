@@ -755,7 +755,7 @@ func TestScrubEnvironmentDropsHostProxyCredentials(t *testing.T) {
 }
 
 func TestBuildSeatbeltProfileContainsWritesAndEgress(t *testing.T) {
-	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "offline"}, "/guest/home", "/work/dir")
+	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "offline"}, "/guest/home", "/work/dir", "", nil)
 	if strings.Contains(profile, "(allow default)") {
 		t.Fatal("Seatbelt profile must be default-deny, not allow-all")
 	}

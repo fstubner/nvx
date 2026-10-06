@@ -19,7 +19,7 @@ credentials within reach. nvx puts that command inside an OS sandbox with a
 throwaway `HOME` and an allowlist for anything it tries to reach over the
 network. It can write only to the project and that home. It cannot read
 `~/.ssh` or `~/.npmrc` either.
-On macOS other reads are not contained, and the
+On macOS files outside your home directory stay readable, and the
 [known limitations](https://nvx.run/docs/limitations/) say so plainly.
 
 **You do not change how you run anything.** nvx installs shims on `PATH`, so
@@ -89,7 +89,6 @@ The full reference is in **[Commands](https://nvx.run/docs/commands/)** and
 | [Policy](https://nvx.run/docs/policy/) | Global and project policy files, and every setting |
 | [Known limitations](https://nvx.run/docs/limitations/) | What containment does not cover |
 | [Commands](https://nvx.run/docs/commands/) | Commands, flags and environment variables |
-| [FAQ](https://nvx.run/docs/faq/) | Switching, networking, mixed runtimes, agents |
 
 The threat model is in [SECURITY.md](SECURITY.md), and the per-platform evidence
 behind every containment claim is in

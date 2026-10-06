@@ -66,11 +66,12 @@ html[data-theme='dark'] ::backdrop {
 html[data-theme='light'],
 html[data-theme='light'] ::backdrop {
   /* Purple, matching the light accents theme.mjs derived in tokens.css.
-     These arrived hard-coded to netscli's green: the dark block above
-     reads var(--ui-accent) and re-branded itself, this one could not. */
+     Accent and accent-high read the tokens, as in the dark block: a literal
+     here is one `npm run theme` never reaches. Low stays written out because
+     tokens.css has no accent-low to read. */
   --sl-color-accent-low: #ece1fb;
-  --sl-color-accent: #731bc5;
-  --sl-color-accent-high: #4f1287;
+  --sl-color-accent: var(--ui-accent);
+  --sl-color-accent-high: var(--ui-accent-high);
   --sl-color-white: #111827;
   --sl-color-gray-1: #243044;
   --sl-color-gray-2: #44516a;

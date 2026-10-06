@@ -1,4 +1,5 @@
-import type { ReachNote, ReachRow, SectionCopy } from './types';
+import type { SectionCopy } from './types';
+import type { ReachNote, ReachRow } from './product-types';
 
 // What a package install can and cannot open, before and after nvx.
 //

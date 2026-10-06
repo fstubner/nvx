@@ -38,6 +38,8 @@ func TestSeatbeltProfileDoesNotGrantWriteToNvxHome(t *testing.T) {
 		NetworkLaunchContext{Mode: "proxy"},
 		"/Users/testuser/.nvx/sandbox_home/session1",
 		"/Users/testuser/projects/app",
+		"/Users/testuser/.nvx",
+		nil,
 	)
 	writes := seatbeltWriteSection(t, profile)
 
@@ -59,6 +61,8 @@ func TestSeatbeltProfileDoesNotGrantWriteToRuntimeBinDir(t *testing.T) {
 		NetworkLaunchContext{Mode: "proxy"},
 		"/Users/testuser/.nvx/sandbox_home/session1",
 		"/Users/testuser/projects/app",
+		"/Users/testuser/.nvx",
+		nil,
 	)
 	writes := seatbeltWriteSection(t, profile)
 
@@ -81,7 +85,7 @@ func TestSeatbeltProfileDoesNotGrantWriteToRuntimeBinDir(t *testing.T) {
 func TestSeatbeltProfileWritableRootsAreExactlyExpected(t *testing.T) {
 	guestHome := "/Users/testuser/.nvx/sandbox_home/session1"
 	workDir := "/Users/testuser/projects/app"
-	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "proxy"}, guestHome, workDir)
+	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "proxy"}, guestHome, workDir, "/Users/testuser/.nvx", nil)
 	writes := seatbeltWriteSection(t, profile)
 
 	want := append([]string{
@@ -118,7 +122,7 @@ func TestSeatbeltProfileWritableRootsAreExactlyExpected(t *testing.T) {
 // also catch their return, and this one names what they are.
 func TestSeatbeltProfileDoesNotGrantWriteToSharedTempOrAllOfDev(t *testing.T) {
 	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "proxy"},
-		"/Users/testuser/.nvx/sandbox_home/session1", "/Users/testuser/projects/app")
+		"/Users/testuser/.nvx/sandbox_home/session1", "/Users/testuser/projects/app", "/Users/testuser/.nvx", nil)
 	writes := seatbeltWriteSection(t, profile)
 	for _, root := range []string{"/dev", "/private/tmp", "/private/var/tmp", "/private/var/folders", "/tmp", "/var/folders"} {
 		for _, form := range []string{`(subpath "` + root + `")`, `(literal "` + root + `")`} {
