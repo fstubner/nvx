@@ -43,6 +43,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   updates, and Bun's binary `bun.lockb` are checked on what they name or
   declare, as before.
 
+### Changed
+
+* **`nvx setup` on Windows now only removes what older versions left.** It no
+  longer grants the sandbox access to drive roots and Users folders. Measured
+  2026-10-06 with every such grant removed, contained `npx`, `pnpm` and `bun`
+  1.4.2 all install on `C:`, because a preload answers the directory stats the
+  grants were for. Run from an Administrator terminal, setup now clears those
+  entries, the ones made to older sandbox identities, and the loopback
+  exemption from before 0.5.0. On a machine with nothing to remove it says so
+  and exits 0. `--undo` and `--all-drives` are still accepted and change
+  nothing. nvx no longer suggests `nvx setup` after a failed command, and
+  `nvx doctor` reports a leftover grant as a note, never as a failure.
+
 ### Fixed
 
 * **nvx's egress proxy no longer looks up a name it is about to refuse.** The
