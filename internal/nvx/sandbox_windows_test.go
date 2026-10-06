@@ -96,39 +96,6 @@ func TestSetNodeOptionsPreserveSymlinks(t *testing.T) {
 	})
 }
 
-// A project on a non-system drive makes tools resolve paths up to that volume's
-// root; without a grant there the stat fails as a bare EPERM on e.g. "H:\".
-// Setup must therefore cover every fixed drive root, not just the system one.
-func TestWindowsAncestorGrantPathsCoversFixedDrives(t *testing.T) {
-	paths := windowsAncestorGrantPaths()
-
-	have := map[string]bool{}
-	for _, p := range paths {
-		have[strings.ToUpper(p)] = true
-	}
-
-	roots := fixedDriveRoots()
-	if len(roots) == 0 {
-		t.Skip("no fixed drives reported")
-	}
-	for _, r := range roots {
-		if !have[strings.ToUpper(r)] {
-			t.Errorf("fixed drive root %q missing from grant paths %v", r, paths)
-		}
-	}
-
-	// Deduplication must hold even though the system drive is added twice.
-	seen := map[string]int{}
-	for _, p := range paths {
-		seen[strings.ToUpper(p)]++
-	}
-	for p, n := range seen {
-		if n > 1 {
-			t.Errorf("path %q listed %d times; expected deduplication", p, n)
-		}
-	}
-}
-
 func TestFixedDriveRootsIncludesSystemDrive(t *testing.T) {
 	sysDrive := os.Getenv("SystemDrive")
 	if sysDrive == "" {

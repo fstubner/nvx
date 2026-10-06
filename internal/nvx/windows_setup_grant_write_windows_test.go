@@ -2,9 +2,9 @@
 
 package nvx
 
-// `nvx setup` writes its drive-root entry without walking the volume.
+// `nvx setup` removes its drive-root entry without walking the volume.
 //
-// The grant and its removal went through SetNamedSecurityInfoW, which re-runs
+// The grant an older setup made, and its removal, went through SetNamedSecurityInfoW, which re-runs
 // auto-inheritance over every descendant of the directory written. On a drive
 // root that is the whole volume. Measured 2026-10-04: setup --all-drives took 1s
 // on D:\ and 3s on E:\, and was still on F:\ after 33 minutes. The entry is
@@ -26,7 +26,7 @@ const setupWriteTestSID = "S-1-15-3-1024-1212121212-2323232323-3434343434-141414
 
 // The propagating writer is the only one aclWriteFn stands in for, so a hook
 // there that fails proves which writer setup used.
-func TestSetupGrantAndUndoDoNotUseThePropagatingWrite(t *testing.T) {
+func TestSetupWritesDoNotUseThePropagatingWrite(t *testing.T) {
 	var propagating atomic.Int32
 	hook := func(path, sidStr string, mask uint32, flags uint8) error {
 		propagating.Add(1)
@@ -36,25 +36,25 @@ func TestSetupGrantAndUndoDoNotUseThePropagatingWrite(t *testing.T) {
 	t.Cleanup(func() { aclWriteFn.Store(nil) })
 
 	dir := tempDir(t)
-	if err := grantSidReadExecThisFolder(setupWriteTestSID, dir); err != nil {
-		t.Fatalf("setup's grant: %v", err)
+	if err := setupACLWrite(dir, setupWriteTestSID, aclMaskReadExec); err != nil {
+		t.Fatalf("writing the entry: %v", err)
 	}
 	if n := propagating.Load(); n != 0 {
-		t.Fatalf("setup's grant went through the propagating write %d time(s); on a drive root that walks the whole volume", n)
+		t.Fatalf("the write went through the propagating write %d time(s); on a drive root that walks the whole volume", n)
 	}
 	e, ok, err := aclEntryFor(dir, setupWriteTestSID)
 	if err != nil || !ok {
-		t.Fatalf("the grant left no entry (found=%v, err=%v)", ok, err)
+		t.Fatalf("the write left no entry (found=%v, err=%v)", ok, err)
 	}
 	if e.Flags != 0 || e.Mask != aclMaskReadExec {
 		t.Errorf("the entry has flags %#x and mask %#x, want 0 and %#x", e.Flags, e.Mask, aclMaskReadExec)
 	}
 
 	if err := revokeSidGrant(setupWriteTestSID, dir); err != nil {
-		t.Fatalf("setup --undo's revoke: %v", err)
+		t.Fatalf("setup's revoke: %v", err)
 	}
 	if n := propagating.Load(); n != 0 {
-		t.Fatalf("setup --undo went through the propagating write %d time(s)", n)
+		t.Fatalf("setup's revoke went through the propagating write %d time(s)", n)
 	}
 	if _, ok, _ := aclEntryFor(dir, setupWriteTestSID); ok {
 		t.Error("the revoke left the entry in place")
@@ -65,7 +65,7 @@ func TestSetupGrantAndUndoDoNotUseThePropagatingWrite(t *testing.T) {
 // checks what that could get wrong: every descendant's security descriptor is
 // byte-identical afterwards, and the directory holds its old entries and
 // control bits with exactly one entry added.
-func TestSetupGrantLeavesEveryChildACLUnchanged(t *testing.T) {
+func TestSetupWriteLeavesEveryChildACLUnchanged(t *testing.T) {
 	root := tempDir(t)
 	for i := 0; i < 4; i++ {
 		for j := 0; j < 4; j++ {
@@ -87,8 +87,8 @@ func TestSetupGrantLeavesEveryChildACLUnchanged(t *testing.T) {
 	}
 	controlBefore := securityControl(t, root)
 
-	if err := grantSidReadExecThisFolder(setupWriteTestSID, root); err != nil {
-		t.Fatalf("setup's grant: %v", err)
+	if err := setupACLWrite(root, setupWriteTestSID, aclMaskReadExec); err != nil {
+		t.Fatalf("writing the entry: %v", err)
 	}
 	t.Cleanup(func() { _ = revokeSidGrant(setupWriteTestSID, root) })
 

@@ -19,9 +19,9 @@ import (
 //
 // It persists because appContainerHasGrant answers "is there any allow ACE", not
 // "is it the right one", so the narrower grant is skipped as already present. The
-// same check is used for ancestor grants that `nvx setup` deliberately makes (RX)
-// on drive roots, so this narrowing is deliberately scoped to nvxHome rather than
-// applied wherever a broad ACE is found.
+// same check is used for ancestor grants, including the (RX) ones an older
+// `nvx setup` made on drive roots, so this narrowing is deliberately scoped to
+// nvxHome rather than applied wherever a broad ACE is found.
 //
 // Once per home, marked on disk: it is a migration, and paying an ACL read on
 // every launch to re-answer a question that cannot change again is the kind of

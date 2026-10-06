@@ -201,10 +201,7 @@ func deriveAppContainerSIDString(profileName string) (string, error) {
 // now a note with the cleanup command. An exemption on a package that is in use
 // is caught at launch, by warnIfSandboxLoopbackExempt with that session's SID.
 func reportSandboxWeakeners(nvxHome string) bool {
-	weakened := reportStrandedSetupGrant(nvxHome)
-	if reportUnprotectedProfile() {
-		weakened = true
-	}
+	weakened := reportUnprotectedProfile()
 
 	sidStr, err := deriveAppContainerSIDString(stableSandboxProfile)
 	if err != nil {
@@ -216,81 +213,7 @@ func reportSandboxWeakeners(nvxHome string) bool {
 	}
 	fmt.Println("  [INFO] an older 'nvx setup' left a loopback exemption on the retired 'nvx.sandbox' identity")
 	fmt.Println("         no sandbox runs under it any more, so it has no effect")
-	fmt.Printf("         to remove it, from an Administrator terminal: CheckNetIsolation LoopbackExempt -d -p=%s\n", sidStr)
+	fmt.Println("         to remove it, from an Administrator terminal: nvx setup")
+	fmt.Printf("         or: CheckNetIsolation LoopbackExempt -d -p=%s\n", sidStr)
 	return weakened
-}
-
-// reportStrandedSetupGrant reports a completed `nvx setup` whose grants sit on an
-// identity nothing launches under any more.
-//
-// `nvx setup` granted the AppContainer package SID until packages became per
-// project. Those grants are still on disk and still name that old package, so
-// they admit nothing: measured 2026-08-30, `npx` on such a machine fails with
-// "EPERM: operation not permitted, lstat 'C:\\Users'" from npm's own dependency
-// walker, while the same command succeeds on the released build. nvx said
-// nothing, and doctor called the machine healthy.
-//
-// Reported here rather than only at launch because doctor is where someone looks
-// after a command failed in a way they cannot read, and because the launch
-// advisory is deliberately shown once per identity -- useful the first time, and
-// gone by the time anyone goes looking.
-//
-// A note, not a FAIL, since 2026-09-02, and it never marks the machine as
-// weakened: the return is always false. Installs and npx were measured working
-// with the grant stranded; what the grant serves is a tool nobody has measured.
-// Doctor's red line was what sent the person running nvx to a 22-minute
-// elevated write on a volume no command of theirs had needed -- see
-// remindAboutDriveRoots.
-func reportStrandedSetupGrant(nvxHome string) bool {
-	prev, ok := readWindowsSetupState(nvxHome)
-	if !ok || prev.AppContainerSID == "" {
-		return false // setup was never run here; nothing to be stranded
-	}
-	current, err := deriveCapabilitySIDString(setupCapabilityName)
-	if err != nil {
-		return false
-	}
-	workDir, _ := os.Getwd()
-	missing := strandedSetupGrantPaths(nvxHome, workDir, prev.AppContainerSID, current,
-		func(p string) bool { return appContainerHasGrantFor(current, p, grantReadExec) })
-	if len(missing) == 0 {
-		return false
-	}
-
-	fmt.Println("  [note] the sandbox has no drive-root access on " + strings.Join(missing, ", "))
-	fmt.Println("         an earlier 'nvx setup' granted an identity nvx no longer uses. Installs and")
-	fmt.Println("         npx do not need it; a tool that resolves a path all the way to a drive root")
-	fmt.Println("         might. If one fails with EPERM there, 'nvx setup' from an Administrator")
-	fmt.Println("         terminal grants it. This is not a failure.")
-	return false
-}
-
-// strandedSetupGrantPaths returns the paths this machine needs and the current
-// setup identity does not hold. Empty means nothing to report.
-//
-// It asks the permissions, not the record. Reporting straight off the recorded
-// identity said FAIL on a machine where C:\, C:\Users and D:\ already carried the
-// current identity's entry -- because the record is only written when a setup run
-// COMPLETES, and a run interrupted part-way through a slow volume leaves it
-// holding whatever identity was there before. Measured 2026-09-02: two cancelled
-// runs, three volumes correctly granted, and doctor still reporting that none of
-// them applied.
-//
-// Reporting the wrong thing here is expensive rather than untidy. This is the
-// message someone reads after a contained command failed, and the version it
-// replaces asserted that npx "fails there with EPERM" -- which sent a maintainer
-// to a 46-minute elevated grant on a volume that had nothing to do with the
-// failure they were chasing.
-func strandedSetupGrantPaths(nvxHome, workDir, recordedSID, currentSID string, hasGrant func(string) bool) []string {
-	if recordedSID == "" || strings.EqualFold(recordedSID, currentSID) {
-		return nil
-	}
-	paths := windowsSetupGrantPaths(nvxHome, workDir, false)
-	var missing []string
-	for _, p := range paths {
-		if !hasGrant(p) {
-			missing = append(missing, p)
-		}
-	}
-	return missing
 }

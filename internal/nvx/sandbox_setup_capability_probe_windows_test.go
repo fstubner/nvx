@@ -2,27 +2,22 @@
 
 package nvx
 
-// Would running `nvx setup` actually help?
+// Do launches still carry the capability an older `nvx setup` granted?
 //
-// setup is elevated, runs once, and grants drive-root stat access to the
-// capability named by setupCapabilityName. Every launch appends that capability
-// to its token (sandbox_native_windows.go). If those two ever named different
-// things -- a renamed constant, a launch path that forgot to append it, a
-// derivation that differs between the elevated process and the contained one --
-// setup would grant access to an identity nothing holds, and contained `npx`
-// would keep failing with the machine's owner having done exactly what they were
-// told. The failure would look like "setup did not work" and be invisible from
-// either side.
+// Setup no longer grants anything, but an older one wrote drive-root stat access
+// to the capability named by setupCapabilityName, and every launch appends that
+// capability to its token (sandbox_native_windows.go). If those two ever named
+// different things -- a renamed constant, a launch path that forgot to append
+// it, a derivation that differs between the elevated process and the contained
+// one -- an entry an older setup left would apply to nothing, and `nvx setup`
+// would be removing entries that never did anything.
 //
-// Nothing asserted that end to end. TestCapabilitySidGatesFileAccess proves the
-// general mechanism -- a custom capability ACE gates access -- but not that THIS
-// capability is the one a real launch carries.
+// TestCapabilitySidGatesFileAccess proves the general mechanism -- a custom
+// capability ACE gates access -- but not that THIS capability is the one a real
+// launch carries.
 //
-// Deliberately on a directory this test owns rather than on C:\ or C:\Users.
-// Writing those needs elevation, which is the whole reason setup exists; the
-// grant primitive is identical either way, so what is unverified after this is
-// only whether an Administrator can write the drive root, not whether doing so
-// would achieve anything. That is a permissions question, not a design one.
+// Deliberately on a directory this test owns rather than on C:\ or C:\Users,
+// which need elevation to write. The write primitive is identical either way.
 
 import (
 	"os"
@@ -132,7 +127,7 @@ func TestTheCapabilitySetupGrantsIsTheOneLaunchesCarry(t *testing.T) {
 		t.Fatalf("granting the setup capability read/execute: %v", err)
 	}
 	t.Cleanup(func() { _ = revokeACL(outside, setupCap) })
-	if err := grantSidReadExecThisFolder(setupCap, statTarget); err != nil {
+	if err := setupACLWrite(statTarget, setupCap, aclMaskReadExec); err != nil {
 		t.Fatalf("setup's own grant: %v", err)
 	}
 	t.Cleanup(func() { _ = revokeSidGrant(setupCap, statTarget) })

@@ -146,7 +146,7 @@ func daclControl(sd *byte) uint16 {
 // Every write passed UNPROTECTED_DACL_SECURITY_INFORMATION until 2026-09-26,
 // which switches inheritance back ON for the directory written. Windows ships
 // C:\Users and every profile folder protected, precisely so they do not take
-// C:\'s "Authenticated Users: Modify" for subfolders. One `nvx setup` grant on
+// C:\'s "Authenticated Users: Modify" for subfolders. One grant `nvx setup` used to make on
 // C:\Users, or one traverse grant on a profile, lifted that protection, and
 // every signed-in account on the machine could then modify the whole profile.
 // Reproduced on a scratch directory: protected before a grant, unprotected

@@ -57,10 +57,11 @@ func TestMain(m *testing.M) {
 	// same control launch directly (probe_appcontainer_capability_windows_test.go),
 	// which is where a test that needs a real AppContainer belongs.
 	reportSandboxLaunchFn = func(string) bool { return true }
-	// Same reasoning for the elevated-grant check: it reads the machine's real
-	// ACLs, so a test that calls runDoctor about PATH would otherwise turn on
-	// whatever the last `nvx setup` left on the host running the suite.
-	reportSetupGrantsFn = func(string) bool { return true }
+	// Same reasoning for the note about access an older `nvx setup` left: it
+	// reads the machine's real ACLs, so a test that calls runDoctor about PATH
+	// would otherwise print whatever an old setup left on the host running the
+	// suite.
+	reportSetupLeftoversFn = func(string) {}
 
 	code := m.Run()
 	cleanupProbeChildBinary()

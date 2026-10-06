@@ -7,38 +7,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
-
-// isPackageManagerCommand reports whether cmd is a JS package manager/executor
-// that walks ancestor directories (and therefore needs the Windows sandbox
-// setup to run under AppContainer isolation).
-func isPackageManagerCommand(cmd string) bool {
-	base := strings.ToLower(filepath.Base(cmd))
-	base = strings.TrimSuffix(strings.TrimSuffix(base, ".cmd"), ".exe")
-	switch base {
-	case "npm", "npx", "yarn", "pnpm", "corepack":
-		return true
-	}
-	return false
-}
 
 // stableSandboxProfile is the AppContainer profile name nvx used for every
 // sandbox until per-project packages landed. It survives as the name whose SID
 // `nvx doctor` checks for a leftover pre-0.5.0 loopback exemption, and as the
-// identity `nvx setup --undo` still has to revoke for anyone who ran an older
-// setup. Nothing launches under it any more.
+// identity `nvx setup` still has to clear for anyone who ran an older setup.
+// Nothing launches under it any more.
 const stableSandboxProfile = "nvx.sandbox"
 
-// setupCapabilityName is the durable identity `nvx setup` grants drive-root stat
-// access to.
+// setupCapabilityName is the identity an older `nvx setup` granted drive-root
+// stat access to. Setup no longer grants anything.
 //
 // It used to grant the package SID, which worked only while every sandbox shared
 // one package. Packages are per-project now, so a grant made at setup time could
 // not name them -- they do not exist yet. A capability can be granted once and
-// carried by every launch, which is what makes the elevated grant outlive the
-// change. Capabilities do not affect the loopback rule; that is package-scoped,
-// which is the whole point.
+// carried by every launch, which is what made that elevated grant outlive the
+// change. Launches still carry it, so a grant an older setup left keeps applying
+// until `nvx setup` removes it. Capabilities do not affect the loopback rule;
+// that is package-scoped, which is the whole point.
 const setupCapabilityName = "nvx.setup.driveroots"
 
 // sandboxPackageName returns the AppContainer package a session runs under.
@@ -78,8 +65,9 @@ func sandboxPackageName(scopeDir, sandboxID string) string {
 	return stableSandboxProfile + "." + hex.EncodeToString(sum[:])[:16]
 }
 
-// windowsSetupState records what `nvx setup` granted, so the sandbox can switch
-// to the allowlisted-proxy path and `nvx setup --undo` can reverse it.
+// windowsSetupState is the record an older `nvx setup` wrote of what it granted.
+// Nothing writes it now. It is read so `nvx setup` can find and remove the
+// paths it names.
 type windowsSetupState struct {
 	AppContainerSID string   `json:"appcontainer_sid"`
 	GrantedPaths    []string `json:"granted_paths"`
@@ -91,18 +79,6 @@ func windowsSetupMarkerPath(nvxHome string) string {
 	return filepath.Join(nvxHome, "windows-setup.json")
 }
 
-// windowsSandboxSetupDone is deliberately absent.
-//
-// It reported whether `nvx setup` had completed, by testing LoopbackExempt --
-// a state setup no longer creates, and deliberately removes. So it answered
-// "has setup run" with "does this machine still carry the thing setup exists to
-// take away", which by now can only be false. Nothing called it, and anything
-// that started to would have been reading a wrong answer confidently.
-//
-// What replaced it is not a boolean: whether the grants setup made still apply
-// is a question about the CURRENT sandbox identity, which noteMissingElevatedGrants
-// and reportStrandedSetupGrant each ask against the real ACLs.
-
 func readWindowsSetupState(nvxHome string) (windowsSetupState, bool) {
 	data, err := os.ReadFile(windowsSetupMarkerPath(nvxHome))
 	if err != nil {
@@ -113,20 +89,6 @@ func readWindowsSetupState(nvxHome string) (windowsSetupState, bool) {
 		return windowsSetupState{}, false
 	}
 	return s, true
-}
-
-func writeWindowsSetupState(nvxHome string, s windowsSetupState) error {
-	if s.SetupAt == "" {
-		s.SetupAt = time.Now().UTC().Format(time.RFC3339)
-	}
-	if err := os.MkdirAll(nvxHome, 0700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(windowsSetupMarkerPath(nvxHome), append(data, '\n'), 0600)
 }
 
 func clearWindowsSetupState(nvxHome string) error {
