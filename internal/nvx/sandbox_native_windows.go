@@ -344,6 +344,14 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1, refusedToStart("the egress proxy could not be reached from the sandbox")
 	}
 
+	// Started before the launch scan in applyProjectGrants, so a .env created
+	// between the scan and the launch is caught too. Stopped when this function
+	// returns, which is when the contained process has exited.
+	if hidesDotenvIn(config.NvxHome, scope, workDir) {
+		stopDotenvWatch := watchDotenvFiles(config.NvxHome, scope)
+		defer stopDotenvWatch()
+	}
+
 	// Withdraw stale read/execute grants BEFORE the writable roots are set up, not
 	// after.
 	//
@@ -354,13 +362,6 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// Access is denied". Doing it first means prepareAppContainerFilesystem
 	// re-establishes whatever this run actually needs, after anything the policy no
 	// longer asks for is gone.
-	// Started before the launch scan in applyProjectGrants, so a .env created
-	// between the scan and the launch is caught too. Stopped when this function
-	// returns, which is when the contained process has exited.
-	if hidesDotenvIn(config.NvxHome, scope, workDir) {
-		stopDotenvWatch := watchDotenvFiles(config.NvxHome, scope)
-		defer stopDotenvWatch()
-	}
 	scopeCaps, launchDir, err := applyProjectGrants(config, sid, scope, guestHome, workDir)
 	if err != nil {
 		LogError("%v", err)
