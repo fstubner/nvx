@@ -36,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Windows is unchanged: deny entries and an integrity label on the file were
   both measured, and neither stopped the read.
 
+* **On Windows, `yarn` classic installs in a project under your user profile
+  even when you have a `~/.yarnrc` or `~/.npmrc`.** yarn reads those files from
+  every directory between the project and the drive root. The sandbox does not
+  let a contained process read the ones in your real home, and yarn stopped on
+  the refusal with `EPERM: operation not permitted, open 'C:\Users\you\.yarnrc'`.
+  The contained process now sees those files as absent, which is what the
+  sandbox intends. Nothing new becomes readable. Other refused reads still
+  report `EPERM`.
+
 * **On macOS, a contained install can no longer read the rest of your home
   directory.** The sandbox allowed every read outside the credential stores, so
   a package could read other projects in the home directory, nvx's own settings
@@ -46,6 +55,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   home by another tool, such as nvm, now needs its directory in
   `allow_read_exec` to run contained, as on Linux. Files outside the home stay
   readable on macOS.
+
+* **On macOS, a contained process can no longer look up host names.** A
+  program using Network.framework could ask the system resolver for any name,
+  so a package that could connect nowhere could still send data out encoded in
+  the names it looked up. The sandbox now refuses the resolver's Mach service,
+  `com.apple.dnssd.service`, in every network mode but `open`. getaddrinfo's way
+  in, the socket `/private/var/run/mDNSResponder`, was already refused.
+  Measured on a macOS runner: a contained Network.framework client resolved a
+  fresh name under a wildcard domain before the change and was refused after
+  it, with `localhost` still resolving and a contained `npm install` still
+  working through the proxy.
 
 ## [0.7.0] - 2026-10-06
 

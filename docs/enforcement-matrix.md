@@ -54,7 +54,7 @@ and do not verify whether the kernel honours it.
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
 | Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes⁵ (TCP and UDP; UDP refused at bind) |
-| Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
+| Non-proxied DNS blocked | Yes³ | Yes (netns) | Yes¹ ⁵ |
 | Any loopback service reachable | No, unless the policy lists it¹¹, or `network.mode: loopback`¹³ | No, unless the policy lists it, or `network.mode: loopback`¹³ | No⁶ (proxy port only), or `network.mode: loopback`¹³ |
 | One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | Via `allow_hosts` for proxy-aware clients, or `--connect` for one run, except in `offline`¹¹ ¹² | Via `allow_hosts` for proxy-aware clients, or `--connect` for one run¹¹ ¹² |
 | Another project's sandbox reachable over loopback | No¹⁰ (per-project package) | No (each has its own netns) | Untested |
@@ -124,13 +124,29 @@ elsewhere on the disk stay allowed, which is a narrower product than the same
 sentence describes on Linux, where a contained process sees only what it is
 granted.
 
-¹ On macOS, the loopback proxy and OS network rules gate egress. Linux
-also removes all non-loopback interfaces (network namespace), so DNS to
-external resolvers cannot leave. On macOS a determined process could still
-attempt DNS via the OS resolver. This is the main per-OS difference and is why
-Linux has the strongest network story.
+¹ On macOS a contained process cannot reach the system resolver,
+mDNSResponder, in any network mode but `open`. It has two ways in.
+getaddrinfo, which node, curl and dscacheutil use, connects to the socket
+`/private/var/run/mDNSResponder`, and the profile's `(deny default)` refuses
+that. Network.framework, which NSURLSession and everything built on it use,
+asks the Mach service `com.apple.dnssd.service`, and the profile denies that
+service after its blanket `mach-lookup` allow. A query sent to port 53
+directly is refused like any other outbound connection. `localhost` still
+resolves.
 
-⁵ **macOS hardware confirms the macOS column, with one stated exception.**
+Until 2026-10-06 the Mach service was reachable, and this row said Partial. A
+contained Network.framework client resolved a fresh name under a wildcard
+domain (run 37513452515), so data encoded in a name could leave through the
+host's resolver while every connection was refused.
+
+Two paths are not covered by this row. nvx's egress proxy resolves the name a
+contained client asks for before the allowlist refuses it, on every platform,
+so a refused name still reaches the host's resolver through nvx. A unit-level
+run with the resolver stubbed showed a `CONNECT` to a host off the allowlist
+looked up, then answered 403. And other macOS Mach services that might look up
+a name on a caller's behalf have not been checked.
+
+⁵ **macOS hardware confirms the cells marked ⁵.**
 `scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on every CI
 build and asserts the denials instead of only that the command ran. A contained
 process reports, and CI requires:
@@ -138,6 +154,8 @@ process reports, and CI requires:
 ```
 WRITE_OUTSIDE=DENIED   WRITE_INSIDE=ALLOWED   READ_OUTSIDE=DENIED   READ_INSIDE=ALLOWED
 EGRESS=DENIED          UDP_EGRESS=DENIED      CONNECT=200 (allowlisted host)
+TCP_DIRECT=DENIED      DNS_LOOKUP=REFUSED     DNS_RESOLVE=REFUSED   DSCACHEUTIL=REFUSED
+NW=REFUSED             LOCALHOST=::1,127.0.0.1
 ```
 
 Three of those are load-bearing in a way the others are not. `WRITE_INSIDE`,
@@ -183,12 +201,27 @@ is the outcome that would actually matter. The script separately checks
 `sandbox-exec` exists and fails loudly if a future runner image drops it, which
 is a different claim.
 
-**Still unclaimed.** `EGRESS=DENIED` does not say which layer refused. The probe's
-request is a direct one (Node's classic `https` API ignores `HTTPS_PROXY`, so it
-never reaches the proxy). It does not complete, but a DNS failure and a
-refused TCP connect are the same observation from inside. Per ¹, macOS is the
-platform where that distinction is real, so this page leaves it open instead of
-assuming it favourably.
+The DNS checks ask for fresh random names under a wildcard domain, which
+resolve for any query that reaches a DNS server and which no cache can hold.
+An answer means the query left the machine. `DNS_LOOKUP` goes through
+getaddrinfo, `DSCACHEUTIL` through the same socket, `NW` through a
+Network.framework client built with `swiftc`, and `DNS_RESOLVE` through
+c-ares, which sends to port 53 itself. Uncontained, each must resolve another
+fresh name under the same domain, or the contained refusals would prove
+nothing. A name that does not exist is checked through c-ares only:
+getaddrinfo reports a refused socket as EAI_NONAME, the code NXDOMAIN gets
+(run 37511971892), so from inside the two look alike. Before the profile
+denied `com.apple.dnssd.service`, `NW` resolved and everything else was
+refused (run 37513452515). After it, all were refused, `localhost` resolved,
+and the macOS smoke's contained `npm install` and the launch-escape probe
+passed (run 37514151891).
+
+**Which layer refuses.** `EGRESS=DENIED` alone does not say. The probe's
+request is a direct one (Node's classic `https` API ignores `HTTPS_PROXY`, so
+it never reaches the proxy), and it needs a lookup first, which the resolver
+checks above show refused. `TCP_DIRECT` connects to an address, with no lookup,
+and the kernel refuses it with EPERM. So each layer refuses on its own. This
+was left open until 2026-10-06.
 
 This footnote read "nobody has checked" until 2026-08-23. Before that the
 only macOS check in CI was `scripts/sandbox-smoke-macos.sh`, which asserted that a

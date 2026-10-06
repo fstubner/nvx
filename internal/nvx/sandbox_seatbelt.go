@@ -249,6 +249,10 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir, nvxHo
 	mode := strings.ToLower(strings.TrimSpace(netCtx.Mode))
 	if mode == "open" {
 		b.WriteString("(allow network*)\n")
+	} else {
+		for _, rule := range seatbeltResolverDenies {
+			b.WriteString(rule + "\n")
+		}
 	}
 	// Loopback is granted per mode, narrowly.
 	//
@@ -300,6 +304,30 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir, nvxHo
 	}
 
 	return b.String()
+}
+
+// seatbeltResolverDenies keep a contained process away from mDNSResponder, the
+// macOS system resolver, in every network mode but open. A lookup carries its
+// name to the resolver, which sends it on to a DNS server, so a process that can
+// connect nowhere could still send data out encoded in the names it asks for.
+// Nothing contained needs to resolve a name: the egress proxy resolves
+// allowlisted hosts in nvx, and contained clients hand it host names.
+//
+// mDNSResponder has two doors. getaddrinfo, which node, curl and dscacheutil
+// use, connects to the socket /private/var/run/mDNSResponder, and (deny
+// default) already refuses that: on the macos-latest runner the kernel logged
+// node and dscacheutil denied network-outbound to it. Network.framework, which
+// NSURLSession and everything built on it use, asks the Mach service
+// com.apple.dnssd.service instead, and the blanket (allow mach-lookup) above
+// let it through: a contained Network.framework client resolved a fresh name
+// under a wildcard domain there before this rule. Seatbelt applies the last
+// matching rule, so this deny, written after that allow, wins.
+//
+// localhost resolved inside the sandbox on the same runner with the socket
+// refused, so it does not depend on either door.
+// scripts/sandbox-enforcement-macos.sh checks all of this.
+var seatbeltResolverDenies = []string{
+	`(deny mach-lookup (global-name "com.apple.dnssd.service"))`,
 }
 
 // seatbeltDeviceWrites are the device files a contained process may write, in

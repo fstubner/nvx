@@ -585,6 +585,181 @@ if [[ -e "$PROJ/fresh/.env" ]]; then
   fail=1
 fi
 
+# DNS: a contained process must not reach the system resolver.
+#
+# A lookup carries its name to whoever answers it, so a process that cannot
+# connect anywhere can still send data out by encoding it in names it asks the
+# host's resolver for. The proxy resolves allowlisted hosts in the parent and
+# contained clients hand it host names, so nothing contained needs to resolve
+# one itself.
+#
+# macOS has two ways into its resolver, mDNSResponder. getaddrinfo, which node,
+# curl and dscacheutil use, writes to the socket /private/var/run/mDNSResponder.
+# Network.framework, which NSURLSession and anything built on it use, asks the
+# Mach service com.apple.dnssd.service. Each is checked by a client that takes
+# that path. c-ares (node's dns.resolve) sends to port 53 itself, and is checked
+# too.
+#
+# A refused lookup and a name that does not exist look alike from inside: both
+# are an error. So the names asked for are fresh random labels under a wildcard
+# domain, which resolve for anyone whose query reaches a DNS server, and which
+# no cache can hold because nobody has asked for them before. An answer means
+# the query left the machine. The uncontained controls ask for other fresh
+# labels under the same domain and must get an answer, or the contained
+# refusals would prove nothing about the sandbox.
+#
+# Measured on the macos-latest runner: getaddrinfo reports a refused socket as
+# EAI_NONAME, node's ENOTFOUND, the same code as NXDOMAIN. So a missing name
+# tells nothing for dns.lookup, and only the wildcard name is asserted there.
+# c-ares does tell them apart, and its NXDOMAIN check stays.
+echo "DNS: a contained process must not reach the system resolver..."
+rand_label() { od -An -N8 -tx1 /dev/urandom | tr -d ' \n'; }
+
+# A Network.framework client: it resolves through com.apple.dnssd.service. Port
+# 9 is closed on loopback, where the wildcard names point, so an uncontained
+# run fails to connect at once. A DNS error means the name did not resolve.
+# Anything else (connected, refused, denied by the sandbox) comes after an
+# answer, so it counts as resolved.
+cat > nwprobe.swift <<'SWIFT'
+import Foundation
+import Network
+
+func report(_ s: String) -> Never { print(s); fflush(stdout); exit(0) }
+let conn = NWConnection(host: NWEndpoint.Host(CommandLine.arguments[1]), port: 9, using: .tcp)
+conn.stateUpdateHandler = { state in
+    switch state {
+    case .ready:
+        report("NW=RESOLVED connected")
+    case .waiting(let err), .failed(let err):
+        if case .dns(let code) = err { report("NW=REFUSED dns \(code)") }
+        report("NW=RESOLVED \(err)")
+    default:
+        break
+    }
+}
+conn.start(queue: .main)
+DispatchQueue.main.asyncAfter(deadline: .now() + 20) { report("NW=TIMEOUT") }
+dispatchMain()
+SWIFT
+if ! swiftc -O nwprobe.swift -o nwprobe >/dev/null 2>&1; then
+  echo "FAIL: could not build the Network.framework probe with swiftc; the resolver's Mach service would go unchecked." >&2
+  fail=1
+fi
+
+WILD_SUFFIX=""
+for suffix in 127-0-0-1.sslip.io 127.0.0.1.nip.io; do
+  if node -e "require('dns').lookup(process.argv[1],e=>process.exit(e?1:0))" "nvx-control-$(rand_label).$suffix"; then
+    WILD_SUFFIX="$suffix"
+    break
+  fi
+done
+if [[ -z "$WILD_SUFFIX" ]]; then
+  echo "FAIL: this runner could not resolve a fresh name under a wildcard domain uncontained," >&2
+  echo "      so a contained lookup failing would say nothing about the sandbox." >&2
+  fail=1
+else
+  echo "  wildcard domain: $WILD_SUFFIX"
+  if ! node -e "require('dns').resolve4(process.argv[1],e=>process.exit(e?1:0))" "nvx-control-$(rand_label).$WILD_SUFFIX"; then
+    echo "FAIL: uncontained dns.resolve4 of a fresh wildcard name failed; the contained resolve check would measure nothing." >&2
+    fail=1
+  fi
+  if ! /usr/bin/dscacheutil -q host -a name "nvx-control-$(rand_label).$WILD_SUFFIX" | grep -q 'ip_address'; then
+    echo "FAIL: uncontained dscacheutil did not resolve a fresh wildcard name; the contained dscacheutil check would measure nothing." >&2
+    fail=1
+  fi
+  if [[ -x ./nwprobe ]]; then
+    NW_CONTROL="$(./nwprobe "nvx-control-$(rand_label).$WILD_SUFFIX" 2>&1 || true)"
+    echo "  uncontained Network.framework: $NW_CONTROL"
+    if [[ "$NW_CONTROL" != NW=RESOLVED* ]]; then
+      echo "FAIL: uncontained Network.framework did not resolve a fresh wildcard name; the contained check would measure nothing." >&2
+      fail=1
+    fi
+  fi
+
+  cat > dns.js <<'DNS'
+const dns = require('dns');
+const net = require('net');
+const cp = require('child_process');
+const fs = require('fs');
+const [report, wildLookup, wildResolve, wildCache, wildNW, nxResolve] = process.argv.slice(2);
+const resolver = new dns.Resolver({ timeout: 3000, tries: 2 });
+const out = [];
+let pending = 5;
+let finished = false;
+function done(line) {
+  out.push(line);
+  if (--pending === 0) finish();
+}
+function run(file, args) {
+  try { return cp.execFileSync(file, args, { stdio: 'pipe', timeout: 30000 }).toString(); }
+  catch (e) { return String(e.stdout || '') + ' ERROR ' + (e.code || e.status); }
+}
+function finish() {
+  if (finished) return;
+  finished = true;
+  out.push(/ip_address/.test(run('/usr/bin/dscacheutil', ['-q', 'host', '-a', 'name', wildCache]))
+    ? 'DSCACHEUTIL=RESOLVED' : 'DSCACHEUTIL=REFUSED');
+  if (fs.existsSync('./nwprobe')) out.push(run('./nwprobe', [wildNW]).trim());
+  fs.writeFileSync(report, out.join('\n') + '\n');
+  process.exit(0);
+}
+const addrs = a => a.map(x => (typeof x === 'string' ? x : x.address)).join(',');
+dns.lookup(wildLookup, { all: true }, (e, a) => done(e ? 'DNS_LOOKUP=REFUSED ' + e.code : 'DNS_LOOKUP=RESOLVED ' + addrs(a)));
+resolver.resolve4(wildResolve, (e, a) => done(e ? 'DNS_RESOLVE=REFUSED ' + e.code : 'DNS_RESOLVE=RESOLVED ' + addrs(a)));
+resolver.resolve4(nxResolve, e => done('DNS_RESOLVE_NX=' + (e ? e.code : 'RESOLVED')));
+dns.lookup('localhost', { all: true }, (e, a) => done(e ? 'LOCALHOST=FAILED ' + e.code : 'LOCALHOST=' + addrs(a)));
+// A TCP connect to an address, so no lookup is involved: which layer refuses
+// a direct connection once DNS is out of the way.
+const sock = net.connect({ host: '1.1.1.1', port: 443 });
+sock.on('connect', () => { sock.destroy(); done('TCP_DIRECT=ALLOWED'); });
+sock.on('error', e => done('TCP_DIRECT=DENIED ' + e.code));
+sock.setTimeout(10000, () => { sock.destroy(); done('TCP_DIRECT=TIMEOUT'); });
+setTimeout(() => { out.push('DNS_TIMEOUT pending=' + pending); finish(); }, 45000);
+DNS
+
+  DNS_REPORT="$PROJ/dns-report.txt"
+  "$NVX" -y --strict shim node dns.js "$DNS_REPORT" \
+    "nvx-probe-$(rand_label).$WILD_SUFFIX" "nvx-probe-$(rand_label).$WILD_SUFFIX" \
+    "nvx-probe-$(rand_label).$WILD_SUFFIX" "nvx-probe-$(rand_label).$WILD_SUFFIX" \
+    "nvx-probe-$(rand_label).example.com" >/dev/null 2>&1 || true
+  if [[ ! -f "$DNS_REPORT" ]]; then
+    echo "FAIL: the contained DNS probe wrote no report." >&2
+    fail=1
+  else
+    sed 's/^/  /' "$DNS_REPORT"
+    dns_fail=0
+    dns_expect() {
+      local pattern="$1" why="$2"
+      if ! grep -qE "$pattern" "$DNS_REPORT"; then
+        echo "FAIL: $why" >&2
+        dns_fail=1
+      fi
+    }
+    dns_expect '^DNS_LOOKUP=REFUSED'      "a contained getaddrinfo (dns.lookup) resolved a fresh name, so the query reached a DNS server"
+    dns_expect '^DNS_RESOLVE=REFUSED'     "a contained dns.resolve4 resolved a fresh name, so the query reached a DNS server"
+    dns_expect '^DSCACHEUTIL=REFUSED'     "a contained dscacheutil resolved a fresh name, so the query reached a DNS server"
+    dns_expect '^NW=REFUSED'              "a contained Network.framework client resolved a fresh name through com.apple.dnssd.service, so the query reached a DNS server"
+    dns_expect '^DNS_RESOLVE_NX=E[A-Z]+$' "a contained dns.resolve4 of a missing name did not report an error code"
+    if grep -qxE 'DNS_RESOLVE_NX=(ENOTFOUND|ENODATA)' "$DNS_REPORT"; then
+      echo "FAIL: a contained dns.resolve4 of a missing name got an answer from a DNS server" >&2
+      dns_fail=1
+    fi
+    dns_expect '^TCP_DIRECT=DENIED'       "a contained TCP connect to an external address was not refused"
+    dns_expect '^LOCALHOST=.*(127\.0\.0\.1|::1)' "a contained process could not resolve localhost, which tools use to reach loopback services"
+    # Which rule refused, or that nothing did. Informational: the assertions
+    # above are the claim, and this tells the next reader what macOS did.
+    echo "  Seatbelt denials logged for the contained probes (last 2 minutes):"
+    log show --last 2m --style compact --predicate 'sender == "Sandbox"' 2>/dev/null \
+      | grep -E 'Sandbox: (node|dscacheutil|nwprobe)\(' \
+      | grep -iE 'dnssd|mDNSResponder|opendirectoryd|network-outbound' | tail -20 | sed 's/^/    /' || true
+    if [[ $dns_fail -ne 0 ]]; then
+      echo "  mDNSResponder's endpoints on this runner:" >&2
+      launchctl print system/com.apple.mDNSResponder 2>/dev/null | sed -n '/endpoints = {/,/}/p' | sed 's/^/    /' >&2 || true
+      fail=1
+    fi
+  fi
+fi
+
 if [[ $fail -ne 0 ]]; then
   echo "macOS enforcement probe FAILED." >&2
   exit 1
@@ -592,4 +767,4 @@ fi
 
 echo "macOS enforcement probe passed: writes contained, egress denied for TCP and UDP,"
 echo "an allowlisted host reachable through the proxy, the home directory, credential and dotenv files unreadable,"
-echo "the project, the runtime and an allow_read_exec root readable."
+echo "the project, the runtime and an allow_read_exec root readable, and the system resolver unreachable."
