@@ -30,44 +30,53 @@ import (
 // namespace, where it holds both over every file the user owns, the mask
 // included. So they leave the bounding set with CAP_SYS_ADMIN, which would let
 // the target unmount the mask. Without them the target reads and writes the
-// user's files as the user does outside the sandbox.
+// user's files as the user does outside the sandbox. They go even when the
+// launch finds no dotenv file, because watchDotenvFiles may cover one later.
 //
-// Only files present at launch are covered: a dotenv file created during the
-// run is an ordinary project file until the next launch. The walk stops after
-// dotenvScanLimit entries, with a warning.
+// This covers the files present at launch. watchDotenvFiles covers those
+// created or replaced during the run. The walk stops after dotenvScanLimit
+// entries, with a warning.
 //
 // Called before enterSandboxRoot, whose recursive bind of the working
 // directory carries these mounts into the sandbox's view, and before Landlock,
-// which refuses mounts. Any failure is fatal to the launch, as for .git.
-func maskDotenvFiles(workDir, guestHome string, nsErr error) error {
+// which refuses mounts. Any failure is fatal to the launch, as for .git. It
+// returns the mask it mounted, or nil, so the watcher can tell a covered file
+// from a new one.
+func maskDotenvFiles(workDir, guestHome string, nsErr error) (os.FileInfo, error) {
 	if workDir == "" {
-		return nil
+		return nil, nil
 	}
 	targets := dotenvMaskTargets(workDir)
-	if len(targets) == 0 {
-		return nil
-	}
 	if nsErr != nil {
-		return fmt.Errorf("no private mount namespace for %s: %w", targets[0], nsErr)
+		if len(targets) == 0 {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("no private mount namespace for %s: %w", targets[0], nsErr)
 	}
-	mask, err := createDotenvMask(guestHome)
-	if err != nil {
-		return err
-	}
-	// The mounts hold the file open. Its name goes now, so nothing in the guest
-	// home leads to it.
-	defer os.Remove(mask)
-	for _, p := range targets {
-		if err := bindMountReadOnlyFrom(mask, p); err != nil {
-			return err
+	var maskInfo os.FileInfo
+	if len(targets) > 0 {
+		mask, err := createDotenvMask(guestHome)
+		if err != nil {
+			return nil, err
+		}
+		// The mounts hold the file open. Its name goes now, so nothing in the guest
+		// home leads to it.
+		defer os.Remove(mask)
+		if maskInfo, err = os.Stat(mask); err != nil {
+			return nil, fmt.Errorf("read the dotenv mask: %w", err)
+		}
+		for _, p := range targets {
+			if err := bindMountReadOnlyFrom(mask, p); err != nil {
+				return nil, err
+			}
 		}
 	}
 	for _, c := range []uintptr{capSysAdmin, capDacOverride, capDacReadSearch} {
 		if err := dropFromBoundingSet(c); err != nil {
-			return fmt.Errorf("drop capability %d for the sandboxed command: %w", c, err)
+			return nil, fmt.Errorf("drop capability %d for the sandboxed command: %w", c, err)
 		}
 	}
-	return nil
+	return maskInfo, nil
 }
 
 // dotenvMaskTargets returns the files to cover: each dotenv file under workDir
