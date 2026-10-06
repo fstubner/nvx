@@ -177,6 +177,33 @@ fs.realpath.native('.', (err) => {
 	}
 }
 
+// Opt-in verification (NVX_PROBE=1): Node's JavaScript fs.realpathSync of a
+// directory below C:\ is refused on a machine with no drive-root grant,
+// because it stats C:\ through the binding, and the preload answers it. pnpm
+// loads temp-dir, which calls fs.realpathSync(os.tmpdir()) at require time, so
+// every contained pnpm command died on "EPERM: operation not permitted, lstat
+// 'C:\'" until the preload did this. Skips where a grant makes C:\ readable,
+// as the ancestor probe above does.
+func TestWalkUpShimAnswersRefusedJavaScriptRealpathSync(t *testing.T) {
+	run := walkupProbe(t, "nvx.sandbox.realpathsync.probe", `
+const fs = require('fs');
+let line;
+// The working directory stands in for os.tmpdir(): both sit below C:\, and
+// this one exists in the probe, where the guest home has no skeleton.
+try { fs.realpathSync(process.cwd()); line = 'ok jssync'; } catch (e) { line = e.code + ' jssync'; }
+fs.writeFileSync(process.argv[2], line);
+`)
+
+	without := run(false)
+	if !strings.Contains(without, "EPERM jssync") {
+		t.Skipf("premise not met: fs.realpathSync of the working directory works without the preload here (a drive-root grant applies), so the preload has nothing to answer for:\n%s", without)
+	}
+	with := run(true)
+	if !strings.Contains(with, "ok jssync") {
+		t.Fatalf("with the preload, fs.realpathSync of the working directory still failed; contained pnpm stops on it at load:\n%s", with)
+	}
+}
+
 // The preload's own walk, which answers a refused synchronous realpath where
 // Node's synchronous one fails too, resolves paths as Node's realpath does:
 // a plain directory, a relative path, and a path through a junction. Run
