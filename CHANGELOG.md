@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **On Windows, `yarn` classic installs in a project under your user profile
+  even when you have a `~/.yarnrc` or `~/.npmrc`.** yarn reads those files from
+  every directory between the project and the drive root. The sandbox does not
+  let a contained process read the ones in your real home, and yarn stopped on
+  the refusal with `EPERM: operation not permitted, open 'C:\Users\you\.yarnrc'`.
+  The contained process now sees those files as absent, which is what the
+  sandbox intends. Nothing new becomes readable. Other refused reads still
+  report `EPERM`.
+
 * **On macOS, a contained install can no longer read the rest of your home
   directory.** The sandbox allowed every read outside the credential stores, so
   a package could read other projects in the home directory, nvx's own settings
