@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never sent to your proxy. Other schemes, such as `socks4://`, are still
   ignored with a warning.
 
-## [0.7.0]
+## [0.7.0] - 2026-10-06
 
 ### Added
 

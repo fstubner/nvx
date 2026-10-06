@@ -1,7 +1,17 @@
 ---
 import { site } from '../data/site';
 const { install, copy } = site;
-const { byPlatform, tryCommands, binariesNote } = install;
+const { byPlatform, clients, steps, tryCommands, binariesNote } = install;
+// With numbered steps, the first try-command is the second step's card and
+// the rest are links under it; without, the old "Then" panel lists them all.
+const [afterCommand, ...afterExtras] = tryCommands;
+// Step 1 is always the client grid; step 2 joins it as a second grid when the
+// content gives it cards rather than a single command.
+const cardGroups = [
+  { n: 1, label: steps?.install, cards: clients },
+  ...(steps?.afterCards ? [{ n: 2, label: steps.after, cards: steps.afterCards }] : []),
+  ...(steps?.afterCards ? steps.moreSteps ?? [] : []).map((step, i) => ({ n: 3 + i, label: step.label, cards: step.cards })),
+];
 const oses = ['windows', 'macos', 'linux'] as const;
 const labels = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
 // Desktop first: most visitors landing here want the app, and the CLI
@@ -19,6 +29,101 @@ const groups = [
     <h2>{copy.install.heading}</h2>
     <p class="lead" set:html={copy.install.leadHtml} />
 
+    {clients.length > 0 ? (
+      <div class="install-by-client">
+        {/* By client rather than by OS: see install-clients.ts. Every card is
+            visible at once, because which clients are supported is itself
+            part of the answer. */}
+        {cardGroups.map((group) => (
+        <Fragment>
+        {group.label && (
+          <h3 class:list={['install-step', group.n > 1 && 'install-step-next']}><span class="install-step-n" aria-hidden="true">{group.n}</span>{group.label}</h3>
+        )}
+        <ul class:list={['client-grid', group.n > 1 && 'client-grid-pair']}>
+          {group.cards.map((client) => (
+            <li class="client-card">
+              <h3 class="client-name">
+                {client.kind && (
+                  <svg class="client-kind" viewBox="0 0 20 20" aria-hidden="true">
+                    <rect x="1.5" y="3" width="17" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5" />
+                    {client.kind === 'terminal' ? (
+                      <path d="M5.5 8l2.5 2-2.5 2M10 12.5h4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                    ) : (
+                      <path d="M1.5 7h17M6.5 7v10" fill="none" stroke="currentColor" stroke-width="1.5" />
+                    )}
+                  </svg>
+                )}
+                {client.name}
+              </h3>
+              {(client.maker || client.kind) && (
+                <p class="client-maker">
+                  {[client.maker, client.kind === 'terminal' ? 'terminal agent' : client.kind === 'editor' ? 'editor' : undefined]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </p>
+              )}
+              {client.oneBox && client.commands.length > 1 ? (
+                <div class="client-cmd has-copy" data-copy={client.commands.join('\n')}><code>{client.commands.map((command) => <span class="cmd-line">{command}</span>)}</code></div>
+              ) : client.commands.map((command) => (
+                <div class="client-cmd has-copy" data-copy={command}><code>{command}</code></div>
+              ))}
+              {client.note && <p class="client-note">{client.note}</p>}
+            </li>
+          ))}
+        </ul>
+        </Fragment>
+        ))}
+        {steps?.afterCards ? (
+          <p class="footer-note client-after-foot" set:html={binariesNote} />
+        ) : steps && afterCommand ? (
+          <div class="client-after client-after-step">
+            <h3 class="install-step"><span class="install-step-n" aria-hidden="true">2</span>{steps.after}</h3>
+            <div class="client-cmd client-cmd-main has-copy" data-copy={afterCommand.command}><code>{afterCommand.command}</code></div>
+            {steps.afterNote && <p class="client-after-note">{steps.afterNote}</p>}
+            {!steps.use && afterExtras.length > 0 && (
+              <p class="client-after-extras">
+                {afterExtras.map((c, i) => (
+                  <Fragment>
+                    {i > 0 && <span aria-hidden="true"> · </span>}
+                    {c.comment}: <code>{c.command}</code>
+                  </Fragment>
+                ))}
+              </p>
+            )}
+            {steps.use && (
+              <Fragment>
+                <h3 class="install-step install-step-next"><span class="install-step-n" aria-hidden="true">3</span>{steps.use.title}</h3>
+                <p class="client-after-note">{steps.use.text}</p>
+                {afterExtras.length > 0 && (
+                  <p class="client-after-extras">
+                    {afterExtras.map((c, i) => (
+                      <Fragment>
+                        {i > 0 && <span aria-hidden="true"> · </span>}
+                        {c.comment}: <code>{c.command}</code>
+                      </Fragment>
+                    ))}
+                  </p>
+                )}
+              </Fragment>
+            )}
+            <p class="footer-note" set:html={binariesNote} />
+          </div>
+        ) : (
+        <div class="client-after">
+          <div class="try">
+            <h3 class="try-title">Then</h3>
+            {tryCommands.map((c) => (
+              <div class="try-cmd has-copy" data-copy={c.command}>
+                <span class="try-comment"># {c.comment}</span>
+                <span class="try-line"><span class="p">$</span><span class="t">{c.command}</span></span>
+              </div>
+            ))}
+          </div>
+          <p class="footer-note" set:html={binariesNote} />
+        </div>
+        )}
+      </div>
+    ) : (
     <div class="install-grid">
       <div class="os-tabs" role="tablist" aria-label="Choose operating system">
         {oses.map((os) => (
@@ -51,13 +156,21 @@ const groups = [
               return (
                 <div class="install-group">
                   <h3 class="install-group-title">{title}</h3>
-                  <div class="reco">
+                  <div class={`reco${recommended.command ? '' : ' reco-download'}`}>
                     <div class="reco-meta">{recommended.label}</div>
                     {recommended.command ? (
                       <div class="cmd big has-copy always-show"><span class="cmd-text" tabindex="0">{recommended.command}</span></div>
                     ) : (
-                      <a class="cmd big install-download" href={recommended.href} download>
-                        Download {recommended.label}
+                      /* A button, not a command chip. It was drawn in the
+                         `.cmd big` box the other tabs use for their
+                         recommended command, so it read as a command that
+                         said "Download Debian / Ubuntu" -- the label above
+                         it, repeated, in a box made for copying. The label
+                         names the package type; the button just says
+                         Download, like the AppImage row's, and is styled like
+                         it (not green: see `a.install-download` below). */
+                      <a class="install-download" href={recommended.href} download>
+                        Download →
                       </a>
                     )}
                     {recommended.hint && <p class="install-hint">{recommended.hint}</p>}
@@ -106,10 +219,80 @@ const groups = [
         ))}
       </div>
     </div>
+    )}
   </div>
 </section>
 
 <style is:global>
+/* ─── BY CLIENT ─── */
+.client-grid{
+  list-style:none;margin:8px 0 0;padding:0;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:16px;
+}
+/* Outlined panels on the band, not chips. As light chips (the light theme's
+   #f2f5fa) six or seven of them made a block of white tiles on the dark
+   band, heavier than anything else on the page; the commands inside are the
+   part to look at, so they carry the fill. */
+.client-card{
+  background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.14);border-radius:10px;
+  padding:16px 18px;display:flex;flex-direction:column;gap:8px;min-width:0;
+}
+.client-name{
+  display:flex;align-items:center;gap:8px;
+  font-size:.9375rem;font-weight:700;color:var(--ui-ondark-text-strong);margin:0 0 2px;
+}
+.client-kind{width:18px;height:18px;flex:none;color:var(--ui-ondark-accent)}
+.client-maker{margin:-6px 0 4px;font-size:.75rem;color:var(--ui-ondark-text-muted)}
+/* Commands wrap rather than scroll: a long plugin command cut off behind a
+   scrollbar is the command someone came here to read. */
+/* A code surface, like the Then panel below the grid, in both themes. */
+.client-cmd{
+  position:relative;padding:8px 40px 8px 10px;border-radius:6px;
+  background:var(--ui-code-bg);border:1px solid rgba(255,255,255,.14);
+  font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.75rem;line-height:1.5;
+  color:var(--ui-ondark-text);
+}
+.client-cmd code{all:unset;font:inherit;color:inherit;white-space:pre-wrap;overflow-wrap:anywhere}
+/* One box, several commands: each on its own line, a wrapped line indented under it. */
+.client-cmd .cmd-line{display:block;padding-left:1.5em;text-indent:-1.5em}
+.client-cmd .cmd-line+.cmd-line{margin-top:6px}
+.client-note{font-size:.75rem;line-height:1.5;color:var(--ui-ondark-text-muted);margin:0}
+/* Full width, with its commands side by side. At 560px it filled half the
+   row under a full-width grid and left the other half empty. */
+.client-after{margin-top:16px}
+/* The per-OS layout pins .try to its second column; here it spans the row. */
+.client-after .try{
+  grid-column:auto;grid-row:auto;
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:4px 16px;
+}
+.client-after .try .try-title{grid-column:1/-1}
+.client-after .footer-note{margin-top:14px}
+
+/* Numbered steps: the grid is step 1, the per-project command step 2. */
+.install-step{
+  display:flex;align-items:center;gap:10px;
+  margin:8px 0 12px;font-size:1rem;font-weight:700;color:var(--ui-ondark-text-strong);
+}
+.install-step-n{
+  display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;
+  border:1px solid rgba(var(--ui-ondark-accent-rgb),.6);color:var(--ui-ondark-accent);
+  font-size:.6875rem;font-weight:700;flex:none;
+}
+.client-after-step{margin-top:28px}
+/* Two cards, always a pair: auto-fill left an empty third track on wide
+   screens, which read as a missing card. */
+.client-grid-pair{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:700px){.client-grid-pair{grid-template-columns:minmax(0,1fr)}}
+.client-after-foot{margin-top:18px}
+.install-step-next{margin-top:28px}
+.client-cmd-main{max-width:420px;font-size:.8125rem;padding:10px 44px 10px 12px}
+.client-after-note{margin:10px 0 0;font-size:.875rem;color:var(--ui-ondark-text)}
+.client-after-extras{margin:10px 0 0;font-size:.8125rem;color:var(--ui-ondark-text-muted)}
+.client-after-extras code{
+  font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.75rem;
+  color:var(--ui-ondark-text);background:none;border:0;padding:0;
+}
+
 /* ─── GET STARTED ─── */
 .install-grid{
   display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:8px;
@@ -242,6 +425,16 @@ html[data-theme='light'] #install .reco{
    text and shrank the box, which is not what the button looked like before the
    scroll container was split out. */
 .cmd.big{font-size:1.05rem}
+/* A recommended download (Linux's .deb) lays out like the download rows
+   under it: label left, button on the right edge. Stacked, the button sat
+   under the label on the left while the AppImage button below it sat on the
+   right, so the two buttons in one group pointed in different directions.
+   16px sides match `.alt`, so labels and buttons line up down the group. */
+.reco-download{
+  display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;
+  gap:8px 16px;padding-inline:16px;
+}
+.reco-download .reco-meta{margin-bottom:0}
 /* The container is the divider: the rows sit on it with a 1px gap, so its
    background shows through as the hairline between them. Chip tokens, so the
    rule between two light rows is a light hairline rather than a near-black
@@ -291,8 +484,8 @@ html[data-theme='light'] #install .reco{
  *
  * This was accent text on an accent tint inside an accent border -- the
  * loudest thing in the section, on the row that is the *least* recommended
- * route: a direct download is unsigned, unverified and unmanaged, while the
- * package-manager rows above it check a hash. The green was pointing at the
+ * route: a direct download is unmanaged and nothing checks it on the way
+ * in, while the package-manager rows above it check a hash. The green was pointing at the
  * wrong option. It reads as one route among several now, and keeps the
  * accent for hover and focus so it is still obviously a control. */
 a.install-download{

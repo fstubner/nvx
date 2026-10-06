@@ -3,7 +3,7 @@ import type { Platform, PlatformInstall, SectionCopy, TryCommand } from './types
 export const installCopy: SectionCopy = {
   heading: 'Install',
   leadHtml:
-    'One command on every platform. nvx is also on npm as <code>@fstubner/nvx</code>, and not yet on winget, Scoop or Homebrew.',
+    'One command installs nvx on Windows, macOS or Linux. It is also on npm as <code>@fstubner/nvx</code>.',
 };
 
 const RELEASE = 'https://github.com/fstubner/nvx/releases/latest/download';
@@ -15,7 +15,7 @@ export const installByPlatform: Record<Platform, PlatformInstall> = {
         label: 'PowerShell',
         command: 'irm https://nvx.run/install.ps1 | iex',
       },
-      { label: 'Binary', href: `${RELEASE}/nvx.exe`, hint: 'x64, unsigned, so SmartScreen will ask before it runs.' },
+      { label: 'Binary', href: `${RELEASE}/nvx.exe`, hint: 'x64 and signed. SmartScreen may still ask while the certificate is new.' },
     ],
     desktop: [],
   },
