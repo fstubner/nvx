@@ -11,8 +11,10 @@ const setupHelpText = `nvx setup
 (Windows) Remove what older nvx versions left on the machine: sandbox read and
 list access on drive roots and Users folders, grants made to an older sandbox
 identity, and the loopback exemption older versions registered. nvx no longer
-adds any of these. Run it from an Administrator terminal to remove them. With
-nothing to remove it says so and exits 0.
+adds any of these. It also restores the inheritance protection older versions
+switched off on C:\Users and on your profile folder, when the folder's own
+entries make that safe. Run it from an Administrator terminal to fix these. With
+nothing to fix it says so and exits 0.
 
 --undo, -u     Accepted, and does the same thing.
 --all-drives   Accepted for older scripts. It changes nothing.

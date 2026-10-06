@@ -56,6 +56,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing. nvx no longer suggests `nvx setup` after a failed command, and
   `nvx doctor` reports a leftover grant as a note, never as a failure.
 
+  Setup also repairs the other damage older versions did. Every permission
+  they wrote switched off the inheritance protection Windows ships on
+  `C:\Users` and on your profile folder, so every signed-in account could
+  modify them. Setup now removes the inherited entries and keeps the explicit
+  ones, which is what `icacls ... /inheritance:r` does, so nobody has to type
+  that command. It does so only when the folder's own entries still give SYSTEM
+  and Administrators full control (and you, for your profile). Otherwise it says
+  why and changes nothing. `nvx doctor` points at `nvx setup` for this.
+
 ### Fixed
 
 * **nvx's egress proxy no longer looks up a name it is about to refuse.** The

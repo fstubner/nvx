@@ -26,10 +26,11 @@ const (
 // fakeSetupOps records what a setup run does. Every operation succeeds unless a
 // test replaces it.
 type fakeSetupOps struct {
-	ops     setupCleanupOps
-	revoked []setupEntry
-	exempt  []string
-	cleared int
+	ops      setupCleanupOps
+	revoked  []setupEntry
+	exempt   []string
+	cleared  int
+	restored []string
 }
 
 func newFakeSetupOps(elevated bool, entryOn func(sid, path string) bool) *fakeSetupOps {
@@ -50,6 +51,13 @@ func newFakeSetupOps(elevated bool, entryOn func(sid, path string) bool) *fakeSe
 		},
 		listExempt: func() ([]string, error) { return nil, nil },
 		clearState: func(string) error { f.cleared++; return nil },
+		// Every profile folder is protected unless a test says otherwise, so the
+		// state of the machine running the tests cannot decide a verdict.
+		unprotected: func() []unprotectedDir { return nil },
+		restoreProtection: func(dir string) error {
+			f.restored = append(f.restored, dir)
+			return nil
+		},
 	}
 	return f
 }

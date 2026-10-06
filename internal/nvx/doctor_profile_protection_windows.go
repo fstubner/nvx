@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -20,21 +21,45 @@ import (
 // permission nvx wrote switched that protection off (see keepDACLProtection),
 // and fixing the writer does not repair a machine it already changed: the
 // development machine's whole profile was modifiable by every signed-in account.
-// Doctor is where someone would find out, so it looks.
-//
-// It names the repair only when the folder's own entries would still let the
-// owner in once the inherited ones are gone. Otherwise removing them could lock
-// the user out, and the right step is to look first.
+// Doctor is where someone would find out, so it looks. `nvx setup` is what
+// repairs it, when the folder's own entries make that safe.
 func reportUnprotectedProfile() bool {
+	weakened := false
+	for _, d := range findUnprotectedProfileDirs() {
+		weakened = true
+		fmt.Printf("  [FAIL] %s takes its parent's permissions; Windows ships it protected from them\n", d.Dir)
+		fmt.Println("         an nvx version before this one could cause this, and it can let other accounts on this machine into the folder")
+		if d.Safe {
+			fmt.Println("         to restore it, from an Administrator terminal: nvx setup")
+		} else {
+			fmt.Println("         its own entries would not keep you in if the inherited ones were removed; review its permissions before changing them")
+		}
+	}
+	return weakened
+}
+
+// unprotectedDir is a profile folder, or the folder above it, that takes its
+// parent's permissions, and whether its own entries would still let the people
+// who need access in once the inherited ones are gone.
+type unprotectedDir struct {
+	Dir  string
+	Safe bool
+}
+
+// findUnprotectedProfileDirs looks at the folder above the profile and at the
+// profile, both of which Windows ships protected. A folder is Safe to restore
+// only when removing its inherited entries cannot lock SYSTEM, Administrators or
+// the owner out. Otherwise the right step is to look first.
+func findUnprotectedProfileDirs() []unprotectedDir {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return false
+		return nil
 	}
 	userSID := ""
 	if u, uerr := user.Current(); uerr == nil {
 		userSID = u.Uid
 	}
-	weakened := false
+	var found []unprotectedDir
 	for _, dir := range []string{filepath.Dir(home), home} {
 		protected, err := pathDACLProtected(dir)
 		if err != nil || protected {
@@ -48,16 +73,36 @@ func reportUnprotectedProfile() bool {
 		if dir == home {
 			owner = userSID
 		}
-		weakened = true
-		fmt.Printf("  [FAIL] %s takes its parent's permissions; Windows ships it protected from them\n", dir)
-		fmt.Println("         an nvx version before this one could cause this, and it can let other accounts on this machine into the folder")
-		if protectionIsSafeToRestore(entries, owner) {
-			fmt.Printf("         to restore it, from an Administrator terminal: icacls \"%s\" /inheritance:r\n", dir)
-		} else {
-			fmt.Println("         its own entries would not keep you in if the inherited ones were removed; review its permissions before changing them")
-		}
+		found = append(found, unprotectedDir{Dir: dir, Safe: protectionIsSafeToRestore(entries, owner)})
 	}
-	return weakened
+	return found
+}
+
+// restoreProtectionTimeout bounds one restore. Removing the inherited entries
+// from a profile folder makes Windows re-derive the permissions of everything
+// beneath it, which takes minutes on a large profile. A variable so a test can
+// shorten it.
+var restoreProtectionTimeout = 20 * time.Minute
+
+// restoreProfileProtection protects dir from its parent's permissions and drops
+// the inherited entries, keeping the explicit ones. It is what
+// `icacls dir /inheritance:r` does, run through the same system-directory
+// lookup as every other privileged call. The result is read back, because a
+// tool that exits 0 without having changed the folder is the failure this
+// exists to catch.
+func restoreProfileProtection(dir string) error {
+	out, err := runWinCmd(restoreProtectionTimeout, "icacls", dir, "/inheritance:r")
+	if err != nil {
+		return fmt.Errorf("icacls /inheritance:r on %s: %v (%s)", dir, err, strings.TrimSpace(string(out)))
+	}
+	protected, err := pathDACLProtected(dir)
+	if err != nil {
+		return err
+	}
+	if !protected {
+		return fmt.Errorf("%s still takes its parent's permissions", dir)
+	}
+	return nil
 }
 
 // protectionIsSafeToRestore reports whether a folder's explicit entries grant

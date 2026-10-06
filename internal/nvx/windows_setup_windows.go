@@ -320,16 +320,23 @@ type setupCleanupOps struct {
 	setExempt  func(add bool, sid string) error
 	listExempt func() ([]string, error)
 	clearState func(nvxHome string) error
+
+	// unprotected lists the profile folders that take their parent's permissions,
+	// and restoreProtection protects one again. See findUnprotectedProfileDirs.
+	unprotected       func() []unprotectedDir
+	restoreProtection func(dir string) error
 }
 
 func realSetupCleanupOps() setupCleanupOps {
 	return setupCleanupOps{
-		elevated:   isElevated,
-		hasEntry:   aclHasAnyEntry,
-		revoke:     revokeSidGrant,
-		setExempt:  setLoopbackExempt,
-		listExempt: listLoopbackExemptSIDs,
-		clearState: clearWindowsSetupState,
+		elevated:          isElevated,
+		hasEntry:          aclHasAnyEntry,
+		revoke:            revokeSidGrant,
+		setExempt:         setLoopbackExempt,
+		listExempt:        listLoopbackExemptSIDs,
+		clearState:        clearWindowsSetupState,
+		unprotected:       findUnprotectedProfileDirs,
+		restoreProtection: restoreProfileProtection,
 	}
 }
 
@@ -342,6 +349,11 @@ func realSetupCleanupOps() setupCleanupOps {
 // stats, and contained npx, pnpm and bun 1.4.2 were measured installing on C:
 // with every such grant removed, so nothing needs the grant. Setup is now the
 // way to take back what an earlier one wrote.
+//
+// It also repairs the other damage older versions did. Every ACL write before
+// 2026-09-26 switched off the inheritance protection Windows ships on C:\Users
+// and on profile folders (see keepDACLProtection), and doctor reported it with a
+// command to type by hand. Setup restores the protection itself.
 //
 // --undo is accepted and does the same thing, so existing scripts and
 // documentation keep working. See parseSetupArgs.
@@ -392,9 +404,25 @@ func runWindowsSetupCleanup(nvxHome, workDir, capSID, legacySID string, ops setu
 	_, statErr := os.Stat(windowsSetupMarkerPath(nvxHome))
 	stateFound := statErr == nil
 
-	if len(entries) == 0 && !exemptionFound && !stateFound {
+	// A profile folder that takes its parent's permissions is restored only when
+	// its own entries keep SYSTEM, Administrators and the owner in. Removing the
+	// inherited entries from one that does not could lock them out, so setup
+	// leaves it alone and says why. That counts as a failure, since the folder is
+	// still open.
+	var restorable []string
+	for _, d := range ops.unprotected() {
+		if d.Safe {
+			restorable = append(restorable, d.Dir)
+			continue
+		}
+		LogWarn("Did not change the permissions on %s. It takes its parent's permissions, but its own entries would not keep SYSTEM, Administrators and you in if the inherited ones were removed.", d.Dir)
+		LogInfo("Review its permissions first, for example with: icacls \"%s\"", d.Dir)
+		failures++
+	}
+
+	if len(entries) == 0 && !exemptionFound && !stateFound && len(restorable) == 0 {
 		if failures > 0 {
-			LogError("nvx setup could not finish checking: %d item(s) above could not be read.", failures)
+			LogError("nvx setup could not finish: %d item(s) above need attention.", failures)
 			return 1
 		}
 		LogSuccess("Nothing to remove. An older nvx setup left nothing on this machine.")
@@ -412,10 +440,22 @@ func runWindowsSetupCleanup(nvxHome, workDir, capSID, legacySID string, ops setu
 		if stateFound {
 			LogInfo("  the record of an earlier setup")
 		}
+		for _, d := range restorable {
+			LogInfo("  permission protection to restore on %s", d)
+		}
 		return 1
 	}
 
 	removed := 0
+	for _, d := range restorable {
+		if err := ops.restoreProtection(d); err != nil {
+			LogWarn("Could not restore the permission protection on %s: %v", d, err)
+			failures++
+			continue
+		}
+		removed++
+		LogInfo("Restored the permission protection on %s.", d)
+	}
 	for _, e := range entries {
 		done := true
 		for _, sid := range e.SIDs {
@@ -449,11 +489,11 @@ func runWindowsSetupCleanup(nvxHome, workDir, capSID, legacySID string, ops setu
 		}
 	}
 	if failures > 0 {
-		LogError("nvx setup did not finish: %d item(s) above could not be removed.", failures)
-		LogInfo("Re-run in an Administrator terminal, or remove the entries named above by hand.")
+		LogError("nvx setup did not finish: %d item(s) above could not be fixed.", failures)
+		LogInfo("Re-run in an Administrator terminal, or fix the items named above by hand.")
 		return 1
 	}
-	LogSuccess("Removed %d item(s) an older nvx setup left. nvx does not need any of them.", removed)
+	LogSuccess("Fixed %d item(s) an older nvx setup left.", removed)
 	return 0
 }
 

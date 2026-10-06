@@ -774,8 +774,10 @@ Commands:
                            every run reclaims some automatically)
   setup                    (Windows, Administrator) Remove what older nvx versions
                            left: drive-root and Users-folder access for the
-                           sandbox, and the loopback exemption. nvx no longer
-                           adds either. With nothing to remove it says so.
+                           sandbox, the loopback exemption, and lost permission
+                           protection on C:\Users and your profile. nvx no
+                           longer adds any of these. With nothing to fix it
+                           says so.
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
   grants list              Show this project's egress hosts (from older nvx), trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)

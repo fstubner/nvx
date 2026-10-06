@@ -1007,6 +1007,14 @@ they date quickly. Each carries the date and machine of its measurement.
   `nvx doctor` shows leftover entries as a note, never as a failure. `--undo` and
   `--all-drives` are still accepted and change nothing.
 
+  Setup also restores the inheritance protection older versions switched off on
+  `C:\Users` and on the profile folder. It removes the inherited entries and keeps
+  the explicit ones, as `icacls ... /inheritance:r` does. It refuses unless the
+  folder's own entries give SYSTEM and Administrators (and, for the profile, the
+  owner) full control, so removing the inherited ones cannot lock anyone out.
+  Doctor reports an unprotected folder as a failure and names `nvx setup` as the
+  fix.
+
   The entries were read/execute on the root folder itself, never inherited, for the
   sandbox's identity only. Each grant used to cost time proportional to the volume's
   size (22 minutes for 5.6 million entries). The write walked everything beneath

@@ -298,8 +298,10 @@ These are deliberate trade-offs, and this section documents each one:
   protected from the drive root's `Authenticated Users: Modify`. Older nvx
   builds switched that protection off on every folder they granted, and nvx now
   keeps it as it found it. `nvx doctor` reports a profile, or the folder above
-  it, that has lost its protection, with the `icacls ... /inheritance:r`
-  command that restores it.
+  it, that has lost its protection. `nvx setup`, from an Administrator
+  terminal, restores it. It does so only where the folder's own entries keep
+  SYSTEM and Administrators (and, for your profile, you) in, so nobody is
+  locked out. Otherwise it says why and leaves the folder alone.
 - **A contained command started in your home directory cannot write it.** On
   Linux and macOS, a command started in your home directory or above it starts
   in the sandbox's home instead. It cannot write `~/.nvx` or your shell profile. On Windows the same applies to a directory above your profile or
