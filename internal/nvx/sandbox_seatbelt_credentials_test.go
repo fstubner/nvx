@@ -11,9 +11,10 @@ import (
 )
 
 // The Seatbelt profile allows every read so the dynamic linker can find its
-// libraries. The user's credential stores are denied after that allow, so the
-// deny wins, and each is named under the real home and under the home with
-// links resolved, because Seatbelt matches the resolved path.
+// libraries, then denies the home and reopens what a run needs. The user's
+// credential stores are denied after all of that, so the deny wins, and each is
+// named under the real home and under the home with links resolved, because
+// Seatbelt matches the resolved path.
 func TestSeatbeltProfileDeniesReadingCredentialStores(t *testing.T) {
 	home := tempDir(t)
 	t.Setenv("HOME", home)
@@ -27,15 +28,18 @@ func TestSeatbeltProfileDeniesReadingCredentialStores(t *testing.T) {
 	guestHome := filepath.Join(home, ".nvx", "sandbox_home", "s1")
 	workDir := filepath.Join(home, "projects", "app")
 
-	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "proxy"}, guestHome, workDir)
+	nvxHome := filepath.Join(home, ".nvx")
+	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "proxy"}, guestHome, workDir, nvxHome, nil)
 
 	homes := []string{home}
 	if resolved, err := filepath.EvalSymlinks(home); err == nil && resolved != home {
 		homes = append(homes, resolved)
 	}
-	allowAt := strings.Index(profile, "(allow file-read*)\n")
+	// The last read rule reopening something under the home: the stores must
+	// come after it, or a project holding one would expose it.
+	allowAt := strings.LastIndex(profile, "(allow file-read* (subpath ")
 	if allowAt < 0 {
-		t.Fatalf("profile has no blanket read allow:\n%s", profile)
+		t.Fatalf("profile reopens nothing under the home:\n%s", profile)
 	}
 	for _, h := range homes {
 		for _, want := range []string{
@@ -53,13 +57,18 @@ func TestSeatbeltProfileDeniesReadingCredentialStores(t *testing.T) {
 				continue
 			}
 			if at < allowAt {
-				t.Errorf("%s comes before the read allow it has to override", want)
+				t.Errorf("%s comes before a read allow it has to override", want)
 			}
 		}
 	}
 
-	// What a contained run needs stays readable. No read deny covers the guest
-	// home, the project, or the home directory itself.
+	// No credential-store deny covers the guest home, the project, or the home
+	// directory itself. The deny on the whole home and on nvxHome is the
+	// exception, and sandbox_seatbelt_home_read_test.go checks what reopens it.
+	wholeTree := map[string]bool{}
+	for _, p := range seatbeltPathForms([]string{home, nvxHome}) {
+		wholeTree[p] = true
+	}
 	denyRe := regexp.MustCompile(`\(deny file-read\* \((?:literal|subpath) ("(?:[^"\\]|\\.)*")\)\)`)
 	matches := denyRe.FindAllStringSubmatch(profile, -1)
 	if len(matches) == 0 {
@@ -69,6 +78,9 @@ func TestSeatbeltProfileDeniesReadingCredentialStores(t *testing.T) {
 		p, err := strconv.Unquote(m[1])
 		if err != nil {
 			t.Fatalf("unquote %s: %v", m[1], err)
+		}
+		if wholeTree[p] {
+			continue
 		}
 		for _, needed := range []string{guestHome, workDir, home} {
 			if dirWithin(needed, p) {

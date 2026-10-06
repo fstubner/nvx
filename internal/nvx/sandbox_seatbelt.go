@@ -116,10 +116,10 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 	// binary's own directory must NOT be writable: this profile used to pass
 	// both as writable roots, which let any sandboxed process rewrite the
 	// global policy, self-approve grants, or trojan the node/npm binaries
-	// themselves — a full, persistent sandbox defeat. Reads remain broad
-	// (file-read* below) so the dynamic linker and tooling can still find
-	// everything they need; only writes are scoped down.
-	profile := buildSeatbeltProfile(netCtx, guestHome, cwd)
+	// themselves — a full, persistent sandbox defeat. Reads stay broad outside
+	// the home directory and nvx's home, so the dynamic linker can find what it
+	// needs. See buildSeatbeltProfile.
+	profile := buildSeatbeltProfile(netCtx, guestHome, cwd, config.NvxHome, config.ReadExecRoots)
 	profilePath, removeProfile, err := writeSeatbeltProfile(config.NvxHome, profile)
 	if err != nil {
 		LogError("Failed to write the Seatbelt profile: %v", err)
@@ -168,8 +168,12 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 // The roots are named as given and as resolved, because Seatbelt matches the
 // resolved path. A project made by mktemp is under /var/folders, really
 // /private/var/folders, and a rule naming only the first would match nothing.
-func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string) string {
+//
+// nvxHome and readExecRoots decide what stays readable under the home
+// directory. See seatbeltHomeReadRules.
+func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir, nvxHome string, readExecRoots []string) string {
 	writeRoots := seatbeltPathForms(sandboxWritableRoots(guestHome, workDir))
+	home, _ := os.UserHomeDir()
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n")
@@ -193,11 +197,13 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	// Reads are allowed broadly. The dynamic linker must read system libraries
 	// and the dyld shared cache, whose paths vary by macOS version (e.g. the
 	// Cryptexes firmlink on Apple Silicon) and are impractical to enumerate
-	// reliably. nvx's enforced guarantees are filesystem-WRITE containment and
-	// egress control, both kept strict below; environment secrets are separately
-	// scrubbed and $HOME is redirected to an ephemeral guest profile. The user's
-	// credential stores are carved back out further down.
+	// reliably. The home directory and nvx's own home are denied straight after,
+	// with what a run needs reopened. The user's credential stores are denied
+	// again further down.
 	b.WriteString("(allow file-read*)\n")
+	for _, rule := range seatbeltHomeReadRules(home, guestHome, workDir, nvxHome, readExecRoots) {
+		b.WriteString(rule + "\n")
+	}
 	b.WriteString("(allow file-write*\n")
 	for _, dev := range seatbeltDeviceWrites {
 		b.WriteString("  " + dev + "\n")
@@ -219,8 +225,9 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 		fmt.Fprintf(&b, "(deny file-write* (subpath %q))\n", p)
 	}
 	// The user's credential stores are unreadable, as they are on Windows and
-	// Linux. These come after the blanket file-read* allow so they win.
-	home, _ := os.UserHomeDir()
+	// Linux. These come after the blanket file-read* allow and after the reads
+	// reopened under the home, so they win over both. A project or an
+	// allow_read_exec root that holds a store does not expose it.
 	for _, rule := range seatbeltCredentialReadDenies(home) {
 		b.WriteString(rule + "\n")
 	}
@@ -237,6 +244,10 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	mode := strings.ToLower(strings.TrimSpace(netCtx.Mode))
 	if mode == "open" {
 		b.WriteString("(allow network*)\n")
+	} else {
+		for _, rule := range seatbeltResolverDenies {
+			b.WriteString(rule + "\n")
+		}
 	}
 	// Loopback is granted per mode, narrowly.
 	//
@@ -290,6 +301,30 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	return b.String()
 }
 
+// seatbeltResolverDenies keep a contained process away from mDNSResponder, the
+// macOS system resolver, in every network mode but open. A lookup carries its
+// name to the resolver, which sends it on to a DNS server, so a process that can
+// connect nowhere could still send data out encoded in the names it asks for.
+// Nothing contained needs to resolve a name: the egress proxy resolves
+// allowlisted hosts in nvx, and contained clients hand it host names.
+//
+// mDNSResponder has two doors. getaddrinfo, which node, curl and dscacheutil
+// use, connects to the socket /private/var/run/mDNSResponder, and (deny
+// default) already refuses that: on the macos-latest runner the kernel logged
+// node and dscacheutil denied network-outbound to it. Network.framework, which
+// NSURLSession and everything built on it use, asks the Mach service
+// com.apple.dnssd.service instead, and the blanket (allow mach-lookup) above
+// let it through: a contained Network.framework client resolved a fresh name
+// under a wildcard domain there before this rule. Seatbelt applies the last
+// matching rule, so this deny, written after that allow, wins.
+//
+// localhost resolved inside the sandbox on the same runner with the socket
+// refused, so it does not depend on either door.
+// scripts/sandbox-enforcement-macos.sh checks all of this.
+var seatbeltResolverDenies = []string{
+	`(deny mach-lookup (global-name "com.apple.dnssd.service"))`,
+}
+
 // seatbeltDeviceWrites are the device files a contained process may write, in
 // place of all of /dev. Shell scripts write /dev/null and /dev/fd/N, which
 // /dev/stdout and /dev/stderr resolve to. Programs prompt on /dev/tty, and a
@@ -307,6 +342,57 @@ var seatbeltDeviceWrites = []string{
 	`(literal "/dev/dtracehelper")`,
 	`(regex #"^/dev/fd/[0-9]+$")`,
 	`(regex #"^/dev/ttys[0-9]+$")`,
+}
+
+// seatbeltHomeReadRules denies reading the real home directory and nvxHome,
+// then reopens what a contained run reads there. They go after the blanket
+// file-read* allow and before the credential-store denies, because Seatbelt
+// applies the last rule that matches.
+//
+// Until 2026-10-06 the profile denied only the credential stores, so a
+// contained process could read every other file in the home directory, other
+// projects included, and nvxHome's grants, policy and tool_home credentials.
+// Windows and Linux already denied reads of the home directory. The reopened
+// set is what Linux
+// grants under the home (sandboxVisiblePaths): the project and the guest home,
+// which are also the writable roots, every allow_read_exec root, and nvx's
+// runtime trees. A runtime that lives under the home outside nvx, such as one
+// installed by nvm, needs its directory in allow_read_exec, as on Linux.
+//
+// nvxHome is denied as well as the home, because NVX_HOME can point outside
+// the home. Paths are named as given and as resolved, for the reason
+// buildSeatbeltProfile gives.
+func seatbeltHomeReadRules(home, guestHome, workDir, nvxHome string, readExecRoots []string) []string {
+	var denied []string
+	for _, p := range []string{home, nvxHome} {
+		if p != "" {
+			denied = append(denied, p)
+		}
+	}
+	if len(denied) == 0 {
+		return nil
+	}
+	denied = seatbeltPathForms(denied)
+
+	var rules []string
+	for _, p := range denied {
+		rules = append(rules, fmt.Sprintf("(deny file-read* (subpath %q))", p))
+	}
+	// Metadata stays readable, as it is everywhere else in the profile. Node's
+	// module resolution stats node_modules in each ancestor of the project,
+	// and a stat shows no file contents.
+	for _, p := range denied {
+		rules = append(rules, fmt.Sprintf("(allow file-read-metadata (subpath %q))", p))
+	}
+	reopened := append(sandboxWritableRoots(guestHome, workDir), readExecRoots...)
+	reopened = append(reopened, sandboxRuntimeReadRoots(nvxHome)...)
+	for _, p := range seatbeltPathForms(reopened) {
+		if p == "" {
+			continue
+		}
+		rules = append(rules, fmt.Sprintf("(allow file-read* (subpath %q))", p))
+	}
+	return rules
 }
 
 // Registry tokens, keys and cloud credentials, relative to the real home.

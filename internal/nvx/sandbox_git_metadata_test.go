@@ -57,7 +57,7 @@ func TestGitMetadataSeatbeltProfileDeniesWrites(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(work, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "proxy"}, tempDir(t), work)
+	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "proxy"}, tempDir(t), work, "", nil)
 
 	deny := fmt.Sprintf("(deny file-write* (subpath %q))", filepath.Join(work, ".git"))
 	allow := fmt.Sprintf("(subpath %q)", work)

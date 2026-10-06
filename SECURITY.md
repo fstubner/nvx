@@ -183,11 +183,21 @@ These are deliberate trade-offs, and this section documents each one:
   last check is what distinguishes enforcement from a sandbox that has simply
   failed to start.
 
-  What macOS does not do is contain reads outside the credential stores. See the
-  entry below. A macOS runner also confirms that an allowlisted host completes
+  On macOS reads are denied under the home directory and nvx's home, apart from
+  what a run needs, and allowed elsewhere on the disk. See the entry below. A
+  macOS runner also confirms that an allowlisted host completes
   through the proxy, that UDP is refused, and that nvx fails closed without
-  `sandbox-exec`. One cell stays unclaimed. Nothing yet shows which layer refuses
-  the outbound connection the probe observes being refused, DNS or connect.
+  `sandbox-exec`. It shows a contained lookup refused at the system resolver,
+  and a TCP connect to an address refused by the kernel, so each layer refuses
+  on its own.
+
+  On macOS a contained process cannot reach the system resolver in any network
+  mode but `open`. getaddrinfo's socket was already refused. Until 2026-10-06
+  Network.framework's way in, the Mach service `com.apple.dnssd.service`, was
+  not, and a contained program could send data out encoded in the names it
+  looked up. On every platform nvx's egress proxy still looks up the name a
+  contained client asks for before the allowlist refuses it, so a refused name
+  reaches the host's resolver through nvx.
 
   This entry has been wrong in both directions. Until 2026-08-20 it said macOS
   egress was cooperative and a raw socket could bypass the allowlist. That
@@ -263,11 +273,12 @@ These are deliberate trade-offs, and this section documents each one:
   directory has to be readable for an install to work, and `.env` lives in it.
   Environment *variables* are scrubbed, and a file is a file. Secrets outside the
   project, such as `~/.ssh`, `~/.aws` and `~/.npmrc`, stay unreachable on Windows
-  and Linux. On macOS the Seatbelt profile allows filesystem reads and denies the
-  credential stores by path (see `docs/enforcement-matrix.md` note 2). Those
-  three, the other registry and cloud credential files listed there, and the
-  keychains cannot be read. **Other files outside the project can**, other
-  projects included.
+  and Linux. On macOS the Seatbelt profile denies reads under the home
+  directory and nvx's home, apart from the project, the guest home, nvx's
+  runtimes and `allow_read_exec` roots. It denies the credential stores by path
+  on top of that (see `docs/enforcement-matrix.md` note 2). Other projects in the
+  home cannot be read. **Files outside the home can**, such as other apps' temp
+  files under `/private/var/folders`.
 - **Your home directory's names are visible on Windows, contents are not.**
   A contained process can list your profile directory, which shows which
   credential stores exist. The entry that allows it ships with Windows, and nvx

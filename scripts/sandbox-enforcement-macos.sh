@@ -12,15 +12,15 @@
 # apart. That distinction is not hypothetical here -- a Windows egress test once
 # reported success while the sandbox was blocking its own test server.
 #
-# It also asserts a WEAKNESS on purpose. macOS allows filesystem reads outside
-# the user's credential stores, so a contained process can read other files by
-# absolute path. That is deliberate (the dynamic linker needs system libraries
-# whose paths vary by OS version, and a strict read allowlist stops processes
-# launching) and it is documented in README, SECURITY.md, PRODUCT.md and
-# docs/enforcement-matrix.md. Pinning it here means that if the profile is ever
-# tightened, this fails and forces those four documents to be updated together
-# -- rather than the docs quietly staying wrong in either direction. The
-# credential stores themselves are denied, and phase 3 asserts that.
+# Reads are allowed outside the home directory, because the dynamic linker needs
+# system libraries whose paths vary by OS version. Under the home directory they
+# are denied except for the project, the guest home, nvx's runtimes and any
+# allow_read_exec root. Until 2026-10-06 a contained process could read every
+# file in the home directory outside the credential stores, other projects
+# included, and this script asserted that as a documented weakness. It now
+# requires such a read to be refused, with the project, the runtime and an
+# allow_read_exec root still readable as the controls. The credential stores
+# are denied as well, and phase 3 asserts that.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -48,7 +48,21 @@ if [[ ! -x /usr/bin/sandbox-exec ]]; then
   exit 1
 fi
 
-PROJ="$(mktemp -d)"
+# The project, nvx's home and an allow_read_exec root all sit under the real
+# home, the layout a developer has, so the reads the profile reopens under the
+# home are the ones exercised here. mktemp would put them under
+# /private/var/folders, outside the home, where nothing is reopened because
+# nothing was denied. sandbox-smoke-macos.sh covers an NVX_HOME outside the
+# home.
+PROJ="$HOME/nvx-enforcement-project-$$"
+export NVX_HOME="$HOME/.nvx-enforcement-home-$$"
+READ_EXEC_DIR="$HOME/nvx-enforcement-tool-$$"
+rm -rf "$PROJ" "$NVX_HOME" "$READ_EXEC_DIR"
+mkdir -p "$PROJ" "$NVX_HOME" "$READ_EXEC_DIR"
+printf 'tool-file\n' > "$READ_EXEC_DIR/tool.txt"
+# Inside nvx's home but outside its runtimes: the control plane, which holds
+# grants, policy and other tools' credentials.
+printf 'control-plane\n' > "$NVX_HOME/probe-control-plane"
 
 # NOT mktemp for the "outside" fixture. Until 2026-10-06 buildSeatbeltProfile
 # granted writes on all of /private/var/folders, where macOS mktemp puts its
@@ -80,23 +94,45 @@ SHARED_TEMP_TARGETS=(
   "$(getconf DARWIN_USER_TEMP_DIR)$PROBE_TAG"
   "$(getconf DARWIN_USER_CACHE_DIR)$PROBE_TAG"
 )
-trap 'rm -rf "$PROJ" "$OUTSIDE" "$FAKE_HOME" "${SHARED_TEMP_TARGETS[@]}"' EXIT
+trap 'rm -rf "$PROJ" "$NVX_HOME" "$READ_EXEC_DIR" "$OUTSIDE" "$FAKE_HOME" "${SHARED_TEMP_TARGETS[@]}"' EXIT
 
+# A file in the home directory that is no credential store, standing in for
+# another project's source or secrets.
 SECRET="$OUTSIDE/credentials"
 printf 'SECRET-CONTENT-DO-NOT-LEAK\n' > "$SECRET"
 FORBIDDEN_WRITE="$OUTSIDE/should-not-exist"
 
+# An nvx-managed runtime under NVX_HOME, as the Linux probe uses. The runner's
+# own node is under /Users/runner/hostedtoolcache, inside the home, which a
+# contained process may not read. Running nvx's runtime is also the realistic
+# case, since managing runtimes is what nvx is for.
 cd "$PROJ"
+echo "Installing an nvx-managed runtime..."
+if ! "$NVX" -y install 22 >/dev/null 2>&1 || ! "$NVX" -y default 22 >/dev/null 2>&1; then
+  echo "FAIL: could not install an nvx-managed runtime into $NVX_HOME (network?)." >&2
+  echo "      Every contained run below needs one, so nothing here can be checked." >&2
+  exit 1
+fi
+
+# The policies below add an allow_read_exec root and an allowlisted host, and
+# nvx refuses to honour a widening policy it has not been told to trust. This
+# script writes them itself, which is not the case that guard exists for.
+export NVX_TRUST_YES=true
+
+printf 'project-file\n' > "$PROJ/project-file.txt"
 # Repository metadata. git runs uncontained, so a contained process must not be
 # able to write it, while reading it still works.
 mkdir -p .git/hooks
 GIT_CONFIG_BODY="$(printf '[core]\n\trepositoryformatversion = 0')"
 printf '%s\n' "$GIT_CONFIG_BODY" > .git/config
-cat > .nvx-policy.json <<'POLICY'
+cat > .nvx-policy.json <<POLICY
 {
   "isolation": {
     "enabled": true,
     "level": "strict",
+    "filesystem": {
+      "allow_read_exec": ["$READ_EXEC_DIR"]
+    },
     "network": {
       "mode": "proxy",
       "default_allow": [],
@@ -168,12 +204,28 @@ try {
 try { cp.execFileSync('/usr/bin/git', ['--version'], { stdio: 'pipe' }); out.push('XCRUN_TOOL=ALLOWED'); }
 catch (e) { out.push('XCRUN_TOOL=DENIED', why(e)); }
 
-// Documented as ALLOWED on macOS. Asserted so a change in either direction is
-// caught rather than silently diverging from four documents.
-try {
-  const got = fs.readFileSync(secret, 'utf8');
-  out.push(got.includes('SECRET-CONTENT') ? 'READ_OUTSIDE=ALLOWED' : 'READ_OUTSIDE=GARBLED');
-} catch (e) { out.push('READ_OUTSIDE=DENIED'); }
+// Must be DENIED by the OS: a file in the home directory outside the project,
+// and one in nvx's home outside its runtimes. Only EPERM or EACCES counts, so a
+// missing fixture cannot pass as a refusal.
+const readCheck = (name, p, want) => {
+  try {
+    const got = fs.readFileSync(p, 'utf8');
+    out.push(name + (got.includes(want) ? '=ALLOWED' : '=GARBLED'));
+  } catch (e) {
+    out.push(name + (e.code === 'EPERM' || e.code === 'EACCES' ? '=DENIED' : '=ERROR ' + e.code));
+  }
+};
+readCheck('READ_OUTSIDE', secret, 'SECRET-CONTENT');
+readCheck('NVX_HOME_READ', process.argv[10], 'control-plane');
+
+// Must be ALLOWED: the controls for the two denials above. All three sit under
+// the home directory too, so a profile that denied the whole home would fail
+// here: the project, the runtime this process is running, and the
+// allow_read_exec root the policy names.
+readCheck('READ_INSIDE', 'project-file.txt', 'project-file');
+try { fs.readFileSync(process.execPath); out.push('READ_RUNTIME=ALLOWED'); }
+catch (e) { out.push('READ_RUNTIME=DENIED', why(e)); }
+readCheck('READ_EXEC_ROOT', process.argv[9], 'tool-file');
 
 // Must be DENIED: UDP to an external host. Asserted separately from TCP because
 // the profile's `(deny default)` covers both and nothing checked the second, so
@@ -219,7 +271,8 @@ PROBE
 REPORT="$PROJ/report.txt"
 echo "Running contained probe..."
 set +e
-"$NVX" -y --strict shim node probe.js "$SECRET" "$FORBIDDEN_WRITE" "$REPORT" "${SHARED_TEMP_TARGETS[@]}"
+"$NVX" -y --strict shim node probe.js "$SECRET" "$FORBIDDEN_WRITE" "$REPORT" "${SHARED_TEMP_TARGETS[@]}" \
+  "$READ_EXEC_DIR/tool.txt" "$NVX_HOME/probe-control-plane"
 rc=$?
 set -e
 
@@ -257,6 +310,11 @@ expect "USER_CACHE_WRITE=DENIED"  "a contained process wrote the user's Darwin c
 expect "OWN_TMP_WRITE=ALLOWED"    "a contained process could not write its own temp directory, so the temp denials above prove nothing"
 expect "DEV_WRITE=ALLOWED"        "a contained shell could not write /dev/null, /dev/zero, /dev/stdout, /dev/fd/1 or /dev/stderr"
 expect "XCRUN_TOOL=ALLOWED"       "a contained process could not run /usr/bin/git, which npm uses for git dependencies"
+expect "READ_OUTSIDE=DENIED"      "a contained process read a file in the home directory outside the project, and other projects there are as readable as that file"
+expect "NVX_HOME_READ=DENIED"     "a contained process read nvx's home outside its runtimes, where grants, policy and other tools' credentials live"
+expect "READ_INSIDE=ALLOWED"      "a contained process could not read its own project, so the read denials above prove nothing"
+expect "READ_RUNTIME=ALLOWED"     "a contained process could not read the runtime it runs from NVX_HOME/versions"
+expect "READ_EXEC_ROOT=ALLOWED"   "a contained process could not read a directory the policy names in allow_read_exec"
 
 # On disk, outside the sandbox: nothing reported as denied landed anyway.
 for p in "${SHARED_TEMP_TARGETS[@]}"; do
@@ -271,17 +329,6 @@ if [[ -e .git/hooks/pre-commit ]]; then
 fi
 if [[ "$(cat .git/config)" != "$GIT_CONFIG_BODY" ]]; then
   echo "FAIL: .git/config changed; a contained process wrote it." >&2
-  fail=1
-fi
-
-# The documented weakness. A change here is not necessarily a regression -- it
-# may be an improvement -- but it must not go unnoticed, because four documents
-# describe the current behaviour.
-if ! grep -qx "READ_OUTSIDE=ALLOWED" "$REPORT"; then
-  echo "FAIL: reads outside the project are no longer allowed on macOS." >&2
-  echo "      That may be an improvement, but README, SECURITY.md, PRODUCT.md and" >&2
-  echo "      docs/enforcement-matrix.md all state that macOS allows reads outside the credential stores." >&2
-  echo "      Update them in the same change that tightened the profile." >&2
   fail=1
 fi
 
@@ -337,10 +384,6 @@ req.setTimeout(20000, () => { req.destroy(); console.log('CONNECT=timeout'); pro
 req.end();
 CONNECT
 
-# The policy above widens what the sandbox may reach, and nvx refuses to honour a
-# widening policy it has not been told to trust. This script wrote it a few lines
-# up, which is not the case that guard exists for.
-export NVX_TRUST_YES=true
 OUT2="$("$NVX" -y --strict shim node connect.js 2>&1 | grep '^CONNECT=' || true)"
 echo "  proxy said: ${OUT2:-<nothing>}"
 case "$OUT2" in
@@ -366,11 +409,11 @@ case "$OUT2" in
 esac
 
 # A contained run started in the home directory must not be able to write it,
-# nor ~/.nvx below it. The working directory is a writable root, and nothing
+# nor nvx's home below it. The working directory is a writable root, and nothing
 # checked which directory it was: measured on this runner before the guard, all
 # such writes landed.
 HOME_WRITE="$OUTSIDE/written-from-home"
-NVX_WRITE="$HOME/.nvx/probe-written-from-home"
+NVX_WRITE="$NVX_HOME/probe-written-from-home"
 ( cd "$HOME" && "$NVX" -y --strict shim node -e \
     "for(const p of process.argv.slice(1)){try{require('fs').writeFileSync(p,'x')}catch(e){}}" \
     "$HOME_WRITE" "$NVX_WRITE" >/dev/null 2>&1 ) || true
@@ -436,10 +479,206 @@ elif grep -q 'planted.invalid' <<<"$NPM_OUT"; then
   fail=1
 fi
 
+# Phase 4: an NVX_HOME outside the home directory.
+#
+# Everything above has nvx's home under the real home, where the deny on the
+# home covers it. NVX_HOME may be anywhere, so nvx's home is denied on its own
+# as well, with its runtimes reopened. mktemp puts this one under /var/folders.
+# A file in it outside the runtimes must be refused by the OS, and the runtime
+# itself must still read, or the refusal proves nothing.
+echo "Phase 4: nvx's home outside the home directory must be unreadable outside its runtimes..."
+OUT_NVX_HOME="$(mktemp -d)"
+trap 'rm -rf "$PROJ" "$NVX_HOME" "$READ_EXEC_DIR" "$OUTSIDE" "$FAKE_HOME" "$OUT_NVX_HOME" "${SHARED_TEMP_TARGETS[@]}"' EXIT
+if ! NVX_HOME="$OUT_NVX_HOME" "$NVX" -y install 22 >/dev/null 2>&1 || ! NVX_HOME="$OUT_NVX_HOME" "$NVX" -y default 22 >/dev/null 2>&1; then
+  echo "FAIL: could not install an nvx-managed runtime into $OUT_NVX_HOME (network?)." >&2
+  fail=1
+else
+  printf 'control-plane\n' > "$OUT_NVX_HOME/probe-control-plane"
+  NVX_HOME_DIR="$OUT_NVX_HOME"
+  expect_read "$OUT_NVX_HOME/probe-control-plane" 3 "nvx's home outside its runtimes must be unreadable wherever NVX_HOME is"
+  expect_read "SELF"                               0 "The runtime under an NVX_HOME outside the home must stay readable, or the denial above proves nothing"
+fi
+
+# DNS: a contained process must not reach the system resolver.
+#
+# A lookup carries its name to whoever answers it, so a process that cannot
+# connect anywhere can still send data out by encoding it in names it asks the
+# host's resolver for. The proxy resolves allowlisted hosts in the parent and
+# contained clients hand it host names, so nothing contained needs to resolve
+# one itself.
+#
+# macOS has two ways into its resolver, mDNSResponder. getaddrinfo, which node,
+# curl and dscacheutil use, writes to the socket /private/var/run/mDNSResponder.
+# Network.framework, which NSURLSession and anything built on it use, asks the
+# Mach service com.apple.dnssd.service. Each is checked by a client that takes
+# that path. c-ares (node's dns.resolve) sends to port 53 itself, and is checked
+# too.
+#
+# A refused lookup and a name that does not exist look alike from inside: both
+# are an error. So the names asked for are fresh random labels under a wildcard
+# domain, which resolve for anyone whose query reaches a DNS server, and which
+# no cache can hold because nobody has asked for them before. An answer means
+# the query left the machine. The uncontained controls ask for other fresh
+# labels under the same domain and must get an answer, or the contained
+# refusals would prove nothing about the sandbox.
+#
+# Measured on the macos-latest runner: getaddrinfo reports a refused socket as
+# EAI_NONAME, node's ENOTFOUND, the same code as NXDOMAIN. So a missing name
+# tells nothing for dns.lookup, and only the wildcard name is asserted there.
+# c-ares does tell them apart, and its NXDOMAIN check stays.
+echo "DNS: a contained process must not reach the system resolver..."
+rand_label() { od -An -N8 -tx1 /dev/urandom | tr -d ' \n'; }
+
+# A Network.framework client: it resolves through com.apple.dnssd.service. Port
+# 9 is closed on loopback, where the wildcard names point, so an uncontained
+# run fails to connect at once. A DNS error means the name did not resolve.
+# Anything else (connected, refused, denied by the sandbox) comes after an
+# answer, so it counts as resolved.
+cat > nwprobe.swift <<'SWIFT'
+import Foundation
+import Network
+
+func report(_ s: String) -> Never { print(s); fflush(stdout); exit(0) }
+let conn = NWConnection(host: NWEndpoint.Host(CommandLine.arguments[1]), port: 9, using: .tcp)
+conn.stateUpdateHandler = { state in
+    switch state {
+    case .ready:
+        report("NW=RESOLVED connected")
+    case .waiting(let err), .failed(let err):
+        if case .dns(let code) = err { report("NW=REFUSED dns \(code)") }
+        report("NW=RESOLVED \(err)")
+    default:
+        break
+    }
+}
+conn.start(queue: .main)
+DispatchQueue.main.asyncAfter(deadline: .now() + 20) { report("NW=TIMEOUT") }
+dispatchMain()
+SWIFT
+if ! swiftc -O nwprobe.swift -o nwprobe >/dev/null 2>&1; then
+  echo "FAIL: could not build the Network.framework probe with swiftc; the resolver's Mach service would go unchecked." >&2
+  fail=1
+fi
+
+WILD_SUFFIX=""
+for suffix in 127-0-0-1.sslip.io 127.0.0.1.nip.io; do
+  if node -e "require('dns').lookup(process.argv[1],e=>process.exit(e?1:0))" "nvx-control-$(rand_label).$suffix"; then
+    WILD_SUFFIX="$suffix"
+    break
+  fi
+done
+if [[ -z "$WILD_SUFFIX" ]]; then
+  echo "FAIL: this runner could not resolve a fresh name under a wildcard domain uncontained," >&2
+  echo "      so a contained lookup failing would say nothing about the sandbox." >&2
+  fail=1
+else
+  echo "  wildcard domain: $WILD_SUFFIX"
+  if ! node -e "require('dns').resolve4(process.argv[1],e=>process.exit(e?1:0))" "nvx-control-$(rand_label).$WILD_SUFFIX"; then
+    echo "FAIL: uncontained dns.resolve4 of a fresh wildcard name failed; the contained resolve check would measure nothing." >&2
+    fail=1
+  fi
+  if ! /usr/bin/dscacheutil -q host -a name "nvx-control-$(rand_label).$WILD_SUFFIX" | grep -q 'ip_address'; then
+    echo "FAIL: uncontained dscacheutil did not resolve a fresh wildcard name; the contained dscacheutil check would measure nothing." >&2
+    fail=1
+  fi
+  if [[ -x ./nwprobe ]]; then
+    NW_CONTROL="$(./nwprobe "nvx-control-$(rand_label).$WILD_SUFFIX" 2>&1 || true)"
+    echo "  uncontained Network.framework: $NW_CONTROL"
+    if [[ "$NW_CONTROL" != NW=RESOLVED* ]]; then
+      echo "FAIL: uncontained Network.framework did not resolve a fresh wildcard name; the contained check would measure nothing." >&2
+      fail=1
+    fi
+  fi
+
+  cat > dns.js <<'DNS'
+const dns = require('dns');
+const net = require('net');
+const cp = require('child_process');
+const fs = require('fs');
+const [report, wildLookup, wildResolve, wildCache, wildNW, nxResolve] = process.argv.slice(2);
+const resolver = new dns.Resolver({ timeout: 3000, tries: 2 });
+const out = [];
+let pending = 5;
+let finished = false;
+function done(line) {
+  out.push(line);
+  if (--pending === 0) finish();
+}
+function run(file, args) {
+  try { return cp.execFileSync(file, args, { stdio: 'pipe', timeout: 30000 }).toString(); }
+  catch (e) { return String(e.stdout || '') + ' ERROR ' + (e.code || e.status); }
+}
+function finish() {
+  if (finished) return;
+  finished = true;
+  out.push(/ip_address/.test(run('/usr/bin/dscacheutil', ['-q', 'host', '-a', 'name', wildCache]))
+    ? 'DSCACHEUTIL=RESOLVED' : 'DSCACHEUTIL=REFUSED');
+  if (fs.existsSync('./nwprobe')) out.push(run('./nwprobe', [wildNW]).trim());
+  fs.writeFileSync(report, out.join('\n') + '\n');
+  process.exit(0);
+}
+const addrs = a => a.map(x => (typeof x === 'string' ? x : x.address)).join(',');
+dns.lookup(wildLookup, { all: true }, (e, a) => done(e ? 'DNS_LOOKUP=REFUSED ' + e.code : 'DNS_LOOKUP=RESOLVED ' + addrs(a)));
+resolver.resolve4(wildResolve, (e, a) => done(e ? 'DNS_RESOLVE=REFUSED ' + e.code : 'DNS_RESOLVE=RESOLVED ' + addrs(a)));
+resolver.resolve4(nxResolve, e => done('DNS_RESOLVE_NX=' + (e ? e.code : 'RESOLVED')));
+dns.lookup('localhost', { all: true }, (e, a) => done(e ? 'LOCALHOST=FAILED ' + e.code : 'LOCALHOST=' + addrs(a)));
+// A TCP connect to an address, so no lookup is involved: which layer refuses
+// a direct connection once DNS is out of the way.
+const sock = net.connect({ host: '1.1.1.1', port: 443 });
+sock.on('connect', () => { sock.destroy(); done('TCP_DIRECT=ALLOWED'); });
+sock.on('error', e => done('TCP_DIRECT=DENIED ' + e.code));
+sock.setTimeout(10000, () => { sock.destroy(); done('TCP_DIRECT=TIMEOUT'); });
+setTimeout(() => { out.push('DNS_TIMEOUT pending=' + pending); finish(); }, 45000);
+DNS
+
+  DNS_REPORT="$PROJ/dns-report.txt"
+  "$NVX" -y --strict shim node dns.js "$DNS_REPORT" \
+    "nvx-probe-$(rand_label).$WILD_SUFFIX" "nvx-probe-$(rand_label).$WILD_SUFFIX" \
+    "nvx-probe-$(rand_label).$WILD_SUFFIX" "nvx-probe-$(rand_label).$WILD_SUFFIX" \
+    "nvx-probe-$(rand_label).example.com" >/dev/null 2>&1 || true
+  if [[ ! -f "$DNS_REPORT" ]]; then
+    echo "FAIL: the contained DNS probe wrote no report." >&2
+    fail=1
+  else
+    sed 's/^/  /' "$DNS_REPORT"
+    dns_fail=0
+    dns_expect() {
+      local pattern="$1" why="$2"
+      if ! grep -qE "$pattern" "$DNS_REPORT"; then
+        echo "FAIL: $why" >&2
+        dns_fail=1
+      fi
+    }
+    dns_expect '^DNS_LOOKUP=REFUSED'      "a contained getaddrinfo (dns.lookup) resolved a fresh name, so the query reached a DNS server"
+    dns_expect '^DNS_RESOLVE=REFUSED'     "a contained dns.resolve4 resolved a fresh name, so the query reached a DNS server"
+    dns_expect '^DSCACHEUTIL=REFUSED'     "a contained dscacheutil resolved a fresh name, so the query reached a DNS server"
+    dns_expect '^NW=REFUSED'              "a contained Network.framework client resolved a fresh name through com.apple.dnssd.service, so the query reached a DNS server"
+    dns_expect '^DNS_RESOLVE_NX=E[A-Z]+$' "a contained dns.resolve4 of a missing name did not report an error code"
+    if grep -qxE 'DNS_RESOLVE_NX=(ENOTFOUND|ENODATA)' "$DNS_REPORT"; then
+      echo "FAIL: a contained dns.resolve4 of a missing name got an answer from a DNS server" >&2
+      dns_fail=1
+    fi
+    dns_expect '^TCP_DIRECT=DENIED'       "a contained TCP connect to an external address was not refused"
+    dns_expect '^LOCALHOST=.*(127\.0\.0\.1|::1)' "a contained process could not resolve localhost, which tools use to reach loopback services"
+    # Which rule refused, or that nothing did. Informational: the assertions
+    # above are the claim, and this tells the next reader what macOS did.
+    echo "  Seatbelt denials logged for the contained probes (last 2 minutes):"
+    log show --last 2m --style compact --predicate 'sender == "Sandbox"' 2>/dev/null \
+      | grep -E 'Sandbox: (node|dscacheutil|nwprobe)\(' \
+      | grep -iE 'dnssd|mDNSResponder|opendirectoryd|network-outbound' | tail -20 | sed 's/^/    /' || true
+    if [[ $dns_fail -ne 0 ]]; then
+      echo "  mDNSResponder's endpoints on this runner:" >&2
+      launchctl print system/com.apple.mDNSResponder 2>/dev/null | sed -n '/endpoints = {/,/}/p' | sed 's/^/    /' >&2 || true
+      fail=1
+    fi
+  fi
+fi
+
 if [[ $fail -ne 0 ]]; then
   echo "macOS enforcement probe FAILED." >&2
   exit 1
 fi
 
 echo "macOS enforcement probe passed: writes contained, egress denied for TCP and UDP,"
-echo "an allowlisted host reachable through the proxy, credential files unreadable, other reads allowed as documented."
+echo "an allowlisted host reachable through the proxy, the home directory and credential files unreadable,"
+echo "the project, the runtime and an allow_read_exec root readable, and the system resolver unreachable."

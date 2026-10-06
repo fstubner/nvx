@@ -28,9 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   went unchecked. Measured 2026-10-06 with `is-number` on `blocked_packages`,
   in a project depending on `is-odd@3.0.1`, which depends on `is-number`:
   `pnpm install --frozen-lockfile` and `yarn install` both installed
-  `is-number@6.0.0` (run with `--no-sandbox`, which gets the same checks). nvx now reads `pnpm-lock.yaml` (lockfileVersion 5.x, 6.x
-  and 9.x, pnpm 7 to 12), `yarn.lock` (Yarn 1, and Yarn 2 and later) and
-  `bun.lock`, and both installs are refused naming `is-number`. Every entry for
+  `is-number@6.0.0` (run with `--no-sandbox`, which gets the same checks).
+  nvx now reads `pnpm-lock.yaml` (lockfileVersion 5.x, 6.x and 9.x, pnpm 7
+  to 12), `yarn.lock` (Yarn 1, and Yarn 2 and later) and `bun.lock`, and both
+  installs are refused naming `is-number`. Every entry for
   this platform gets the checks a `package-lock.json` entry gets, and its hash
   or tarball URL must match the registry's where the lockfile records one. The
   typosquat check stays on the names you chose. A lockfile nvx cannot read is
@@ -41,6 +42,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the run says so. Named installs such as `pnpm add left-pad`,
   updates, and Bun's binary `bun.lockb` are checked on what they name or
   declare, as before.
+
+### Fixed
+
+* **On Windows, `yarn` classic installs in a project under your user profile
+  even when you have a `~/.yarnrc` or `~/.npmrc`.** yarn reads those files from
+  every directory between the project and the drive root. The sandbox does not
+  let a contained process read the ones in your real home, and yarn stopped on
+  the refusal with `EPERM: operation not permitted, open 'C:\Users\you\.yarnrc'`.
+  The contained process now sees those files as absent, which is what the
+  sandbox intends. Nothing new becomes readable. Other refused reads still
+  report `EPERM`.
+
+* **On macOS, a contained install can no longer read the rest of your home
+  directory.** The sandbox allowed every read outside the credential stores, so
+  a package could read other projects in the home directory, nvx's own settings
+  and the tool credentials nvx saves. Reads under the home directory and under nvx's home are now
+  refused, apart from the project, the sandbox's own home, nvx's runtimes and
+  directories listed in `isolation.filesystem.allow_read_exec`. Windows and
+  Linux already refused reads of the home directory. A Node.js installed in the
+  home by another tool, such as nvm, now needs its directory in
+  `allow_read_exec` to run contained, as on Linux. Files outside the home stay
+  readable on macOS.
+
+* **On macOS, a contained process can no longer look up host names.** A
+  program using Network.framework could ask the system resolver for any name,
+  so a package that could connect nowhere could still send data out encoded in
+  the names it looked up. The sandbox now refuses the resolver's Mach service,
+  `com.apple.dnssd.service`, in every network mode but `open`. getaddrinfo's way
+  in, the socket `/private/var/run/mDNSResponder`, was already refused.
+  Measured on a macOS runner: a contained Network.framework client resolved a
+  fresh name under a wildcard domain before the change and was refused after
+  it, with `localhost` still resolving and a contained `npm install` still
+  working through the proxy.
 
 ## [0.7.0] - 2026-10-06
 

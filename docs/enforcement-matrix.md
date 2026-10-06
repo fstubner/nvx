@@ -47,39 +47,54 @@ and do not verify whether the kernel honours it.
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
 | Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |
-| Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: credential stores denied, other reads allowed⁵ |
+| Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: the home directory denied outside what a run needs, other paths readable⁵ |
 | Project `.git` read-only, rest of project writable | Yes¹⁴ | Yes¹⁴ | Yes¹⁴ |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
 | Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |
 | Non-proxied raw TCP/UDP blocked at OS | Yes³ (no network capability) | Yes (loopback-only netns + seccomp) | Yes⁵ (TCP and UDP; UDP refused at bind) |
-| Non-proxied DNS blocked | Yes³ | Yes (netns) | Partial¹ |
+| Non-proxied DNS blocked | Yes³ | Yes (netns) | Yes¹ ⁵ |
 | Any loopback service reachable | No, unless the policy lists it¹¹, or `network.mode: loopback`¹³ | No, unless the policy lists it, or `network.mode: loopback`¹³ | No⁶ (proxy port only), or `network.mode: loopback`¹³ |
 | One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | Via `allow_hosts` for proxy-aware clients, or `--connect` for one run, except in `offline`¹¹ ¹² | Via `allow_hosts` for proxy-aware clients, or `--connect` for one run¹¹ ¹² |
 | Another project's sandbox reachable over loopback | No¹⁰ (per-project package) | No (each has its own netns) | Untested |
 | A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
 
-² On macOS the Seatbelt profile allows filesystem reads. The dynamic linker must
-read system libraries and the dyld shared cache. Their locations vary by macOS
-version (e.g. the Cryptexes firmlink on Apple Silicon) and nvx cannot enumerate
-them reliably. A strict read allowlist breaks process launch. Write containment and
-egress control remain enforced, and nvx scrubs environment secrets and redirects
-`$HOME` to a guest profile under `~/.nvx`. That profile is thrown away after
-each run, except for pnpm and for tools approved as trusted, which keep one
-profile per project.
+² On macOS the Seatbelt profile allows filesystem reads outside the home
+directory. The dynamic linker must read system libraries and the dyld shared
+cache. Their locations vary by macOS version (e.g. the Cryptexes firmlink on
+Apple Silicon) and nvx cannot enumerate them reliably. A strict read allowlist
+breaks process launch. Write containment and egress control remain enforced, and
+nvx scrubs environment secrets and redirects `$HOME` to a guest profile under
+`~/.nvx`. That profile is thrown away after each run, except for pnpm and for
+tools approved as trusted, which keep one profile per project.
 
-The user's credential stores are the exception. After the blanket read allow, the
-profile denies reads of `~/.npmrc`, `~/.yarnrc`, `~/.yarnrc.yml`,
+Under the home directory reads are denied. After the blanket read allow, the
+profile denies reads of the real home and of nvx's own home (`~/.nvx`, or
+wherever `NVX_HOME` points). It then reopens what a contained run reads there,
+which is what Linux grants: the project, the guest home, nvx's `versions`, `bin`
+and `current`, and every `isolation.filesystem.allow_read_exec` root. File
+metadata stays readable, so a contained process can stat a path in the home and
+cannot read its contents. A runtime installed under the home outside nvx, such
+as one from nvm, runs contained only when its directory is listed in
+`allow_read_exec`, as on Linux. Until 2026-10-06 the profile denied only the
+credential stores below, and every other file in the home was readable, other
+projects included.
+
+The user's credential stores are denied last, after everything the profile
+reopens, so a project or an `allow_read_exec` root that holds one does not
+expose it. The profile denies reads of `~/.npmrc`, `~/.yarnrc`, `~/.yarnrc.yml`,
 `~/.config/pnpm/rc`, `~/Library/Preferences/pnpm/rc`, `~/.bunfig.toml`,
 `~/.docker/config.json`, `~/.netrc` and `~/.git-credentials`, and of everything
 under `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.kube`,
 `~/.config/gcloud`, `~/.azure` and `~/Library/Keychains`. `~` is the real home,
 and each path is also named with symbolic links resolved, because Seatbelt
 matches the resolved path. None of these is on the dynamic linker's path. Until
-2026-10-01 the profile denied none of them. Every other file outside the project
-stays readable, other projects included, and so does a credential kept anywhere
-the list does not name.
+2026-10-01 the profile denied none of them.
+
+Reads outside the home stay allowed. That includes the per-user temp and cache
+directories under `/private/var/folders`, which other apps use, and a project
+or a credential kept on another volume. Linux denies those too.
 
 Writes are contained to the project and the guest home, where `$TMPDIR` points.
 Outside them the profile grants writes only on named device files: `/dev/null`,
@@ -100,31 +115,50 @@ true of writes and false of reads.
 `$HOME` decides where `~` expands to. It does
 not stop anything opening `/Users/<you>/.ssh/id_rsa` by absolute path. A
 postinstall script looking for credentials does not need `~` to find them. That
-is why the profile denies the credential stores above by path.
+is why the profile denies the home directory and the credential stores above
+by path.
 
-On macOS, reads outside
-them are not contained. The write and egress guarantees are real. The read
-guarantee covers only the listed stores, which is a narrower product than the
-same sentence describes on Windows and Linux.
+On macOS the read guarantee covers the home directory and nvx's home. Reads
+elsewhere on the disk stay allowed, which is a narrower product than the same
+sentence describes on Linux, where a contained process sees only what it is
+granted.
 
-¹ On macOS, the loopback proxy and OS network rules gate egress. Linux
-also removes all non-loopback interfaces (network namespace), so DNS to
-external resolvers cannot leave. On macOS a determined process could still
-attempt DNS via the OS resolver. This is the main per-OS difference and is why
-Linux has the strongest network story.
+¹ On macOS a contained process cannot reach the system resolver,
+mDNSResponder, in any network mode but `open`. It has two ways in.
+getaddrinfo, which node, curl and dscacheutil use, connects to the socket
+`/private/var/run/mDNSResponder`, and the profile's `(deny default)` refuses
+that. Network.framework, which NSURLSession and everything built on it use,
+asks the Mach service `com.apple.dnssd.service`, and the profile denies that
+service after its blanket `mach-lookup` allow. A query sent to port 53
+directly is refused like any other outbound connection. `localhost` still
+resolves.
 
-⁵ **macOS hardware confirms the macOS column, with one stated exception.**
+Until 2026-10-06 the Mach service was reachable, and this row said Partial. A
+contained Network.framework client resolved a fresh name under a wildcard
+domain (run 37513452515), so data encoded in a name could leave through the
+host's resolver while every connection was refused.
+
+Two paths are not covered by this row. nvx's egress proxy resolves the name a
+contained client asks for before the allowlist refuses it, on every platform,
+so a refused name still reaches the host's resolver through nvx. A unit-level
+run with the resolver stubbed showed a `CONNECT` to a host off the allowlist
+looked up, then answered 403. And other macOS Mach services that might look up
+a name on a caller's behalf have not been checked.
+
+⁵ **macOS hardware confirms the cells marked ⁵.**
 `scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on every CI
 build and asserts the denials instead of only that the command ran. A contained
 process reports, and CI requires:
 
 ```
-WRITE_OUTSIDE=DENIED   WRITE_INSIDE=ALLOWED   READ_OUTSIDE=ALLOWED
+WRITE_OUTSIDE=DENIED   WRITE_INSIDE=ALLOWED   READ_OUTSIDE=DENIED   READ_INSIDE=ALLOWED
 EGRESS=DENIED          UDP_EGRESS=DENIED      CONNECT=200 (allowlisted host)
+TCP_DIRECT=DENIED      DNS_LOOKUP=REFUSED     DNS_RESOLVE=REFUSED   DSCACHEUTIL=REFUSED
+NW=REFUSED             LOCALHOST=::1,127.0.0.1
 ```
 
-Two of those are load-bearing in a way the others are not. `WRITE_INSIDE` and
-`CONNECT=200` are the positive controls. Every denial above them would also pass
+Three of those are load-bearing in a way the others are not. `WRITE_INSIDE`,
+`READ_INSIDE` and `CONNECT=200` are the positive controls. Every denial above them would also pass
 for a sandbox that had failed to start. Requiring something to
 *succeed* is the only thing that tells enforcement from breakage. `CONNECT=200`
 is the one that closed the largest gap here. Until 2026-08-24 the whole script
@@ -136,11 +170,17 @@ read of each. A project file and node's own binary must still read,
 each checked by exit code. Contained `npm config get registry` must succeed with
 that `.npmrc` present and must not report the registry planted in it.
 
-`READ_OUTSIDE=ALLOWED` pins the documented weakness in ² deliberately. If the
-profile is ever tightened this fails. That forces an update to the docs site's
-limitations page (`site/src/content/docs/docs/limitations.md`), SECURITY.md,
-PRODUCT.md and this page in the same change. Otherwise they would quietly
-go wrong in the flattering direction.
+`READ_OUTSIDE` reads a file in the real home outside the project, and the OS
+must refuse it with EPERM or EACCES. The project, `NVX_HOME` and an
+`allow_read_exec` directory sit under the home for this run, so the controls
+`READ_INSIDE`, `READ_RUNTIME` (node's own binary under `NVX_HOME/versions`) and
+`READ_EXEC_ROOT` would fail against a profile that denied the whole home.
+`NVX_HOME_READ` reads a file in nvx's home outside its runtimes and must be
+refused. A fourth phase repeats that with an `NVX_HOME` under `/var/folders`,
+outside the home. Before the profile denied the home, all three reads succeeded
+(run 37399750782). After it, all three were refused and every control passed,
+as did the macOS smoke's contained `npm install` and the launch-escape probe
+(run 37400274341).
 
 `UDP_EGRESS=DENIED` comes from Seatbelt refusing at **bind**, not at send. Sending
 on an unbound UDP socket makes the runtime bind one implicitly. Seatbelt
@@ -160,12 +200,27 @@ is the outcome that would actually matter. The script separately checks
 `sandbox-exec` exists and fails loudly if a future runner image drops it, which
 is a different claim.
 
-**Still unclaimed.** `EGRESS=DENIED` does not say which layer refused. The probe's
-request is a direct one (Node's classic `https` API ignores `HTTPS_PROXY`, so it
-never reaches the proxy). It does not complete, but a DNS failure and a
-refused TCP connect are the same observation from inside. Per ¹, macOS is the
-platform where that distinction is real, so this page leaves it open instead of
-assuming it favourably.
+The DNS checks ask for fresh random names under a wildcard domain, which
+resolve for any query that reaches a DNS server and which no cache can hold.
+An answer means the query left the machine. `DNS_LOOKUP` goes through
+getaddrinfo, `DSCACHEUTIL` through the same socket, `NW` through a
+Network.framework client built with `swiftc`, and `DNS_RESOLVE` through
+c-ares, which sends to port 53 itself. Uncontained, each must resolve another
+fresh name under the same domain, or the contained refusals would prove
+nothing. A name that does not exist is checked through c-ares only:
+getaddrinfo reports a refused socket as EAI_NONAME, the code NXDOMAIN gets
+(run 37511971892), so from inside the two look alike. Before the profile
+denied `com.apple.dnssd.service`, `NW` resolved and everything else was
+refused (run 37513452515). After it, all were refused, `localhost` resolved,
+and the macOS smoke's contained `npm install` and the launch-escape probe
+passed (run 37514151891).
+
+**Which layer refuses.** `EGRESS=DENIED` alone does not say. The probe's
+request is a direct one (Node's classic `https` API ignores `HTTPS_PROXY`, so
+it never reaches the proxy), and it needs a lookup first, which the resolver
+checks above show refused. `TCP_DIRECT` connects to an address, with no lookup,
+and the kernel refuses it with EPERM. So each layer refuses on its own. This
+was left open until 2026-10-06.
 
 This footnote read "nobody has checked" until 2026-08-23. Before that the
 only macOS check in CI was `scripts/sandbox-smoke-macos.sh`, which asserted that a
