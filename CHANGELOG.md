@@ -102,21 +102,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.env.example`, `.env.sample`, `.env.template` and `.env.dist`. On Linux the
   sandbox mounts an empty, unreadable, read-only file over each one present at
   launch, outside `node_modules` and `.git`, and stops looking after 50,000
-  entries. On macOS the Seatbelt profile refuses reading and writing those
+  entries. While the run lasts it watches the project's folders and covers
+  each `.env` that is created, moved in, or replaced by your editor or
+  `git checkout` within a few milliseconds. A process that reads the file in
+  that moment can still see it. A contained process that creates a `.env`
+  itself keeps the file it has open, but cannot open it again, rename it or
+  delete it. If the watch cannot start, the run says so and goes on with the
+  launch's protection. On macOS the Seatbelt profile refuses reading and writing those
   names anywhere, so a contained tool cannot create a `.env` there either.
   Windows is covered by the entry below.
-
-* **On Linux, a `.env` file created or replaced during a contained run is
-  hidden too.** Only the files present at launch were covered. A dev server or
-  MCP server that runs for hours could read a `.env` created after it started,
-  or one your editor or `git checkout` replaced, because replacing a file
-  removes the mount that covered it. The sandbox now watches the project's
-  folders and covers each new `.env` or `.env.*` within a few milliseconds, the
-  same way as at launch. A process that reads the file in that moment can still
-  see it. A contained process that creates a `.env` itself keeps
-  the file it has open, but cannot open it again, rename it or delete it. If
-  the watch cannot start, the run says so and goes on with the launch's
-  protection.
 
 * **A contained install on Windows can no longer read the project's `.env`
   files.** At each contained launch nvx now changes the permissions of the
