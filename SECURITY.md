@@ -120,8 +120,13 @@ install and run scripts. Its defenses are layered:
    non-interactive). When nvx's own environment sets `HTTPS_PROXY` or
    `HTTP_PROXY`, an allowed connection is forwarded through that proxy. The
    egress proxy dials `NO_PROXY` and loopback destinations directly. The allowlist decides
-   before anything is forwarded. The upstream proxy resolves the name itself,
-   so nvx's link-local check covers only what nvx's own resolver returned.
+   before anything is forwarded. The proxy may be `http://`, `https://`,
+   `socks5://` or `socks5h://`. nvx verifies an `https://` proxy's certificate
+   against the system roots before it sends any credential. Any other scheme is
+   ignored with a warning, and connections are then made directly. An
+   `http://`, `https://` or `socks5h://` proxy resolves the name itself, so
+   nvx's link-local check covers only what nvx's own resolver returned. A
+   `socks5://` proxy is sent the addresses nvx resolved and checked.
 
 **Design stance.** Security-relevant failures **fail closed**. If a sandbox
 primitive is unavailable or a policy cannot be parsed, nvx refuses to run the
