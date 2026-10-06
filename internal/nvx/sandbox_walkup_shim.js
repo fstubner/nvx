@@ -243,6 +243,23 @@ try {
     };
   }
 
+  // Node's own synchronous realpath is refused the same way, because it stats
+  // each component through the binding. pnpm loads temp-dir, which calls
+  // fs.realpathSync(os.tmpdir()) at require time, so without a drive-root grant
+  // every contained pnpm command died on "EPERM: operation not permitted,
+  // lstat 'C:\'" before doing anything. Measured 2026-10-06 with pnpm 10.34.6
+  // on a machine with no `nvx setup` grant.
+  const realpathSyncWithWalk = function (p, options) {
+    try {
+      return jsRealpathSync.call(this, p, options);
+    } catch (e) {
+      if (!isPermissionError(e)) throw e;
+      try { return encodeAs(options, walkRealpathSync(p)); } catch (e2) { throw e; }
+    }
+  };
+  realpathSyncWithWalk.native = jsRealpathSync.native;
+  fs.realpathSync = realpathSyncWithWalk;
+
   if (typeof fs.realpath.native === 'function') {
     const nativeCb = fs.realpath.native;
     jsRealpath.native = function (p, options, cb) {
