@@ -30,6 +30,11 @@
 // to the original function if anything at all goes wrong, because this file is
 // injected into every node process in the sandbox and must never be the reason
 // one fails.
+//
+// The same ancestors hold one more thing a tool walks up to read: yarn classic
+// reads a .yarnrc from every directory between the project and the drive root,
+// and the sandbox refuses the one in the real home on purpose. See
+// isHiddenRcFile.
 
 try {
   const fs = require('fs');
@@ -59,6 +64,38 @@ try {
     return !!e && (e.code === 'EPERM' || e.code === 'EACCES');
   }
 
+  // yarn classic reads .yarnrc and .npmrc (and their .yml forms) from every
+  // directory between the project and the drive root. Under the user's profile
+  // that includes the real home, which the sandbox does not let a contained
+  // process read, and yarn treats EPERM there as fatal where ENOENT means "no
+  // file":
+  //
+  //   Error: EPERM: operation not permitted, open 'C:\Users\<name>\.yarnrc'
+  //
+  // Measured 2026-10-06 with yarn 1.22.22 under Node 22.23.3: the stack ends in
+  // parseRcPaths, which skips ENOENT and EISDIR and rethrows everything else.
+  // The same failure follows for ~/.npmrc once ~/.yarnrc is answered.
+  // The sandbox hides those files on purpose, so to the contained process they
+  // do not exist. A refused read of one therefore reports ENOENT. Nothing
+  // becomes readable, only the error code changes. The rule covers only these
+  // rc names directly inside an ancestor of the working directory or home,
+  // the one place yarn looks that the sandbox hides. Any other refused read, of
+  // any other name or place, keeps its EPERM.
+  function isHiddenRcFile(p) {
+    if (typeof p !== 'string') return false;
+    if (!/^\.(yarn|npm)rc(\.yml)?$/i.test(path.basename(p))) return false;
+    return isCoveredAncestor(path.dirname(p));
+  }
+
+  function enoentFor(p) {
+    const err = new Error("ENOENT: no such file or directory, open '" + p + "'");
+    err.errno = -4058;
+    err.code = 'ENOENT';
+    err.syscall = 'open';
+    err.path = p;
+    return err;
+  }
+
   // Exported so the narrowness this file claims can be asserted rather than
   // merely stated. Loading via `--require` ignores module.exports; a test
   // requires the file directly and checks the two predicates against paths that
@@ -68,6 +105,7 @@ try {
   if (typeof module === 'object' && module.exports) {
     module.exports.isCoveredAncestor = isCoveredAncestor;
     module.exports.isPermissionError = isPermissionError;
+    module.exports.isHiddenRcFile = isHiddenRcFile;
   }
 
   // A real directory's Stats, borrowed from one the sandbox can read, so the
@@ -228,6 +266,73 @@ try {
       });
     }
   };
+
+  // Reads of a hidden rc file report ENOENT. See isHiddenRcFile.
+  const readFileSyncOrig = fs.readFileSync;
+  fs.readFileSync = function (p, ...rest) {
+    try {
+      return readFileSyncOrig.call(this, p, ...rest);
+    } catch (e) {
+      if (isPermissionError(e) && isHiddenRcFile(p)) throw enoentFor(p);
+      throw e;
+    }
+  };
+
+  const readFileOrig = fs.readFile;
+  fs.readFile = function (p, ...rest) {
+    const cb = typeof rest[rest.length - 1] === 'function' ? rest.pop() : null;
+    if (!cb) return readFileOrig.call(this, p, ...rest);
+    return readFileOrig.call(this, p, ...rest, (err, data) => {
+      if (isPermissionError(err) && isHiddenRcFile(p)) return cb(enoentFor(p));
+      cb(err, data);
+    });
+  };
+
+  const readFilePromiseOrig = fsp.readFile;
+  fsp.readFile = async function (p, ...rest) {
+    try {
+      return await readFilePromiseOrig.call(this, p, ...rest);
+    } catch (e) {
+      if (isPermissionError(e) && isHiddenRcFile(p)) throw enoentFor(p);
+      throw e;
+    }
+  };
+
+  // yarn asks fs.exists before it reads ~/.npmrc, and the sandbox answers true
+  // for a file it then refuses to open (measured 2026-10-06: stat, access and
+  // exists succeed on the real home's .npmrc and .yarnrc, the read gives EPERM).
+  // A file reported present and then missing would fail yarn the same way, so
+  // the existence check agrees with the read: a hidden rc file that cannot be
+  // opened does not exist. One that can be opened still does.
+  function isReadRefused(p) {
+    try {
+      fs.closeSync(fs.openSync(p, 'r'));
+      return false;
+    } catch (e) {
+      return isPermissionError(e);
+    }
+  }
+
+  const existsSyncOrig = fs.existsSync;
+  fs.existsSync = function (p) {
+    const found = existsSyncOrig.call(this, p);
+    return found && isHiddenRcFile(p) && isReadRefused(p) ? false : found;
+  };
+
+  const existsOrig = fs.exists;
+  if (typeof existsOrig === 'function') {
+    const exists = function (p, cb) {
+      if (typeof cb !== 'function') return existsOrig.call(this, p, cb);
+      return existsOrig.call(this, p, (found) => {
+        cb(found && isHiddenRcFile(p) && isReadRefused(p) ? false : found);
+      });
+    };
+    // util.promisify(fs.exists) resolves with the boolean through this hook.
+    if (existsOrig[require('util').promisify.custom]) {
+      exists[require('util').promisify.custom] = (p) => new Promise((resolve) => exists(p, resolve));
+    }
+    fs.exists = exists;
+  }
 } catch (e) {
   // Never the reason a contained process fails.
 }
