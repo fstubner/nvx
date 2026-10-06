@@ -19,7 +19,7 @@ credentials within reach. nvx puts that command inside an OS sandbox with a
 throwaway `HOME` and an allowlist for anything it tries to reach over the
 network. It can write only to the project and that home. It cannot read
 `~/.ssh` or `~/.npmrc` either.
-On macOS other reads are not contained, and the
+On macOS files outside your home directory stay readable, and the
 [known limitations](https://nvx.run/docs/limitations/) say so plainly.
 
 **You do not change how you run anything.** nvx installs shims on `PATH`, so

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+* **On macOS, a contained install can no longer read the rest of your home
+  directory.** The sandbox allowed every read outside the credential stores, so
+  a package could read other projects in the home directory, nvx's own settings
+  and the tool credentials nvx saves. Reads under the home directory and under nvx's home are now
+  refused, apart from the project, the sandbox's own home, nvx's runtimes and
+  directories listed in `isolation.filesystem.allow_read_exec`. Windows and
+  Linux already refused reads of the home directory. A Node.js installed in the
+  home by another tool, such as nvm, now needs its directory in
+  `allow_read_exec` to run contained, as on Linux. Files outside the home stay
+  readable on macOS.
+
 ## [0.7.0]
 
 ### Added
