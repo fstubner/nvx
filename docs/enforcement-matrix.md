@@ -49,7 +49,11 @@ and do not verify whether the kernel honours it.
 | Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |
 | Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: the home directory denied outside what a run needs, other paths readable⁵ |
 | Project `.git` read-only, rest of project writable | Yes¹⁴ | Yes¹⁴ | Yes¹⁴ |
+<<<<<<< HEAD
 | Project `.env` files unreadable | Yes¹⁵ (files present at launch) | Yes¹⁵ | Yes¹⁵ |
+=======
+| Project `.env` files unreadable | Yes¹⁵ | Yes¹⁵ (files present at launch) | Yes¹⁵ |
+>>>>>>> origin/main
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
 | Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |
@@ -988,10 +992,17 @@ provider mounts the project as it is.
   `git add`, `node` and `wsl cat` read the file as before.
 
   An editor that saves by replacing the file, and `git checkout -- .env`, leave
-  a new file that inherits again. The next launch changes it again. A contained
-  process already running when the file is replaced can read the new one. A
-  launch that finds every file already changed reads permissions and writes
-  none. Each changed file is recorded with its earlier permissions in the
+  a new file that inherits again. While a contained process runs, nvx watches
+  the project with `ReadDirectoryChangesW` and changes each such file as it
+  appears, along with a `.env` created or moved in, outside `node_modules` and
+  `.git`. When Windows reports that changes were lost, it searches the whole
+  project again. Measured 2026-10-07 on Windows 11 26300, a new or replaced
+  `.env` was changed between 4 and 13 ms after it appeared, and a contained
+  process can open it in that time. A contained process that creates a `.env`
+  itself keeps the handle it created it with. It can finish writing the file
+  and cannot open it again. If the watch cannot start, the run goes on with a
+  warning and the next launch changes the file. A launch that finds every file
+  already changed reads permissions and writes none. Each changed file is recorded with its earlier permissions in the
   project's grant record under `~/.nvx/grants`, and `nvx grants reset` puts
   them back, unless someone changed them again since. A file nvx may not
   change, such as one the user does not own, stays readable, with a warning,
@@ -999,7 +1010,9 @@ provider mounts the project as it is.
   through one that lies outside the project, are left alone with a note.
   `TestLaunchHidesDotenvFromContainedProcess` (NVX_PROBE=1) runs the launch's
   grant step and a contained child against `.env`, `.env.local`,
-  `.env.example` and `package.json`.
+  `.env.example` and `package.json`. `TestWatchHidesNewDotenvFromRunningProcess`
+  (NVX_PROBE=1) has a running contained node process read a `.env` created and
+  then replaced after its launch.
 
   Deny entries and integrity labels do not work here. On 2026-08-18 a deny
   entry on `.env` for the container's SID and for ALL APPLICATION PACKAGES left
