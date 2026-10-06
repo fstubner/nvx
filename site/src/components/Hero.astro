@@ -2,6 +2,7 @@
 import { site } from '../data/site';
 import { sections } from '../data/site-content/sections';
 import { heroCommands } from '../data/site-content/hero';
+import Visual from './Visual.astro';
 const { hero, heroDownloads, social } = site;
 // The jump link only exists if there is an install section to jump to.
 // sections.ts can drop one, and a link to a section the page does not render
@@ -23,6 +24,10 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
   (c) => c.packageManager !== c.script,
 );
 
+const showSource = hero.showSourceLink !== false;
+// A product with one command leaves `quickInstall` empty. The second row then
+// holds only the install link, rather than an empty command chip beside it.
+const hasSecondCommand = hero.quickInstall.trim() !== '';
 ---
 <div class="hero-frame">
 <div class="hero">
@@ -49,16 +54,16 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
         source link. It has moved into the badge above the headline, where it
         can carry the release notes link with it; this line is metrics only
         again. */}
-    <span class="sep" aria-hidden="true" id="source-sep" hidden>·</span>
-    <a class="plain" href={hero.sourceUrl}>
+    {showSource && <span class="sep" aria-hidden="true" id="source-sep" hidden>·</span>}
+    {showSource && <a class="plain" href={hero.sourceUrl}>
       <svg class="gh-icon" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px">
         <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
       </svg>
       View source
-    </a>
+    </a>}
   </div>
 
-  <div class="hero-cta">
+  <div class:list={['hero-cta', heroDownloads.length === 0 && !hasSecondCommand && 'hero-cta-single']}>
     {/* Two columns when there is a desktop button to put in the first one.
         A product with no desktop build leaves `heroDownloads` empty, and
         the wide command was then laid into the 200px column meant for the
@@ -131,10 +136,12 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
         </div>
       )}
     </div>
-    <div class="hero-cta-sub">
-      <div class="hero-command has-copy hero-copy" id="hero-package-install" data-copy={hero.quickInstall}>
-        <code>{hero.quickInstall}</code>
-      </div>
+    <div class:list={['hero-cta-sub', !hasSecondCommand && 'hero-cta-sub-solo']}>
+      {hasSecondCommand && (
+        <div class="hero-command has-copy hero-copy" id="hero-package-install" data-copy={hero.quickInstall}>
+          <code>{hero.quickInstall}</code>
+        </div>
+      )}
       {hasInstall && <a class="hero-install-link" href="#install">{hero.installLinkLabel}</a>}
     </div>
   </div>
@@ -143,14 +150,18 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
 <!-- Big hero screenshot -->
 <div class="w hero-shot">
   <div class="bigshot">
-    {/* Text, not a picture of text. A crawler and a language model both read
+    {/* hero.visual wins when set. Otherwise heroTerminalHtml, then the image.
+
+        heroTerminalHtml is text, not a picture of text. A crawler and a language model both read
         this, and neither can read a PNG. It also scales with the reader's font
         size and can be copied. Focusable because it scrolls on a narrow
         screen, which axe requires of a scrollable region.
 
         A JSX-style comment, not an HTML one. An HTML comment inside this
         expression is a compiler error, which is how this arrived. */}
-    {hero.heroTerminalHtml ? (
+    {hero.visual ? (
+      <Visual visual={hero.visual} priority />
+    ) : hero.heroTerminalHtml ? (
       <div class="hero-term-frame">
         {/* The same title bar the screenshot carried. Without it the panel
             reads as an unstyled box rather than a terminal. Decorative, so it
@@ -231,6 +242,9 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
 .hero h1{
   font-size:clamp(1.75rem,4vw,2.75rem);font-weight:700;color:var(--ui-text-strong);
   letter-spacing:-.02em;margin:0 auto;line-height:1.2;
+  /* Balanced lines, so a heading that wraps does not leave its last word
+     alone on the final line ("...re-explaining the / work."). */
+  text-wrap:balance;
   /* Sized for the current heading, which is 62 characters. At the old 15ch
      -- set when the heading was "A modern network scanner" -- it broke into
      four lines and pushed the install buttons off the first screen. */
@@ -357,6 +371,12 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
   justify-self:center;
   gap:28px;
 }
+/* One command and nothing beside it: sized to a short command rather than to
+   the two-row block, where `npx -y xtctx setup` sat in the middle of a 610px
+   bar. */
+.hero-cta-single{width:min(380px,calc(100vw - 48px))}
+.hero-cta-sub-solo{grid-template-columns:auto;justify-content:center;width:100%}
+.hero-cta-sub-solo .hero-install-link{justify-self:center}
 .hero-primary-wrap{
   position:relative;
   display:grid;grid-template-columns:minmax(0,1fr) 34px;
@@ -632,8 +652,12 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
     max-width:calc(100% + 2px);
   }
   .hero-command{padding-right:50px;gap:3px}
+  /* After the commands, not between them: it names the other routes, so it
+     reads as a way out once the command above it has been seen. At order 2
+     a phone showed "Other agents and setup" above the command it referred
+     to. */
   .hero-install-link{
-    order:2;
+    order:5;
     align-self:center;
     justify-self:start;
     min-width:150px;
@@ -667,6 +691,9 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
 }
 .bigshot img{width:100%;height:auto;display:block}
 .bigshot img{cursor:zoom-in}
+/* A visual made of its own windows brings its own frame; the shot's frame
+   around it drew a second box round both windows and the gap between them. */
+.bigshot:has(> .handoff){border:0;border-radius:0;box-shadow:none;overflow:visible}
 
 /* ─── HERO TERMINAL ───
    Text rather than a screenshot, so it is indexable, selectable and scales
@@ -778,8 +805,9 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
 
 /* The narrow end of the split hero. The column is 46% of the frame, so
    between 900 and 1100px it is too narrow for the install command and the
-   "more install options" link side by side: measured at 1000px, a 433px
-   column left the command 289px and clipped 39px of it. The link goes under
+   "more install options" link side by side: measured on nvx's site at
+   1000px, a 433px column left `irm https://nvx.run/install.ps1 | iex` 289px
+   and clipped 39px of it. The link goes under
    the command instead, where it still reads as the next step. */
 @media (min-width:900px) and (max-width:1099px){
   .landing-split .hero-cta-sub{grid-template-columns:minmax(0,1fr);gap:10px}
@@ -808,6 +836,7 @@ const hasPackageManagerRoute = Object.values(heroCommands).some(
   .landing-split .hero .social-proof{justify-content:flex-start}
   .landing-split .hero-cta{margin-inline:0;width:100%}
   .landing-split .hero-cta-sub{width:100%;justify-self:start}
+  .landing-split .hero-cta-sub-solo{justify-content:start}
   .landing-split .bigshot{margin:0;max-width:none}
   /* `.hero-shot` also carries `.w`, whose `margin:0 auto` makes it a grid item
      with auto inline margins. That overrides the default stretch and sizes it
