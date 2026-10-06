@@ -5,33 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-* **On macOS, a contained install can no longer write other apps' temp and
-  cache files.** The sandbox let every contained process write `/private/tmp`,
-  `/private/var/tmp`, all of `/dev` and all of `/private/var/folders`, which
-  holds every app's per-user temp and cache directories. A package could plant
-  files there for uncontained programs to read. It now writes only the project,
-  its own temporary home, where its temp directory already was, and a named
-  list of device files such as `/dev/null` and `/dev/tty`.
-
-* **`--help` works after `policy init`, `policy check`, `policy explain` and
-  `audit export`.** Each printed "Unknown option" and exited 1. They now print
-  the command's help and exit 0, as the other commands do.
-
-* **`nvx policy check --format=json` prints an empty `findings` list when
-  nothing failed.** It printed `null`, which a script that loops over the list
-  had to treat as a special case.
-
-* **The help text describes what `nvx setup`, `nvx grants list` and `nvx auto`
-  do.** `setup` grants read and list access, not stat access, on the root of
-  every fixed volume and its Users folder. `grants list` shows egress hosts
-  recorded by older versions, because approving a host at the prompt now lasts
-  one run and is not stored. `auto` lists `.bun-version` and the `volta` entry
-  in `package.json`, which it reads, and no longer names a separate Volta file.
-
 ## [0.7.0]
 
 ### Added
@@ -261,6 +234,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   docker's. The native providers are unaffected.
 
 ### Fixed
+
+* **On macOS, a contained install can no longer write other apps' temp and
+  cache files.** The sandbox let every contained process write `/private/tmp`,
+  `/private/var/tmp`, all of `/dev` and all of `/private/var/folders`, which
+  holds every app's per-user temp and cache directories. A package could plant
+  files there for uncontained programs to read. It now writes only the project,
+  its own temporary home, where its temp directory already was, and a named
+  list of device files such as `/dev/null` and `/dev/tty`.
+
+* **`--help` works after `policy init`, `policy check`, `policy explain` and
+  `audit export`.** Each printed "Unknown option" and exited 1. They now print
+  the command's help and exit 0, as the other commands do.
+
+* **`nvx policy check --format=json` prints an empty `findings` list when
+  nothing failed.** It printed `null`, which a script that loops over the list
+  had to treat as a special case.
+
+* **The help text describes what `nvx setup`, `nvx grants list` and `nvx auto`
+  do.** `setup` grants read and list access, not stat access, on the root of
+  every fixed volume and its Users folder. `grants list` shows egress hosts
+  recorded by older versions, because approving a host at the prompt now lasts
+  one run and is not stored. `auto` lists `.bun-version` and the `volta` entry
+  in `package.json`, which it reads, and no longer names a separate Volta file.
 
 * **pnpm installs inside the Windows sandbox.** pnpm 10 resolves the project
   directory with `fs.promises.realpath`, which asks Windows for the path with
