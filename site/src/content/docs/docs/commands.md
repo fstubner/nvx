@@ -127,7 +127,7 @@ This is what `nvx help` prints in 0.7.0, including every flag and environment
 variable.
 
 ```text
-nvx - A modern, secure, cross-platform runtime version manager
+nvx - A Node.js and Bun version manager that runs package installs in an OS sandbox
 
 Usage:
   nvx <command> [arguments]
@@ -144,7 +144,7 @@ Commands:
   list-remote, ls-remote   List Node.js versions on nodejs.org or NVX_NODE_MIRROR
   env [--shell=<type>]     Print shell integration script (powershell, bash, zsh, fish, cmd)
   auto [--shell=<type>]    Auto-switch runtimes from .nvmrc / .node-version /
-                           .bun-version / package.json
+                           .bun-version / package.json (engines, volta)
   verify-install <pkgs>    Verify package safety before installing (called by wrappers)
   init-shims               Generate PATH shims in ~/.nvx/bin (and project bin shims in a project)
   policy init              Scaffold ~/.nvx/policy.json and/or .nvx-policy.json
@@ -154,15 +154,16 @@ Commands:
   shim <cmd> [args]        Internal shim router for package managers
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;
                            every run reclaims some automatically)
-  setup                    (Windows, Administrator) Grant the sandbox stat access
-                           to the root of every fixed volume. Optional: installs
-                           and npx do not need it; only a tool that resolves a
-                           path all the way up to a drive root does, and nvx
-                           names this command after such a failure. Also removes
-                           a loopback exemption an older nvx left.
+  setup                    (Windows, Administrator) Grant the sandbox read and
+                           list access to the root of every fixed volume and its
+                           Users folder. Optional: installs and npx do not need
+                           it; only a tool that resolves a path all the way up
+                           to a drive root does, and nvx names this command
+                           after such a failure. Also removes a loopback
+                           exemption an older nvx left.
                            'setup --undo' reverses it
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
-  grants list              Show this project's approved egress hosts, trusted tools, and policy pins
+  grants list              Show this project's egress hosts (from older nvx), trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)
   audit [--summary]        Review the local record of past runs and security decisions
   audit export             Export that record as json, jsonl or csv, filtered by
