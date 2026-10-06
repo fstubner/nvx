@@ -34,8 +34,9 @@ import (
 //
 // An editor that saves by writing a new file and renaming it over .env, and a
 // git checkout, leave a file that inherits again. The next launch finds it and
-// protects it again, so the files are checked on every launch. A file that is
-// already protected is only read, so a normal launch writes nothing.
+// protects it again, so the files are checked on every launch. While a contained
+// process runs, watchDotenvFiles protects such a file as it appears. A file that
+// is already protected is only read, so a normal launch writes nothing.
 //
 // Each file is recorded in the project's grant ledger with its permissions
 // from before, before it is changed, so `nvx grants reset` can put them back.
@@ -53,6 +54,14 @@ func hideDotenvFromSandbox(nvxHome, scope string) {
 	if !complete {
 		LogWarn("Stopped looking for .env files after %d entries under %s; any further down stay readable in the sandbox.", dotenvScanLimit, scope)
 	}
+	protectDotenvFiles(nvxHome, scope, found)
+}
+
+// protectDotenvFiles hides each of found, dotenv files under the project scope,
+// from the sandbox, as hideDotenvFromSandbox describes. The launch hands it every
+// dotenv file in the project, and watchDotenvFiles the ones that appear while a
+// contained process runs.
+func protectDotenvFiles(nvxHome, scope string, found []string) {
 	if len(found) == 0 {
 		return
 	}
