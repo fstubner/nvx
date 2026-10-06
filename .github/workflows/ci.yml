@@ -529,7 +529,7 @@ jobs:
     # The smoke script checks a sandboxed process can write its own working
     # directory, which would pass against a sandbox that blocks nothing. The
     # enforcement script is the one that can fail: it asserts what must be
-    # DENIED, what must still be ALLOWED, and the documented read weakness, so
+    # DENIED and what must still be ALLOWED, so
     # macOS stops being the platform whose claims rest on reading the generator.
     - name: macOS sandbox smoke
       if: matrix.os == 'macos-latest'

@@ -37,8 +37,14 @@ rm -rf "$OUTSIDE"; mkdir -p "$OUTSIDE"
 trap 'rm -rf "$PROJ" "$OUTSIDE"; launchctl remove nvx.probe.control 2>/dev/null; launchctl remove nvx.probe.contained 2>/dev/null' EXIT
 
 cd "$PROJ"
-cat > .nvx-policy.json <<'POLICY'
+# The runner's node is under /Users/runner/hostedtoolcache, inside the home
+# directory, which a contained process may not read. Naming its install
+# directory in allow_read_exec is how a developer runs a runtime nvx does not
+# manage from there, and it saves this script a runtime download.
+NODE_PREFIX="$(node -p 'require("path").resolve(process.execPath, "..", "..")')"
+cat > .nvx-policy.json <<POLICY
 { "isolation": { "enabled": true, "level": "strict",
+  "filesystem": { "allow_read_exec": ["$NODE_PREFIX"] },
   "network": { "mode": "offline", "default_allow": [], "prompt_unknown": false } } }
 POLICY
 
