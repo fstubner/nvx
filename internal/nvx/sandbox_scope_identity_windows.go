@@ -156,7 +156,7 @@ func scopeCapabilitySID(scopeDir string) (string, error) {
 // Without this, every project an older nvx ran in keeps a (M) ACE for the shared
 // SID. Current launches no longer hold that SID, but any sandbox an older nvx
 // build starts still does. Inherited ACEs are untouched by /remove:g, so the
-// drive-root grants `nvx setup` adds are not affected.
+// drive-root grants an older `nvx setup` added are not affected.
 //
 // Best-effort. Failing to clean an old grant leaves the previous behaviour for
 // that one path, which is worth a log line and not worth refusing to run.

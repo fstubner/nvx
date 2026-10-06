@@ -158,9 +158,9 @@ Deferred with intent, not built:
 
 - **Zero runtime dependencies, one static binary.** No Node, Python or shell
   runtime required to run nvx itself.
-- **No elevation.** Containment must work for an ordinary user account. An
-  elevated `nvx setup` may add optional conveniences. No security guarantee may
-  require it.
+- **No elevation.** Containment must work for an ordinary user account. No
+  security guarantee may require it. `nvx setup` is elevated and only removes
+  what older versions left.
 
   **This was recorded as violated on Windows for `npx`, and the evidence did not
   support it.** npm's dependency walker stats every ancestor of its `_npx`
@@ -202,6 +202,10 @@ Deferred with intent, not built:
   node process. It answers a stat for the ancestors of the sandbox's own
   working directory and home (`sandbox_walkup_shim.js`). Measured working,
   same project, no grant.
+
+  Measured 2026-10-06 with every drive-root and Users grant removed, contained
+  `npx`, `pnpm` and `bun` 1.4.2 install on `C:`. Nothing measured needs the grant,
+  so `nvx setup` no longer adds it. It removes what older versions left.
 
   This constraint has now flipped three times in
   four days. The lesson recorded here is procedural. A claim that something

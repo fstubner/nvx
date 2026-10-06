@@ -283,30 +283,6 @@ func TestWindowsSetupStateRoundTrip(t *testing.T) {
 	}
 }
 
-func TestIsPackageManagerCommand(t *testing.T) {
-	managers := []string{"npm", "npx", "yarn", "pnpm", "npm.cmd", "NPX.CMD"}
-	// A resolved cmdPath is a full path, so cover that too -- but with a path the
-	// host's filepath actually parses. `C:\x\npm.cmd` was asserted unconditionally
-	// here, and on Linux/macOS filepath.Base does not treat `\` as a separator, so
-	// the whole string came back as the basename and never matched. That failed
-	// `go test ./...` on ubuntu-latest and macos-latest for 51 commits.
-	if runtime.GOOS == "windows" {
-		managers = append(managers, `C:\x\npm.cmd`)
-	} else {
-		managers = append(managers, "/usr/local/bin/npm")
-	}
-	for _, cmd := range managers {
-		if !isPackageManagerCommand(cmd) {
-			t.Errorf("expected %q to be a package manager", cmd)
-		}
-	}
-	for _, cmd := range []string{"node", "bun", "deno", "go", "python", "cowsay"} {
-		if isPackageManagerCommand(cmd) {
-			t.Errorf("%q should not be a package manager", cmd)
-		}
-	}
-}
-
 func TestRuntimeFromVersionDirRecognizesKnownRuntimes(t *testing.T) {
 	nvxHome := filepath.Join("some", "home")
 	nodeDir := filepath.Join(nvxHome, "versions", "node", "v20.0.0")

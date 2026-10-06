@@ -327,7 +327,7 @@ func isProfileRoot(dir string) bool {
 // that stat ancestors (npm walking up to find a project root) succeed. It stops
 // at the profile root: that root already grants ALL APPLICATION PACKAGES (and
 // writing its ACL propagates over the entire profile, which takes minutes), and C:\ /
-// C:\Users are handled once by `nvx setup`. Best-effort and time-boxed.
+// C:\Users need no grant (see sandbox_walkup_shim.js). Best-effort and time-boxed.
 // grantWorkdirAncestors returns how many ancestor grants it attempted and how many
 // were eligible, so the caller can report once for the whole launch rather than
 // once per chain.

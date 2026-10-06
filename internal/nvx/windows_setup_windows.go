@@ -154,54 +154,8 @@ func isElevated() bool {
 	return r != 0 && elevation != 0
 }
 
-// windowsAncestorGrantPaths lists the system-owned directories the sandbox must
-// be able to stat/traverse (npm and other tools walk ancestors up to the drive
-// root). Granted this-folder-only, so contents of sibling directories stay
-// inaccessible.
-func windowsAncestorGrantPaths() []string {
-	seen := map[string]bool{}
-	var paths []string
-	add := func(p string) {
-		if p == "" {
-			return
-		}
-		c := filepath.Clean(p)
-		key := strings.ToLower(c)
-		if !seen[key] {
-			seen[key] = true
-			paths = append(paths, c)
-		}
-	}
-
-	sysDrive := os.Getenv("SystemDrive")
-	if sysDrive == "" {
-		sysDrive = "C:"
-	}
-	add(sysDrive + `\`)
-	add(filepath.Join(sysDrive+`\`, "Users"))
-	// The profile root (C:\Users\<user>) already grants ALL APPLICATION PACKAGES,
-	// so it needs no grant and is deliberately excluded (its ACL write propagates
-	// over the whole profile tree). Cover another volume's roots
-	// only if the profile lives off the system drive.
-	if up := os.Getenv("USERPROFILE"); up != "" {
-		if vol := filepath.VolumeName(up); vol != "" && !strings.EqualFold(vol, sysDrive) {
-			add(vol + `\`)
-			add(filepath.Join(vol+`\`, "Users"))
-		}
-	}
-	// Every other fixed volume's root too: a project living off the system drive
-	// (H:\work\...) makes tools resolve paths up to that root, and without a
-	// grant there the stat fails with a bare EPERM on e.g. "H:\". Root only —
-	// this-folder-only RX, so the volume's contents stay governed by their own
-	// ACLs and nothing below the root becomes readable by this.
-	for _, root := range fixedDriveRoots() {
-		add(root)
-	}
-	return paths
-}
-
-// setupACLWrite is the permission write setup and --undo make on each path: a
-// this-folder-only entry for the identity, or its removal when mask is 0.
+// setupACLWrite is the permission write `nvx setup` makes when it removes an
+// entry: the identity's this-folder-only entry on path, taken away when mask is 0.
 //
 // It was SetNamedSecurityInfoW, which re-runs Windows' auto-inheritance over
 // everything beneath the directory, and a drive root's subtree is the whole
@@ -217,133 +171,16 @@ func windowsAncestorGrantPaths() []string {
 // A variable so a test can stand in a write that stalls.
 var setupACLWrite = writeThisFolderEntry
 
-// grantSidReadExecThisFolder grants the identity read/execute on path alone.
-//
-// Not time-bounded. A bounded version shipped first and lost the whole grant
-// whenever the propagating write behind it was cut short. Measured 2026-09-02:
-// an interrupted 1118GB volume carried no entry afterwards. The write is now
-// local to the directory, so there is nothing long to bound.
-func grantSidReadExecThisFolder(sidStr, path string) error {
-	if err := setupACLWrite(path, sidStr, aclMaskReadExec); err != nil {
-		return fmt.Errorf("grant read/execute on %s: %w", path, err)
-	}
-	return nil
-}
-
-// runWindowsSetupGrants grants each path that does not already carry the grant,
-// and reports how many could not be granted.
-//
-// The two operations are parameters for the same reason runWindowsSetupUndo's
-// are: setup needs an Administrator terminal, so neither the resume path nor the
-// failure path can be reached from the gate otherwise -- and they are the two
-// that used to be wrong. A grant that failed aborted the whole run, and since the
-// volume holding the user's projects was granted last, the grant most likely to
-// be lost was the one that mattered.
-func runWindowsSetupGrants(paths []string, hasGrant func(string) bool, grant func(string) error) (failed int) {
-	for _, p := range paths {
-		// Already granted? Say so and move on, so a re-run writes only what is
-		// missing.
-		if hasGrant(p) {
-			LogInfo("Sandbox read and list access on %s is already in place.", p)
-			continue
-		}
-		LogInfo("Granting sandbox read and list access on %s ...", p)
-		started := time.Now()
-		if err := grant(p); err != nil {
-			failed++
-			LogError("Failed to grant sandbox read and list access on %s after %s: %v", p, time.Since(started).Round(time.Millisecond), err)
-			LogInfo("Continuing with the remaining paths; re-run 'nvx setup' afterwards to retry this one.")
-			continue
-		}
-		LogInfo("Granted %s in %s.", p, time.Since(started).Round(time.Millisecond))
-	}
-	return failed
-}
-
-// windowsSetupGrantPaths lists the ancestor roots a path in this run resolves
-// up to, and with allDrives the root of every other fixed volume too.
-//
-// `nvx setup` passes allDrives. From 2026-09-01 until 2026-10-04 it granted
-// only the volumes known to matter, because each grant cost time proportional
-// to the size of the volume. The grant no longer walks the volume (see
-// setupACLWrite), so there is no cost left to save.
-//
-// The notices printed after a failed command list only the narrower set. It
-// holds the system drive and the volumes of the profile, nvx's own home and
-// the working directory, which are the roots this run could have walked to.
-//
-// windowsAncestorGrantPaths stays the FULL list on purpose: --undo has to take
-// back what any older setup granted.
-func windowsSetupGrantPaths(nvxHome, workDir string, allDrives bool) (grant []string) {
-	seen := map[string]bool{}
-	add := func(p string) {
-		if p == "" {
-			return
-		}
-		c := filepath.Clean(p)
-		key := strings.ToLower(c)
-		if !seen[key] {
-			seen[key] = true
-			grant = append(grant, c)
-		}
-	}
-
-	sysDrive := os.Getenv("SystemDrive")
-	if sysDrive == "" {
-		sysDrive = "C:"
-	}
-	add(sysDrive + `\`)
-	add(filepath.Join(sysDrive+`\`, "Users"))
-
-	// The volumes a real path on this machine resolves up to. USERPROFILE and
-	// NVX_HOME are where npx stages, and workDir is where the person running
-	// setup actually works -- which is the volume the old behaviour reached last,
-	// behind every volume that did not need it.
-	for _, p := range []string{os.Getenv("USERPROFILE"), nvxHome, workDir} {
-		vol := filepath.VolumeName(p)
-		if vol == "" {
-			continue
-		}
-		add(vol + `\`)
-		if strings.EqualFold(vol, sysDrive) {
-			continue
-		}
-		// Only if it is really there. The system drive always has one; another
-		// volume may not, and granting a path that does not exist fails -- which
-		// would count as a failure and take a healthy setup to a non-zero exit for
-		// a directory nothing was ever going to look in.
-		users := filepath.Join(vol+`\`, "Users")
-		if info, err := os.Stat(users); err == nil && info.IsDir() {
-			add(users)
-		}
-	}
-
-	if allDrives {
-		for _, root := range fixedDriveRoots() {
-			add(root)
-		}
-	}
-	return grant
-}
-
-// windowsSetupPaths is every path `nvx setup` grants: the ones a real path
-// resolves up to, and the root of every fixed volume.
-func windowsSetupPaths(nvxHome, workDir string) []string {
-	return windowsSetupGrantPaths(nvxHome, workDir, true)
-}
-
-// undoRevokeTimeout bounds each revoke `nvx setup --undo` performs. A variable
-// so a test can shorten it.
+// undoRevokeTimeout bounds each revoke `nvx setup` performs. A variable so a
+// test can shorten it.
 var undoRevokeTimeout = directGrantTimeout
 
 func revokeSidGrant(sidStr, path string) error {
-	// Time-boxed like every grant. The undo swept every ancestor path and the
-	// profile root through an unbounded DACL write; on the profile root that
-	// write propagates over the whole tree, so `--undo` after a setup on a
-	// large profile appeared to hang, with nothing to say which path. A revoke
-	// that does not finish in time is now reported by name and counted as a
-	// failure, which the caller already turns into a non-zero exit and "remove
-	// the entries named above by hand".
+	// Time-boxed like every grant. A revoke through an unbounded DACL write on
+	// the profile root propagates over the whole tree, so it appeared to hang
+	// with nothing to say which path. A revoke that does not finish in time is
+	// now reported by name and counted as a failure, which the caller turns into
+	// a non-zero exit and "remove the entries named above by hand".
 	//
 	// The write itself is setup's own, which removes a this-folder entry without
 	// walking anything beneath it and writes nothing where there is no entry.
@@ -369,88 +206,294 @@ func setLoopbackExempt(add bool, sidStr string) error {
 	return nil
 }
 
-// runWindowsSetup performs the optional elevated setup that grants the
-// AppContainer sandbox stat access on drive roots, for tools that resolve paths
-// that far up. It is idempotent and reversible via --undo.
+// setupLeftoverPaths lists where an older `nvx setup` could have written an
+// entry: the drive root and Users folder of the system drive, the root and Users
+// folder of every fixed volume and of the volumes the profile, nvx's home and
+// the working directory are on, the profile root itself (the oldest versions
+// granted it), and every path the last setup recorded.
 //
-// It is no longer needed for egress. Until 0.5.0 this was also where the loopback
-// exemption was registered, without which the sandbox could not reach the egress
-// proxy at all -- so allowlisted egress was an elevated opt-in and the default was
-// an unrestricted direct connection. The in-container relay reaches the proxy over
-// a UNIX socket instead, which needs no exemption and no elevation.
-func runWindowsSetup(nvxHome string, undo bool) int {
-	if !isElevated() {
-		LogError("nvx setup must run from an elevated (Administrator) terminal.")
-		LogInfo("It grants the nvx sandbox read and list access on drive roots for tools that need it. Egress is allowlisted either way. Undo later with: nvx setup --undo")
-		return 1
+// absent holds recorded paths that are not present now. A volume that is not
+// attached cannot be cleaned now, and the caller names it.
+func setupLeftoverPaths(nvxHome, workDir string) (paths, absent []string) {
+	seen := map[string]bool{}
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		c := filepath.Clean(p)
+		if key := strings.ToLower(c); !seen[key] {
+			seen[key] = true
+			paths = append(paths, c)
+		}
+	}
+	addUsers := func(vol string) {
+		users := filepath.Join(vol+`\`, "Users")
+		if info, err := os.Stat(users); err == nil && info.IsDir() {
+			add(users)
+		}
 	}
 
-	LogInfo("Preparing the nvx sandbox identity ...")
+	sysDrive := os.Getenv("SystemDrive")
+	if sysDrive == "" {
+		sysDrive = "C:"
+	}
+	add(sysDrive + `\`)
+	add(filepath.Join(sysDrive+`\`, "Users"))
+	add(os.Getenv("USERPROFILE"))
+	for _, p := range []string{os.Getenv("USERPROFILE"), nvxHome, workDir} {
+		if vol := filepath.VolumeName(p); vol != "" {
+			add(vol + `\`)
+			addUsers(vol)
+		}
+	}
+	for _, root := range fixedDriveRoots() {
+		add(root)
+		addUsers(strings.TrimSuffix(root, `\`))
+	}
+	if st, ok := readWindowsSetupState(nvxHome); ok {
+		for _, p := range st.GrantedPaths {
+			if _, err := os.Stat(p); err != nil {
+				absent = append(absent, p)
+				continue
+			}
+			add(p)
+		}
+	}
+	return paths, absent
+}
 
-	// Granted to a CAPABILITY, not to an AppContainer package.
-	//
-	// This used to grant the package SID, which worked only while every sandbox on
-	// the machine shared one package. Packages are per-project now -- that is what
-	// stops one sandbox reaching another's loopback listeners -- so a grant made
-	// here could not name them; they do not exist until a project is first run.
-	// Every launch carries this capability, so one elevated grant still covers all
-	// of them.
-	sidStr, err := deriveCapabilitySIDString(setupCapabilityName)
+// setupEntry is a path an older setup left permissions on, and the identities
+// that hold one there.
+type setupEntry struct {
+	Path string
+	SIDs []string
+}
+
+// findSetupLeftovers returns every path in paths that carries an entry for one
+// of the identities. Reads only, so it needs no elevation.
+func findSetupLeftovers(sids, paths []string, hasEntry func(sid, path string) bool) []setupEntry {
+	var found []setupEntry
+	for _, p := range paths {
+		e := setupEntry{Path: p}
+		for _, sid := range sids {
+			if sid != "" && hasEntry(sid, p) {
+				e.SIDs = append(e.SIDs, sid)
+			}
+		}
+		if len(e.SIDs) > 0 {
+			found = append(found, e)
+		}
+	}
+	return found
+}
+
+// aclHasAnyEntry reports whether path carries an explicit entry for sidStr.
+// An unreadable list answers no: there is nothing it can be shown to hold.
+func aclHasAnyEntry(sidStr, path string) bool {
+	_, ok, err := aclEntryFor(path, sidStr)
+	return err == nil && ok
+}
+
+// setupIdentities returns the two identities an older setup granted: the
+// capability it used from 0.5.1 on, and the shared AppContainer package it used
+// before packages became per project. The second is empty if it cannot be
+// derived.
+//
+// The package identity is derived without registering the profile, which used
+// to leave a profile behind after --undo.
+func setupIdentities() (capSID, legacySID string, err error) {
+	capSID, err = deriveCapabilitySIDString(setupCapabilityName)
+	if err != nil {
+		return "", "", err
+	}
+	legacySID, _ = deriveAppContainerSIDString(stableSandboxProfile)
+	return capSID, legacySID, nil
+}
+
+// setupCleanupOps are the machine-touching operations `nvx setup` performs, as
+// parameters. Setup needs an Administrator terminal, so a test cannot reach the
+// removal or the failure paths through the real ones.
+type setupCleanupOps struct {
+	elevated   func() bool
+	hasEntry   func(sid, path string) bool
+	revoke     func(sid, path string) error
+	setExempt  func(add bool, sid string) error
+	listExempt func() ([]string, error)
+	clearState func(nvxHome string) error
+
+	// unprotected lists the profile folders that take their parent's permissions,
+	// and restoreProtection protects one again. See findUnprotectedProfileDirs.
+	unprotected       func() []unprotectedDir
+	restoreProtection func(dir string) error
+}
+
+func realSetupCleanupOps() setupCleanupOps {
+	return setupCleanupOps{
+		elevated:          isElevated,
+		hasEntry:          aclHasAnyEntry,
+		revoke:            revokeSidGrant,
+		setExempt:         setLoopbackExempt,
+		listExempt:        listLoopbackExemptSIDs,
+		clearState:        clearWindowsSetupState,
+		unprotected:       findUnprotectedProfileDirs,
+		restoreProtection: restoreProfileProtection,
+	}
+}
+
+// runWindowsSetup is `nvx setup`: it removes what older nvx versions left on the
+// machine, and adds nothing.
+//
+// Until 2026-10-06 it granted the sandbox read and list access to the root of
+// every fixed volume and its Users folder, for tools that resolve a path all the
+// way up to a drive root. The preload in sandbox_walkup_shim.js answers those
+// stats, and contained npx, pnpm and bun 1.4.2 were measured installing on C:
+// with every such grant removed, so nothing needs the grant. Setup is now the
+// way to take back what an earlier one wrote.
+//
+// It also repairs the other damage older versions did. Every ACL write before
+// 2026-09-26 switched off the inheritance protection Windows ships on C:\Users
+// and on profile folders (see keepDACLProtection), and doctor reported it with a
+// command to type by hand. Setup restores the protection itself.
+//
+// --undo is accepted and does the same thing, so existing scripts and
+// documentation keep working. See parseSetupArgs.
+func runWindowsSetup(nvxHome string) int {
+	capSID, legacySID, err := setupIdentities()
 	if err != nil {
 		LogError("Could not derive the nvx sandbox capability: %v", err)
 		return 1
 	}
-
-	// The package identity older versions granted. Nothing launches under it any
-	// more, but --undo has to be able to take back what an older setup gave, so it
-	// is derived here for the revoke sweep below and for nothing else. It is
-	// derived without registering the profile, which used to leave a profile
-	// behind after --undo.
-	legacySidStr, _ := deriveAppContainerSIDString(stableSandboxProfile)
-
-	if undo {
-		return runWindowsSetupUndo(nvxHome, sidStr, legacySidStr,
-			revokeSidGrant, setLoopbackExempt, clearWindowsSetupState)
-	}
-
 	workDir, _ := os.Getwd()
-	paths := windowsSetupPaths(nvxHome, workDir)
-	failed := runWindowsSetupGrants(paths,
-		func(p string) bool { return appContainerHasGrantFor(sidStr, p, grantReadExec) },
-		func(p string) error { return grantSidReadExecThisFolder(sidStr, p) })
-	// Setup used to register a loopback exemption here, because reaching the egress
-	// proxy meant dialling a listener OUTSIDE the container -- which Windows blocks
-	// for AppContainers without one. The in-container relay removed that need: the
-	// proxy is reached over a UNIX socket and re-exposed on loopback inside the
-	// container, where no exemption applies.
-	//
-	// So the exemption is now a permission granted for no remaining reason -- it
-	// lets the sandbox reach every other loopback listener on the machine. Remove
-	// it, including for users who ran an earlier setup. On a machine that never
-	// had it, CheckNetIsolation reports nothing to delete.
-	exemptionLeft := legacySidStr != "" &&
-		!removeLegacyLoopbackExemption(legacySidStr, setLoopbackExempt, listLoopbackExemptSIDs)
-	if err := writeWindowsSetupState(nvxHome, windowsSetupState{
-		AppContainerSID: sidStr,
-		GrantedPaths:    paths,
-		LoopbackExempt:  false,
-	}); err != nil {
-		LogWarn("Setup applied, but recording state failed: %v", err)
+	return runWindowsSetupCleanup(nvxHome, workDir, capSID, legacySID, realSetupCleanupOps())
+}
+
+// runWindowsSetupCleanup finds what an older setup left, and removes it when
+// the process is elevated.
+//
+// Finding it needs no elevation, so a machine with nothing to remove is told so
+// from any terminal. When something is there and the terminal is not elevated,
+// the entries are named before the command stops.
+//
+// Every failure is counted, and any of them makes this command fail. The
+// loopback exemption is the worst one to be wrong about: while it is registered
+// the egress allowlist is bypassable, so a tick over a failed removal would
+// leave a user exempt who believes they are not. Each is reported by name as
+// well, so the user can finish the job by hand.
+//
+// The profile root is in the paths on purpose. Earlier versions granted it, and
+// revoking costs nothing where nothing was granted.
+func runWindowsSetupCleanup(nvxHome, workDir, capSID, legacySID string, ops setupCleanupOps) int {
+	paths, absent := setupLeftoverPaths(nvxHome, workDir)
+	for _, p := range absent {
+		LogInfo("Skipped %s, which setup recorded but is not present now.", p)
+	}
+	entries := findSetupLeftovers([]string{capSID, legacySID}, paths, ops.hasEntry)
+
+	failures := 0
+	exemptionFound := false
+	if legacySID != "" {
+		sids, listErr := ops.listExempt()
+		switch {
+		case listErr != nil:
+			LogWarn("Could not check for a loopback exemption left by an older setup: %v", listErr)
+			failures++
+		case sidListContains(sids, legacySID):
+			exemptionFound = true
+		}
+	}
+	_, statErr := os.Stat(windowsSetupMarkerPath(nvxHome))
+	stateFound := statErr == nil
+
+	// A profile folder that takes its parent's permissions is restored only when
+	// its own entries keep SYSTEM, Administrators and the owner in. Removing the
+	// inherited entries from one that does not could lock them out, so setup
+	// leaves it alone and says why. That counts as a failure, since the folder is
+	// still open.
+	var restorable []string
+	for _, d := range ops.unprotected() {
+		if d.Safe {
+			restorable = append(restorable, d.Dir)
+			continue
+		}
+		LogWarn("Did not change the permissions on %s. It takes its parent's permissions, but its own entries would not keep SYSTEM, Administrators and you in if the inherited ones were removed.", d.Dir)
+		LogInfo("Review its permissions first, for example with: icacls \"%s\"", d.Dir)
+		failures++
 	}
 
-	if failed > 0 {
-		LogError("nvx sandbox setup did not finish: %d path(s) above could not be granted.", failed)
-		LogInfo("Re-run 'nvx setup' (elevated). Anything already in place is skipped, so it resumes rather than starting over.")
-		return 1
+	if len(entries) == 0 && !exemptionFound && !stateFound && len(restorable) == 0 {
+		if failures > 0 {
+			LogError("nvx setup could not finish: %d item(s) above need attention.", failures)
+			return 1
+		}
+		LogSuccess("Nothing to remove. An older nvx setup left nothing on this machine.")
+		return 0
 	}
-	if exemptionLeft {
-		LogError("nvx sandbox setup did not finish: the loopback exemption above is still registered.")
+
+	if !ops.elevated() {
+		LogError("nvx setup must run from an elevated (Administrator) terminal to remove what an older setup left:")
+		for _, e := range entries {
+			LogInfo("  sandbox access on %s", e.Path)
+		}
+		if exemptionFound {
+			LogInfo("  a loopback exemption")
+		}
+		if stateFound {
+			LogInfo("  the record of an earlier setup")
+		}
+		for _, d := range restorable {
+			LogInfo("  permission protection to restore on %s", d)
+		}
 		return 1
 	}
 
-	LogSuccess("nvx sandbox setup complete.")
-	LogInfo("Drive-root access granted, for tools that resolve paths that far. Undo with: nvx setup --undo (elevated).")
-	LogInfo("Egress is allowlisted with or without this step; setup is not required for it.")
+	removed := 0
+	for _, d := range restorable {
+		if err := ops.restoreProtection(d); err != nil {
+			LogWarn("Could not restore the permission protection on %s: %v", d, err)
+			failures++
+			continue
+		}
+		removed++
+		LogInfo("Restored the permission protection on %s.", d)
+	}
+	for _, e := range entries {
+		done := true
+		for _, sid := range e.SIDs {
+			if err := ops.revoke(sid, e.Path); err != nil {
+				LogWarn("Could not remove the sandbox access on %s: %v", e.Path, err)
+				failures++
+				done = false
+			}
+		}
+		if done {
+			removed++
+			LogInfo("Removed the sandbox access on %s.", e.Path)
+		}
+	}
+	if exemptionFound {
+		if removeLegacyLoopbackExemption(legacySID, ops.setExempt, ops.listExempt) {
+			removed++
+			LogInfo("Removed the loopback exemption.")
+		} else {
+			failures++
+			LogWarn("While it is registered the egress allowlist can be bypassed through any reachable loopback service.")
+		}
+	}
+	if stateFound {
+		if err := ops.clearState(nvxHome); err != nil {
+			LogWarn("Could not clear setup state: %v", err)
+			failures++
+		} else {
+			removed++
+			LogInfo("Removed the record of an earlier setup.")
+		}
+	}
+	if failures > 0 {
+		LogError("nvx setup did not finish: %d item(s) above could not be fixed.", failures)
+		LogInfo("Re-run in an Administrator terminal, or fix the items named above by hand.")
+		return 1
+	}
+	LogSuccess("Fixed %d item(s) an older nvx setup left.", removed)
 	return 0
 }
 
@@ -477,114 +520,4 @@ func removeLegacyLoopbackExemption(legacySid string,
 		LogInfo("No loopback exemption to remove (the sandbox no longer needs one).")
 	}
 	return true
-}
-
-// windowsSetupUndoPaths is every path --undo revokes.
-//
-// The fixed ancestor list alone missed what setup grants from where it runs:
-// the Users directory on the nvx home's or working directory's volume, and a
-// working directory on a volume that is not fixed. The paths the last setup
-// recorded cover those. The ones this directory would grant are added too, so
-// an undo run where setup ran works without the record.
-func windowsSetupUndoPaths(nvxHome, workDir string) []string {
-	seen := map[string]bool{}
-	var out []string
-	add := func(p string) {
-		if p == "" {
-			return
-		}
-		c := filepath.Clean(p)
-		if key := strings.ToLower(c); !seen[key] {
-			seen[key] = true
-			out = append(out, c)
-		}
-	}
-	for _, p := range windowsAncestorGrantPaths() {
-		add(p)
-	}
-	add(os.Getenv("USERPROFILE"))
-	grant := windowsSetupGrantPaths(nvxHome, workDir, false)
-	for _, p := range grant {
-		add(p)
-	}
-	if st, ok := readWindowsSetupState(nvxHome); ok {
-		for _, p := range st.GrantedPaths {
-			// A volume that is not attached now cannot be revoked now. Named, so
-			// the user knows the record is about to be cleared without it.
-			if _, err := os.Stat(p); err != nil {
-				LogInfo("Skipped %s, which setup granted but is not present now.", p)
-				continue
-			}
-			add(p)
-		}
-	}
-	return out
-}
-
-// runWindowsSetupUndo takes back what setup granted, and reports whether it
-// managed to.
-//
-// The three operations are parameters so this can be tested with them failing.
-// Without that the counting below is unverifiable: undo needs an Administrator
-// terminal, so the path where a revoke fails cannot be exercised in the gate at
-// all, and it is exactly the path that used to print a tick regardless.
-func runWindowsSetupUndo(
-	nvxHome, sidStr, legacySidStr string,
-	revokeGrant func(sid, path string) error,
-	setExempt func(bool, string) error,
-	clearState func(string) error,
-) int {
-	// The profile root is deliberately excluded from the GRANT sweep (its ACL
-	// write propagates over the whole profile tree and cannot finish in any budget
-	// nvx would accept), but earlier versions did grant it, and README/SECURITY.md
-	// tell users --undo removes it. Revoking is cheap where nothing was granted,
-	// so sweep it here even though it is not granted here.
-	//
-	// Every failure below is counted, and any of them makes this command fail.
-	//
-	// It used to warn on each one and then print "nvx sandbox setup removed."
-	// at exit 0 regardless. The loopback exemption is the worst of them to be
-	// wrong about: while it is registered, this codebase's own words are that
-	// the egress allowlist is bypassable -- so a user could run --undo, see a
-	// tick, and still be exempt. That is the same fail-open already closed for
-	// `grants reset --all`, which returns 1 when it leaves a record behind.
-	//
-	// Reported per item as well as counted, because "3 things could not be
-	// removed" without saying which leaves the user no way to finish the job by
-	// hand.
-	failures := 0
-	workDir, _ := os.Getwd()
-	for _, p := range windowsSetupUndoPaths(nvxHome, workDir) {
-		if err := revokeGrant(sidStr, p); err != nil {
-			LogWarn("Could not remove grant on %s: %v", p, err)
-			failures++
-		}
-		// Anyone who ran an older setup has the grant on the package identity
-		// instead. Removing only the capability would leave that one behind,
-		// and --undo is documented as removing what setup added.
-		if legacySidStr != "" {
-			if err := revokeGrant(legacySidStr, p); err != nil {
-				LogWarn("Could not remove the older grant on %s: %v", p, err)
-				failures++
-			}
-		}
-	}
-	if legacySidStr != "" {
-		if err := setExempt(false, legacySidStr); err != nil {
-			LogWarn("Could not remove loopback exemption: %v", err)
-			LogWarn("While it is registered the egress allowlist can be bypassed through any reachable loopback service.")
-			failures++
-		}
-	}
-	if err := clearState(nvxHome); err != nil {
-		LogWarn("Could not clear setup state: %v", err)
-		failures++
-	}
-	if failures > 0 {
-		LogError("nvx sandbox setup was NOT fully removed: %d item(s) above could not be undone.", failures)
-		LogInfo("Re-run in an Administrator terminal, or remove the entries named above by hand.")
-		return 1
-	}
-	LogSuccess("nvx sandbox setup removed.")
-	return 0
 }

@@ -28,7 +28,7 @@ const (
 // It stops at the profile root deliberately: that root already grants ALL
 // APPLICATION PACKAGES for stat/traverse, writing its ACL propagates over the
 // whole profile tree and cannot finish in any budget a launch would accept, and
-// C:\ and C:\Users are handled once by `nvx setup`.
+// C:\ and C:\Users need no grant (see sandbox_walkup_shim.js).
 func ancestorGrantPaths(workDir, profile string) []string {
 	if workDir == "" || profile == "" {
 		return nil

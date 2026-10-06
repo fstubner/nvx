@@ -17,7 +17,7 @@ import (
 // that holds the system directory. Anywhere else the command dies with a bare
 // "error: An internal error occurred (EBADF)". Measured 2026-10-04 with bun
 // 1.4.2: `bun install` fails on D: and H: and works on C:, with or without the
-// drive-root grants `nvx setup` makes. The upstream fix is oven-sh/bun#38365, and
+// drive-root grants an older `nvx setup` made. The upstream fix is oven-sh/bun#38365, and
 // nvx cannot make that call succeed from outside.
 //
 // bunx does not fail this way (measured the same day), so only the subcommands

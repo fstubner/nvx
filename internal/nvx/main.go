@@ -343,8 +343,8 @@ func Main() {
 		os.Exit(runAuditCommand(os.Args[2:], nvxHome))
 
 	case "setup":
-		// Grants every fixed volume. --all-drives is still accepted and changes
-		// nothing. Anything unrecognised is refused: see parseSetupArgs.
+		// Removes what older versions granted. --undo and --all-drives are still
+		// accepted. Anything unrecognised is refused: see parseSetupArgs.
 		os.Exit(runSetupCommand(os.Args[2:], nvxHome))
 
 	case "__landlock-exec":
@@ -772,14 +772,12 @@ Commands:
   shim <cmd> [args]        Internal shim router for package managers
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;
                            every run reclaims some automatically)
-  setup                    (Windows, Administrator) Grant the sandbox read and
-                           list access to the root of every fixed volume and its
-                           Users folder. Optional: installs and npx do not need
-                           it; only a tool that resolves a path all the way up
-                           to a drive root does, and nvx names this command
-                           after such a failure. Also removes a loopback
-                           exemption an older nvx left.
-                           'setup --undo' reverses it
+  setup                    (Windows, Administrator) Remove what older nvx versions
+                           left: drive-root and Users-folder access for the
+                           sandbox, the loopback exemption, and lost permission
+                           protection on C:\Users and your profile. nvx no
+                           longer adds any of these. With nothing to fix it
+                           says so.
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
   grants list              Show this project's egress hosts (from older nvx), trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all)

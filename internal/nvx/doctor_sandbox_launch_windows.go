@@ -87,13 +87,12 @@ func sandboxLaunchWorks(nvxHome string) (bool, string) {
 
 	// The same capabilities a real launch carries, not just the scope ones.
 	//
-	// This passed scopeCaps alone, and a contained command does not: the setup
-	// capability is what an elevated `nvx setup` grants the drive roots and the
-	// profile parent to, and the runtime capability is what the staged supervisor
-	// and the guest home's parent are granted to. Without them the control could
-	// not traverse to its own binary on a machine where every real contained
-	// command works -- a diagnostic reporting a broken sandbox against a healthy
-	// host, which is the one failure this check must not have.
+	// This passed scopeCaps alone, and a contained command does not: the runtime
+	// capability is what the staged supervisor and the guest home's parent are
+	// granted to. Without it the control could not traverse to its own binary on a
+	// machine where every real contained command works -- a diagnostic reporting a
+	// broken sandbox against a healthy host, which is the one failure this check
+	// must not have.
 	exitCode, launchErr := launchAppContainerProcess(
 		supervisor,
 		[]string{"__appcontainer-control"},

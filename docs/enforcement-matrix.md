@@ -331,8 +331,10 @@ mismatched has-grant check repeated them on every launch.
 Since 2026-09-02 those
 go to a second capability every sandbox carries, `nvx.runtime.readonly`, granted
 once per path per machine (`sandbox_runtime_identity_windows.go`). A token now
-holds three identities. They are the project's (writable roots and `allow_read_exec`),
-the runtime's (read-only trees), and setup's (drive roots).
+holds two identities besides the package. They are the project's (writable roots and
+`allow_read_exec`) and the runtime's (read-only trees). It carried a third until
+2026-10-06, setup's, which an older `nvx setup` granted drive roots to. Nothing
+grants to it now, and launches no longer carry it.
 
 Deriving from the project instead of the session is what makes it affordable. The
 same project derives the same SID every run, so the `icacls` write happens once and
@@ -463,8 +465,8 @@ smoke hang verified this.
 `network.mode: open` is the documented opt-out and is the only mode that grants a
 network capability. Setup no longer registers a loopback exemption, and it removes an
 existing one, because the relay makes it an access grant with no remaining
-purpose. `nvx setup` is now only about read and list access to the root of every fixed
-volume and its Users folder.
+purpose. `nvx setup` is now a clean-up command. It removes the loopback exemption
+and the drive-root access older versions left, and grants nothing.
 
 **A leftover exemption defeats the loopback half of this, and 0.5.0 shipped
 without saying so.** Everything above rests on Windows refusing an AppContainer's
@@ -1001,38 +1003,55 @@ scaffolder that writes one on macOS, runs with `--no-sandbox`.
 Moved here from README. These are measurements instead of guarantees, and
 they date quickly. Each carries the date and machine of its measurement.
 
-- **`nvx setup` is optional, and nvx no longer asks you to run it.** Contained
-  `npx` does need `C:\Users` and the drive root to answer a stat. npm's own
-  realpath walks every directory above the cache `npx` uses. That cache is under
-  the sandbox's home, and an AppContainer with no drive-root grant gets `EPERM`
-  on both. Measured 2026-09-03. `npm install` in a project on `C:` works, and `npx -y
-  cowsay hi` from the same project fails with `EPERM: operation not permitted,
-  lstat 'C:\Users'`. An earlier version of this entry said `npx` needed no grant.
-  Every run behind that claim happened while the grant was present.
+- **`nvx setup` grants nothing, and no contained command needs what it used to
+  grant.** Older versions of `nvx setup` gave the sandbox read and list access to
+  the root of every fixed volume and its Users folder. Contained `npx` does need
+  `C:\Users` and the drive root to answer a stat. npm's own realpath walks every
+  directory above the cache `npx` uses. That cache is under the sandbox's home, and
+  an AppContainer with no drive-root grant gets `EPERM` on both. Measured
+  2026-09-03. `npm install` in a project on `C:` works, and `npx -y cowsay hi` from
+  the same project fails with `EPERM: operation not permitted, lstat 'C:\Users'`.
+  An earlier version of this entry said `npx` needed no grant. Every run behind
+  that claim happened while the grant was present.
 
   nvx now answers that stat itself. A preload in every contained node process
   replies with a directory's stats when the OS refuses the real ones. It does this
   only for the directories above the sandbox's own working directory and
   home. Those
   directories exist by construction, and the sandbox may already pass through
-  them. The OS hid only their attributes. With it, `npx` runs contained on a
-  machine that has never run `nvx setup`, as measured with the same `npx` from the same
-  project and no grant.
+  them. The OS hid only their attributes.
 
-  `nvx setup` still serves a non-node tool
-  that walks to a drive root. If one fails with `EPERM` there, nvx names setup
-  after the failure, and `nvx doctor` shows the missing roots as a note. The
-  grant gives read/execute on the root folder itself, never inherited, for the
-  sandbox's identity only.
+  Measured 2026-10-06 on a Windows 11 machine with every drive-root and Users
+  grant removed. Contained `npx`, `pnpm` and `bun` 1.4.2 each install on `C:`.
+  Nothing measured needs the grant, so setup stopped adding it.
 
-  Setup grants every fixed volume. Each grant used to
-  cost time proportional to the volume's size (22 minutes for 5.6 million
-  entries). The write walked everything beneath the root. It no longer
-  does.
+  `nvx setup` is now the way to take back what an older one left. From an
+  Administrator terminal it removes the drive-root and Users-folder entries, the
+  entries made to the older sandbox identity, and the pre-0.5.0 loopback exemption.
+  On a machine with nothing to remove it says so and exits 0, from any terminal.
+  `nvx doctor` shows leftover entries as a note, never as a failure. `--undo` and
+  `--all-drives` are still accepted and change nothing.
 
-  Measured 2026-10-04. On a directory holding 20,000 files, the write took
-  2.67 to 3.01 s with the walk and under 1 ms without. No file's permissions changed
-  either way. `nvx setup --undo` takes it back.
+  Launches no longer carry the capability those entries were granted to
+  (`launchCapabilitySIDs`), so an entry an older setup left admits no contained
+  process on any machine, whether or not setup has removed it. A probe writes
+  such an entry and checks that a real launch is still refused
+  (`TestALeftoverSetupGrantAdmitsNoLaunch`).
+
+  Setup also restores the inheritance protection older versions switched off on
+  `C:\Users` and on the profile folder. It removes the inherited entries and keeps
+  the explicit ones, as `icacls ... /inheritance:r` does. It refuses unless the
+  folder's own entries give SYSTEM and Administrators (and, for the profile, the
+  owner) full control, so removing the inherited ones cannot lock anyone out.
+  Doctor reports an unprotected folder as a failure and names `nvx setup` as the
+  fix.
+
+  The entries were read/execute on the root folder itself, never inherited, for the
+  sandbox's identity only. Each grant used to cost time proportional to the volume's
+  size (22 minutes for 5.6 million entries). The write walked everything beneath
+  the root. It no longer does. Measured 2026-10-04. On a directory holding 20,000
+  files, the write took 2.67 to 3.01 s with the walk and under 1 ms without. No
+  file's permissions changed either way. Setup's removals use the same write.
 - **A contained command costs a few hundred milliseconds, and the first one after nvx
   stages a new runtime can be minutes.** A contained launch has to prepare an
   isolated home and check permissions, which the shim's own dispatch does not. The first run in a project is slower than the rest, because

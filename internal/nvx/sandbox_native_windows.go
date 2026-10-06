@@ -4,7 +4,6 @@ package nvx
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -202,10 +201,9 @@ func containedEnv(env []string, guestHome, cmdPath, nvxHome string) []string {
 
 	// The preserve-symlinks flags above only cover the process nvx launches.
 	// npm scripts spawn further node processes, whose own entry-point resolution
-	// realpaths up to the drive root — a path an AppContainer cannot stat unless
-	// that volume's root was granted by `nvx setup` (only the system drive is,
-	// so any project on another drive fails). NODE_OPTIONS carries the flags into
-	// every child so the realpath walk is skipped there too.
+	// realpaths up to the drive root — a path an AppContainer cannot stat.
+	// NODE_OPTIONS carries the flags into every child so the realpath walk is
+	// skipped there too.
 	env = setNodeOptionsPreserveSymlinks(env)
 
 	// Lifecycle scripts must inherit stdio rather than have it piped, or they
@@ -226,11 +224,11 @@ func containedEnv(env []string, guestHome, cmdPath, nvxHome string) []string {
 	// Tools walk up to the drive root and stat every directory on the way; npm
 	// does it for the cache `npx` uses, and an AppContainer cannot stat C:\Users
 	// or a drive root. The preload answers for the ancestors of the sandbox's own
-	// working directory and home, which exist by construction -- so contained
-	// npx no longer needs an elevated `nvx setup`. See sandbox_walkup_shim.js.
+	// working directory and home, which exist by construction -- so no drive-root
+	// grant is needed. See sandbox_walkup_shim.js.
 	if shim, err := writeWalkupShim(guestHome); err != nil {
 		LogWarn("Could not install the directory-walk compatibility preload: %v", err)
-		LogInfo("A tool that walks up to the drive root may fail there with EPERM; 'nvx setup' from an Administrator terminal is the fallback.")
+		LogInfo("A tool that walks up to the drive root may fail there with EPERM; run it with --no-sandbox.")
 	} else {
 		env = addNodeOptionsRequire(env, shim)
 	}
@@ -331,19 +329,6 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	if err := bindWindowsEgressSocket(&netCtx, sockets); err != nil {
 		LogError("Could not put the egress proxy where the sandbox can reach it: %v", err)
 		return 1, refusedToStart("the egress proxy could not be reached from the sandbox")
-	}
-
-	// Package-manager workflows used to require the elevated `nvx setup` grants,
-	// because node resolved its entry point by realpath'ing up to the drive root
-	// -- a stat an AppContainer cannot do there. NODE_OPTIONS now carries
-	// --preserve-symlinks into every child, so that walk no longer happens and
-	// the sandbox runs unelevated. Verified against an AppContainer SID holding no
-	// grant on the system drive root at all (see the unelevated probe test): both
-	// `npm -v` and `npm run <script>` complete normally. So this is advisory now,
-	// not a refusal -- elevation buys allowlisted egress and drive-root access for
-	// tools that still walk that far, and nothing else.
-	if isPackageManagerCommand(config.Command) {
-		noteMissingElevatedGrants(config.NvxHome, sid, workDir)
 	}
 
 	// Withdraw stale read/execute grants BEFORE the writable roots are set up, not
@@ -493,61 +478,11 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		LogError("AppContainer launch failed: %v", err)
 		return 1, refusedToStart("the appcontainer launch failed")
 	}
-	// Say it again, last, when the command failed and a stranded setup is why it
-	// probably failed.
-	//
-	// The advisory is printed before the child runs, which is the right place for
-	// it -- and then npm prints twenty-odd lines of its own on the way out, ending
-	// with advice to check your antivirus and re-run "as root/Administrator".
-	// Running elevated is not the fix; `nvx setup` is, once. The commit that added
-	// the advisory was titled "instead of letting npm say EPERM", and what shipped
-	// was a prefix: an acceptance pass pointed out that the last twenty-five lines
-	// a person reads are still npm's, and wrong.
-	if exitCode != 0 && isPackageManagerCommand(config.Command) {
-		remindAboutDriveRoots(config.NvxHome, workDir)
-	}
 	// bun's own error for this is a bare EBADF. See sandbox_bun_ebadf_hint.
 	if exitCode != 0 {
 		noteBunOffSystemDrive(config.Command, config.Args, workDir, exitCode)
 	}
 	return exitCode, nil
-}
-
-// remindAboutDriveRoots is the one place nvx points at an elevated `nvx setup`,
-// and it speaks only after a package-manager command has failed.
-//
-// The drive-root grant is advisory. Node no longer walks to the root (nvx
-// passes --preserve-symlinks into every child), and the walk npm makes needs
-// only an entry inside nvx's own home, which nvx grants itself unelevated.
-// What remains is "a tool that resolves a path all the way to a drive root",
-// and nobody has measured one. Until 2026-09-02 a missing grant was a two-line
-// warning on every package-manager run and a red FAIL in doctor, which read as
-// "required" and sent the person running nvx to a 22-minute elevated ACL write
-// on a 5.6-million-entry volume that no command of theirs had needed. Asking
-// for Administrator rights on a drive root is a lot to ask; it is asked once,
-// after a failure, as one thing the error above might be.
-//
-// Nothing here is a security guarantee: the grant is read/execute on the root
-// folder itself, never inherited, for the sandbox's identity only.
-func remindAboutDriveRoots(nvxHome, workDir string) {
-	sidStr, err := deriveCapabilitySIDString(setupCapabilityName)
-	if err != nil {
-		return
-	}
-	roots := windowsSetupGrantPaths(nvxHome, workDir, false)
-	var missing []string
-	for _, r := range roots {
-		if !driveRootHasGrant(sidStr, r) {
-			missing = append(missing, r)
-		}
-	}
-	if len(missing) == 0 {
-		return
-	}
-	LogDetail("If the error above is an EPERM on %s, that is a drive root the sandbox cannot read; "+
-		"'nvx setup' from an Administrator terminal grants it. Nothing else needs "+
-		"elevation, and an EPERM inside ~/.nvx is a different problem that nvx retries itself.",
-		strings.Join(missing, " or "))
 }
 
 // windowsSandboxNetwork decides the AppContainer's network capabilities and
@@ -612,155 +547,6 @@ func wrapWithEgressSupervisor(
 	}
 	supervisorArgs = append(supervisorArgs, "--", cmdPath)
 	return supervisor, append(supervisorArgs, args...), nil
-}
-
-// driveRootHasGrant asks whether setup's identity can read a drive root. Setup
-// writes read/execute on the folder itself; this asked for modify until
-// 2026-09-02, which never matched, so a completed setup still read as missing
-// and the notice below fired on every package-manager run of a machine that had
-// nothing wrong with it. A variable so a test can stand in for the machine's
-// real drive roots, which are whatever the last elevated setup left them.
-var driveRootHasGrant = func(sidStr, root string) bool {
-	return appContainerHasGrantFor(sidStr, root, grantReadExec)
-}
-
-// noteMissingElevatedGrants notes, with --verbose only, which drive roots the
-// sandbox cannot read, based on the actual ACLs rather than on whether a setup
-// marker file exists -- so it stays accurate if setup was undone, or if a
-// project sits on a volume a previous setup did not cover. Only an elevated
-// `nvx setup` can add them, and since 2026-09-02 nvx no longer asks anyone to:
-// see remindAboutDriveRoots for what the grant is worth and why this stopped
-// being a warning.
-//
-// Checked against the identity `nvx setup` GRANTS, not against this run's
-// package. Those were the same thing while one package served the whole machine.
-// They stopped being the same when packages became per project, and the gap is
-// not cosmetic: on a machine set up before that change the grant sits on a
-// package nothing launches under any more, so `npx` fails with a raw
-// "EPERM: operation not permitted, lstat" out of npm's own dependency walker and
-// nvx says nothing at all. Measured 2026-08-30 -- the same command succeeds on
-// 0.5.7 and fails on this build, on an account whose windows-setup.json records
-// the older package SID.
-//
-// Every path setup grants is checked, not only drive roots. Setup grants the
-// system drive root and the profile parent, and it is the profile parent that
-// npm's walk actually trips over; checking only the root reported nothing while
-// the failing path was unreadable.
-//
-// The "already told you" marker is keyed by identity as well as path, so an
-// upgrade that changes which identity needs the grant re-arms the notice rather
-// than inheriting a tick from the old one.
-func noteMissingElevatedGrants(nvxHome string, sid uintptr, workDir string) {
-	sidStr, err := deriveCapabilitySIDString(setupCapabilityName)
-	if err != nil {
-		return
-	}
-
-	// The roots THIS run could actually walk to, which is the same set `nvx setup`
-	// would grant if run from here -- so the notice cannot name a path the
-	// suggested command would not fix, and cannot list one twice.
-	//
-	// It used to take every fixed volume on the machine and then append the working
-	// directory's, which named volumes no project was on and printed the current
-	// one twice ("... or G:\ or H:\ or H:\"). Worse, it made the notice look like a
-	// complete account of why a contained command had failed, when the failure
-	// measured on 2026-09-01 was inside nvx's own home and no amount of elevated
-	// setup would have touched it.
-	roots := windowsSetupGrantPaths(nvxHome, workDir, false)
-
-	// A machine that ran setup before per-project packages has the grant on an
-	// identity nothing carries now. That case is not advisory -- it BREAKS `npx`,
-	// today, with an error from npm that says nothing about nvx -- so it is not
-	// suppressed after one showing.
-	//
-	// It was. The marker is keyed to a machine-wide identity, so the first run
-	// anywhere consumed it and every project afterwards got npm's raw EPERM in
-	// silence; an acceptance pass found a brand-new project getting no explanation
-	// at all, in the commit titled "Say why npx fails after an upgrade". Once per
-	// machine is right for "you never ran setup and probably do not need to" and
-	// wrong for "the thing you are running is about to fail until you act".
-	prev, hadSetup := readWindowsSetupState(nvxHome)
-	stranded := hadSetup && !strings.EqualFold(prev.AppContainerSID, sidStr)
-
-	var missing []string
-	for _, r := range roots {
-		if driveRootHasGrant(sidStr, r) {
-			continue
-		}
-		if driveRootNoticeSeen(nvxHome, sidStr, r) {
-			continue
-		}
-		missing = append(missing, r)
-	}
-	if len(missing) == 0 {
-		return
-	}
-	// Once per identity and path, in both branches. The stranded case used to
-	// repeat on every package-manager run, on the reasoning that it "BREAKS npx
-	// today". Measured 2026-09-01 and again 2026-09-02: contained npx works
-	// unelevated with those grants stranded, because the only path npm's walk
-	// needs an entry on is inside nvx's own home. A warning that fires on every
-	// install about a condition that breaks nothing is one the person stops
-	// reading, and it was the loudest line on the screen. The failure case is
-	// still covered: remindAboutDriveRoots says it again, after a
-	// package-manager command has actually failed.
-	for _, r := range missing {
-		markDriveRootNoticeSeen(nvxHome, sidStr, r)
-	}
-
-	if stranded {
-		LogDetail("An earlier 'nvx setup' granted %s to a sandbox identity nvx no longer uses, so that grant no longer applies.", strings.Join(missing, " or "))
-		LogDetail("Re-run 'nvx setup' from an Administrator terminal to move it; " +
-			"only a tool that resolves a path all the way to that root would notice.")
-		return
-	}
-
-	LogDetail("The sandbox cannot read %s. Installs and npx do not need it.", strings.Join(missing, " or "))
-	LogDetail("A tool that resolves paths that far may fail there. To grant it: 'nvx setup' from an Administrator terminal.")
-}
-
-func driveRootNoticeFile(nvxHome string) string {
-	return filepath.Join(nvxHome, "drive-root-notices.json")
-}
-
-// driveRootNoticeSeen reports whether the advisory for root has already been
-// shown. Best-effort: an unreadable/corrupt file just means the notice repeats,
-// which is strictly better than suppressing it wrongly.
-func driveRootNoticeSeen(nvxHome, sidStr, root string) bool {
-	data, err := os.ReadFile(driveRootNoticeFile(nvxHome))
-	if err != nil {
-		return false
-	}
-	var seen []string
-	if json.Unmarshal(data, &seen) != nil {
-		return false
-	}
-	for _, s := range seen {
-		if strings.EqualFold(s, sidStr+"|"+root) {
-			return true
-		}
-	}
-	return false
-}
-
-func markDriveRootNoticeSeen(nvxHome, sidStr, root string) {
-	var seen []string
-	if data, err := os.ReadFile(driveRootNoticeFile(nvxHome)); err == nil {
-		_ = json.Unmarshal(data, &seen)
-	}
-	for _, s := range seen {
-		if strings.EqualFold(s, sidStr+"|"+root) {
-			return
-		}
-	}
-	seen = append(seen, sidStr+"|"+root)
-	data, err := json.Marshal(seen)
-	if err != nil {
-		return
-	}
-	if os.MkdirAll(nvxHome, 0o700) == nil {
-		_ = os.WriteFile(driveRootNoticeFile(nvxHome), data, 0o600)
-	}
 }
 
 // setNodeOptionsPreserveSymlinks ensures NODE_OPTIONS carries the
@@ -829,22 +615,13 @@ func stripProxyEnv(env []string) []string {
 
 // launchCapabilitySIDs is the capability set every contained launch carries.
 //
-// Extracted so it can be asserted. The setup capability appended here is the
-// identity `nvx setup` writes drive-root ACEs for, and the two are only useful
-// together: if this stops appending it, an elevated setup grants access to
-// something no launch holds, contained `npx` keeps failing, and the machine's
-// owner has done exactly what they were told with nothing to show for it. That
-// failure is invisible from both sides -- setup reports success because the ACE
-// was written, and the launch reports EPERM because it does not hold the
-// identity.
-//
-// A machine that never ran setup simply carries a capability nothing has granted
-// anything to, which costs nothing and grants nothing.
+// Extracted so it can be asserted. It does not include the setup capability, the
+// identity an older `nvx setup` wrote drive-root and Users-folder ACEs for.
+// Nothing needs those entries (see sandbox_walkup_shim.js), so a launch that
+// does not carry the identity makes any leftover entry inert on every machine,
+// whether or not `nvx setup` has removed it yet.
 func launchCapabilitySIDs(scopeCaps, networkCaps []string) []string {
 	caps := append(append([]string{}, scopeCaps...), networkCaps...)
-	if setupCap, err := deriveCapabilitySIDString(setupCapabilityName); err == nil {
-		caps = append(caps, setupCap)
-	}
 	// The runtime, the supervisor and the guest home's parent are granted to this
 	// one; without it the container cannot read the binary it is about to run.
 	if runtimeCap, err := runtimeCapabilitySID(); err == nil {

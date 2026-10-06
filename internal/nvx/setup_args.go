@@ -6,20 +6,21 @@ import (
 )
 
 // setupHelpText is what `nvx setup --help` and `nvx help setup` print.
-const setupHelpText = `nvx setup [--undo]
+const setupHelpText = `nvx setup
 
-(Windows, Administrator) Grant the sandbox read and list access to the root of
-every fixed volume and its Users folder. Optional: installs and npx do not need
-it; only a tool that resolves a path all the way up to a drive root does, and
-nvx names this command after such a failure. Also removes a loopback exemption
-an older nvx left.
+(Windows) Remove what older nvx versions left on the machine: sandbox read and
+list access on drive roots and Users folders, grants made to an older sandbox
+identity, and the loopback exemption older versions registered. nvx no longer
+adds any of these. It also restores the inheritance protection older versions
+switched off on C:\Users and on your profile folder, when the folder's own
+entries make that safe. Run it from an Administrator terminal to fix these. With
+nothing to fix it says so and exits 0.
 
---undo, -u     Reverse what setup granted.
---all-drives   Accepted for older scripts. Setup covers every fixed volume.
+--undo, -u     Accepted, and does the same thing.
+--all-drives   Accepted for older scripts. It changes nothing.
 `
 
 type setupArgs struct {
-	undo bool
 	help bool
 }
 
@@ -28,19 +29,20 @@ type setupArgs struct {
 // It used to scan for --undo and --all-drives and ignore everything else, so
 // `nvx setup --help` ran setup, and `nvx setup --undoo` ran it forward --
 // granting -- when the person typing it meant to take the grant back. Setup
-// is the one command that changes ACLs on the machine's drive roots, from an
-// Administrator terminal, which is the worst place for "unrecognised means
-// proceed". Measured on the installed build: `nvx setup --help` reached the
-// elevation check.
+// only removes things now, but it is still the one command that changes ACLs on
+// the machine's drive roots, from an Administrator terminal, which is the worst
+// place for "unrecognised means proceed". Measured on the build that granted:
+// `nvx setup --help` reached the elevation check.
+//
+// --undo and --all-drives are still accepted so scripts and habits written for
+// an older nvx keep working. Setup does the same thing with or without them.
 func parseSetupArgs(args []string) (setupArgs, error) {
 	var out setupArgs
 	for _, a := range args {
 		switch a {
-		case "--undo", "-u":
-			out.undo = true
-		case "--all-drives":
-			// What setup does anyway since 2026-10-04. Still accepted, so a
-			// script written for an older nvx keeps working.
+		case "--undo", "-u", "--all-drives":
+			// Setup removes what an older one left, which is what --undo asked for.
+			// --all-drives widened a grant that no longer exists.
 		case "--help", "-h":
 			out.help = true
 		default:
@@ -51,13 +53,13 @@ func parseSetupArgs(args []string) (setupArgs, error) {
 }
 
 // runSetupImpl is what a well-formed `nvx setup` invocation runs. A variable so
-// a test can record whether the elevated path was reached without reaching
-// it: on a CI runner that IS elevated, calling the real thing runs setup
-// against the runner's drive roots.
+// a test can record whether the removal was reached without reaching it: on a
+// CI runner that IS elevated, calling the real thing runs setup against the
+// runner's drive roots.
 var runSetupImpl = runWindowsSetup
 
 // runSetupCommand is the `nvx setup` entry point: help and errors never reach
-// the elevated path.
+// the removal.
 func runSetupCommand(args []string, nvxHome string) int {
 	parsed, err := parseSetupArgs(args)
 	if err != nil {
@@ -69,5 +71,5 @@ func runSetupCommand(args []string, nvxHome string) int {
 		fmt.Print(setupHelpText)
 		return 0
 	}
-	return runSetupImpl(nvxHome, parsed.undo)
+	return runSetupImpl(nvxHome)
 }

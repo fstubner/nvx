@@ -15,3 +15,7 @@ func repairPersistentPathImpl(nvxHome string, apply bool) (bool, error) {
 func reportSandboxWeakeners(nvxHome string) bool {
 	return false
 }
+
+// reportSetupLeftovers is a no-op off Windows: `nvx setup` only ever granted
+// anything there.
+func reportSetupLeftovers(nvxHome string) {}

@@ -9,14 +9,14 @@ import (
 	"time"
 )
 
-// Each revoke `nvx setup --undo` performs is time-boxed, like each grant.
+// Each revoke `nvx setup` performs is time-boxed, like each grant.
 //
 // The undo swept every ancestor path and the profile root through an
 // unbounded DACL write. Every grant nvx makes is bounded -- fifteen seconds
 // for one the launch cannot do without, a three-second budget for the rest --
 // because a filter driver over the profile root can stall an ACL write
 // indefinitely, and one did. The revoke had no bound at all, and on the profile
-// root the write propagates over the whole tree, so `--undo` after a setup on a
+// root the write propagates over the whole tree, so `nvx setup` after an older setup on a
 // large profile appeared to hang with nothing to say which path.
 //
 // The stall is injected in place of setup's own write. Before the fix the

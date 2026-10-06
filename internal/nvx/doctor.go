@@ -398,9 +398,10 @@ func shimPathPrependSnippet(shell, shimDir string) string {
 // start makes doctor unhealthy rather than being printed and ignored.
 var reportSandboxLaunchFn = reportSandboxLaunch
 
-// reportSetupGrantsFn is the same seam for the elevated-grant check, which reads
-// the machine's real ACLs and so cannot be driven from a test either.
-var reportSetupGrantsFn = reportSetupGrants
+// reportSetupLeftoversFn is the same seam for the note about access an older
+// `nvx setup` left, which reads the machine's real ACLs and so cannot be driven
+// from a test either.
+var reportSetupLeftoversFn = reportSetupLeftovers
 
 // doctorFixRequested reports whether `nvx doctor` was given --fix among args,
 // the arguments after "doctor".
@@ -430,8 +431,10 @@ func runDoctor(nvxHome string, fix bool) int {
 	fmt.Print(formatDoctorReport(rep))
 
 	// Machine state that weakens containment without breaking anything visible --
-	// a loopback exemption an older `nvx setup` left behind, and grants an older
-	// nvx left on this project that every sandbox on the machine still holds.
+	// a loopback exemption an older `nvx setup` left behind, drive-root access it
+	// granted, and grants an older nvx left on this project that every sandbox on
+	// the machine still holds.
+	reportSetupLeftoversFn(nvxHome)
 	weakened := reportSandboxWeakeners(nvxHome)
 	if reportCollapsedProjectScope() {
 		weakened = true
@@ -449,14 +452,6 @@ func runDoctor(nvxHome string, fix bool) int {
 	// invokes can run. Measured 2026-09-20: a machine out of commit charge
 	// refused every AppContainer launch while doctor reported good health and exit 0.
 	sandboxBroken := !reportSandboxLaunchFn(nvxHome)
-
-	// And, when it cannot, whether the elevated grants it depends on explain why.
-	// The launch check above reports the Windows error, which for a missing
-	// traverse grant is a bare "Access is denied" naming no path; this names the
-	// path and the one command that fixes it.
-	if !reportSetupGrantsFn(nvxHome) {
-		sandboxBroken = true
-	}
 
 	// One definition, read twice: once before any repair and once after, since a
 	// --fix pass can change the answer. It was written out twice instead, and the
@@ -496,8 +491,9 @@ func runDoctor(nvxHome string, fix bool) int {
 	// the report used. It used to call repairPersistentPath(nvxHome, fix)
 	// directly, so --fix wrote the User PATH whenever a repair was possible, while
 	// the OFFER was gated on the PATH being the thing that was wrong. A machine
-	// with a healthy PATH and one unrelated failure -- a stale `nvx setup` grant,
-	// say -- was therefore never told its persistent PATH would be touched, ran
+	// with a healthy PATH and one unrelated failure -- a sandbox that
+	// cannot start, say -- was therefore never told its persistent PATH would be
+	// touched, ran
 	// --fix for the other problem, and had its User PATH edited and announced
 	// after the fact. That is F71 again, which this comment used to claim was
 	// closed: the second half of "only offered when the PATH is actually what is
@@ -527,9 +523,9 @@ func runDoctor(nvxHome string, fix bool) int {
 	// PATH advice only when PATH is what is wrong.
 	//
 	// This block ran whenever anything at all was unhealthy, so a machine with a
-	// perfectly good PATH and a stale `nvx setup` grant was told, three lines after
+	// perfectly good PATH and a sandbox that cannot start was told, three lines after
 	// "[OK] shim dir is on PATH", to repair its PATH and run `nvx doctor --fix` --
-	// which regenerates shims and cannot touch a grant that needs an Administrator
+	// which regenerates shims and cannot touch a problem that needs an Administrator
 	// terminal. Someone following it lands back on the same red report, having
 	// changed their PATH for no reason.
 	if !rep.shimDirOnPath || len(rep.shadowedBy) > 0 || len(rep.missingExeShims) > 0 {
