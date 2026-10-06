@@ -44,6 +44,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `allow_read_exec` to run contained, as on Linux. Files outside the home stay
   readable on macOS.
 
+* **On macOS, a contained process can no longer look up host names.** A
+  program using Network.framework could ask the system resolver for any name,
+  so a package that could connect nowhere could still send data out encoded in
+  the names it looked up. The sandbox now refuses the resolver's Mach service,
+  `com.apple.dnssd.service`, in every network mode but `open`. getaddrinfo's way
+  in, the socket `/private/var/run/mDNSResponder`, was already refused.
+  Measured on a macOS runner: a contained Network.framework client resolved a
+  fresh name under a wildcard domain before the change and was refused after
+  it, with `localhost` still resolving and a contained `npm install` still
+  working through the proxy.
+
 ## [0.7.0] - 2026-10-06
 
 ### Added
