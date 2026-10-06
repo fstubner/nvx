@@ -5,29 +5,29 @@ import (
 	"testing"
 )
 
-// A name whose first lookup failed is not offered at the prompt.
+// A name approved at the prompt whose lookup fails is not dialled.
 //
-// The loopback refusal in allowed() inspects the addresses from the FIRST
+// The loopback refusal in admit() inspects the addresses from nvx's own
 // resolution. When that lookup fails, there are none, so the refusal had nothing
-// to inspect and the name reached the prompt. One "yes" -- or NVX_TRUST_YES,
-// which needs no human -- and dialVetted resolved again, checking only for
-// link-local. SERVFAIL first, 127.0.0.1 second, and a postinstall was spliced to
-// the developer's local Postgres. The same shape closed for link-local the day
+// to inspect. dialVetted then resolved again, checking only for link-local.
+// SERVFAIL first, 127.0.0.1 second, and a postinstall was spliced to the
+// developer's local Postgres. The same shape closed for link-local the day
 // before, found in the fix for it by an independent audit on 2026-09-06.
 //
-// A person cannot judge an address nobody has seen, so an unresolved name is
-// refused before the prompt. Allowlisted names are untouched: they return before
+// The name is looked up only once the prompt has approved it, so the refusal
+// comes after the approval. Allowlisted names are untouched: they return before
 // this, and a transient DNS failure there stays the dial's problem.
-func TestAnUnresolvedNameIsRefusedNotPrompted(t *testing.T) {
+func TestAnApprovedNameThatDoesNotResolveIsRefused(t *testing.T) {
+	// Approves the prompt, so what refuses is the unresolved-name rule.
+	t.Setenv("NVX_TRUST_YES", "1")
 	p := newTestProxy(t, "proxy", nil)
 	p.policy.Isolation.Network.PromptUnknown = true
 
 	if p.allowed(parseHostPortSpec("cache.attacker.example", 5432), nil) {
 		t.Fatal("a name that did not resolve was permitted; the dial's second lookup would then be the only judge")
 	}
-	// As with the loopback test: `false` is also what a prompt nobody answers
-	// returns, so the verdict alone cannot say which refusal fired. The audit
-	// event can, and without this check the test passed with the fix reverted.
+	// The audit event says which refusal fired. Without this check the test
+	// passed with the fix reverted.
 	entries, err := readAuditEntries(p.nvxHome)
 	if err != nil {
 		t.Fatalf("read audit log: %v", err)
@@ -39,8 +39,8 @@ func TestAnUnresolvedNameIsRefusedNotPrompted(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("the unresolved name reached the prompt instead of being refused: a postinstall got to ask " +
-			"the developer to approve an address that did not exist yet")
+		t.Error("the unresolved name was not refused by the unresolved-name rule: an approved name " +
+			"would be dialled on a second lookup nothing judges")
 	}
 }
 

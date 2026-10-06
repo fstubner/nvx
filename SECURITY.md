@@ -171,9 +171,11 @@ These are deliberate trade-offs, and this section documents each one:
   mode but `open`. getaddrinfo's socket was already refused. Until 2026-10-06
   Network.framework's way in, the Mach service `com.apple.dnssd.service`, was
   not, and a contained program could send data out encoded in the names it
-  looked up. On every platform nvx's egress proxy still looks up the name a
-  contained client asks for before the allowlist refuses it, so a refused name
-  reaches the host's resolver through nvx.
+  looked up. Until the same date nvx's egress proxy looked up the name a
+  contained client asked for before the allowlist refused it, on every
+  platform. It now looks a name up only after the allowlist, an earlier grant
+  or a yes at the prompt has allowed it, so a refused name never reaches the
+  host's resolver.
 
   This entry has been wrong in both directions. Until 2026-08-20 it said macOS
   egress was cooperative and a raw socket could bypass the allowlist. That

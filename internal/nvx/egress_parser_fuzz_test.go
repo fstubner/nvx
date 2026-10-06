@@ -30,9 +30,9 @@ import (
 // Three deliberate choices keep a fuzz run off the network entirely. The
 // allowlist is empty and prompt_unknown is false, so allowed() refuses before
 // dialVetted is ever called -- meaning no fuzz input can open a connection.
-// resolveEgressTarget is stubbed, because both handlers resolve the host BEFORE
-// consulting the allowlist, and without this every generated hostname would be a
-// real DNS query. And nvxHome is empty, which makes auditLog a no-op rather than
+// resolveEgressTarget is stubbed, so that a change which made the handlers
+// resolve before the allowlist decides could not turn every generated hostname
+// into a real DNS query. And nvxHome is empty, which makes auditLog a no-op rather than
 // writing a file per iteration.
 func fuzzProxy(f *testing.F) *EgressProxy {
 	f.Helper()

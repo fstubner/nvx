@@ -78,9 +78,9 @@ func TestAPromptedApprovalDoesNotOutliveTheRun(t *testing.T) {
 	t.Setenv("NVX_TRUST_YES", "1")
 	p := newPromptingProxy(t, nil)
 
-	// A real address, not nil. A prompted request always carries what its first
-	// lookup returned; nil is the UNRESOLVED case, which is refused before the
-	// prompt since 2026-09-06 -- so nil here would test the refusal, not the grant.
+	// A real address, not nil. nil is the UNRESOLVED case, which is refused
+	// after the prompt approves the name -- so nil here would test that refusal,
+	// not the grant.
 	public := []net.IP{net.ParseIP("104.16.0.1")}
 	if !p.allowed(parseHostPortSpec("example.com", 443), public) {
 		t.Fatal("NVX_TRUST_YES did not approve the prompt; the rest of this test would prove nothing")

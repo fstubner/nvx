@@ -58,8 +58,8 @@ debugging aid and nvx writes them only when `NVX_TRACE=1`.
 | `egress_deny`                    | `host`                                                    | A contained process was refused a host that is not on the allowlist.        |
 | `egress_deny_resolved`           | `host`                                                    | A host resolved to an address the allowlist does not cover (rebinding check). |
 | `egress_deny_invalid_host`       | `host`                                                    | A destination that is not a valid host name was refused.                     |
-| `egress_deny_loopback_prompt`    | `host`                                                    | A loopback destination was refused rather than prompted for.                 |
-| `egress_deny_unresolved_prompt`  | `host`                                                    | A destination that would not resolve was refused rather than prompted for.   |
+| `egress_deny_loopback_prompt`    | `host`                                                    | A loopback destination was refused rather than prompted for, or a name granted at the prompt resolved to loopback. |
+| `egress_deny_unresolved_prompt`  | `host`                                                    | A name granted at the prompt would not resolve, so it was refused.           |
 | `egress_block_mode`              | `host`, `mode`                                            | The network mode (`offline`, `loopback`) refused the request outright.       |
 | `egress_allow_prompted`          | `host`                                                    | Someone approved a host at the prompt.                                       |
 | `trusted_tool_granted`           | `tool`, `project`                                         | A tool was granted a persistent sandbox profile for this project.            |
