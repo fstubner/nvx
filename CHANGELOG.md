@@ -65,8 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   launch, outside `node_modules` and `.git`, and stops looking after 50,000
   entries. On macOS the Seatbelt profile refuses reading and writing those
   names anywhere, so a contained tool cannot create a `.env` there either.
-  Windows is unchanged: deny entries and an integrity label on the file were
-  both measured, and neither stopped the read.
+  Windows is covered by the entry below.
 
 * **A contained install on Windows can no longer read the project's `.env`
   files.** At each contained launch nvx now changes the permissions of the
