@@ -969,6 +969,30 @@ provider mounts the project as it is.
   preload in contained node processes could refuse the read, but contained code
   can start another program to read the file, so it would contain nothing.
 
+  Why neither held, measured 2026-10-06 on Windows 11 26300 by
+  `TestWindowsDotenvProtectionExperiments` (NVX_PROBE=1), with the contained
+  child reporting its own token. The reader is an AppContainer process at Low
+  integrity. Its token carries the project's capability SID and the package SID.
+  `.env` gets its allow from the capability's entry, inherited from the project
+  folder. The earlier deny named the package SID and ALL APPLICATION PACKAGES,
+  so it named the wrong identities. A deny for the capability itself did not
+  hold either, with the deny first in the list and with the deny beside an
+  explicit allow for the same capability. A deny for the user's own SID did stop
+  the read, so the deny syntax was sound. The label is enforced against a plain
+  Low integrity process started from the same user's token, and the contained
+  child read through it, so Windows does not apply the label to an AppContainer
+  process.
+
+  What did stop the read was a protected permission list on `.env` with the
+  inherited entries copied in as explicit ones, minus the capability's entry.
+  The developer still read and edited the file, and the contained child could
+  not read, append to, rename or delete it. Re-granting the project folder left
+  it alone. An entry for ALL APPLICATION PACKAGES, where the folder has one,
+  has to be left out too. An editor that saves by writing a new file and
+  renaming it over `.env` brings the inherited entry back, so the protection
+  has to be applied again at each launch. This is the mechanism `.git` already
+  uses (¹⁴).
+
 A tool that needs to read or write `.env` during a contained run, such as a
 scaffolder that writes one on macOS, runs with `--no-sandbox`.
 
