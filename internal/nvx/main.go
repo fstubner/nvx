@@ -581,7 +581,7 @@ A line that cannot be parsed is reported and the command exits non-zero, having
 exported and counted everything that could be read.
 `
 	case "grants":
-		return "nvx grants list\nnvx grants reset [--all]\n\nInspect or forget the approve-once grants recorded for the current project\n(or every project, with --all): egress hosts recorded by older nvx versions,\ntrusted tools, and trusted project policy files. Grants live under ~/.nvx/grants, never in the project.\n"
+		return "nvx grants list\nnvx grants reset [--all]\n\nInspect or forget the approve-once grants recorded for the current project\n(or every project, with --all): egress hosts recorded by older nvx versions,\ntrusted tools, and trusted project policy files. Grants live under ~/.nvx/grants, never in the project.\n\nOn Windows, reset also puts back the permissions of the .env files nvx hid\nfrom the sandbox.\n"
 	}
 	return ""
 }
@@ -780,7 +780,8 @@ Commands:
                            says so.
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
   grants list              Show this project's egress hosts (from older nvx), trusted tools, and policy pins
-  grants reset [--all]     Forget this project's grants (or every project's, with --all)
+  grants reset [--all]     Forget this project's grants (or every project's, with --all);
+                           on Windows, put back the permissions of hidden .env files
   audit [--summary]        Review the local record of past runs and security decisions
   audit export             Export that record as json, jsonl or csv, filtered by
                            time and event, for a compliance pipeline

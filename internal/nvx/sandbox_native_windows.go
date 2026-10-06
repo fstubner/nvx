@@ -96,6 +96,13 @@ func applyProjectGrants(config SandboxConfig, sid uintptr, scope, guestHome, wor
 	if err != nil {
 		return nil, "", fmt.Errorf("AppContainer filesystem setup failed: %w", err)
 	}
+	// The whole project, not only the working directory: grants persist, so a
+	// run from a subdirectory carries a capability that an earlier run from the
+	// root left holding modify there. Same reach as restrictGitMetadataToReadOnly.
+	if scope != "" && workDir != "" && !isProfileRoot(scope) && !isProfileRoot(workDir) &&
+		!workDirReachesControlPlane(config.NvxHome, workDir) {
+		hideDotenvFromSandbox(config.NvxHome, scope)
+	}
 
 	// Extra read/execute roots from isolation.filesystem.allow_read_exec, granted
 	// to THIS PROJECT's capability rather than the shared package identity.

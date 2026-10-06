@@ -104,8 +104,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   launch, outside `node_modules` and `.git`, and stops looking after 50,000
   entries. On macOS the Seatbelt profile refuses reading and writing those
   names anywhere, so a contained tool cannot create a `.env` there either.
-  Windows is unchanged: deny entries and an integrity label on the file were
-  both measured, and neither stopped the read.
+  Windows is covered by the entry below.
+
+* **A contained install on Windows can no longer read the project's `.env`
+  files.** At each contained launch nvx now changes the permissions of the
+  project's `.env` and `.env.*` files, the same files macOS and Linux hide.
+  Each file stops inheriting permissions from the project folder, keeps every
+  entry it had for you, SYSTEM, Administrators and other accounts, and loses
+  the entries that let sandboxed processes in. You read and edit it as before.
+  A file an editor or `git checkout` replaces is changed again at the next
+  launch, and a launch that finds every file already changed writes nothing.
+  nvx records each file's earlier permissions, and `nvx grants reset` puts
+  them back. A file nvx may not change stays readable in the sandbox, and the
+  run says so and carries on. A link named `.env` is left alone.
 
 * **On Windows, `yarn` classic installs in a project under your user profile
   even when you have a `~/.yarnrc` or `~/.npmrc`.** yarn reads those files from

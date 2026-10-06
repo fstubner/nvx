@@ -57,6 +57,14 @@ func formatProjectGrants(g projectGrants) string {
 			fmt.Fprintf(&b, "    - %s\n", r.Path)
 		}
 	}
+	// Only on Windows, and only when there are any: nothing records them
+	// elsewhere.
+	if len(g.ProtectedDotenv) > 0 {
+		b.WriteString("  .env files hidden from the sandbox (`nvx grants reset` puts their permissions back):\n")
+		for _, r := range g.ProtectedDotenv {
+			fmt.Fprintf(&b, "    - %s\n", r.Path)
+		}
+	}
 	return b.String()
 }
 
@@ -124,6 +132,7 @@ func runGrants(args []string, nvxHome string) int {
 			// on disk with nothing left that knows they exist -- which is what
 			// "reset" was quietly doing before.
 			revoked, failed, unreadable, unaccounted := 0, 0, 0, 0
+			dotenvRestored, dotenvFailed := 0, 0
 			for _, e := range entries {
 				path := filepath.Join(dir, e.Name())
 				// Preserved records of permissions nvx can no longer account for.
@@ -141,7 +150,7 @@ func runGrants(args []string, nvxHome string) int {
 					unreadable++
 					continue
 				}
-				grants, ok := readGrantsFile(path)
+				g, ok := readGrantsFile(path)
 				if !ok {
 					// Could not be read, so its permissions cannot be withdrawn and
 					// its contents are unknown. Keep the file: removing it is exactly
@@ -151,11 +160,14 @@ func runGrants(args []string, nvxHome string) int {
 					unlock()
 					continue
 				}
-				out := revokeAllReadExecGrants(grants, revokeSandboxReadExec)
+				out := revokeAllReadExecGrants(g.ReadExecGrants, revokeSandboxReadExec)
 				revoked += out.Revoked
 				failed += out.Failed
 				unaccounted += out.Unaccounted()
-				if out.Failed > 0 {
+				restoredEnv, keepEnv := restoreAllProtectedDotenv(g.ProjectPath, g.ProtectedDotenv)
+				dotenvRestored += restoredEnv
+				dotenvFailed += len(keepEnv)
+				if out.Failed > 0 || len(keepEnv) > 0 {
 					// Keep the record of whatever could not be withdrawn; removing it
 					// would strand those entries permanently.
 					unlock()
@@ -171,6 +183,13 @@ func runGrants(args []string, nvxHome string) int {
 			}
 			if failed > 0 {
 				LogWarn("Could not withdraw %d permission(s); their records were kept so a later reset can retry.", failed)
+			}
+			if dotenvRestored > 0 {
+				LogInfo("Put back the permissions of %d .env file(s).", dotenvRestored)
+			}
+			if dotenvFailed > 0 {
+				LogWarn("Could not put back the permissions of %d .env file(s); their records were kept so a later reset can retry.", dotenvFailed)
+				failed += dotenvFailed
 			}
 			if unreadable > 0 {
 				LogWarn("%d grant record(s) could not be read and were kept; directory permissions they list must be removed with icacls.", unreadable)
@@ -213,7 +232,7 @@ func runGrants(args []string, nvxHome string) int {
 			return 1
 		}
 		defer unlock()
-		grants, readable := readGrantsFile(path)
+		g, readable := readGrantsFile(path)
 		if !readable {
 			if _, statErr := os.Stat(path); statErr == nil {
 				LogError("This project's grant record could not be read; it was left in place rather than deleted.")
@@ -221,12 +240,20 @@ func runGrants(args []string, nvxHome string) int {
 				return 1
 			}
 		}
-		out := revokeAllReadExecGrants(grants, revokeSandboxReadExec)
+		out := revokeAllReadExecGrants(g.ReadExecGrants, revokeSandboxReadExec)
 		if out.Revoked > 0 {
 			LogInfo("Withdrew %d read/execute directory permission(s).", out.Revoked)
 		}
+		restoredEnv, keepEnv := restoreAllProtectedDotenv(scope, g.ProtectedDotenv)
+		if restoredEnv > 0 {
+			LogInfo("Put back the permissions of %d .env file(s).", restoredEnv)
+		}
 		if out.Failed > 0 {
 			LogWarn("Could not withdraw %d permission(s); the record was kept so a later reset can retry.", out.Failed)
+			return 1
+		}
+		if len(keepEnv) > 0 {
+			LogWarn("Could not put back the permissions of %d .env file(s); the record was kept so a later reset can retry.", len(keepEnv))
 			return 1
 		}
 		if err := os.Remove(path); err != nil {
