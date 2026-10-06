@@ -1,0 +1,3 @@
+# The lockfiles here are byte for byte what the package managers wrote. Yarn
+# writes CRLF on Windows, and the readers are tested on those bytes everywhere.
+* -text

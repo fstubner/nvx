@@ -2,6 +2,7 @@ package nvx
 
 import (
 	"context"
+	"net"
 	"testing"
 )
 
@@ -28,6 +29,13 @@ func newTestProxy(t *testing.T, mode string, allowHosts []string) *EgressProxy {
 		nvxHome:  tempDir(t),
 		ctx:      context.Background(),
 	}
+}
+
+// allowed is admit for a test that already knows what the name resolves to:
+// ips is what the lookup answers, if admit gets as far as making one.
+func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
+	_, ok := p.admit(hp, func(string) ([]net.IP, error) { return ips, nil })
+	return ok
 }
 
 // TestLoopbackIsNotAutomaticallyAllowed is the fix for a regression the Windows

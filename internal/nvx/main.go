@@ -1972,11 +1972,11 @@ func prefetchVerifyDetails(targets []verifyTarget) map[packageQueryKey]packageDe
 			continue
 		}
 		if i, ok := index[k]; ok {
-			jobs[i].dist = jobs[i].dist || t.fromLockfile()
+			jobs[i].dist = jobs[i].dist || t.carriesSource()
 			continue
 		}
 		index[k] = len(jobs)
-		jobs = append(jobs, job{k, t.fromLockfile()})
+		jobs = append(jobs, job{k, t.carriesSource()})
 	}
 
 	out := make(map[packageQueryKey]packageDetails, len(jobs))
@@ -2161,7 +2161,7 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 		LogDetail("Verifying package %q...", pkgName)
 		d := details[packageQueryKey{pkgName, versionQuery}]
 		resolvedVer, pubTime, hasScripts, err := d.version, d.publishTime, d.hasScripts, d.err
-		if err == nil && t.fromLockfile() {
+		if err == nil && t.carriesSource() {
 			err = d.distErr
 		}
 		if err != nil {
@@ -2198,10 +2198,10 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 
 		// A lockfile entry is installed from its own URL and hash, so they must
 		// be the registry's for the name and version checked here.
-		if t.fromLockfile() {
+		if t.carriesSource() {
 			if problem := lockEntryMismatch(t, d.dist); problem != "" {
 				LogError("The lockfile entry for %s@%s does not match the registry: %s.", pkgName, resolvedVer, problem)
-				LogRefusalDetail("npm would install what the entry points at, which may be another package. If the lockfile is your own, delete this entry and run npm install to write it again from the registry.")
+				LogRefusalDetail("The package manager would install what the entry points at, which may be another package. If the lockfile is your own, delete this entry and run the install again to write it from the registry.")
 				recordCheckRefused(nvxHome, checkInfo{check: checkLockfileSource, pkg: pkgName, version: resolvedVer, detail: problem})
 				return 1, "a lockfile entry does not match the registry's record of that package"
 			}

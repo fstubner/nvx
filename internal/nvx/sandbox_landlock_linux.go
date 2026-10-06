@@ -457,6 +457,12 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 		LogError("Could not make this repository's .git read-only for the sandbox (fail-closed): %v", err)
 		return 1
 	}
+	// The project's dotenv files, unreadable, for the same reason and in the same
+	// way.
+	if err := maskDotenvFiles(workDir, guestHome, mountNSErr); err != nil {
+		LogError("Could not hide this project's .env files from the sandbox (fail-closed): %v", err)
+		return 1
+	}
 	// The filesystem view, before Landlock for the same reason as /proc. Fail
 	// closed. Without it, every UNIX socket on the host is one connect() away on
 	// kernels below Landlock ABI v9. See enterSandboxRoot.

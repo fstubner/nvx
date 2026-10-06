@@ -49,6 +49,7 @@ and do not verify whether the kernel honours it.
 | Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |
 | Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: the home directory denied outside what a run needs, other paths readable⁵ |
 | Project `.git` read-only, rest of project writable | Yes¹⁴ | Yes¹⁴ | Yes¹⁴ |
+| Project `.env` files unreadable | No¹⁵ | Yes¹⁵ (files present at launch) | Yes¹⁵ |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
 | Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |
@@ -138,12 +139,14 @@ contained Network.framework client resolved a fresh name under a wildcard
 domain (run 37513452515), so data encoded in a name could leave through the
 host's resolver while every connection was refused.
 
-Two paths are not covered by this row. nvx's egress proxy resolves the name a
-contained client asks for before the allowlist refuses it, on every platform,
-so a refused name still reaches the host's resolver through nvx. A unit-level
-run with the resolver stubbed showed a `CONNECT` to a host off the allowlist
-looked up, then answered 403. And other macOS Mach services that might look up
-a name on a caller's behalf have not been checked.
+nvx's egress proxy looks a name up only once it is allowed, on every
+platform. The allowlist, an earlier grant in this run or a yes at the prompt
+decides on the name first, and a refused name never reaches the host's
+resolver. Until 2026-10-06 the proxy looked the name up before the allowlist
+refused it. A unit-level run with the resolver stubbed showed a `CONNECT` to a
+host off the allowlist looked up, then answered 403. One path is still not
+covered by this row. Other macOS Mach services that might look up a name on a
+caller's behalf have not been checked.
 
 ⁵ **macOS hardware confirms the cells marked ⁵.**
 `scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on every CI
@@ -924,6 +927,50 @@ Everything else in the project stays writable, because an install writes it:
 `package.json`, `node_modules`, lockfiles and build output. That is why a
 contained install can still affect `npm test` or `npm run build` run later at the
 `standard` level.
+
+¹⁵ **The project's `.env` files are unreadable to contained runs.**
+
+The project has to be readable for an install to work, and `.env` lives in it.
+A contained process cannot read `.env` or any `.env.*` file, such as `.env.local`
+or `.env.production`, in any letter case. The templates `.env.example`,
+`.env.sample`, `.env.template` and `.env.dist` stay readable. They exist to be
+committed and copied. Names such as `.env.development` are committed with
+harmless values in some projects and hold credentials in others, so they are
+hidden. `.envrc`, and names such as `production.env`, are not covered. A `.env`
+that was ever committed is also in `.git`, which stays readable. The Docker
+provider mounts the project as it is.
+
+- **Linux** looks for these files under the working directory when the run
+  starts. The search is breadth first, skips `node_modules` and `.git`, and stops
+  after 50,000 entries with a warning. The supervisor mounts an empty, read-only
+  file with mode 0000 over each one in its private mount namespace, before
+  Landlock applies. A read or a write fails with `EACCES`, a `chmod` with
+  `EROFS`, a rename with `EBUSY` and a hard link with `EXDEV`. The target runs
+  as root in its user namespace, so the supervisor drops `CAP_DAC_OVERRIDE` and
+  `CAP_DAC_READ_SEARCH` from it, which would read past the mode, and
+  `CAP_SYS_ADMIN`, which would unmount the mask. A symbolic link named `.env` is
+  followed, and the file it names is covered. A `.env` created during the run is
+  an ordinary file until the next launch. `TestContainedProcessCannotReadDotenvFiles`
+  covers this in the privileged CI step, and `scripts/sandbox-enforcement-linux.sh`
+  on the runner.
+- **macOS** denies `file-read-data` and `file-write*` on these names anywhere
+  on disk, after the profile's allows, `node_modules` included. Writes are
+  denied because a process that could rename or hard-link `.env` could read it
+  under another name. So a contained tool cannot create or change a `.env` on
+  macOS. `stat` still works. `scripts/sandbox-enforcement-macos.sh` asserts it on the macOS
+  runner, with reads through a hard link, a copy and a rename, and with
+  `.env.example` and a plain project file as the controls.
+- **Windows** has no mechanism. On 2026-08-18 a deny entry on `.env` for the
+  container's SID and for ALL APPLICATION PACKAGES left it readable. On
+  2026-10-06 a medium integrity label with no-read-up, confirmed with `icacls`,
+  left it readable too, on a Windows 11 workstation and on the CI runner.
+  `TestDenyACEHidesSecretFromAppContainer` and
+  `TestIntegrityLabelHidesSecretFromAppContainer` (NVX_PROBE=1) pin both. A
+  preload in contained node processes could refuse the read, but contained code
+  can start another program to read the file, so it would contain nothing.
+
+A tool that needs to read or write `.env` during a contained run, such as a
+scaffolder that writes one on macOS, runs with `--no-sandbox`.
 
 ## Measured costs and platform floors
 
