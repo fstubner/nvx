@@ -471,7 +471,7 @@ Measured on WSL2 Ubuntu 24.04, kernel 6.18, before the change. A contained
 process got HTTP 200 from `/var/run/docker.sock` while the sandbox denied its writes outside the
 project.
 
-A socket inside a granted path stays reachable. That means
+A socket inside a granted path stays reachable. The granted paths are
 the project, the guest home, and below ABI v9 also the system and runtime
 directories and any `allow_read_exec` root. In `network.mode: open` the host
 resolver sockets in `/run/systemd/resolve` and `/run/nscd` stay visible too.

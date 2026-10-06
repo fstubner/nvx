@@ -364,5 +364,5 @@ would be the kind of overstatement the honesty condition above exists to prevent
 - Resolving dependencies or writing lockfiles.
 - Certifying that a package is safe. The checks reduce risk. Containment is the
   backstop, and neither is a guarantee.
-- Requiring configuration to be secure by default.
+- Needing configuration before it is secure.
 - Any security claim that cannot be demonstrated by running something.
