@@ -989,16 +989,11 @@ func isolationLevelRank(level string) int {
 	return 1
 }
 
-func hostsAdded(before, after []string) bool {
-	return len(entriesAdded(before, after)) > 0
-}
-
 // entriesAdded returns the entries in after that before did not already carry,
 // compared case-insensitively and ignoring surrounding space.
 //
-// hostsAdded answers the yes/no question the trust gate needs; an enforced
-// baseline has to NAME what a project file tried to add, so both come from here
-// and cannot disagree about what counts as an addition.
+// An enforced baseline has to NAME what a project file tried to add, so this
+// returns the entries rather than a yes/no.
 func entriesAdded(before, after []string) []string {
 	seen := map[string]bool{}
 	for _, h := range before {

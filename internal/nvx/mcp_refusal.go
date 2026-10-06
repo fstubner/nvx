@@ -270,13 +270,3 @@ func readPendingJSONRPCRequest(r *os.File, timeout time.Duration) (jsonRPCReques
 		return jsonRPCRequest{}, false
 	}
 }
-
-// firstPackageLabel names the packages a refusal was about, for the message.
-// Only the first, and only if it is safe to echo: a list is rarely more useful
-// than one name, and every extra specifier is another chance to print a URL.
-func firstPackageLabel(pkgs []string) string {
-	if len(pkgs) == 0 {
-		return ""
-	}
-	return pkgs[0]
-}

@@ -8,11 +8,11 @@ import (
 // setupHelpText is what `nvx setup --help` and `nvx help setup` print.
 const setupHelpText = `nvx setup [--undo]
 
-(Windows, Administrator) Grant the sandbox stat access to the root of every
-fixed volume. Optional: installs and npx do not need it; only a tool that
-resolves a path all the way up to a drive root does, and nvx names this
-command after such a failure. Also removes a loopback exemption an older
-nvx left.
+(Windows, Administrator) Grant the sandbox read and list access to the root of
+every fixed volume and its Users folder. Optional: installs and npx do not need
+it; only a tool that resolves a path all the way up to a drive root does, and
+nvx names this command after such a failure. Also removes a loopback exemption
+an older nvx left.
 
 --undo, -u     Reverse what setup granted.
 --all-drives   Accepted for older scripts. Setup covers every fixed volume.

@@ -11,8 +11,8 @@
 
 # Test / Cache / Temp dirs
 downloads/
-versions/
-current/
+/versions/
+/current/
 npm_global/
 .nvx/
 
@@ -37,7 +37,6 @@ docs/session-history-*.md
 
 
 # Stray probe files from acceptance runs, which once reached a release tag.
-ACC_*.tmp
 *.tmp
 
 # Agent and review scratch output. These are working notes, not part of the
@@ -58,3 +57,6 @@ nvx-report-*.txt
 # copy drift from the real one, which is the thing the copy step prevents.
 /site/public/install.ps1
 /site/public/install.sh
+
+# Local editor launch config for the preview pane. Per machine, so not tracked.
+.claude/launch.json
