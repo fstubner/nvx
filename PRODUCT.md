@@ -277,9 +277,10 @@ Deferred with intent, not built:
   default)`. Until 2026-08-23 it called macOS unverified at runtime after a macOS
   runner had begun proving otherwise. Until 2026-08-24 it listed an
   allowlisted host, UDP, and failing closed without `sandbox-exec` as untested
-  after all three had started passing. What remains unclaimed is narrower again.
-  It is which layer refuses the outbound connection the probe observes being
-  refused.
+  after all three had started passing. Until 2026-10-06 it left open which
+  layer refuses the outbound connection the probe observes being refused. The
+  probe now shows a lookup refused at the resolver and a connect to an address
+  refused by the kernel.
 
   `docs/enforcement-matrix.md` is the authority. Where it and this document
   disagree, that matrix is right and this file is stale.
