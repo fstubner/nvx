@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A tilde version range gets every pre-install check.** A spec such as
+  `left-pad@~1.3.0`, or `~1.3.0` in `package.json`, was read as a path in the
+  home directory because it starts with `~`. A path gets only the blocklist, so
+  those packages skipped the advisory, release-age and typosquat checks. Only
+  `~/` now counts as a path.
+
 * **A contained install on macOS or Linux can no longer read the project's
   `.env` files.** The project has to be readable for an install, so `.env`,
   `.env.local` and the rest were readable to every postinstall script. Now
