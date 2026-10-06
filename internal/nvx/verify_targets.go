@@ -28,9 +28,10 @@ import (
 //     contained with no checks at all.
 //
 // For npm, nvx now asks npm what it will install (see npm_resolve.go). Every
-// lockfile entry is held to the registry's record of its name and version. The
-// other package managers keep reading the command line and the project's
-// files, which the docs say.
+// lockfile entry is held to the registry's record of its name and version. A
+// whole-project pnpm, Yarn or Bun install reads that package manager's
+// lockfile (see lockfile_pm.go). Their named installs and updates read the
+// command line and package.json, which the docs say.
 
 // verifyTarget is one package the pre-install checks run on.
 type verifyTarget struct {
@@ -53,9 +54,16 @@ type verifyTarget struct {
 	// of something they did. The typosquat check skips it, because a name a
 	// package's author wrote is not a name anyone mistyped.
 	transitive bool
+	// locked marks an entry read from a lockfile. A Yarn 2+ entry records
+	// neither a URL nor a registry hash, so the two fields above cannot say so.
+	locked bool
 }
 
-func (t verifyTarget) fromLockfile() bool { return t.resolved != "" || t.integrity != "" }
+func (t verifyTarget) fromLockfile() bool { return t.locked }
+
+// carriesSource reports a lockfile entry that records where its tarball is or
+// what it hashes to, which must agree with the registry's record.
+func (t verifyTarget) carriesSource() bool { return t.resolved != "" || t.integrity != "" }
 
 func specTargets(specs []string) []verifyTarget {
 	out := make([]verifyTarget, 0, len(specs))
@@ -107,13 +115,22 @@ func verifyBeforeRun(req verifyRequest) (int, string, string) {
 			// The lockfile is what installs, and nvx could not read it. Checking
 			// package.json instead checked the newest version of each range in
 			// place of the locked one, and flagged versions nobody was installing.
+			// For pnpm, Yarn and Bun, package.json is what was checked before
+			// their lockfiles were read, and it is offered as that.
 			msg := fmt.Sprintf("%v, so nvx cannot tell which versions this command installs and has nothing to check. Proceed without the pre-install checks?", err)
-			if !askCheck(req.nvxHome, checkInfo{check: checkLockfileUnreadable, detail: err.Error(),
-				what: "the install goes ahead without its lockfile checked"}, msg, lockfileUnreadableRemedy) {
+			what := "the install goes ahead without its lockfile checked"
+			if len(targets) > 0 {
+				msg = fmt.Sprintf("%v, so nvx cannot tell which versions this command installs. It can check what package.json declares, and not the packages those bring in. Proceed with only those checked?", err)
+				what = "the install goes ahead with only what package.json declares checked"
+			}
+			if !askCheck(req.nvxHome, checkInfo{check: checkLockfileUnreadable, detail: err.Error(), what: what}, msg, lockfileUnreadableRemedy) {
 				LogError("Installation aborted: the lockfile could not be read and proceeding was not approved.")
 				return 1, "its lockfile could not be read", ""
 			}
-			return 0, "", ""
+			if len(targets) == 0 {
+				return 0, "", ""
+			}
+			LogWarn("Checking what package.json declares in place of the lockfile, which could not be read. The packages those bring in are not checked.")
 		}
 	}
 	if len(targets) == 0 {
@@ -127,7 +144,7 @@ func verifyBeforeRun(req verifyRequest) (int, string, string) {
 	return code, reason, targets[0].spec
 }
 
-const lockfileUnreadableRemedy = "No policy setting waives an unreadable lockfile. Check that it is valid JSON written by npm." +
+const lockfileUnreadableRemedy = "No policy setting waives an unreadable lockfile. Check that the package manager wrote it, or update nvx if the lockfile is in a newer format than it reads." +
 	" To proceed without the checks, pass -y or set NVX_YES=true, which approves every check in the run."
 
 // detectTargets lists what the checks run on without asking the package
@@ -141,10 +158,10 @@ func detectTargets(cmdName string, args []string, platform nodePlatform) ([]veri
 			return specTargets(pkgs), nil
 		}
 		if hasInstallVerb(args, ciVerbs...) || isBareYarnInstall(cmd, args) {
-			return projectTargets(platform)
+			return projectTargets(cmd, platform)
 		}
 		if commandVerbIndex(args, refreshVerbs...) >= 0 {
-			return refreshTargets(args, platform)
+			return refreshTargets(cmd, args, platform)
 		}
 		if t := runnerTargets(cmd, args); t != nil {
 			return t, nil
@@ -160,10 +177,10 @@ func detectTargets(cmdName string, args []string, platform nodePlatform) ([]veri
 			return specTargets(pkgs), nil
 		}
 		if hasInstallVerb(args, "a") {
-			return projectTargets(platform)
+			return projectTargets(cmd, platform)
 		}
 		if commandVerbIndex(args, refreshVerbs...) >= 0 {
-			return refreshTargets(args, platform)
+			return refreshTargets(cmd, args, platform)
 		}
 		if t := runnerTargets(cmd, args); t != nil {
 			return t, nil
@@ -179,9 +196,26 @@ func detectTargets(cmdName string, args []string, platform nodePlatform) ([]veri
 	return nil, nil
 }
 
-// projectTargets reads what a project installs: its lockfile when it has one,
+// projectTargets reads what a project installs: the lockfile cmd installs
+// from when it has one, otherwise package.json as declared. With an error for
+// a pnpm, Yarn or Bun lockfile that is there and cannot be read, it returns
+// what it read before it read those lockfiles, for the caller to offer.
+func projectTargets(cmd string, platform nodePlatform) ([]verifyTarget, error) {
+	dir := projectManifestDir()
+	lock, ok, err := readPMLockfile(cmd, dir)
+	if err != nil {
+		fallback, _ := npmProjectTargets(platform)
+		return fallback, err
+	}
+	if ok {
+		return pmLockTargets(lock, platform, dir), nil
+	}
+	return npmProjectTargets(platform)
+}
+
+// npmProjectTargets reads package-lock.json when the project has one,
 // otherwise package.json as declared.
-func projectTargets(platform nodePlatform) ([]verifyTarget, error) {
+func npmProjectTargets(platform nodePlatform) ([]verifyTarget, error) {
 	lock, ok, err := readProjectLockfile(projectManifestDir())
 	if err != nil {
 		return nil, err
@@ -258,7 +292,7 @@ func markTransitive(targets []verifyTarget, chosen []string) []verifyTarget {
 
 // refreshTargets covers update, upgrade, dedupe and rebuild. Named packages
 // are checked as named. Without names they act on the whole project.
-func refreshTargets(args []string, platform nodePlatform) ([]verifyTarget, error) {
+func refreshTargets(cmd string, args []string, platform nodePlatform) ([]verifyTarget, error) {
 	i := commandVerbIndex(args, refreshVerbs...)
 	named := installPackagesArg(args, refreshVerbs...)
 	verb := strings.ToLower(args[i])
@@ -266,7 +300,15 @@ func refreshTargets(args []string, platform nodePlatform) ([]verifyTarget, error
 	if len(named) > 0 && !rebuild {
 		return specTargets(named), nil
 	}
-	project, err := projectTargets(platform)
+	lockCmd := cmd
+	switch verb {
+	case "update", "up", "upgrade", "udpate":
+		// An update installs newer versions than the lockfile's. Checking the
+		// locked ones would pass over what installs, and refuse an update
+		// made to leave a vulnerable version behind.
+		lockCmd = ""
+	}
+	project, err := projectTargets(lockCmd, platform)
 	if err != nil || len(named) == 0 {
 		return project, err
 	}
@@ -418,7 +460,7 @@ func isInstalledAt(root, path, name, version string) bool {
 
 // lockEntryTarget classifies one lockfile entry by where it is fetched from.
 func lockEntryTarget(name, version, resolved, integrity string, scripts bool, declared []string) verifyTarget {
-	t := verifyTarget{spec: name + "@" + version, name: name, resolved: resolved, integrity: integrity, hasInstallScript: scripts}
+	t := verifyTarget{spec: name + "@" + version, name: name, resolved: resolved, integrity: integrity, hasInstallScript: scripts, locked: true}
 	lower := strings.ToLower(resolved)
 	switch {
 	case resolved == "":

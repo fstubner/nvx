@@ -22,6 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never sent to your proxy. Other schemes, such as `socks4://`, are still
   ignored with a warning.
 
+* **pnpm, yarn and bun installs check every package their lockfile
+  installs.** A `pnpm install`, `yarn` or `bun install` that names no package
+  was checked on what `package.json` declares, and the packages those bring in
+  went unchecked. Measured 2026-10-06 with `is-number` on `blocked_packages`,
+  in a project depending on `is-odd@3.0.1`, which depends on `is-number`:
+  `pnpm install --frozen-lockfile` and `yarn install` both installed
+  `is-number@6.0.0` (run with `--no-sandbox`, which gets the same checks). nvx now reads `pnpm-lock.yaml` (lockfileVersion 5.x, 6.x
+  and 9.x, pnpm 7 to 12), `yarn.lock` (Yarn 1, and Yarn 2 and later) and
+  `bun.lock`, and both installs are refused naming `is-number`. Every entry for
+  this platform gets the checks a `package-lock.json` entry gets, and its hash
+  or tarball URL must match the registry's where the lockfile records one. The
+  typosquat check stays on the names you chose. A lockfile nvx cannot read is
+  asked about, as an unreadable `package-lock.json` is. The package manager
+  resolves afresh a dependency that `package.json` or a lockfile entry
+  declares and the lockfile has no entry for (pnpm 10 and Yarn 1 both
+  installed `is-number` with its entry deleted), so nvx checks it as declared,
+  and the run says so. Named installs such as `pnpm add left-pad`,
+  updates, and Bun's binary `bun.lockb` are checked on what they name or
+  declare, as before.
+
 ## [0.7.0] - 2026-10-06
 
 ### Added
