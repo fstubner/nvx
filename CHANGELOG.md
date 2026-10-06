@@ -45,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **pnpm runs inside the Windows sandbox on a machine that never ran
+  `nvx setup`.** pnpm loads a module that resolves the temp directory with
+  Node's synchronous `realpath` as soon as it starts. Without a drive-root
+  grant that call is refused on `C:\`, so every contained pnpm command stopped
+  with `EPERM: operation not permitted, lstat 'C:'`. The preload now answers
+  it the way it already answered the native `realpath`. Measured 2026-10-06
+  with pnpm 10.34.6 and no grant: two installs in a row complete.
+
 * **A tilde version range gets every pre-install check.** A spec such as
   `left-pad@~1.3.0`, or `~1.3.0` in `package.json`, was read as a path in the
   home directory because it starts with `~`. A path gets only the blocklist, so
