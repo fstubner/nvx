@@ -96,9 +96,9 @@ export const faq: FaqItem[] = [
   {
     group: 'Containment',
     q: 'Can I run a dev server, or reach a local service, from the sandbox?',
-    a: 'Yes. On Windows a server started in the sandbox reports itself listening, but Windows refuses connections into it from outside, so publish the port with --expose. nvx --expose 5173:8080 npx vite makes port 5173 inside reachable at 8080, and the two numbers must differ. Linux and macOS need no flag. For a service already running on your machine, use --connect for one run or allow_hosts in a policy. Under the Docker provider, open mode reaches it through the Docker host gateway. Containment has the details.',
+    a: 'Yes. On Windows a server started in the sandbox reports itself listening, but Windows refuses connections into it from outside, so publish the port with --expose. nvx --expose 5173:8080 npx vite makes port 5173 inside reachable at 8080, and the two numbers must differ. Linux and macOS need no flag. For a service already running on your machine, use --connect for one run or allow_hosts in a policy. Containment has the details.',
     aHtml:
-      '<p>Yes. On Windows a server started in the sandbox reports itself listening, but Windows refuses connections into it from outside, so publish the port with <code>--expose</code>. <code>nvx --expose 5173:8080 npx vite</code> makes port 5173 inside reachable at 8080, and the two numbers must differ. Linux and macOS need no flag.</p><p>For a service already running on your machine, use <code>--connect</code> for one run or <code>allow_hosts</code> in a policy. Under the Docker provider, <code>open</code> mode reaches it through the Docker host gateway. <a href="/docs/containment/#local-servers-and-services">Containment</a> has the details.</p>',
+      '<p>Yes. On Windows a server started in the sandbox reports itself listening, but Windows refuses connections into it from outside, so publish the port with <code>--expose</code>. <code>nvx --expose 5173:8080 npx vite</code> makes port 5173 inside reachable at 8080, and the two numbers must differ. Linux and macOS need no flag.</p><p>For a service already running on your machine, use <code>--connect</code> for one run or <code>allow_hosts</code> in a policy. <a href="/docs/containment/#local-servers-and-services">Containment</a> has the details.</p>',
   },
   {
     group: 'Containment',
