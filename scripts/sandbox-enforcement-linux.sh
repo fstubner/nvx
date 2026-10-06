@@ -249,6 +249,84 @@ if [[ -e "$HOME_WRITE" ]]; then
   fail=1
 fi
 
+# The project's dotenv files are unreadable, and their templates are not.
+#
+# The project has to be readable for an install to work, and .env lives in it.
+# The link, copy and rename checks try to get the same bytes out under a name
+# nothing covers. The template and the plain file are the controls: without
+# them a sandbox that refused every read in the project would pass. upper/.ENV
+# is a file of its own here, and is covered like .env, as it is on macOS.
+#
+# A dotenv file created after launch is not covered, and DOTENV_CREATE pins
+# that, so the documents that say so change with it.
+echo "Dotenv: dotenv files must be unreadable while templates stay readable..."
+DOTENV_SECRET='API_KEY=DOTENV-SECRET-DO-NOT-LEAK'
+mkdir -p "$PROJ/sub" "$PROJ/upper"
+printf '%s\n' "$DOTENV_SECRET" > "$PROJ/.env"
+printf '%s\n' "$DOTENV_SECRET" > "$PROJ/sub/.env.local"
+printf '%s\n' "$DOTENV_SECRET" > "$PROJ/upper/.ENV"
+printf 'API_KEY=\n' > "$PROJ/.env.example"
+printf 'plain\n' > "$PROJ/plain.txt"
+cat > dotenv.js <<'DOTENV'
+const fs = require('fs');
+const out = [];
+const outcome = (e) => ['EPERM', 'EACCES', 'EROFS', 'EBUSY', 'EXDEV'].includes(e.code) ? 'DENIED' : 'ERROR ' + e.code;
+function read(name, p) {
+  try { fs.readFileSync(p); out.push(name + '=ALLOWED'); }
+  catch (e) { out.push(name + '=' + outcome(e)); }
+}
+function act(name, fn) {
+  try { fn(); out.push(name + '=ALLOWED'); }
+  catch (e) { out.push(name + '=' + outcome(e)); }
+}
+// Puts the bytes under a name no rule matches, then reads them there.
+function leak(name, fn, dst) {
+  try { fn(); } catch (e) { out.push(name + '=' + outcome(e)); return; }
+  try { out.push(name + (fs.readFileSync(dst, 'utf8').includes('DOTENV-SECRET') ? '=LEAKED' : '=DENIED')); }
+  catch (e) { out.push(name + '=' + outcome(e)); }
+}
+read('DOTENV_ROOT', '.env');
+read('DOTENV_SUB', 'sub/.env.local');
+if (process.argv[3]) read('DOTENV_CASE', process.argv[3]);
+read('DOTENV_TEMPLATE', '.env.example');
+read('DOTENV_CONTROL', 'plain.txt');
+act('DOTENV_WRITE', () => fs.appendFileSync('.env', 'INJECTED=1\n'));
+act('DOTENV_CREATE', () => { fs.mkdirSync('fresh', { recursive: true }); fs.writeFileSync('fresh/.env', 'X=1\n'); });
+leak('DOTENV_LINK', () => fs.linkSync('.env', 'linked.txt'), 'linked.txt');
+leak('DOTENV_COPY', () => fs.copyFileSync('.env', 'copied.txt', fs.constants.COPYFILE_FICLONE), 'copied.txt');
+leak('DOTENV_RENAME', () => fs.renameSync('.env', 'renamed.txt'), 'renamed.txt');
+fs.writeFileSync(process.argv[2], out.join('\n') + '\n');
+DOTENV
+
+DOTENV_REPORT="$PROJ/dotenv-report.txt"
+"$NVX" -y --strict shim node dotenv.js "$DOTENV_REPORT" upper/.ENV >/dev/null 2>&1 || true
+if [[ ! -f "$DOTENV_REPORT" ]]; then
+  echo "FAIL: the contained dotenv probe wrote no report." >&2
+  fail=1
+else
+  cat "$DOTENV_REPORT"
+  expect_dotenv() {
+    if ! grep -qx "$1" "$DOTENV_REPORT"; then
+      echo "FAIL: expected $1 — $2" >&2
+      fail=1
+    fi
+  }
+  expect_dotenv "DOTENV_ROOT=DENIED"      "a contained process read the project's .env"
+  expect_dotenv "DOTENV_SUB=DENIED"       "a contained process read sub/.env.local"
+  expect_dotenv "DOTENV_CASE=DENIED"      "a contained process read upper/.ENV"
+  expect_dotenv "DOTENV_TEMPLATE=ALLOWED" "a contained process could not read .env.example, a template that holds no secrets"
+  expect_dotenv "DOTENV_CONTROL=ALLOWED"  "a contained process could not read a plain project file, so the denials above prove nothing"
+  expect_dotenv "DOTENV_WRITE=DENIED"     "a contained process wrote a .env that existed at launch"
+  expect_dotenv "DOTENV_CREATE=ALLOWED"   "creating a new .env is documented as allowed on Linux; update the documents with this"
+  expect_dotenv "DOTENV_LINK=DENIED"      "a contained process read .env through a hard link"
+  expect_dotenv "DOTENV_COPY=DENIED"      "a contained process read .env through a copy"
+  expect_dotenv "DOTENV_RENAME=DENIED"    "a contained process read .env after renaming it"
+fi
+if [[ "$(cat "$PROJ/.env" 2>/dev/null)" != "$DOTENV_SECRET" ]]; then
+  echo "FAIL: .env changed or moved; a contained process wrote or renamed it." >&2
+  fail=1
+fi
+
 if [[ $fail -ne 0 ]]; then
   echo "Linux enforcement probe FAILED." >&2
   exit 1
