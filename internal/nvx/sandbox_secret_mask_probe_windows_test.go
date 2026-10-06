@@ -41,13 +41,19 @@ func TestDenyACEHidesSecretFromAppContainer(t *testing.T) {
 			}
 			fmt.Printf("%s=READ:%s\n", label, strings.TrimSpace(string(b)))
 		}
+		reportOwnToken()
 		read("SECRET", os.Getenv("NVX_PROBE_SECRET"))
+		childExtra()
+		childAppend()
 		read("NORMAL", os.Getenv("NVX_PROBE_NORMAL"))
 		// npm must still be able to create files in the project (node_modules).
 		if err := os.WriteFile(os.Getenv("NVX_PROBE_WRITE"), []byte("x"), 0o600); err != nil {
 			fmt.Printf("WRITE=DENIED\n")
 		} else {
 			fmt.Printf("WRITE=OK\n")
+		}
+		if os.Getenv("NVX_PROBE_TAMPER") == "1" {
+			childTamper(os.Getenv("NVX_PROBE_SECRET"))
 		}
 		os.Exit(0)
 	}
@@ -119,19 +125,27 @@ func TestDenyACEHidesSecretFromAppContainer(t *testing.T) {
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
 	syscall.CloseHandle(write)
-	got := readWithTimeout(t, read)
+	got := readAllWithTimeout(t, read)
 
 	requireAppContainerLaunch(t, launchErr)
 	t.Logf("child exit=%d output=%q", exitCode, got)
+	logProbeEvidence(t, secret, got)
 
 	// This pins the CURRENT, UNPROTECTED state rather than the state we want.
 	//
 	// Deny ACEs do not work here. Measured 2026-08-18, both ways round: denying the
 	// container's own SID left .env readable, and additionally denying ALL
-	// APPLICATION PACKAGES (S-1-15-2-1) left it readable too. Why is not yet
-	// understood -- an AppContainer process runs as the user, and the user's own
-	// allow on a user-owned file appears to carry the read regardless of the
-	// package-SID deny.
+	// APPLICATION PACKAGES (S-1-15-2-1) left it readable too.
+	//
+	// Measured again 2026-10-06 on Windows 11 26300, with the child reporting its own
+	// token (TestWindowsDotenvProtectionExperiments has the full record). The reader
+	// is an AppContainer process at Low integrity. Its token carries the project
+	// capability, and .env's allow is that capability's entry, inherited from the
+	// project folder. A deny for the package SID and ALL APPLICATION PACKAGES names
+	// neither. A deny for the capability itself does not hold either, with the deny
+	// first in the list or beside an explicit allow for the same capability. A deny
+	// for the user's own SID does stop the read, so the deny syntax is not at fault.
+	// What stops the child is the capability's allow being absent from .env's list.
 	//
 	// So: a contained process CAN read .env, and README.md's claim that "a bad
 	// package can't quietly read your .env" is false on Windows. If this test ever
@@ -239,7 +253,7 @@ func TestContainedProcessCannotReachTheRealHome(t *testing.T) {
 
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
 	syscall.CloseHandle(write)
-	got := readWithTimeout(t, read)
+	got := readAllWithTimeout(t, read)
 	requireAppContainerLaunch(t, launchErr)
 	t.Logf("child output: %q", got)
 

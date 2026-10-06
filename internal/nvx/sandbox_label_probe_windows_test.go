@@ -27,6 +27,14 @@ import (
 // failing because the read is refused, the label works: update the known
 // limitations with it.
 //
+// Why, measured 2026-10-06 (TestWindowsDotenvProtectionExperiments has the full
+// record). The child is an AppContainer process at Low integrity (S-1-16-4096) with
+// token mandatory policy 1, and the file's owner is the child's own user SID. A
+// plain Low integrity process, not an AppContainer, started from a copy of the same
+// user's token was refused by the same label. So the label works, and Windows does
+// not apply it to an AppContainer process. The child also appended to an unlabelled
+// package.json, which a plain Low integrity process could not.
+//
 // NVX_PROBE_LABEL overrides the SDDL; "none" applies no label, as the control.
 func TestIntegrityLabelHidesSecretFromAppContainer(t *testing.T) {
 	if os.Getenv("NVX_PROBE") != "1" {
@@ -92,9 +100,10 @@ func TestIntegrityLabelHidesSecretFromAppContainer(t *testing.T) {
 		env, workDir, sid, 0, scopeCaps)
 	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
 	syscall.CloseHandle(write)
-	got := readWithTimeout(t, read)
+	got := readAllWithTimeout(t, read)
 	requireAppContainerLaunch(t, launchErr)
 	t.Logf("label %q: child exit=%d output=%q", label, exitCode, got)
+	logProbeEvidence(t, secret, got)
 
 	switch {
 	case contains(got, "SECRET=DENIED") && label != "none":
