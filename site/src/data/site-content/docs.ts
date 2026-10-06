@@ -27,7 +27,6 @@ export const docsSidebar: DocsSection[] = [
     label: 'Reference',
     items: [
       { label: 'Commands', link: '/docs/commands/' },
-      { label: 'FAQ', link: '/docs/faq/' },
     ],
   },
 ];

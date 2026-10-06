@@ -104,8 +104,10 @@ install and run scripts. Its defenses are layered:
 3. **Process isolation.** Commands that fetch or execute package-authored code
    run inside an OS-native sandbox. The sandbox is Windows AppContainer, Linux
    Landlock + network namespace + seccomp, or macOS Seatbelt. It has a scrubbed
-   environment. It can write only to the working directory and an ephemeral
-   guest home, which holds its temp directory. On macOS it may also write a
+   environment. It can write only to the working directory and a guest home
+   under `~/.nvx`, which holds its temp directory. The guest home is thrown away
+   after each run, except for pnpm and for tools approved as trusted, which keep
+   one per project. On macOS it may also write a
    few named device files such as `/dev/null` and `/dev/tty`.
 
    That is installs (`install`, `ci`, `add`, `update`, `rebuild`, `dedupe`,

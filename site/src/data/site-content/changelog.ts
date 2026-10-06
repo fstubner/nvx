@@ -1,4 +1,5 @@
-import type { ChangelogSurface, SectionCopy } from './types';
+import type { SectionCopy } from './types';
+import type { ChangelogSurface } from './product-types';
 import { meta } from './meta';
 
 // The changelog page's own copy, and one plain-language summary per release.
@@ -37,6 +38,8 @@ export const changelogSurfaces: ChangelogSurface[] = [
 ];
 
 export const releaseSummaries: Record<string, string> = {
+  'v0.7.0':
+    'The first Authenticode-signed release, and nvx is on npm. pnpm installs inside the Windows sandbox, nvx setup takes seconds, and the pre-install checks cover every package an npm install brings in.',
   'v0.6.0':
     'Per-project sandbox identity, and the first ways for a contained tool to reach named things outside its box: --connect for one service, loopback mode, read-and-execute grants, and named environment variables. The wsl, wslc and systemd-nspawn providers were removed.',
   'v0.5.6':

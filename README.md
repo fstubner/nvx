@@ -89,7 +89,6 @@ The full reference is in **[Commands](https://nvx.run/docs/commands/)** and
 | [Policy](https://nvx.run/docs/policy/) | Global and project policy files, and every setting |
 | [Known limitations](https://nvx.run/docs/limitations/) | What containment does not cover |
 | [Commands](https://nvx.run/docs/commands/) | Commands, flags and environment variables |
-| [FAQ](https://nvx.run/docs/faq/) | Switching, networking, mixed runtimes, agents |
 
 The threat model is in [SECURITY.md](SECURITY.md), and the per-platform evidence
 behind every containment claim is in

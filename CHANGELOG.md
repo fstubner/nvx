@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `allow_read_exec` to run contained, as on Linux. Files outside the home stay
   readable on macOS.
 
-## [0.7.0]
+## [0.7.0] - 2026-10-06
 
 ### Added
 

@@ -2,7 +2,9 @@ import type { Analytics, BuiltWithEntry, SocialProof } from './types';
 
 // What the product is made of, not what the site is made of.
 export const builtWith: BuiltWithEntry[] = [
-  { name: 'Go', url: 'https://go.dev/' },
+  // 'Golang', not 'Go': Lighthouse's link-text audit reads a link that says
+  // only "Go" as non-descriptive, and it cost every page its SEO score.
+  { name: 'Golang', url: 'https://go.dev/' },
   { name: 'AppContainer', url: 'https://learn.microsoft.com/en-us/windows/win32/secauthz/appcontainer-isolation' },
   { name: 'Landlock', url: 'https://landlock.io/' },
   // macOS's own sandbox primitive, named everywhere else on the page
