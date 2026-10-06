@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+* **Contained installs work behind an `https://`, `socks5://` or `socks5h://`
+  proxy.** Only an `http://` value in `HTTPS_PROXY` or `HTTP_PROXY` was used.
+  Any other was ignored with a warning, and contained connections were made
+  directly, so a machine whose only way out is such a proxy reached nothing.
+  An `https://` proxy is reached over TLS, its certificate is checked against
+  the system roots, and it gets the same CONNECT request and
+  `Proxy-Authorization` as an `http://` one. A SOCKS5 proxy gets the URL's
+  user and password as a SOCKS5 login. `socks5h://` sends the host name for
+  the proxy to look up. `socks5://` sends the addresses nvx looked up and
+  checked itself. The allowlist still decides first, so a host it refuses is
+  never sent to your proxy. Other schemes, such as `socks4://`, are still
+  ignored with a warning.
+
 ## [0.7.0] - 2026-10-06
 
 ### Added
