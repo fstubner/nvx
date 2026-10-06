@@ -615,17 +615,13 @@ func stripProxyEnv(env []string) []string {
 
 // launchCapabilitySIDs is the capability set every contained launch carries.
 //
-// Extracted so it can be asserted. The setup capability is the identity an older
-// `nvx setup` wrote drive-root ACEs for. Nothing writes them now, but a machine
-// that still carries them keeps them applying until `nvx setup` removes them, so
-// the capability stays on the token. A machine with no such entry carries a
-// capability nothing has granted anything to, which costs nothing and grants
-// nothing.
+// Extracted so it can be asserted. It does not include the setup capability, the
+// identity an older `nvx setup` wrote drive-root and Users-folder ACEs for.
+// Nothing needs those entries (see sandbox_walkup_shim.js), so a launch that
+// does not carry the identity makes any leftover entry inert on every machine,
+// whether or not `nvx setup` has removed it yet.
 func launchCapabilitySIDs(scopeCaps, networkCaps []string) []string {
 	caps := append(append([]string{}, scopeCaps...), networkCaps...)
-	if setupCap, err := deriveCapabilitySIDString(setupCapabilityName); err == nil {
-		caps = append(caps, setupCap)
-	}
 	// The runtime, the supervisor and the guest home's parent are granted to this
 	// one; without it the container cannot read the binary it is about to run.
 	if runtimeCap, err := runtimeCapabilitySID(); err == nil {

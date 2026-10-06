@@ -13,8 +13,8 @@ import (
 // Older versions asked for an elevated `nvx setup` that granted the sandbox read
 // and list access on drive roots and Users folders. Nothing needs those grants:
 // the preload in sandbox_walkup_shim.js answers the stats they were for. Where
-// they are still on disk they do no harm to anything nvx does, but they are
-// permissions on the machine's drive roots that nobody is using, and
+// they are still on disk no launch carries the identity they name, so they admit
+// nothing. They are permissions on the machine's drive roots that nobody uses, and
 // `nvx setup` now exists to remove them.
 //
 // A note and never a failure. Nothing is broken, so the machine is not reported
@@ -43,6 +43,6 @@ func reportSetupLeftoversWith(nvxHome, workDir string, hasEntry func(sid, path s
 		where = append(where, e.Path)
 	}
 	fmt.Println("  [note] an older 'nvx setup' left sandbox access on " + strings.Join(where, ", "))
-	fmt.Println("         nvx does not need it, and nothing is broken")
+	fmt.Println("         nvx does not need it, no sandbox carries the identity it names, and nothing is broken")
 	fmt.Println("         to remove it, from an Administrator terminal: nvx setup")
 }

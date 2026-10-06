@@ -290,9 +290,10 @@ These are deliberate trade-offs, and this section documents each one:
 - **Your home directory's names are visible on Windows, contents are not.**
   A contained process can list your profile directory, which shows which
   credential stores exist. The entry that allows it ships with Windows, and nvx
-  cannot revoke it. `C:\` and `C:\Users` are listable only where an older
-  `nvx setup` granted them, and `nvx setup` now removes that grant. "Limitations
-  in detail" below has the measurements.
+  cannot revoke it. `C:\` and `C:\Users` are not listable from a contained
+  process. An older `nvx setup` granted them, but launches no longer carry the
+  identity it granted to, and `nvx setup` removes the entries. "Limitations in
+  detail" below has the measurements.
 - **On Windows, a profile folder that lost its inheritance protection is open
   to other accounts.** Windows ships `C:\Users` and each profile folder
   protected from the drive root's `Authenticated Users: Modify`. Older nvx
@@ -452,8 +453,9 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   LIST[C:\Users\you]   OK, 203 entries  OK, 203 entries
   ```
 
-  The first two read OK where an older setup's grant applies. `nvx setup`
-  removes the grants nvx added, from an Administrator terminal. The shipped entry
+  The first two read OK while an older setup's grant applied. Launches no longer
+  carry the identity it granted to, so a grant left on a machine admits nothing.
+  `nvx setup` removes the grants nvx added, from an Administrator terminal. The shipped entry
   on your profile stays either way.
 
   This entry used to name all three as always visible, crediting the shipped

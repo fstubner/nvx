@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and exits 0. `--undo` and `--all-drives` are still accepted and change
   nothing. nvx no longer suggests `nvx setup` after a failed command, and
   `nvx doctor` reports a leftover grant as a note, never as a failure.
+  Contained launches also stop carrying the identity those grants were made to,
+  so a grant an older setup left admits nothing from the moment you upgrade, even
+  before you run `nvx setup`.
 
   Setup also repairs the other damage older versions did. Every permission
   they wrote switched off the inheritance protection Windows ships on

@@ -2,19 +2,18 @@
 
 package nvx
 
-// Do launches still carry the capability an older `nvx setup` granted?
+// A drive-root entry an older `nvx setup` left admits no launch.
 //
-// Setup no longer grants anything, but an older one wrote drive-root stat access
-// to the capability named by setupCapabilityName, and every launch appends that
-// capability to its token (sandbox_native_windows.go). If those two ever named
-// different things -- a renamed constant, a launch path that forgot to append
-// it, a derivation that differs between the elevated process and the contained
-// one -- an entry an older setup left would apply to nothing, and `nvx setup`
-// would be removing entries that never did anything.
+// Setup no longer grants anything, and launches stopped carrying the capability
+// named by setupCapabilityName, so an entry left for it applies to nothing
+// whether or not `nvx setup` has removed it. This writes such an entry the way
+// the old setup did and checks that a real launch is still refused. A launch
+// that carried the capability again would read the file, and nothing else in the
+// suite would notice.
 //
 // TestCapabilitySidGatesFileAccess proves the general mechanism -- a custom
-// capability ACE gates access -- but not that THIS capability is the one a real
-// launch carries.
+// capability ACE gates access -- which is what makes the refusal here mean
+// something.
 //
 // Deliberately on a directory this test owns rather than on C:\ or C:\Users,
 // which need elevation to write. The write primitive is identical either way.
@@ -27,7 +26,7 @@ import (
 	"testing"
 )
 
-func TestTheCapabilitySetupGrantsIsTheOneLaunchesCarry(t *testing.T) {
+func TestALeftoverSetupGrantAdmitsNoLaunch(t *testing.T) {
 	if os.Getenv("NVX_PROBE") != "1" {
 		t.Skip("set NVX_PROBE=1 to run (creates a throwaway AppContainer profile and writes an ACL)")
 	}
@@ -91,16 +90,12 @@ func TestTheCapabilitySetupGrantsIsTheOneLaunchesCarry(t *testing.T) {
 		env := append(scrubEnvironment(guestHome),
 			"NVX_PROBE=1", "NVX_SETUPCAP_CHILD=1", "NVX_PROBE_TARGET="+target,
 			"NVX_PROBE_STAT_TARGET="+statTarget)
-		// launchCapabilitySIDs, not a hand-written append of setupCap.
-		//
-		// The first version of this test passed setupCap to the launch itself, which
-		// made it tautological: it granted an ACE to a capability and then handed the
-		// launch that same capability, so of course they matched. Renaming the
-		// constant under it still passed. Going through the real assembly is what
-		// makes the ACE and the token independent -- the grant below names the setup
-		// capability, and only this function decides whether the launch carries it.
+		// launchCapabilitySIDs, not a hand-written list. Going through the real
+		// assembly is what makes the ACE and the token independent -- the entry
+		// below names the setup capability, and only this function decides whether
+		// the launch carries it.
 		_, launchErr := launchAppContainerProcess(childExe,
-			[]string{"-test.run=TestTheCapabilitySetupGrantsIsTheOneLaunchesCarry"},
+			[]string{"-test.run=TestALeftoverSetupGrantAdmitsNoLaunch"},
 			env, workDir, sid, 0, launchCapabilitySIDs(scopeCaps, nil))
 
 		procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
@@ -110,36 +105,32 @@ func TestTheCapabilitySetupGrantsIsTheOneLaunchesCarry(t *testing.T) {
 		return strings.TrimSpace(out)
 	}
 
-	// Negative control first: without the grant the file must be unreachable, or a
-	// later READ=OK would prove nothing about the capability.
+	// Negative control first: without the entry the file must be unreachable, or a
+	// later READ=DENIED would prove nothing about the launch.
 	got := run()
 	if !strings.Contains(got, "READ=DENIED") {
 		t.Fatalf("the target was readable BEFORE any grant (%q); this probe cannot "+
 			"distinguish the capability from ambient access", got)
 	}
 	if !strings.Contains(got, "STAT=DENIED") {
-		t.Fatalf("the stat target was statable BEFORE any grant (%q); this probe cannot "+
-			"tell setup's grant from ambient access", got)
+		t.Fatalf("the stat target was statable BEFORE any entry (%q); this probe cannot "+
+			"tell the entry from ambient access", got)
 	}
 
-	// Now the grant setup makes, on a directory this test can write.
+	// Now the entry an older setup made, on a directory this test can write.
 	if err := grantACL(outside, setupCap, aclMaskReadExec, nvxInheritFlags); err != nil {
 		t.Fatalf("granting the setup capability read/execute: %v", err)
 	}
 	t.Cleanup(func() { _ = revokeACL(outside, setupCap) })
 	if err := setupACLWrite(statTarget, setupCap, aclMaskReadExec); err != nil {
-		t.Fatalf("setup's own grant: %v", err)
+		t.Fatalf("writing the entry: %v", err)
 	}
 	t.Cleanup(func() { _ = revokeSidGrant(setupCap, statTarget) })
 
 	got = run()
-	if !strings.Contains(got, "STAT=OK") {
-		t.Fatalf("a launch could NOT stat a directory granted through setup's own write: got %q", got)
-	}
-	if !strings.Contains(got, "READ=OK") {
-		t.Fatalf("a launch could NOT reach a directory granted to %s (%s): got %q.\n"+
-			"That means `nvx setup` grants an identity contained launches do not carry, "+
-			"so the documented repair for contained npx would not work and would give no sign of it.",
-			setupCapabilityName, setupCap, got)
+	if !strings.Contains(got, "STAT=DENIED") || !strings.Contains(got, "READ=DENIED") {
+		t.Fatalf("a launch reached a directory granted only to %s (%s): got %q.\n"+
+			"Launches must not carry the setup capability, or an entry an older setup left "+
+			"on a drive root would keep applying.", setupCapabilityName, setupCap, got)
 	}
 }

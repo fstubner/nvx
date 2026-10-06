@@ -17,15 +17,16 @@ import (
 const stableSandboxProfile = "nvx.sandbox"
 
 // setupCapabilityName is the identity an older `nvx setup` granted drive-root
-// stat access to. Setup no longer grants anything.
+// stat access to. Setup no longer grants anything, and no launch carries the
+// identity, so an entry left for it admits nothing. It is kept only so `nvx
+// setup` and `nvx doctor` can find those entries and remove or report them.
 //
 // It used to grant the package SID, which worked only while every sandbox shared
 // one package. Packages are per-project now, so a grant made at setup time could
-// not name them -- they do not exist yet. A capability can be granted once and
+// not name them -- they do not exist yet. A capability could be granted once and
 // carried by every launch, which is what made that elevated grant outlive the
-// change. Launches still carry it, so a grant an older setup left keeps applying
-// until `nvx setup` removes it. Capabilities do not affect the loopback rule;
-// that is package-scoped, which is the whole point.
+// change. Capabilities do not affect the loopback rule; that is package-scoped,
+// which is the whole point.
 const setupCapabilityName = "nvx.setup.driveroots"
 
 // sandboxPackageName returns the AppContainer package a session runs under.

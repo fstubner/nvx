@@ -331,9 +331,10 @@ mismatched has-grant check repeated them on every launch.
 Since 2026-09-02 those
 go to a second capability every sandbox carries, `nvx.runtime.readonly`, granted
 once per path per machine (`sandbox_runtime_identity_windows.go`). A token now
-holds three identities. They are the project's (writable roots and `allow_read_exec`),
-the runtime's (read-only trees), and setup's, which an older `nvx setup` granted
-drive roots to and nothing grants to now.
+holds two identities besides the package. They are the project's (writable roots and
+`allow_read_exec`) and the runtime's (read-only trees). It carried a third until
+2026-10-06, setup's, which an older `nvx setup` granted drive roots to. Nothing
+grants to it now, and launches no longer carry it.
 
 Deriving from the project instead of the session is what makes it affordable. The
 same project derives the same SID every run, so the `icacls` write happens once and
@@ -1006,6 +1007,12 @@ they date quickly. Each carries the date and machine of its measurement.
   On a machine with nothing to remove it says so and exits 0, from any terminal.
   `nvx doctor` shows leftover entries as a note, never as a failure. `--undo` and
   `--all-drives` are still accepted and change nothing.
+
+  Launches no longer carry the capability those entries were granted to
+  (`launchCapabilitySIDs`), so an entry an older setup left admits no contained
+  process on any machine, whether or not setup has removed it. A probe writes
+  such an entry and checks that a real launch is still refused
+  (`TestALeftoverSetupGrantAdmitsNoLaunch`).
 
   Setup also restores the inheritance protection older versions switched off on
   `C:\Users` and on the profile folder. It removes the inherited entries and keeps
