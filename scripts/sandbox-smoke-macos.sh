@@ -148,6 +148,10 @@ PKG="$PROJ/pkgtest"
 mkdir -p "$PKG"
 cd "$PKG"
 printf '%s' '{"name":"probe","version":"1.0.0","dependencies":{"ms":"2.1.3"}}' > package.json
+# A .env and a .env.local, as most projects have, so the install runs with the
+# sandbox hiding them.
+printf 'API_KEY=smoke\n' > .env
+printf 'API_KEY=smoke\n' > .env.local
 # Shim directory leading PATH: what `nvx env` leaves behind, and the
 # arrangement in which a contained install was measured to fail on Linux -- npm
 # resolves node through PATH, found nvx's shim, and the shim could not resolve a

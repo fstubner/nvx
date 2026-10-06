@@ -252,6 +252,10 @@ PKG="$PROJ/pkgtest"
 mkdir -p "$PKG"
 cd "$PKG"
 printf '%s' '{"name":"probe","version":"1.0.0","dependencies":{"ms":"2.1.3"}}' > package.json
+# A .env and a .env.local, as most projects have, so the install runs with the
+# sandbox hiding them.
+printf 'API_KEY=smoke\n' > .env
+printf 'API_KEY=smoke\n' > .env.local
 # The shim directory leads PATH, which is what `nvx env` and init-shims leave
 # behind and the arrangement the README describes. It is also the one that
 # broke: npm resolves node through PATH, found nvx's node SHIM there, and the

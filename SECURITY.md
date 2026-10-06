@@ -245,9 +245,15 @@ These are deliberate trade-offs, and this section documents each one:
   unrestricted. Filesystem containment, environment scrubbing and the
   pre-install checks were unaffected. See
   `docs/enforcement-matrix.md`.
-- **A `.env` inside the project is readable by a contained install.** The project
-  directory has to be readable for an install to work, and `.env` lives in it.
-  Environment *variables* are scrubbed, and a file is a file. Secrets outside the
+- **On Windows, a `.env` inside the project is readable by a contained
+  install.** The project directory has to be readable for an install to work,
+  and `.env` lives in it. Environment *variables* are scrubbed, and a file is a
+  file. A deny entry on the file and a medium integrity label on it were both
+  measured, and a contained process read it either way. On macOS and Linux a
+  contained process cannot read the project's `.env` or `.env.*` files, except
+  the templates `.env.example`, `.env.sample`, `.env.template` and `.env.dist`.
+  On Linux that covers the files present when the run starts.
+  `docs/enforcement-matrix.md` note 15 has the details. Secrets outside the
   project, such as `~/.ssh`, `~/.aws` and `~/.npmrc`, stay unreachable on Windows
   and Linux. On macOS the Seatbelt profile denies reads under the home
   directory and nvx's home, apart from the project, the guest home, nvx's
