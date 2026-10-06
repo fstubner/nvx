@@ -9,6 +9,10 @@ import type { Feedback } from './feedback-types';
 // The hero's types live in ./hero-types and are re-exported the same way, for
 // the same reason: the comparison table's types took this file to 328.
 export type { Hero, HeroCommands, HeroDownload } from './hero-types';
+
+// The hero's live metrics, in ./social-types for the same reason.
+export type { SocialProof } from './social-types';
+import type { SocialProof } from './social-types';
 import type { Hero, HeroCommands, HeroDownload } from './hero-types';
 
 // The shared picture-slot type; see ./visual-types.
@@ -204,23 +208,6 @@ export interface BuiltWithEntry {
   url: string;
 }
 
-export interface SocialProof {
-  /** GitHub repo in "owner/name" format. Used to fetch stars + download counts. */
-  repo: string;
-  /**
-   * crates.io crate name, when the product is installable with `cargo install`.
-   * Its all-time downloads are added to the GitHub release-asset total, because
-   * a cargo install never touches a release asset and the label says "total".
-   * Omit for a product that is not on crates.io: the fetch is then skipped and
-   * the total comes from GitHub alone.
-   *
-   * Name only the crate people install. Library crates alongside it are
-   * dependency resolution and docs.rs builds rather than installs, and counting
-   * them reports one `cargo install` several times.
-   */
-  cratesIoCrate?: string;
-}
-
 export interface Analytics {
   /** Cloudflare Web Analytics beacon token. Omit to disable. */
   cloudflareToken?: string;
@@ -241,6 +228,9 @@ export interface Modules {
   /** Whether the /changelog/ page exists for this product. When false,
    *  nav/footer stop linking to /changelog/. */
   changelog: boolean;
+  /** Whether /privacy/ exists. When false the page is not built
+   *  (src/pages/[policy].astro returns no paths) and the footers drop it. */
+  privacy: boolean;
 }
 
 /** How the landing page arranges its hero and the rhythm below it. */

@@ -14,7 +14,7 @@ interface GitHubRelease {
   html_url?: string;
 }
 
-export function initLandingPage(repo: string, cratesIoCrate?: string): void {
+export function initLandingPage(repo: string, cratesIoCrate?: string, npmPackage?: string): void {
     // Live social proof: GitHub stars + cumulative release asset downloads.
     // Unauthenticated GitHub API is rate-limited to 60/hour per IP; on failure
     // hide optional metrics so visitors don't see stale placeholders.
@@ -48,15 +48,20 @@ export function initLandingPage(repo: string, cratesIoCrate?: string): void {
       fetch(`https://api.github.com/repos/${repo}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
-          // Zero is hidden, not shown. A new repo's "0★" says nothing a
-          // visitor can use and reads as a verdict on the product.
-          if (!d || typeof d.stargazers_count !== "number" || d.stargazers_count === 0) return;
+          if (!d || typeof d.stargazers_count !== "number") return;
           const stars = document.getElementById("stars");
           const count = document.getElementById("stars-count");
-          if (count) count.textContent = fmt(d.stargazers_count);
-          // Only reveal a count that says something. A fresh repo has 0 stars,
-        // and "0" reads worse than an absent chip.
-        if (stars) stars.hidden = d.stargazers_count < 1;
+          // Zero is not shown as a number. A new repo's "0★" says nothing a
+          // visitor can use and reads as a verdict on the product, so the
+          // item asks instead, and points at the repo page, where the star
+          // button is: GitHub has no link that stars a repo by itself.
+          if (d.stargazers_count === 0) {
+            if (count) count.textContent = "Star on GitHub";
+            if (stars instanceof HTMLAnchorElement) stars.href = `https://github.com/${repo}`;
+          } else if (count) {
+            count.textContent = fmt(d.stargazers_count);
+          }
+          if (stars) stars.hidden = false;
           refreshMetricSeparators();
         })
         .catch(() => {});
@@ -85,11 +90,14 @@ export function initLandingPage(repo: string, cratesIoCrate?: string): void {
       // ever fetch crates.io, so leaving this false would hold the label at
       // "one source has not reported" for the life of the page.
       let cratesSettled = !cratesIoCrate;
+      // npm, the same way: a third source only for a product on npm.
+      let npmDownloads: number | null = null;
+      let npmSettled = !npmPackage;
       const renderDownloads = () => {
-        if (githubDownloads === null && cratesDownloads === null) return;
-        const total = (githubDownloads ?? 0) + (cratesDownloads ?? 0);
-        // A product that ships through a registry these two sources do not
-        // count -- npm, PyPI -- has no release assets, and printed "0
+        if (githubDownloads === null && cratesDownloads === null && npmDownloads === null) return;
+        const total = (githubDownloads ?? 0) + (cratesDownloads ?? 0) + (npmDownloads ?? 0);
+        // A product that ships through a registry these sources do not
+        // count -- PyPI, say -- has no release assets, and printed "0
         // downloads" beside a package installed daily. Nothing is better
         // than a number that is wrong in the direction that matters.
         if (total === 0) return;
@@ -98,9 +106,10 @@ export function initLandingPage(repo: string, cratesIoCrate?: string): void {
         // only GitHub in, then "Downloads: 2,635 total" once crates.io
         // landed -- same label, same page, a fifteenfold difference. Until
         // both are in, the number is a lower bound and now says so.
-        const complete = githubSettled && cratesSettled
+        const complete = githubSettled && cratesSettled && npmSettled
           && githubDownloads !== null
-          && (!cratesIoCrate || cratesDownloads !== null);
+          && (!cratesIoCrate || cratesDownloads !== null)
+          && (!npmPackage || npmDownloads !== null);
         const el = document.getElementById("downloads");
         if (el) {
           // fmtDownloads already appends "+" above 1000; don't double it.
@@ -138,6 +147,38 @@ export function initLandingPage(repo: string, cratesIoCrate?: string): void {
           // withholding the word "total".
           .finally(() => {
             cratesSettled = true;
+            renderDownloads();
+          });
+      }
+
+      // npm's downloads API also sets `access-control-allow-origin: *`, but
+      // answers at most 18 months per request: a longer range is silently
+      // cut to the last 18 months (asked for 2024-01-01 onwards, it answered
+      // from 2025-04-05). So the all-time total is summed backwards in
+      // 540-day spans until one comes back empty. npm's counts begin
+      // 2015-01-10; an empty span means the package did not exist yet, or
+      // went 18 months without a download, which ends the sum early.
+      if (npmPackage) {
+        const day = 24 * 60 * 60 * 1000;
+        const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10);
+        const sumBack = async (end: number, sum: number): Promise<number> => {
+          const start = end - 539 * day;
+          const r = await fetch(
+            `https://api.npmjs.org/downloads/point/${isoDay(start)}:${isoDay(end)}/${npmPackage}`,
+          );
+          if (!r.ok) throw new Error(`npm downloads: ${r.status}`);
+          const d = await r.json();
+          const n = typeof d?.downloads === "number" ? d.downloads : 0;
+          if (n === 0 || start <= Date.UTC(2015, 0, 10)) return sum + n;
+          return sumBack(start - day, sum + n);
+        };
+        sumBack(Date.now(), 0)
+          .then((n) => {
+            npmDownloads = n;
+          })
+          .catch(() => {})
+          .finally(() => {
+            npmSettled = true;
             renderDownloads();
           });
       }

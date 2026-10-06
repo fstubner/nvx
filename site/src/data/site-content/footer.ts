@@ -13,6 +13,6 @@ export const builtWith: BuiltWithEntry[] = [
   { name: 'Seatbelt', url: 'https://developer.apple.com/documentation/security/app-sandbox' },
 ];
 
-export const social: SocialProof = { repo: 'fstubner/nvx' };
+export const social: SocialProof = { repo: 'fstubner/nvx', npmPackage: '@fstubner/nvx' };
 
 export const analytics: Analytics = {};
