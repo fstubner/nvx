@@ -51,6 +51,10 @@ type policyCheckResult struct {
 }
 
 func runPolicyCheck(args []string, nvxHome string) int {
+	if wantsHelp(args) {
+		fmt.Print(commandHelpText("policy"))
+		return 0
+	}
 	asJSON := false
 	online := false
 	for _, arg := range args {
@@ -121,7 +125,10 @@ func classForCode(code int) string {
 // once: stopping at the first finding turns one fix into one run per finding.
 // The exit code is chosen afterwards, from the most severe class present.
 func evaluatePolicyCheck(nvxHome, cwd string, online bool) policyCheckResult {
-	var result policyCheckResult
+	// Findings starts as an empty list, not nil: encoding/json writes a nil slice
+	// as null, and a consumer iterating the array should not have to special-case
+	// the passing run.
+	result := policyCheckResult{Findings: []policyCheckFinding{}}
 	add := func(class, format string, a ...interface{}) {
 		for _, c := range policyCheckClasses {
 			if c.Name == class {

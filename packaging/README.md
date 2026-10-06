@@ -80,9 +80,8 @@ These are the parts that need more than "URL and SHA256 changed":
 | Scoop | The asset is already named `nvx.exe`, so the manifest needs no `#/nvx.exe` rename fragment. | `scoop install`; `nvx --version`; `scoop update` |
 | Winget | The asset is a bare executable, not an installer, so the manifest must stay `InstallerType: portable`. | `winget validate`; install from the generated PR manifest |
 
-Windows Authenticode signing and macOS notarization are not solved by these
-manifests. macOS users will hit Gatekeeper on an unsigned binary. Both are
-separate release-trust work.
+macOS notarization is not solved by these manifests. macOS users will hit
+Gatekeeper on an unsigned binary. That is separate release-trust work.
 
 ## Release-day checklist
 

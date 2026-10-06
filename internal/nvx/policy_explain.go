@@ -207,6 +207,10 @@ func attributeChanges(before, after []policySettingSource, source string) []poli
 }
 
 func runPolicyExplain(args []string, nvxHome string) int {
+	if wantsHelp(args) {
+		fmt.Print(commandHelpText("policy"))
+		return 0
+	}
 	for _, arg := range args {
 		LogError("Unknown option for nvx policy explain: %s", arg)
 		return 1

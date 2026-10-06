@@ -47,11 +47,6 @@ func GetHomeDir() string {
 	return filepath.Join(userHome, ".nvx")
 }
 
-// GetVersionsDir returns the path to the versions subdirectory
-func GetVersionsDir() string {
-	return filepath.Join(GetHomeDir(), "versions")
-}
-
 // GetDownloadsDir returns the path to the temporary downloads directory
 func GetDownloadsDir() string {
 	return filepath.Join(GetHomeDir(), "downloads")

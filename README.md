@@ -16,8 +16,10 @@
 
 When a coding agent runs `npm install`, it executes code from strangers with your
 credentials within reach. nvx puts that command inside an OS sandbox with a
-throwaway `HOME`, writes confined to the project, and an allowlist for anything it
-tries to reach over the network. It cannot read `~/.ssh` or `~/.npmrc` either.
+throwaway `HOME` and an allowlist for anything it tries to reach over the
+network. It can write only to the project and that home, and on macOS also to
+the system temp directories. It cannot read `~/.ssh` or `~/.npmrc`
+either.
 On macOS other reads are not contained, and the
 [known limitations](https://nvx.run/docs/limitations/) say so plainly.
 
@@ -32,10 +34,9 @@ IDE task, a git hook or CI. If you use nvm, fnm or volta today, nvx replaces the
 
 ## Why this exists
 
-With modern LLMs, it's now practical to just build the exact tools you want. While
-setting up a clean development machine on Windows and facing the usual version
-manager headaches, I got thinking: *Why not build a modern, fast, secure runtime
-manager from scratch and solve this problem for good?*
+nvx started on a fresh Windows machine and the usual version-manager headaches.
+With LLMs making it practical to build exactly the tool you want, I built one
+that also takes on the part nobody else handles.
 
 Coding agents run terminal commands in your workspace, and installs are where they
 pick up code nobody has read. No tool can promise a package is safe, so the goal is
@@ -76,8 +77,8 @@ nvx --strict npm test    # contain your own code too
 nvx doctor               # check interception and containment
 ```
 
-Full reference: **[Commands](https://nvx.run/docs/commands/)** ·
-**[Policy](https://nvx.run/docs/policy/)**
+The full reference is in **[Commands](https://nvx.run/docs/commands/)** and
+**[Policy](https://nvx.run/docs/policy/)**.
 
 ## Documentation
 

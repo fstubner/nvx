@@ -39,7 +39,7 @@ A provider is registered by adding it to the `Providers` map (`version.go`).
 
 | Provider | Install source | Version pins | Shims |
 |----------|----------------|--------------|-------|
-| **Node** | nodejs.org | `.nvmrc`, `.node-version`, `package.json` engines | `node`, `npm`, `npx`, `yarn`, `pnpm` |
+| **Node** | nodejs.org | `.nvmrc`, `.node-version`, `package.json` engines | `node`, `npm`, `npx`, `yarn`, `pnpm`, `corepack` |
 | **Bun** | GitHub releases (oven-sh/bun) | `.bun-version`, `package.json` engines.bun | `bun`, `bunx` |
 
 Both use checksum-verified downloads and share the npm-oriented supply-chain

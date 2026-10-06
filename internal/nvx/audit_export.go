@@ -31,6 +31,10 @@ import (
 // this needs to know which parts will not move.
 
 func runAuditExport(args []string, nvxHome string) int {
+	if wantsHelp(args) {
+		fmt.Print(commandHelpText("audit"))
+		return 0
+	}
 	var (
 		since    time.Time
 		events   []string

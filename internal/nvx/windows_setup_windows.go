@@ -244,14 +244,14 @@ func runWindowsSetupGrants(paths []string, hasGrant func(string) bool, grant fun
 		// Already granted? Say so and move on, so a re-run writes only what is
 		// missing.
 		if hasGrant(p) {
-			LogInfo("Sandbox stat access on %s is already in place.", p)
+			LogInfo("Sandbox read and list access on %s is already in place.", p)
 			continue
 		}
-		LogInfo("Granting sandbox stat access on %s ...", p)
+		LogInfo("Granting sandbox read and list access on %s ...", p)
 		started := time.Now()
 		if err := grant(p); err != nil {
 			failed++
-			LogError("Failed to grant sandbox stat access on %s after %s: %v", p, time.Since(started).Round(time.Millisecond), err)
+			LogError("Failed to grant sandbox read and list access on %s after %s: %v", p, time.Since(started).Round(time.Millisecond), err)
 			LogInfo("Continuing with the remaining paths; re-run 'nvx setup' afterwards to retry this one.")
 			continue
 		}
@@ -381,7 +381,7 @@ func setLoopbackExempt(add bool, sidStr string) error {
 func runWindowsSetup(nvxHome string, undo bool) int {
 	if !isElevated() {
 		LogError("nvx setup must run from an elevated (Administrator) terminal.")
-		LogInfo("It grants the nvx sandbox drive-root stat access for tools that need it. Egress is allowlisted either way. Undo later with: nvx setup --undo")
+		LogInfo("It grants the nvx sandbox read and list access on drive roots for tools that need it. Egress is allowlisted either way. Undo later with: nvx setup --undo")
 		return 1
 	}
 
