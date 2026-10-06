@@ -38,6 +38,11 @@ Before an install runs, nvx checks what it is about to fetch.
 - **Fresh releases.** A version published inside a configurable window, 24
   hours by default, is held for your approval.
 
+An npm install that brings in new packages runs npm twice. The first run only
+resolves versions, contained, so each package can be checked before the second
+run installs it. An `npm install` whose lockfile already matches
+`package.json`, and `npm ci`, run npm once.
+
 Each check has its own exemption list in the [policy file](/docs/policy/#reference).
 None of them certifies a package, which is why containment is the backstop.
 

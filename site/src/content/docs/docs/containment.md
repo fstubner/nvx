@@ -24,11 +24,27 @@ The shims live in `~/.nvx/project-bin/<project hash>`, not inside the project, a
 ## Inside the sandbox
 
 When running in the sandbox:
-* Environment secrets (e.g. `AWS_*`, `GITHUB_*`, `SSH_*`) are scrubbed.
+* Environment secrets (e.g. `AWS_*`, `GITHUB_*`, `SSH_*`) are scrubbed. A contained command sees almost none of your environment, so a tool reading `CI` or `NODE_ENV` changes behaviour without erroring. nvx names the variables it drops, and `isolation.environment.allow` keeps the ones a project needs.
 * Home and temp paths point into a guest profile under `~/.nvx`, never your real home. It is thrown away after each run. The exceptions are pnpm, which keeps one per project so its package store is there for the next install, and tools you approved as trusted.
 * **Writes** go to the guest profile and the project directory. On macOS a few device files, such as `/dev/null`, are writable as well. The project's `.git` is the exception. A contained command can read it and cannot write it. Git runs outside the sandbox, so a hook or config entry left there would run as you. Everything else in the project stays writable, `package.json`, `node_modules` and lockfiles included, because an install has to write them.
+* **Git hook installers** cannot set themselves up during a contained install. husky's `prepare` script, simple-git-hooks and lefthook write to `.git`. Run their setup yourself afterwards, for example `npx husky`, or run the install with `nvx --no-sandbox`.
+* **Global installs** write outside the project, so `npm install -g` is refused inside the sandbox. `nvx --no-sandbox npm install -g` is an uncontained install, so treat it as one.
+* **A command started in your home directory**, or above it, starts in the sandbox's home instead. Granting your home would grant everything in it, `~/.nvx` and your shell profile included. nvx says so when it happens. Run the command from a project folder.
+* **A stray `package.json` above your projects** merges them into one sandbox scope. `nvx doctor` reports it when the manifest sits in your home directory or at a volume root.
 * **Filesystem** (`isolation.filesystem`). Windows uses AppContainer, Linux uses Landlock with namespaces, and macOS uses Seatbelt.
 * **Network** (`isolation.network.mode: proxy`). Egress goes through a loopback proxy with an allowlist. An unknown host is asked about at an interactive terminal, for that run only, and refused when nobody can answer. Only `NVX_TRUST_YES=true` approves one without asking. `-y`, `--agent-mode` and `NVX_YES` do not. On Windows the sandbox holds no network capability at all. The OS refuses direct connections, DNS does not resolve, and the only route out is nvx's proxy, reached over a UNIX socket. No elevation is required. `network.mode: open` opts out.
+* **Time.** The first contained run in a project takes seconds, because that is when nvx makes and remembers the permission grants. Later ones take a few hundred milliseconds.
+
+## Local servers and services
+
+**A contained server needs `--expose` on Windows** to be reachable from your
+machine, because Windows refuses connections into an AppContainer from outside
+it. On Linux and macOS it is reachable without a flag.
+
+**A service already running on your machine** is out of reach of a contained
+tool until you allow it. Use `--connect` for one run, `allow_hosts` for a tool
+that uses the proxy, or `network.mode: loopback`, which
+[Policy](/docs/policy/#reference) describes.
 
 ## Non-interactive use (CI)
 

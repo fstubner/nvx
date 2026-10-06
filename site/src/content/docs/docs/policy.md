@@ -74,7 +74,8 @@ gets an unknown-key warning.
     popular one. Names and globs.
   - **`release_age.trusted_packages`**: skip the cooling-off window for this
     package. Use it for a package that publishes often and is started
-    non-interactively, such as an MCP server.
+    non-interactively, such as an MCP server. An MCP server launched by an
+    editor cannot prompt, so a release inside the window stops it starting.
   - **`install_scripts.trusted_packages`**: run this package's install scripts
     without asking, and past `enforce_ignore_scripts`. That is how "block
     install scripts except for these" is written. `esbuild`, `sharp` and

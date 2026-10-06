@@ -232,6 +232,12 @@ Examples:
   nvx use bun@1.2
 ```
 
+`NVX_HOME` has a length limit. The sandbox reaches nvx through sockets under
+it, and a socket path must be shorter than 108 bytes. On Linux a run that needs
+one refuses and names the longest `NVX_HOME` that works. On Windows nvx moves
+the sockets to the sandbox's own folder in `%LOCALAPPDATA%\Packages`, and
+refuses only when that path is too long as well.
+
 ## Exit codes
 
 `0` means the command worked. A non-zero code from `nvx doctor` means something
