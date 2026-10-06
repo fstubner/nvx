@@ -24,6 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **nvx's egress proxy no longer looks up a name it is about to refuse.** The
+  proxy looked up every name a contained process asked for, then checked the
+  allowlist. A package that could connect nowhere could still send data out
+  encoded in the names it asked for, through the host's resolver, on every
+  platform. The proxy now checks the name first. It looks a name up only once
+  the allowlist, an earlier grant or a yes at the prompt allows it, and still
+  refuses an answer that is link-local. With `prompt_unknown` on, you are now
+  asked before the name is looked up. A name you approve that turns out to
+  point at a local service, or not to resolve, is refused after you answer
+  rather than before you are asked.
+
 * **A contained install on macOS or Linux can no longer read the project's
   `.env` files.** The project has to be readable for an install, so `.env`,
   `.env.local` and the rest were readable to every postinstall script. Now
