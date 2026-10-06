@@ -48,6 +48,13 @@ export const faq: FaqItem[] = [
       '<p>No. nvx puts shims on <code>PATH</code>, so <code>npm install</code> is still <code>npm install</code>. It is contained when it runs code you did not write, and nothing else about your workflow changes.</p>',
   },
   {
+    group: 'Basics',
+    q: 'Can one project use both Node.js and Bun?',
+    a: 'Yes. nvx use node@20 and nvx use bun@1.2 activate independently in the same shell, and neither takes the other off PATH. Toolchains installed outside nvx stay visible and run alongside them, uncontained unless they run through nvx. The Docker provider picks its image from the active runtime, node:<version> or oven/bun:<version>. It has no setting for another image, so a stack that needs both in one container needs your own Dockerfile or docker-compose setup.',
+    aHtml:
+      '<p>Yes. <code>nvx use node@20</code> and <code>nvx use bun@1.2</code> activate independently in the same shell, and neither takes the other off <code>PATH</code>. Toolchains installed outside nvx stay visible and run alongside them, uncontained unless they run through nvx.</p><p>The Docker provider picks its image from the active runtime, <code>node:&lt;version&gt;</code> or <code>oven/bun:&lt;version&gt;</code>. It has no setting for another image, so a stack that needs both in one container needs your own Dockerfile or <code>docker-compose</code> setup.</p>',
+  },
+  {
     group: 'Containment',
     q: 'What can a contained install actually reach?',
     a: "Your project directory, including its lockfile and node_modules, and a throwaway home directory of its own. Environment variables are scrubbed. It can write to the project and that home. It can read the project's .git and cannot write it. Outbound connections are limited to an allowlist that by default names the npm registry and the OSV vulnerability API, and GitHub's download hosts for Bun.",
@@ -87,14 +94,42 @@ export const faq: FaqItem[] = [
       '<p>At an interactive terminal nvx asks whether to allow that host, and a yes lasts for that run only. With nobody to answer, it refuses the connection and names the host.</p><p>To allow a host for good, add it to <code>isolation.network.allow_hosts</code> in a policy file. nvx will not honour a project file that widens the allowlist until you have approved that file. Passing <code>-y</code> or <code>--agent-mode</code>, or setting <code>NVX_YES</code>, approves neither the host nor the file, because an agent will answer yes to anything.</p>',
   },
   {
+    group: 'Containment',
+    q: 'Can I run a dev server, or reach a local service, from the sandbox?',
+    a: 'Yes. On Windows a server started in the sandbox reports itself listening, but Windows refuses connections into it from outside, so publish the port with --expose. nvx --expose 5173:8080 npx vite makes port 5173 inside reachable at 8080, and the two numbers must differ. Linux and macOS need no flag. For a service already running on your machine, use --connect for one run or allow_hosts in a policy. Under the Docker provider, open mode reaches it through the Docker host gateway. Containment has the details.',
+    aHtml:
+      '<p>Yes. On Windows a server started in the sandbox reports itself listening, but Windows refuses connections into it from outside, so publish the port with <code>--expose</code>. <code>nvx --expose 5173:8080 npx vite</code> makes port 5173 inside reachable at 8080, and the two numbers must differ. Linux and macOS need no flag.</p><p>For a service already running on your machine, use <code>--connect</code> for one run or <code>allow_hosts</code> in a policy. Under the Docker provider, <code>open</code> mode reaches it through the Docker host gateway. <a href="/docs/containment/#local-servers-and-services">Containment</a> has the details.</p>',
+  },
+  {
+    group: 'Containment',
+    q: 'Does it work with AI coding agents?',
+    a: 'Yes, with no configuration. An agent runs the same npm install and npx commands you would, and the nvx shims on PATH check and contain them the same way. That reduces the risk from typosquats, known-vulnerable versions and install scripts, and is no guarantee against a determined or novel attacker. SECURITY.md has the threat model and its limits.',
+    aHtml:
+      '<p>Yes, with no configuration. An agent runs the same <code>npm install</code> and <code>npx</code> commands you would, and the nvx shims on <code>PATH</code> check and contain them the same way.</p><p>That reduces the risk from typosquats, known-vulnerable versions and install scripts, and is no guarantee against a determined or novel attacker. <a href="https://github.com/fstubner/nvx/blob/main/SECURITY.md">SECURITY.md</a> has the threat model and its limits.</p>',
+  },
+  {
     group: 'Using it',
     q: 'What does the sandbox cost in speed?',
     // Figures as docs/enforcement-matrix.md cites them, under "Measured costs
     // and platform floors". The 75 ms is scripts/bench.py, which runs with
     // isolation off, so it is the shim's dispatch and nothing more.
-    a: "On Windows a contained command costs a few hundred milliseconds to about a second, and a project's first contained run takes a few seconds. Measured on Windows 11, a project's first contained run took about 2.4 s and each one after took about 390 ms. A second Windows 11 machine, measured on 2026-08-29, gave 2.9 s first and 785 ms steady, the median of 8 runs. A command that is not contained pays only the shim's dispatch, about 75 ms on Windows from three runs on one machine. No figure has been established on Linux or macOS.",
+    a: "On Windows a contained command costs a few hundred milliseconds to about a second, because nvx prepares an isolated home and checks permissions first. A project's first contained run takes a few seconds. Measured on Windows 11, a project's first contained run took about 2.4 s and each one after took about 390 ms. A second Windows 11 machine, measured on 2026-08-29, gave 2.9 s first and 785 ms steady, the median of 8 runs. The first run after nvx stages a new runtime copies the whole distribution and has been measured at 45 s to 3 minutes. A command that is not contained pays only the shim's dispatch, about 75 ms on Windows. Three runs on one machine gave medians of 73.8, 74.2 and 77.1 ms. No figure has been established on Linux or macOS.",
     aHtml:
-      "<p>On Windows a contained command costs <strong>a few hundred milliseconds to about a second</strong>, and a project's first contained run takes a few seconds. Measured on Windows 11, a project's first contained run took about 2.4 s and each one after took about 390 ms. A second Windows 11 machine, measured on 2026-08-29, gave 2.9 s first and 785 ms steady, the median of 8 runs.</p><p>A command that is not contained pays only the shim's dispatch, about 75 ms on Windows from three runs on one machine. No figure has been established on Linux or macOS. The <a href=\"https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md#measured-costs-and-platform-floors\">enforcement matrix</a> has the measurements.</p>",
+      "<p>On Windows a contained command costs <strong>a few hundred milliseconds to about a second</strong>, because nvx prepares an isolated home and checks permissions first. A project's first contained run takes a few seconds. Measured on Windows 11, a project's first contained run took about 2.4 s and each one after took about 390 ms. A second Windows 11 machine, measured on 2026-08-29, gave 2.9 s first and 785 ms steady, the median of 8 runs. The first run after nvx stages a new runtime copies the whole distribution and has been measured at 45 s to 3 minutes.</p><p>A command that is not contained pays only the shim's dispatch, about 75 ms on Windows. Three runs on one machine gave medians of 73.8, 74.2 and 77.1 ms. No figure has been established on Linux or macOS. The <a href=\"https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md#measured-costs-and-platform-floors\">enforcement matrix</a> has the measurements.</p>",
+  },
+  {
+    group: 'Using it',
+    q: 'Does switching versions affect my other terminals?',
+    a: 'No. nvx use and the switch on cd set PATH and NPM_CONFIG_PREFIX in the shell they run in, and change no system-wide path or link. A build running in another terminal is unaffected. Commands has the details.',
+    aHtml:
+      '<p>No. <code>nvx use</code> and the switch on <code>cd</code> set <code>PATH</code> and <code>NPM_CONFIG_PREFIX</code> in the shell they run in, and change no system-wide path or link. A build running in another terminal is unaffected. <a href="/docs/commands/#shells">Commands</a> has the details.</p>',
+  },
+  {
+    group: 'Using it',
+    q: 'Does nvx handle TypeScript and bundler commands?',
+    a: 'Yes. Global and project-local tools such as tsc, ts-node, vite and webpack run on the selected Node.js version. Project-local tools are contained only at the strict isolation level, like your own code. Containment has the details.',
+    aHtml:
+      '<p>Yes. Global and project-local tools such as <code>tsc</code>, <code>ts-node</code>, <code>vite</code> and <code>webpack</code> run on the selected Node.js version. Project-local tools are contained only at the <code>strict</code> isolation level, like your own code. <a href="/docs/containment/#zero-config-sandbox">Containment</a> has the details.</p>',
   },
   {
     group: 'Using it',
