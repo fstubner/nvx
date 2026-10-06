@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -76,4 +77,54 @@ func findDotenvFiles(root string, limit int) (found []string, complete bool) {
 		}
 	}
 	return found, true
+}
+
+// protectedDotenv is a dotenv file whose permissions nvx changed on Windows to
+// keep the sandbox out, with the permissions it had before, so `nvx grants
+// reset` can put them back. See hideDotenvFromSandbox.
+type protectedDotenv struct {
+	Path string `json:"path"`
+	// SDDL is the file's permission list before nvx changed it.
+	SDDL string `json:"sddl"`
+}
+
+// recordProtectedDotenv adds the record for path, or replaces it when replace
+// is set. The caller replaces a record only for a file that inherits its
+// permissions, which is a new file an editor or git put in place, so the
+// record then holds what the new file came with. A file that is already
+// protected and has a record keeps it: its list may be one nvx wrote with an
+// entry added since, and recording that would lose the permissions from before
+// nvx.
+func recordProtectedDotenv(existing []protectedDotenv, path, sddl string, replace bool) []protectedDotenv {
+	path = filepath.Clean(path)
+	for i, r := range existing {
+		if sameGrantPath(r.Path, path) {
+			if replace {
+				existing[i].SDDL = sddl
+			}
+			return existing
+		}
+	}
+	return append(existing, protectedDotenv{Path: path, SDDL: sddl})
+}
+
+// restoreAllProtectedDotenv puts back the permissions of every recorded dotenv
+// file under root, for `nvx grants reset`. It returns the records to keep:
+// those it could not restore, which a later reset retries.
+func restoreAllProtectedDotenv(root string, records []protectedDotenv) (restored int, keep []protectedDotenv) {
+	for _, r := range records {
+		err := restoreProtectedDotenv(root, r)
+		switch {
+		case err == nil:
+			restored++
+		case errors.Is(err, errNothingToWithdraw):
+			// Gone, or replaced by a file that inherits its permissions again.
+		case errors.Is(err, errDotenvChanged):
+			LogWarn("Left the permissions of %s as they are: they were changed after nvx hid the file from the sandbox.", r.Path)
+		default:
+			LogWarn("Could not put back the permissions of %s: %v", r.Path, err)
+			keep = append(keep, r)
+		}
+	}
+	return restored, keep
 }

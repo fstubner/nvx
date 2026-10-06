@@ -150,8 +150,6 @@ shipped documentation describing protections it did not have, twice.
 Deferred with intent, not built:
 - Containment of the developer's own code (`npm run build`, `node`) at the
   default isolation level. Opt in with `isolation.level: strict`.
-- Hiding a `.env` inside the project from a contained install on Windows.
-  macOS and Linux hide it.
 - Signature verification of runtime downloads, beyond same-origin checksums.
 
 ## Constraints

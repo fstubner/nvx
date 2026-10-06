@@ -49,7 +49,7 @@ and do not verify whether the kernel honours it.
 | Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |
 | Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: the home directory denied outside what a run needs, other paths readable⁵ |
 | Project `.git` read-only, rest of project writable | Yes¹⁴ | Yes¹⁴ | Yes¹⁴ |
-| Project `.env` files unreadable | No¹⁵ | Yes¹⁵ (files present at launch) | Yes¹⁵ |
+| Project `.env` files unreadable | Yes¹⁵ (files present at launch) | Yes¹⁵ (files present at launch) | Yes¹⁵ |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
 | Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |
@@ -960,14 +960,40 @@ provider mounts the project as it is.
   macOS. `stat` still works. `scripts/sandbox-enforcement-macos.sh` asserts it on the macOS
   runner, with reads through a hard link, a copy and a rename, and with
   `.env.example` and a plain project file as the controls.
-- **Windows** has no mechanism. On 2026-08-18 a deny entry on `.env` for the
-  container's SID and for ALL APPLICATION PACKAGES left it readable. On
-  2026-10-06 a medium integrity label with no-read-up, confirmed with `icacls`,
-  left it readable too, on a Windows 11 workstation and on the CI runner.
-  `TestDenyACEHidesSecretFromAppContainer` and
-  `TestIntegrityLabelHidesSecretFromAppContainer` (NVX_PROBE=1) pin both. A
-  preload in contained node processes could refuse the read, but contained code
-  can start another program to read the file, so it would contain nothing.
+- **Windows** changes the permissions of these files at each contained launch,
+  after the project is granted. The search is the one Linux uses, run from the
+  project root, because a run from a subfolder carries the same identity as a
+  run from the root. Each file gets a permission list that does not inherit
+  from the project folder. It holds every entry the file had, inherited ones
+  copied in as explicit, in the same order, apart from the allow entries for
+  AppContainer packages (`S-1-15-2-*`, ALL APPLICATION PACKAGES among them) and
+  capabilities (`S-1-15-3-*`). The user, SYSTEM, Administrators and every other
+  account keep what they had. Measured 2026-10-06 on Windows 11 26300, a
+  contained process is refused reading, appending, renaming and deleting such a
+  file, the developer still reads and edits it in place, and a later grant on
+  the project folder does not reach it. Outside the sandbox, `git status`,
+  `git add`, `node` and `wsl cat` read the file as before.
+
+  An editor that saves by replacing the file, and `git checkout -- .env`, leave
+  a new file that inherits again. The next launch changes it again. A contained
+  process already running when the file is replaced can read the new one. A
+  launch that finds every file already changed reads permissions and writes
+  none. Each changed file is recorded with its earlier permissions in the
+  project's grant record under `~/.nvx/grants`, and `nvx grants reset` puts
+  them back, unless someone changed them again since. A file nvx may not
+  change, such as one the user does not own, stays readable, with a warning,
+  and the run goes on. A link or junction named `.env`, and a file reached
+  through one that lies outside the project, are left alone with a note.
+  `TestLaunchHidesDotenvFromContainedProcess` (NVX_PROBE=1) runs the launch's
+  grant step and a contained child against `.env`, `.env.local`,
+  `.env.example` and `package.json`.
+
+  Deny entries and integrity labels do not work here. On 2026-08-18 a deny
+  entry on `.env` for the container's SID and for ALL APPLICATION PACKAGES left
+  it readable. On 2026-10-06 a medium integrity label with no-read-up,
+  confirmed with `icacls`, left it readable too, on a Windows 11 workstation
+  and on the CI runner. `TestDenyACEHidesSecretFromAppContainer` and
+  `TestIntegrityLabelHidesSecretFromAppContainer` (NVX_PROBE=1) pin both.
 
 A tool that needs to read or write `.env` during a contained run, such as a
 scaffolder that writes one on macOS, runs with `--no-sandbox`.

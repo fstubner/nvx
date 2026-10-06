@@ -25,6 +25,8 @@ import (
 //     keyed by cleaned absolute path.
 //   - ReadExecGrants: filesystem ACEs nvx granted for allow_read_exec, recorded
 //     so they can be withdrawn when the policy stops asking for them.
+//   - ProtectedDotenv: dotenv files nvx hid from the sandbox on Windows, with
+//     their permissions from before.
 type projectGrants struct {
 	ProjectPath  string            `json:"project_path"`
 	AllowHosts   []string          `json:"allow_hosts,omitempty"`
@@ -34,6 +36,10 @@ type projectGrants struct {
 	// isolation.filesystem.allow_read_exec, so it can take them back. See
 	// sandbox_read_exec_grants.go.
 	ReadExecGrants []readExecGrant `json:"read_exec_grants,omitempty"`
+	// ProtectedDotenv are the dotenv files whose permissions nvx changed on
+	// Windows to keep the sandbox out, so it can put them back. See
+	// hideDotenvFromSandbox.
+	ProtectedDotenv []protectedDotenv `json:"protected_dotenv,omitempty"`
 }
 
 // hasTrustedTool reports whether tool (case-insensitive) is in the granted
@@ -219,16 +225,15 @@ func hashPolicyFile(path string) (string, bool) {
 // as holding no grants. Conflating them let `grants reset --all` delete a record
 // it had just reported it could not act on, destroying the only trace of
 // permissions still on disk -- and report success while doing it.
-func readGrantsFile(path string) (grants []readExecGrant, ok bool) {
+func readGrantsFile(path string) (g projectGrants, ok bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, false
+		return projectGrants{}, false
 	}
-	var g projectGrants
 	if err := json.Unmarshal(data, &g); err != nil {
-		return nil, false
+		return projectGrants{}, false
 	}
-	return g.ReadExecGrants, true
+	return g, true
 }
 
 // quarantinePath returns a free name to preserve an unreadable record under.

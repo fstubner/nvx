@@ -271,14 +271,20 @@ These are deliberate trade-offs, and this section documents each one:
   unrestricted. Filesystem containment, environment scrubbing and the
   pre-install checks were unaffected. See
   `docs/enforcement-matrix.md`.
-- **On Windows, a `.env` inside the project is readable by a contained
-  install.** The project directory has to be readable for an install to work,
-  and `.env` lives in it. Environment *variables* are scrubbed, and a file is a
-  file. A deny entry on the file and a medium integrity label on it were both
-  measured, and a contained process read it either way. On macOS and Linux a
-  contained process cannot read the project's `.env` or `.env.*` files, except
-  the templates `.env.example`, `.env.sample`, `.env.template` and `.env.dist`.
-  On Linux that covers the files present when the run starts.
+- **On Windows, nvx changes the permissions of the project's `.env` files.**
+  The project directory has to be readable for an install to work, and `.env`
+  lives in it. A deny entry on the file and a medium integrity label on it were
+  both measured, and a contained process read it either way. So at each
+  contained launch nvx gives each `.env` and `.env.*` file a permission list
+  that does not inherit from the project folder and has no entry for a
+  sandboxed process. Every other entry is kept, so you read and edit the file
+  as before. `nvx grants reset` puts the earlier permissions back. A file an
+  editor or `git checkout` replaces is readable to a contained process that is
+  already running, until the next launch changes it again. A file nvx may not
+  change stays readable, with a warning. On every platform a contained process
+  cannot read the project's `.env` or `.env.*` files, except the templates
+  `.env.example`, `.env.sample`, `.env.template` and `.env.dist`. On Linux and
+  Windows that covers the files present when the run starts.
   `docs/enforcement-matrix.md` note 15 has the details. Secrets outside the
   project, such as `~/.ssh`, `~/.aws` and `~/.npmrc`, stay unreachable on Windows
   and Linux. On macOS the Seatbelt profile denies reads under the home
