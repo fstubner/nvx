@@ -3,14 +3,14 @@
 Manifest templates and submission notes for getting nvx into the OS package
 managers.
 
-The live updates are automated from `.github/workflows/publish.yml` once a
-GitHub release is published. The files here are the reviewed source of those
+`.github/workflows/publish.yml` automates the live updates once you publish a
+GitHub release. The files here are the reviewed source of those
 manifests, so they should stay accurate enough to review.
 
 The publish jobs download each release asset, re-hash the bytes, and check
 the result against the uploaded `.sha256` sidecar before pushing anything
-downstream. A sidecar that disagrees with its asset fails the publish rather
-than propagating. The Homebrew, Scoop and npm jobs then check the asset's
+downstream. A sidecar that disagrees with its asset fails the publish instead
+of propagating. The Homebrew, Scoop and npm jobs then check the asset's
 build provenance from `release.yml` too (`verified_sha` in
 `scripts/release/lib.sh`).
 
@@ -24,23 +24,23 @@ claim. The bytes are the evidence.
 
 publish.yml's npm job publishes `@fstubner/nvx` and its five per-platform
 packages with `scripts/release/publish-npm.sh`. Their `package.json` files
-are in `npm/` at the repository root rather than in this directory.
+are in `npm/` at the repository root instead of in this directory.
 
 ## How the release pipeline feeds these
 
 Pushing a `v*` tag triggers `.github/workflows/release.yml`, which:
 
 1. Waits for CI to pass on that commit.
-2. Builds five binaries with `go build -trimpath`, CGO off:
+2. Builds five binaries with `go build -trimpath` and CGO off, named
    `nvx-linux-amd64`, `nvx-linux-arm64`, `nvx-darwin-amd64`,
-   `nvx-darwin-arm64`, `nvx.exe`.
-3. Writes a `.sha256` next to each one plus a combined `SHASUMS256.txt`.
+   `nvx-darwin-arm64` and `nvx.exe`.
+3. Writes a `.sha256` next to each one and a combined `SHASUMS256.txt`.
 4. Generates a build provenance attestation for all five binaries via
    `actions/attest-build-provenance`.
 5. Publishes the release as a **draft** with every asset attached.
 
 Publishing that draft by hand is what fires publish.yml. By then the assets
-exist, which is why the manifests can reference the release asset URL plus
+exist. That is why the manifests can reference the release asset URL and
 the SHA256 directly.
 
 The provenance attestation lets anyone check that a binary came from this
@@ -76,7 +76,7 @@ These are the parts that need more than "URL and SHA256 changed":
 
 | Target | Nuance | Validate with |
 |---|---|---|
-| Homebrew formula | Installs a prebuilt binary rather than building from source, and one formula covers four platforms. | `brew audit --strict --online`; `brew install --formula`; `brew test nvx` |
+| Homebrew formula | Installs a prebuilt binary instead of building from source, and one formula covers four platforms. | `brew audit --strict --online`; `brew install --formula`; `brew test nvx` |
 | Scoop | The asset is already named `nvx.exe`, so the manifest needs no `#/nvx.exe` rename fragment. | `scoop install`; `nvx --version`; `scoop update` |
 | Winget | The asset is a bare executable, not an installer, so the manifest must stay `InstallerType: portable`. | `winget validate`; install from the generated PR manifest |
 
