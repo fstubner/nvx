@@ -22,6 +22,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never sent to your proxy. Other schemes, such as `socks4://`, are still
   ignored with a warning.
 
+* **pnpm, yarn and bun installs check every package their lockfile
+  installs.** A `pnpm install`, `yarn` or `bun install` that names no package
+  was checked on what `package.json` declares, and the packages those bring in
+  went unchecked. Measured 2026-10-06 with `is-number` on `blocked_packages`,
+  in a project depending on `is-odd@3.0.1`, which depends on `is-number`:
+  `pnpm install --frozen-lockfile` and `yarn install` both installed
+  `is-number@6.0.0` (run with `--no-sandbox`, which gets the same checks).
+  nvx now reads `pnpm-lock.yaml` (lockfileVersion 5.x, 6.x and 9.x, pnpm 7
+  to 12), `yarn.lock` (Yarn 1, and Yarn 2 and later) and `bun.lock`, and both
+  installs are refused naming `is-number`. Every entry for
+  this platform gets the checks a `package-lock.json` entry gets, and its hash
+  or tarball URL must match the registry's where the lockfile records one. The
+  typosquat check stays on the names you chose. A lockfile nvx cannot read is
+  asked about, as an unreadable `package-lock.json` is. The package manager
+  resolves afresh a dependency that `package.json` or a lockfile entry
+  declares and the lockfile has no entry for (pnpm 10 and Yarn 1 both
+  installed `is-number` with its entry deleted), so nvx checks it as declared,
+  and the run says so. Named installs such as `pnpm add left-pad`,
+  updates, and Bun's binary `bun.lockb` are checked on what they name or
+  declare, as before.
+
 ### Fixed
 
 * **A tilde version range gets every pre-install check.** A spec such as
@@ -29,6 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   home directory because it starts with `~`. A path gets only the blocklist, so
   those packages skipped the advisory, release-age and typosquat checks. Only
   `~/` now counts as a path.
+
+* **nvx's egress proxy no longer looks up a name it is about to refuse.** The
+  proxy looked up every name a contained process asked for, then checked the
+  allowlist. A package that could connect nowhere could still send data out
+  encoded in the names it asked for, through the host's resolver, on every
+  platform. The proxy now checks the name first. It looks a name up only once
+  the allowlist, an earlier grant or a yes at the prompt allows it, and still
+  refuses an answer that is link-local. With `prompt_unknown` on, you are now
+  asked before the name is looked up. A name you approve that turns out to
+  point at a local service, or not to resolve, is refused after you answer
+  rather than before you are asked.
 
 * **A contained install on macOS or Linux can no longer read the project's
   `.env` files.** The project has to be readable for an install, so `.env`,

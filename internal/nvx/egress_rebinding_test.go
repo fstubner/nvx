@@ -77,15 +77,20 @@ func TestResolvingOnceStillRefusesLinkLocal(t *testing.T) {
 	}
 }
 
-// A hostname pointing at 127.0.0.1 does not get to ask the developer for their
-// local Postgres.
+// A hostname pointing at 127.0.0.1 does not get the developer's local Postgres,
+// even when they say yes.
 //
 // The refusal that stops untrusted code prompting for a loopback service matched
 // only the literal spellings of loopback, so `cache.attacker.example` with an A
 // record of 127.0.0.1 walked past it and reached the prompt. The prompt is
 // raised BY the contained process, at a moment nobody expects a security
-// question, and one "yes" hands over a service that takes no credentials.
-func TestANameResolvingToLoopbackIsRefusedNotPrompted(t *testing.T) {
+// question, and one "yes" handed over a service that takes no credentials.
+//
+// The name is looked up only after the prompt approves it, so the address is
+// refused after the "yes" rather than before the question.
+func TestANameResolvingToLoopbackIsRefusedEvenWhenApproved(t *testing.T) {
+	// Approves the prompt, so a refusal is the loopback rule and not the prompt.
+	t.Setenv("NVX_TRUST_YES", "1")
 	p := newTestProxy(t, "proxy", nil)
 	p.policy.Isolation.Network.PromptUnknown = true // the prompt path is the one under test
 
@@ -93,13 +98,11 @@ func TestANameResolvingToLoopbackIsRefusedNotPrompted(t *testing.T) {
 	if p.allowed(parseHostPortSpec("cache.attacker.example", 5432), loopback) {
 		t.Error("a name resolving to 127.0.0.1 was permitted; a postinstall could reach the developer's local database")
 	}
-	// The verdict alone proves nothing: a test cannot answer a prompt, so the
-	// prompt path denies too and `false` means either. Which refusal fired is the
-	// whole question, and only the audit event says. Without this the test passed
-	// with the fix reverted.
+	// Which refusal fired is the whole question, and only the audit event says.
+	// Without this the test passed with the fix reverted.
 	if !auditHasLoopbackRefusal(t, p.nvxHome, "cache.attacker.example") {
-		t.Error("the name reached the prompt instead of being refused: a postinstall got to ask the " +
-			"developer for their local database, which is exactly what this refusal exists to stop")
+		t.Error("the name was not refused by the loopback rule: one yes at the prompt would hand a " +
+			"postinstall the developer's local database, which is exactly what this refusal exists to stop")
 	}
 
 	// The literal spellings must still be refused, and a genuinely remote name
@@ -108,9 +111,7 @@ func TestANameResolvingToLoopbackIsRefusedNotPrompted(t *testing.T) {
 	if p.allowed(parseHostPortSpec("127.0.0.1", 5432), loopback) {
 		t.Error("the literal loopback refusal regressed")
 	}
-	// A remote name must not be caught by THIS rule. It is still denied here --
-	// nothing allowlists it and a prompt cannot be answered in a test -- so the
-	// verdict alone cannot tell the two refusals apart. The audit event can.
+	// A remote name must not be caught by THIS rule.
 	remoteProxy := newTestProxy(t, "proxy", nil)
 	remoteProxy.policy.Isolation.Network.PromptUnknown = true
 	remoteProxy.allowed(parseHostPortSpec("registry.npmjs.org", 443), []net.IP{net.ParseIP("104.16.0.1")})
@@ -128,6 +129,7 @@ func TestANameResolvingToLoopbackIsRefusedNotPrompted(t *testing.T) {
 // The refusal is audited under its own event, so a reader can tell it from an
 // ordinary allowlist denial.
 func TestTheLoopbackRefusalIsAudited(t *testing.T) {
+	t.Setenv("NVX_TRUST_YES", "1")
 	p := newTestProxy(t, "proxy", nil)
 	p.policy.Isolation.Network.PromptUnknown = true
 

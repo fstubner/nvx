@@ -1,0 +1,5 @@
+{
+  "name": "app",
+  "version": "0.0.1",
+  "dependencies": { "is-even": "1.0.0" }
+}

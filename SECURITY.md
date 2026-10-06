@@ -65,22 +65,46 @@ install and run scripts. Its defenses are layered:
    must match the registry's record for its name and version, and an entry that
    does not is refused.
 
+   A `pnpm install`, `yarn`, `yarn install` or `bun install` that names no
+   package, and their `rebuild` and `dedupe` commands, check every entry for this
+   platform in the package manager's own lockfile: `pnpm-lock.yaml`
+   (lockfileVersion 5.x, 6.x and 9.x, written by pnpm 7 to 12), `yarn.lock`
+   (Yarn 1, and Yarn 2 and later) or `bun.lock`. pnpm and Bun record each
+   entry's `integrity` hash and Yarn 1 its `resolved` URL and hash, and those
+   must match the registry's record, as a `package-lock.json` entry's must.
+   Yarn 2 and later record a checksum of Yarn's own archive, which nvx cannot
+   compare with the registry's hash. Yarn fetches those entries from the
+   registry by name and version, and an entry that names its own
+   `__archiveUrl` must name the registry's tarball. Yarn 1 records no `os` or
+   `cpu`, so its entries are checked on every platform. A dependency that
+   `package.json` or a lockfile entry declares and the lockfile has no entry
+   for is resolved afresh by the package manager: nvx checks it as declared,
+   and the run says so. The packages it brings in are not checked. Yarn 1
+   leaves another platform's optional dependencies out of its lockfile, so a
+   missing optional dependency is not checked for Yarn 1. A lockfile that is
+   there and cannot be read is asked about the way an unreadable
+   `package-lock.json` is: refused when nobody can answer, and with approval
+   the checks run on what `package.json` declares.
+
    The typosquat check is the one exception to "every package". A typosquat is
    a name someone typed wrongly, so it runs only on the names you chose. Those
    are the packages named on the command line or, with none named, the
-   dependencies in your `package.json` (all four dependency fields). A dependency that came in
+   dependencies in your `package.json` (all four dependency fields) and in
+   those of its workspace members. A dependency that came in
    with one of those was named by its author, and skips the typosquat check
    and the download lookup behind it. The blocklist, release-age, install-script
    and advisory checks still cover the whole tree.
 
    Everywhere else the checks run on the packages the command names, or on the
    project's `package-lock.json`, or on the versions `package.json` declares.
-   That covers `npx`, `npm exec`, `npm create`, `npm init <initializer>`, every
-   pnpm, yarn and bun command, and npm projects that use workspaces or depend
-   on a local folder. The dependencies those packages bring in are not checked
-   there, and pnpm, yarn and bun lockfiles are not read. A package from git, a
-   URL or a local path is checked against `blocked_packages` by the name it
-   installs under, and skips the other checks.
+   That covers `npx`, `npm exec`, `npm create`, `npm init <initializer>`,
+   pnpm, yarn and bun commands that name packages (`pnpm add left-pad`) or
+   update them, pnpm, yarn and bun projects with no lockfile or only Bun's
+   binary `bun.lockb`, an install run from inside a workspace member's folder,
+   and npm projects that use workspaces or depend on a local folder. The
+   dependencies those packages bring in are not checked there. A package from
+   git, a URL or a local path is checked against `blocked_packages` by the
+   name it installs under, and skips the other checks.
 
    nvx makes the lookups itself, outside the sandbox. These are the hosts it
    contacts for them.
@@ -171,9 +195,11 @@ These are deliberate trade-offs, and this section documents each one:
   mode but `open`. getaddrinfo's socket was already refused. Until 2026-10-06
   Network.framework's way in, the Mach service `com.apple.dnssd.service`, was
   not, and a contained program could send data out encoded in the names it
-  looked up. On every platform nvx's egress proxy still looks up the name a
-  contained client asks for before the allowlist refuses it, so a refused name
-  reaches the host's resolver through nvx.
+  looked up. Until the same date nvx's egress proxy looked up the name a
+  contained client asked for before the allowlist refused it, on every
+  platform. It now looks a name up only after the allowlist, an earlier grant
+  or a yes at the prompt has allowed it, so a refused name never reaches the
+  host's resolver.
 
   This entry has been wrong in both directions. Until 2026-08-20 it said macOS
   egress was cooperative and a raw socket could bypass the allowlist. That

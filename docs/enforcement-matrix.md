@@ -139,12 +139,14 @@ contained Network.framework client resolved a fresh name under a wildcard
 domain (run 37513452515), so data encoded in a name could leave through the
 host's resolver while every connection was refused.
 
-Two paths are not covered by this row. nvx's egress proxy resolves the name a
-contained client asks for before the allowlist refuses it, on every platform,
-so a refused name still reaches the host's resolver through nvx. A unit-level
-run with the resolver stubbed showed a `CONNECT` to a host off the allowlist
-looked up, then answered 403. And other macOS Mach services that might look up
-a name on a caller's behalf have not been checked.
+nvx's egress proxy looks a name up only once it is allowed, on every
+platform. The allowlist, an earlier grant in this run or a yes at the prompt
+decides on the name first, and a refused name never reaches the host's
+resolver. Until 2026-10-06 the proxy looked the name up before the allowlist
+refused it. A unit-level run with the resolver stubbed showed a `CONNECT` to a
+host off the allowlist looked up, then answered 403. One path is still not
+covered by this row. Other macOS Mach services that might look up a name on a
+caller's behalf have not been checked.
 
 ⁵ **macOS hardware confirms the cells marked ⁵.**
 `scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on every CI
