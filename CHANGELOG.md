@@ -112,8 +112,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each file stops inheriting permissions from the project folder, keeps every
   entry it had for you, SYSTEM, Administrators and other accounts, and loses
   the entries that let sandboxed processes in. You read and edit it as before.
-  A file an editor or `git checkout` replaces is changed again at the next
-  launch, and a launch that finds every file already changed writes nothing.
+  While the contained process runs, nvx watches the project and changes each
+  `.env` file that is created, moved in, or replaced by an editor or
+  `git checkout` as it appears. So a dev server, MCP server or strict-mode
+  shell that runs for hours cannot read a `.env` that appeared after it
+  started. A contained process that creates a `.env` itself can finish
+  writing it, and cannot open it again afterwards. macOS refuses the create
+  itself. A launch that finds every file already changed writes nothing.
   nvx records each file's earlier permissions, and `nvx grants reset` puts
   them back. A file nvx may not change stays readable in the sandbox, and the
   run says so and carries on. A link named `.env` is left alone.

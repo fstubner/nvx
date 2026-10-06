@@ -44,6 +44,14 @@ func TestBothPreloadsLandInNodeOptionsOnce(t *testing.T) {
 // what the script wrote to the report file named by its first argument.
 func walkupProbe(t *testing.T, profile, script string) func(withShim bool) string {
 	t.Helper()
+	run, _ := walkupProbeIn(t, profile, script)
+	return run
+}
+
+// walkupProbeIn is walkupProbe that also returns the directory the script runs
+// in, for a test that changes it while the script runs.
+func walkupProbeIn(t *testing.T, profile, script string) (run func(withShim bool) string, workDir string) {
+	t.Helper()
 	if os.Getenv("NVX_PROBE") != "1" {
 		t.Skip("set NVX_PROBE=1 to run")
 	}
@@ -58,7 +66,7 @@ func walkupProbe(t *testing.T, profile, script string) func(withShim bool) strin
 
 	nvxHome := GetHomeDir()
 	guestHome := tempDir(t)
-	workDir := tempDir(t)
+	workDir = tempDir(t)
 	scopeCaps, _, err := prepareAppContainerFilesystem(sid, "", guestHome, workDir)
 	if err != nil {
 		t.Fatalf("filesystem prep: %v", err)
@@ -92,7 +100,7 @@ func walkupProbe(t *testing.T, profile, script string) func(withShim bool) strin
 		t.Fatal(err)
 	}
 
-	return func(withShim bool) string {
+	run = func(withShim bool) string {
 		_ = os.Remove(report)
 		env := scrubEnvironment(guestHome)
 		env = prependPath(env, filepath.Dir(nodePath))
@@ -117,6 +125,7 @@ func walkupProbe(t *testing.T, profile, script string) func(withShim bool) strin
 		}
 		return string(got)
 	}
+	return run, workDir
 }
 
 // Opt-in verification (NVX_PROBE=1; creates its own AppContainer profile): a

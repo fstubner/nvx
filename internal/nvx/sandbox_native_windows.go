@@ -99,8 +99,7 @@ func applyProjectGrants(config SandboxConfig, sid uintptr, scope, guestHome, wor
 	// The whole project, not only the working directory: grants persist, so a
 	// run from a subdirectory carries a capability that an earlier run from the
 	// root left holding modify there. Same reach as restrictGitMetadataToReadOnly.
-	if scope != "" && workDir != "" && !isProfileRoot(scope) && !isProfileRoot(workDir) &&
-		!workDirReachesControlPlane(config.NvxHome, workDir) {
+	if hidesDotenvIn(config.NvxHome, scope, workDir) {
 		hideDotenvFromSandbox(config.NvxHome, scope)
 	}
 
@@ -179,6 +178,13 @@ func applyProjectGrants(config SandboxConfig, sid uintptr, scope, guestHome, wor
 		}
 	}
 	return scopeCaps, launchDir, nil
+}
+
+// hidesDotenvIn reports whether a launch in workDir hides the dotenv files
+// under scope from the sandbox, at launch and while the contained process runs.
+func hidesDotenvIn(nvxHome, scope, workDir string) bool {
+	return scope != "" && workDir != "" && !isProfileRoot(scope) && !isProfileRoot(workDir) &&
+		!workDirReachesControlPlane(nvxHome, workDir)
 }
 
 // containedEnv adds everything the contained process needs in its environment:
@@ -348,6 +354,13 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// Access is denied". Doing it first means prepareAppContainerFilesystem
 	// re-establishes whatever this run actually needs, after anything the policy no
 	// longer asks for is gone.
+	// Started before the launch scan in applyProjectGrants, so a .env created
+	// between the scan and the launch is caught too. Stopped when this function
+	// returns, which is when the contained process has exited.
+	if hidesDotenvIn(config.NvxHome, scope, workDir) {
+		stopDotenvWatch := watchDotenvFiles(config.NvxHome, scope)
+		defer stopDotenvWatch()
+	}
 	scopeCaps, launchDir, err := applyProjectGrants(config, sid, scope, guestHome, workDir)
 	if err != nil {
 		LogError("%v", err)
