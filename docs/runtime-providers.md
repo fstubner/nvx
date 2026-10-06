@@ -1,15 +1,18 @@
 # Runtime providers
 
 nvx manages JavaScript runtimes through the `RuntimeProvider` interface
-(`version.go`). Two providers ship today — **Node.js** (`NodeProvider`) and
-**Bun** (`BunProvider`) — and the interface is designed so additional JS
-runtimes can be added without touching the CLI, sandbox, or policy code.
+(`version.go`). Two providers ship today, **Node.js** (`NodeProvider`) and
+**Bun** (`BunProvider`). The interface lets you add more JS
+runtimes without touching the CLI, sandbox, or policy code.
 
-Experimental Deno, Go, and Python providers existed once and were removed from
-the shipped set. Nothing in the shipped build carries stubs for them any more. `classifyInvocation`
+Experimental Deno, Go, and Python providers existed once and the project removed them from
+the shipped set. Nothing in the shipped build carries stubs for them any more.
+
+`classifyInvocation`
 kept branches for `uv` and `deno`, and `uvx`/`pyx` sat in the ad-hoc-tool list,
-left behind when those providers were removed — unreachable, because a command is
-only ever classified after nvx has shimmed it, and none of those names is in any
+left behind when the project removed those providers. All of it was unreachable
+because a command is
+only ever classified after nvx has shimmed it. None of those names is in any
 provider's `ShimCommands`. Removed 2026-08-28 after an acceptance pass pointed out
 that unreachable code reads as support for runtimes this build does not manage.
 A provider returning brings its own classification with it.
@@ -33,7 +36,7 @@ type RuntimeProvider interface {
 }
 ```
 
-A provider is registered by adding it to the `Providers` map (`version.go`).
+You register a provider by adding it to the `Providers` map (`version.go`).
 
 ## Shipped providers
 
