@@ -14,8 +14,6 @@ import (
 	"unsafe"
 )
 
-var procConvertSDToStringSD = modAdvapi32.NewProc("ConvertSecurityDescriptorToStringSecurityDescriptorW")
-
 // tokenInfo reads one token information class for the current process.
 func tokenInfo(class uintptr) ([]byte, error) {
 	var tok syscall.Token
