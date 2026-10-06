@@ -51,7 +51,13 @@ func mountGitMetadataReadOnly(workDir string, nsErr error) error {
 // the remount carries whatever of those the path already has. statfs reports
 // them in ST_* bits, which have the same values as the MS_* bits used here.
 func bindMountReadOnly(path string) error {
-	if err := syscall.Mount(path, path, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+	return bindMountReadOnlyFrom(path, path)
+}
+
+// bindMountReadOnlyFrom shows src at path, read-only, the way bindMountReadOnly
+// shows a path as itself.
+func bindMountReadOnlyFrom(src, path string) error {
+	if err := syscall.Mount(src, path, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
 		return fmt.Errorf("bind %s: %w", path, err)
 	}
 	var st syscall.Statfs_t

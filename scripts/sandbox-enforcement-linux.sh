@@ -290,6 +290,7 @@ read('DOTENV_SUB', 'sub/.env.local');
 if (process.argv[3]) read('DOTENV_CASE', process.argv[3]);
 read('DOTENV_TEMPLATE', '.env.example');
 read('DOTENV_CONTROL', 'plain.txt');
+act('DOTENV_STAT', () => fs.statSync('.env'));
 act('DOTENV_WRITE', () => fs.appendFileSync('.env', 'INJECTED=1\n'));
 act('DOTENV_CREATE', () => { fs.mkdirSync('fresh', { recursive: true }); fs.writeFileSync('fresh/.env', 'X=1\n'); });
 leak('DOTENV_LINK', () => fs.linkSync('.env', 'linked.txt'), 'linked.txt');
@@ -316,6 +317,7 @@ else
   expect_dotenv "DOTENV_CASE=DENIED"      "a contained process read upper/.ENV"
   expect_dotenv "DOTENV_TEMPLATE=ALLOWED" "a contained process could not read .env.example, a template that holds no secrets"
   expect_dotenv "DOTENV_CONTROL=ALLOWED"  "a contained process could not read a plain project file, so the denials above prove nothing"
+  expect_dotenv "DOTENV_STAT=ALLOWED"     "a contained process could not stat .env; only its contents are meant to be hidden"
   expect_dotenv "DOTENV_WRITE=DENIED"     "a contained process wrote a .env that existed at launch"
   expect_dotenv "DOTENV_CREATE=ALLOWED"   "creating a new .env is documented as allowed on Linux; update the documents with this"
   expect_dotenv "DOTENV_LINK=DENIED"      "a contained process read .env through a hard link"

@@ -224,6 +224,11 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir, nvxHo
 	for _, p := range seatbeltPathForms(gitMetadataPaths(workDir)) {
 		fmt.Fprintf(&b, "(deny file-write* (subpath %q))\n", p)
 	}
+	// Dotenv files are unreadable, after the blanket read allow so the deny wins;
+	// see isDotenvName.
+	for _, rule := range seatbeltDotenvRules {
+		b.WriteString(rule + "\n")
+	}
 	// The user's credential stores are unreadable, as they are on Windows and
 	// Linux. These come after the blanket file-read* allow and after the reads
 	// reopened under the home, so they win over both. A project or an
@@ -365,6 +370,26 @@ func seatbeltHomeReadRules(home, guestHome, workDir, nvxHome string, readExecRoo
 		rules = append(rules, fmt.Sprintf("(allow file-read* (subpath %q))", p))
 	}
 	return rules
+}
+
+// seatbeltDotenvRules hide dotenv files, as isDotenvName names them, wherever
+// they are. Reads outside the home directory are allowed broadly on macOS, so a
+// rule scoped to the working directory would leave a .env elsewhere readable,
+// such as one in a monorepo root above a project in /tmp.
+//
+// Writes are denied as well. A process that can rename or hard-link .env can
+// read the same bytes under a name the rule does not match. That also stops a
+// contained tool creating or changing a .env.
+//
+// The templates are carved out of the rule itself. An allow after it would
+// reopen them under the home directory too, where seatbeltHomeReadRules denies
+// every file outside the project.
+//
+// Only file-read-data is denied, so the files can still be listed and
+// stat'ed, as on Linux. Seatbelt applies the last rule that matches, so this
+// comes after every allow it overrides.
+var seatbeltDotenvRules = []string{
+	`(deny file-read-data file-write* (require-all (regex #"/\.[Ee][Nn][Vv](\.[^/]*)?$") (require-not (regex #"/\.env\.(example|sample|template|dist)$"))))`,
 }
 
 // Registry tokens, keys and cloud credentials, relative to the real home.
