@@ -39,7 +39,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// binary itself -- a persistent sandbox defeat on the DEFAULT macOS path. The
 	// legacy caller in sandbox_seatbelt.go was fixed in July; this one was missed,
 	// so the comment there described a guarantee the shipped path did not provide.
-	profile := buildSeatbeltProfile(netCtx, guestHome, workDir)
+	profile := buildSeatbeltProfile(netCtx, guestHome, workDir, config.NvxHome, config.ReadExecRoots)
 	// Under ~/.nvx, which the profile does not grant writes to; see
 	// writeSeatbeltProfile for what $TMPDIR allowed.
 	profilePath, removeProfile, err := writeSeatbeltProfile(config.NvxHome, profile)

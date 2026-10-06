@@ -37,6 +37,19 @@ mkdir -p "$NVX_HOME"
 
 "$NVX" init-shims >/dev/null
 
+# An nvx-managed runtime, so every contained run below uses the runtime nvx
+# pins rather than whatever node the machine happens to have. The runner's own
+# node is under /Users/runner/hostedtoolcache, inside the home directory, which
+# a contained process may not read. It is also what makes the PATH arrangement
+# in the install phase meaningful: the fix being covered there puts the pinned
+# runtime's own bin directory on the contained PATH, and there is no pinned
+# runtime to put there otherwise.
+echo "Installing an nvx-managed runtime..."
+if ! "$NVX" -y install 22 >/dev/null 2>&1 || ! "$NVX" -y default 22 >/dev/null 2>&1; then
+  echo "::warning::could not install an nvx-managed runtime (network?); skipping the macOS smoke" >&2
+  exit 0
+fi
+
 # --strict, and the containment line checked, for the reason the Linux sibling
 # spells out: `node -e` is the user's own code, which the default level does not
 # contain, so this ran outside the sandbox and reported success either way.
@@ -130,18 +143,6 @@ trap 'rm -rf "$PROJ" "${NVX_HOME:-}"' EXIT
 #
 # No --strict here: an install is contained at the default level, so this is the
 # path a person actually takes.
-# An nvx-managed runtime, so the install exercises the runtime nvx pins rather
-# than whatever node the machine happens to have. It is also what makes the PATH
-# arrangement below meaningful: the fix being covered puts the pinned runtime's
-# own bin directory on the contained PATH, and there is no pinned runtime to put
-# there otherwise.
-echo "Installing an nvx-managed runtime..."
-if ! "$NVX" -y install 22 >/dev/null 2>&1 || ! "$NVX" -y default 22 >/dev/null 2>&1; then
-  echo "::warning::could not install an nvx-managed runtime (network?); skipping the macOS install phase" >&2
-  echo "macOS sandbox smoke passed (install phase skipped)."
-  exit 0
-fi
-
 echo "Installing a package through the sandbox..."
 PKG="$PROJ/pkgtest"
 mkdir -p "$PKG"

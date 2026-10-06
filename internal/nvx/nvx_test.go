@@ -820,7 +820,7 @@ func TestExtractQuotedStrings(t *testing.T) {
 
 func TestBuildSeatbeltProfile(t *testing.T) {
 	netCtx := NetworkLaunchContext{Mode: "proxy", HTTPProxyPort: 8080}
-	profile := buildSeatbeltProfile(netCtx, "/guest/home", "/work/dir")
+	profile := buildSeatbeltProfile(netCtx, "/guest/home", "/work/dir", "", nil)
 	for _, expected := range []string{
 		"(version 1)",
 		"(deny default)",

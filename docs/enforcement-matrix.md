@@ -47,7 +47,7 @@ and do not verify whether the kernel honours it.
 | Guarantee | Windows (AppContainer) | Linux (Landlock + netns + seccomp) | macOS (Seatbelt) |
 |---|---|---|---|
 | Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |
-| Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: credential stores denied, other reads allowed⁵ |
+| Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: the home directory denied outside what a run needs, other paths readable⁵ |
 | Project `.git` read-only, rest of project writable | Yes¹⁴ | Yes¹⁴ | Yes¹⁴ |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
@@ -60,26 +60,41 @@ and do not verify whether the kernel honours it.
 | A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
 
-² On macOS the Seatbelt profile allows filesystem reads. The dynamic linker must
-read system libraries and the dyld shared cache. Their locations vary by macOS
-version (e.g. the Cryptexes firmlink on Apple Silicon) and nvx cannot enumerate
-them reliably. A strict read allowlist breaks process launch. Write containment and
-egress control remain enforced, and nvx scrubs environment secrets and redirects
-`$HOME` to a guest profile under `~/.nvx`. That profile is thrown away after
-each run, except for pnpm and for tools approved as trusted, which keep one
-profile per project.
+² On macOS the Seatbelt profile allows filesystem reads outside the home
+directory. The dynamic linker must read system libraries and the dyld shared
+cache. Their locations vary by macOS version (e.g. the Cryptexes firmlink on
+Apple Silicon) and nvx cannot enumerate them reliably. A strict read allowlist
+breaks process launch. Write containment and egress control remain enforced, and
+nvx scrubs environment secrets and redirects `$HOME` to a guest profile under
+`~/.nvx`. That profile is thrown away after each run, except for pnpm and for
+tools approved as trusted, which keep one profile per project.
 
-The user's credential stores are the exception. After the blanket read allow, the
-profile denies reads of `~/.npmrc`, `~/.yarnrc`, `~/.yarnrc.yml`,
+Under the home directory reads are denied. After the blanket read allow, the
+profile denies reads of the real home and of nvx's own home (`~/.nvx`, or
+wherever `NVX_HOME` points). It then reopens what a contained run reads there,
+which is what Linux grants: the project, the guest home, nvx's `versions`, `bin`
+and `current`, and every `isolation.filesystem.allow_read_exec` root. File
+metadata stays readable, so a contained process can stat a path in the home and
+cannot read its contents. A runtime installed under the home outside nvx, such
+as one from nvm, runs contained only when its directory is listed in
+`allow_read_exec`, as on Linux. Until 2026-10-06 the profile denied only the
+credential stores below, and every other file in the home was readable, other
+projects included.
+
+The user's credential stores are denied last, after everything the profile
+reopens, so a project or an `allow_read_exec` root that holds one does not
+expose it. The profile denies reads of `~/.npmrc`, `~/.yarnrc`, `~/.yarnrc.yml`,
 `~/.config/pnpm/rc`, `~/Library/Preferences/pnpm/rc`, `~/.bunfig.toml`,
 `~/.docker/config.json`, `~/.netrc` and `~/.git-credentials`, and of everything
 under `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.kube`,
 `~/.config/gcloud`, `~/.azure` and `~/Library/Keychains`. `~` is the real home,
 and each path is also named with symbolic links resolved, because Seatbelt
 matches the resolved path. None of these is on the dynamic linker's path. Until
-2026-10-01 the profile denied none of them. Every other file outside the project
-stays readable, other projects included, and so does a credential kept anywhere
-the list does not name.
+2026-10-01 the profile denied none of them.
+
+Reads outside the home stay allowed. That includes the per-user temp and cache
+directories under `/private/var/folders`, which other apps use, and a project
+or a credential kept on another volume. Linux denies those too.
 
 Writes are contained to the project and the guest home, where `$TMPDIR` points.
 Outside them the profile grants writes only on named device files: `/dev/null`,
@@ -100,12 +115,13 @@ true of writes and false of reads.
 `$HOME` decides where `~` expands to. It does
 not stop anything opening `/Users/<you>/.ssh/id_rsa` by absolute path. A
 postinstall script looking for credentials does not need `~` to find them. That
-is why the profile denies the credential stores above by path.
+is why the profile denies the home directory and the credential stores above
+by path.
 
-On macOS, reads outside
-them are not contained. The write and egress guarantees are real. The read
-guarantee covers only the listed stores, which is a narrower product than the
-same sentence describes on Windows and Linux.
+On macOS the read guarantee covers the home directory and nvx's home. Reads
+elsewhere on the disk stay allowed, which is a narrower product than the same
+sentence describes on Linux, where a contained process sees only what it is
+granted.
 
 ¹ On macOS, the loopback proxy and OS network rules gate egress. Linux
 also removes all non-loopback interfaces (network namespace), so DNS to
@@ -119,12 +135,12 @@ build and asserts the denials instead of only that the command ran. A contained
 process reports, and CI requires:
 
 ```
-WRITE_OUTSIDE=DENIED   WRITE_INSIDE=ALLOWED   READ_OUTSIDE=ALLOWED
+WRITE_OUTSIDE=DENIED   WRITE_INSIDE=ALLOWED   READ_OUTSIDE=DENIED   READ_INSIDE=ALLOWED
 EGRESS=DENIED          UDP_EGRESS=DENIED      CONNECT=200 (allowlisted host)
 ```
 
-Two of those are load-bearing in a way the others are not. `WRITE_INSIDE` and
-`CONNECT=200` are the positive controls. Every denial above them would also pass
+Three of those are load-bearing in a way the others are not. `WRITE_INSIDE`,
+`READ_INSIDE` and `CONNECT=200` are the positive controls. Every denial above them would also pass
 for a sandbox that had failed to start. Requiring something to
 *succeed* is the only thing that tells enforcement from breakage. `CONNECT=200`
 is the one that closed the largest gap here. Until 2026-08-24 the whole script
@@ -136,11 +152,17 @@ read of each. A project file and node's own binary must still read,
 each checked by exit code. Contained `npm config get registry` must succeed with
 that `.npmrc` present and must not report the registry planted in it.
 
-`READ_OUTSIDE=ALLOWED` pins the documented weakness in ² deliberately. If the
-profile is ever tightened this fails. That forces an update to the docs site's
-limitations page (`site/src/content/docs/docs/limitations.md`), SECURITY.md,
-PRODUCT.md and this page in the same change. Otherwise they would quietly
-go wrong in the flattering direction.
+`READ_OUTSIDE` reads a file in the real home outside the project, and the OS
+must refuse it with EPERM or EACCES. The project, `NVX_HOME` and an
+`allow_read_exec` directory sit under the home for this run, so the controls
+`READ_INSIDE`, `READ_RUNTIME` (node's own binary under `NVX_HOME/versions`) and
+`READ_EXEC_ROOT` would fail against a profile that denied the whole home.
+`NVX_HOME_READ` reads a file in nvx's home outside its runtimes and must be
+refused. A fourth phase repeats that with an `NVX_HOME` under `/var/folders`,
+outside the home. Before the profile denied the home, all three reads succeeded
+(run 37399750782). After it, all three were refused and every control passed,
+as did the macOS smoke's contained `npm install` and the launch-escape probe
+(run 37400274341).
 
 `UDP_EGRESS=DENIED` comes from Seatbelt refusing at **bind**, not at send. Sending
 on an unbound UDP socket makes the runtime bind one implicitly. Seatbelt

@@ -116,11 +116,11 @@ documentation:
    It **cannot** open a network connection to a host outside the policy allowlist,
    including by ignoring `HTTP_PROXY`.
 
-   On macOS the read half covers the credential stores only. The profile denies
-   `~/.ssh`, `~/.aws`, `~/.npmrc` and the other stores it names, and allows every
-   other read, so another project on the machine stays readable. That is a
-   narrower product, and this document says so instead of leaving a reader to
-   discover it in a footnote.
+   On macOS the read half covers the home directory. The profile denies reads
+   there apart from the project, nvx's runtimes and the directories a policy
+   names, and allows reads elsewhere on the disk, so a project kept outside the
+   home stays readable. That is a narrower product, and this document says so
+   instead of leaving a reader to discover it in a footnote.
 
 Step 3 is the product. Steps 1 and 2 are the price of admission. If either is
 slow or fails on a normal machine, step 3 never happens because nvx is not
@@ -268,9 +268,9 @@ Deferred with intent, not built:
   sandbox must deny and what it must still allow. A sandbox that refuses
   everything fails them, which is the failure mode a denial-only check cannot see.
 
-  **macOS does not contain reads**, and the probe asserts that instead of merely
-  admitting it. So tightening the profile fails CI and forces the documents to
-  move with it.
+  **macOS contains reads only under the home directory.** Its probe requires a
+  read in the home outside the project to be refused, and the project and the
+  runtime to still read.
 
   Earlier versions of this constraint were wrong in opposite directions. Until
   2026-08-20 it called macOS egress "cooperative" when the profile is `(deny

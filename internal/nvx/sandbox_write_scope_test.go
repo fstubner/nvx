@@ -89,6 +89,8 @@ func TestSeatbeltProfileNeverGrantsWriteToControlPlane(t *testing.T) {
 		NetworkLaunchContext{Mode: "proxy"},
 		guestHome,
 		"/Users/testuser/projects/app",
+		nvxHome,
+		nil,
 	)
 	writes := seatbeltWriteSection(t, profile)
 

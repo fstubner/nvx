@@ -12,15 +12,15 @@
 # apart. That distinction is not hypothetical here -- a Windows egress test once
 # reported success while the sandbox was blocking its own test server.
 #
-# It also asserts a WEAKNESS on purpose. macOS allows filesystem reads outside
-# the user's credential stores, so a contained process can read other files by
-# absolute path. That is deliberate (the dynamic linker needs system libraries
-# whose paths vary by OS version, and a strict read allowlist stops processes
-# launching) and it is documented in README, SECURITY.md, PRODUCT.md and
-# docs/enforcement-matrix.md. Pinning it here means that if the profile is ever
-# tightened, this fails and forces those four documents to be updated together
-# -- rather than the docs quietly staying wrong in either direction. The
-# credential stores themselves are denied, and phase 3 asserts that.
+# Reads are allowed outside the home directory, because the dynamic linker needs
+# system libraries whose paths vary by OS version. Under the home directory they
+# are denied except for the project, the guest home, nvx's runtimes and any
+# allow_read_exec root. Until 2026-10-06 a contained process could read every
+# file in the home directory outside the credential stores, other projects
+# included, and this script asserted that as a documented weakness. It now
+# requires such a read to be refused, with the project, the runtime and an
+# allow_read_exec root still readable as the controls. The credential stores
+# are denied as well, and phase 3 asserts that.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -48,7 +48,21 @@ if [[ ! -x /usr/bin/sandbox-exec ]]; then
   exit 1
 fi
 
-PROJ="$(mktemp -d)"
+# The project, nvx's home and an allow_read_exec root all sit under the real
+# home, the layout a developer has, so the reads the profile reopens under the
+# home are the ones exercised here. mktemp would put them under
+# /private/var/folders, outside the home, where nothing is reopened because
+# nothing was denied. sandbox-smoke-macos.sh covers an NVX_HOME outside the
+# home.
+PROJ="$HOME/nvx-enforcement-project-$$"
+export NVX_HOME="$HOME/.nvx-enforcement-home-$$"
+READ_EXEC_DIR="$HOME/nvx-enforcement-tool-$$"
+rm -rf "$PROJ" "$NVX_HOME" "$READ_EXEC_DIR"
+mkdir -p "$PROJ" "$NVX_HOME" "$READ_EXEC_DIR"
+printf 'tool-file\n' > "$READ_EXEC_DIR/tool.txt"
+# Inside nvx's home but outside its runtimes: the control plane, which holds
+# grants, policy and other tools' credentials.
+printf 'control-plane\n' > "$NVX_HOME/probe-control-plane"
 
 # NOT mktemp for the "outside" fixture. Until 2026-10-06 buildSeatbeltProfile
 # granted writes on all of /private/var/folders, where macOS mktemp puts its
@@ -80,23 +94,45 @@ SHARED_TEMP_TARGETS=(
   "$(getconf DARWIN_USER_TEMP_DIR)$PROBE_TAG"
   "$(getconf DARWIN_USER_CACHE_DIR)$PROBE_TAG"
 )
-trap 'rm -rf "$PROJ" "$OUTSIDE" "$FAKE_HOME" "${SHARED_TEMP_TARGETS[@]}"' EXIT
+trap 'rm -rf "$PROJ" "$NVX_HOME" "$READ_EXEC_DIR" "$OUTSIDE" "$FAKE_HOME" "${SHARED_TEMP_TARGETS[@]}"' EXIT
 
+# A file in the home directory that is no credential store, standing in for
+# another project's source or secrets.
 SECRET="$OUTSIDE/credentials"
 printf 'SECRET-CONTENT-DO-NOT-LEAK\n' > "$SECRET"
 FORBIDDEN_WRITE="$OUTSIDE/should-not-exist"
 
+# An nvx-managed runtime under NVX_HOME, as the Linux probe uses. The runner's
+# own node is under /Users/runner/hostedtoolcache, inside the home, which a
+# contained process may not read. Running nvx's runtime is also the realistic
+# case, since managing runtimes is what nvx is for.
 cd "$PROJ"
+echo "Installing an nvx-managed runtime..."
+if ! "$NVX" -y install 22 >/dev/null 2>&1 || ! "$NVX" -y default 22 >/dev/null 2>&1; then
+  echo "FAIL: could not install an nvx-managed runtime into $NVX_HOME (network?)." >&2
+  echo "      Every contained run below needs one, so nothing here can be checked." >&2
+  exit 1
+fi
+
+# The policies below add an allow_read_exec root and an allowlisted host, and
+# nvx refuses to honour a widening policy it has not been told to trust. This
+# script writes them itself, which is not the case that guard exists for.
+export NVX_TRUST_YES=true
+
+printf 'project-file\n' > "$PROJ/project-file.txt"
 # Repository metadata. git runs uncontained, so a contained process must not be
 # able to write it, while reading it still works.
 mkdir -p .git/hooks
 GIT_CONFIG_BODY="$(printf '[core]\n\trepositoryformatversion = 0')"
 printf '%s\n' "$GIT_CONFIG_BODY" > .git/config
-cat > .nvx-policy.json <<'POLICY'
+cat > .nvx-policy.json <<POLICY
 {
   "isolation": {
     "enabled": true,
     "level": "strict",
+    "filesystem": {
+      "allow_read_exec": ["$READ_EXEC_DIR"]
+    },
     "network": {
       "mode": "proxy",
       "default_allow": [],
@@ -168,12 +204,28 @@ try {
 try { cp.execFileSync('/usr/bin/git', ['--version'], { stdio: 'pipe' }); out.push('XCRUN_TOOL=ALLOWED'); }
 catch (e) { out.push('XCRUN_TOOL=DENIED', why(e)); }
 
-// Documented as ALLOWED on macOS. Asserted so a change in either direction is
-// caught rather than silently diverging from four documents.
-try {
-  const got = fs.readFileSync(secret, 'utf8');
-  out.push(got.includes('SECRET-CONTENT') ? 'READ_OUTSIDE=ALLOWED' : 'READ_OUTSIDE=GARBLED');
-} catch (e) { out.push('READ_OUTSIDE=DENIED'); }
+// Must be DENIED by the OS: a file in the home directory outside the project,
+// and one in nvx's home outside its runtimes. Only EPERM or EACCES counts, so a
+// missing fixture cannot pass as a refusal.
+const readCheck = (name, p, want) => {
+  try {
+    const got = fs.readFileSync(p, 'utf8');
+    out.push(name + (got.includes(want) ? '=ALLOWED' : '=GARBLED'));
+  } catch (e) {
+    out.push(name + (e.code === 'EPERM' || e.code === 'EACCES' ? '=DENIED' : '=ERROR ' + e.code));
+  }
+};
+readCheck('READ_OUTSIDE', secret, 'SECRET-CONTENT');
+readCheck('NVX_HOME_READ', process.argv[10], 'control-plane');
+
+// Must be ALLOWED: the controls for the two denials above. All three sit under
+// the home directory too, so a profile that denied the whole home would fail
+// here: the project, the runtime this process is running, and the
+// allow_read_exec root the policy names.
+readCheck('READ_INSIDE', 'project-file.txt', 'project-file');
+try { fs.readFileSync(process.execPath); out.push('READ_RUNTIME=ALLOWED'); }
+catch (e) { out.push('READ_RUNTIME=DENIED', why(e)); }
+readCheck('READ_EXEC_ROOT', process.argv[9], 'tool-file');
 
 // Must be DENIED: UDP to an external host. Asserted separately from TCP because
 // the profile's `(deny default)` covers both and nothing checked the second, so
@@ -219,7 +271,8 @@ PROBE
 REPORT="$PROJ/report.txt"
 echo "Running contained probe..."
 set +e
-"$NVX" -y --strict shim node probe.js "$SECRET" "$FORBIDDEN_WRITE" "$REPORT" "${SHARED_TEMP_TARGETS[@]}"
+"$NVX" -y --strict shim node probe.js "$SECRET" "$FORBIDDEN_WRITE" "$REPORT" "${SHARED_TEMP_TARGETS[@]}" \
+  "$READ_EXEC_DIR/tool.txt" "$NVX_HOME/probe-control-plane"
 rc=$?
 set -e
 
@@ -257,6 +310,11 @@ expect "USER_CACHE_WRITE=DENIED"  "a contained process wrote the user's Darwin c
 expect "OWN_TMP_WRITE=ALLOWED"    "a contained process could not write its own temp directory, so the temp denials above prove nothing"
 expect "DEV_WRITE=ALLOWED"        "a contained shell could not write /dev/null, /dev/zero, /dev/stdout, /dev/fd/1 or /dev/stderr"
 expect "XCRUN_TOOL=ALLOWED"       "a contained process could not run /usr/bin/git, which npm uses for git dependencies"
+expect "READ_OUTSIDE=DENIED"      "a contained process read a file in the home directory outside the project, and other projects there are as readable as that file"
+expect "NVX_HOME_READ=DENIED"     "a contained process read nvx's home outside its runtimes, where grants, policy and other tools' credentials live"
+expect "READ_INSIDE=ALLOWED"      "a contained process could not read its own project, so the read denials above prove nothing"
+expect "READ_RUNTIME=ALLOWED"     "a contained process could not read the runtime it runs from NVX_HOME/versions"
+expect "READ_EXEC_ROOT=ALLOWED"   "a contained process could not read a directory the policy names in allow_read_exec"
 
 # On disk, outside the sandbox: nothing reported as denied landed anyway.
 for p in "${SHARED_TEMP_TARGETS[@]}"; do
@@ -271,17 +329,6 @@ if [[ -e .git/hooks/pre-commit ]]; then
 fi
 if [[ "$(cat .git/config)" != "$GIT_CONFIG_BODY" ]]; then
   echo "FAIL: .git/config changed; a contained process wrote it." >&2
-  fail=1
-fi
-
-# The documented weakness. A change here is not necessarily a regression -- it
-# may be an improvement -- but it must not go unnoticed, because four documents
-# describe the current behaviour.
-if ! grep -qx "READ_OUTSIDE=ALLOWED" "$REPORT"; then
-  echo "FAIL: reads outside the project are no longer allowed on macOS." >&2
-  echo "      That may be an improvement, but README, SECURITY.md, PRODUCT.md and" >&2
-  echo "      docs/enforcement-matrix.md all state that macOS allows reads outside the credential stores." >&2
-  echo "      Update them in the same change that tightened the profile." >&2
   fail=1
 fi
 
@@ -337,10 +384,6 @@ req.setTimeout(20000, () => { req.destroy(); console.log('CONNECT=timeout'); pro
 req.end();
 CONNECT
 
-# The policy above widens what the sandbox may reach, and nvx refuses to honour a
-# widening policy it has not been told to trust. This script wrote it a few lines
-# up, which is not the case that guard exists for.
-export NVX_TRUST_YES=true
 OUT2="$("$NVX" -y --strict shim node connect.js 2>&1 | grep '^CONNECT=' || true)"
 echo "  proxy said: ${OUT2:-<nothing>}"
 case "$OUT2" in
@@ -366,11 +409,11 @@ case "$OUT2" in
 esac
 
 # A contained run started in the home directory must not be able to write it,
-# nor ~/.nvx below it. The working directory is a writable root, and nothing
+# nor nvx's home below it. The working directory is a writable root, and nothing
 # checked which directory it was: measured on this runner before the guard, all
 # such writes landed.
 HOME_WRITE="$OUTSIDE/written-from-home"
-NVX_WRITE="$HOME/.nvx/probe-written-from-home"
+NVX_WRITE="$NVX_HOME/probe-written-from-home"
 ( cd "$HOME" && "$NVX" -y --strict shim node -e \
     "for(const p of process.argv.slice(1)){try{require('fs').writeFileSync(p,'x')}catch(e){}}" \
     "$HOME_WRITE" "$NVX_WRITE" >/dev/null 2>&1 ) || true
@@ -436,10 +479,31 @@ elif grep -q 'planted.invalid' <<<"$NPM_OUT"; then
   fail=1
 fi
 
+# Phase 4: an NVX_HOME outside the home directory.
+#
+# Everything above has nvx's home under the real home, where the deny on the
+# home covers it. NVX_HOME may be anywhere, so nvx's home is denied on its own
+# as well, with its runtimes reopened. mktemp puts this one under /var/folders.
+# A file in it outside the runtimes must be refused by the OS, and the runtime
+# itself must still read, or the refusal proves nothing.
+echo "Phase 4: nvx's home outside the home directory must be unreadable outside its runtimes..."
+OUT_NVX_HOME="$(mktemp -d)"
+trap 'rm -rf "$PROJ" "$NVX_HOME" "$READ_EXEC_DIR" "$OUTSIDE" "$FAKE_HOME" "$OUT_NVX_HOME" "${SHARED_TEMP_TARGETS[@]}"' EXIT
+if ! NVX_HOME="$OUT_NVX_HOME" "$NVX" -y install 22 >/dev/null 2>&1 || ! NVX_HOME="$OUT_NVX_HOME" "$NVX" -y default 22 >/dev/null 2>&1; then
+  echo "FAIL: could not install an nvx-managed runtime into $OUT_NVX_HOME (network?)." >&2
+  fail=1
+else
+  printf 'control-plane\n' > "$OUT_NVX_HOME/probe-control-plane"
+  NVX_HOME_DIR="$OUT_NVX_HOME"
+  expect_read "$OUT_NVX_HOME/probe-control-plane" 3 "nvx's home outside its runtimes must be unreadable wherever NVX_HOME is"
+  expect_read "SELF"                               0 "The runtime under an NVX_HOME outside the home must stay readable, or the denial above proves nothing"
+fi
+
 if [[ $fail -ne 0 ]]; then
   echo "macOS enforcement probe FAILED." >&2
   exit 1
 fi
 
 echo "macOS enforcement probe passed: writes contained, egress denied for TCP and UDP,"
-echo "an allowlisted host reachable through the proxy, credential files unreadable, other reads allowed as documented."
+echo "an allowlisted host reachable through the proxy, the home directory and credential files unreadable,"
+echo "the project, the runtime and an allow_read_exec root readable."
