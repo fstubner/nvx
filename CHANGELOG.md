@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **On macOS, a contained install can no longer write other apps' temp and
+  cache files.** The sandbox let every contained process write `/private/tmp`,
+  `/private/var/tmp`, all of `/dev` and all of `/private/var/folders`, which
+  holds every app's per-user temp and cache directories. A package could plant
+  files there for uncontained programs to read. It now writes only the project,
+  its own temporary home, where its temp directory already was, and a named
+  list of device files such as `/dev/null` and `/dev/tty`.
+
 * **`--help` works after `policy init`, `policy check`, `policy explain` and
   `audit export`.** Each printed "Unknown option" and exited 1. They now print
   the command's help and exit 0, as the other commands do.

@@ -105,8 +105,8 @@ install and run scripts. Its defenses are layered:
    run inside an OS-native sandbox. The sandbox is Windows AppContainer, Linux
    Landlock + network namespace + seccomp, or macOS Seatbelt. It has a scrubbed
    environment. It can write only to the working directory and an ephemeral
-   guest home. On macOS it may also write to `/dev` and the system temp
-   directories.
+   guest home, which holds its temp directory. On macOS it may also write a
+   few named device files such as `/dev/null` and `/dev/tty`.
 
    That is installs (`install`, `ci`, `add`, `update`, `rebuild`, `dedupe`,
    `audit fix`) and ad-hoc tool runners (`npx`, `bunx`, `npm exec`, `pnpm dlx`,

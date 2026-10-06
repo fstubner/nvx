@@ -75,14 +75,17 @@ matches the resolved path. None of these is on the dynamic linker's path. Until
 stays readable, other projects included, and so does a credential kept anywhere
 the list does not name.
 
-Writes are contained, with named exceptions: the profile grants write access to
-`/dev`, `/private/tmp`, `/private/var/tmp` and `/private/var/folders` so a
-contained process has somewhere to put temporary files. "Writes cannot leave the
-project" is therefore shorthand -- system temp trees are writable, and on macOS
-`$TMPDIR` lives under `/private/var/folders`. Found while writing
-`scripts/sandbox-enforcement-macos.sh`, whose first version put its
-must-not-be-writable fixture in `mktemp -d` and duly reported an escape that was
-the profile working as designed.
+Writes are contained to the project and the guest home, where `$TMPDIR` points.
+Outside them the profile grants writes only on named device files: `/dev/null`,
+`/dev/zero`, `/dev/random`, `/dev/urandom`, `/dev/tty`, `/dev/ptmx`,
+`/dev/dtracehelper`, `/dev/fd/*` and `/dev/ttys*`. Until 2026-10-06 it also
+granted all of `/dev`, `/private/tmp`, `/private/var/tmp` and
+`/private/var/folders`. The last holds every app's per-user temp and cache
+directories, which uncontained programs read back.
+`scripts/sandbox-enforcement-macos.sh` requires a contained write to each of
+`/private/tmp`, `/private/var/tmp` and the user's Darwin temp and cache
+directories to be refused, and a write to the contained process's own temp
+directory to succeed.
 
 **That redirection does not protect a file from being read, and this note used to
 say it did** -- it claimed "the sensitive material is still protected", which is

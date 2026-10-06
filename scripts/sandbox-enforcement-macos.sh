@@ -50,13 +50,11 @@ fi
 
 PROJ="$(mktemp -d)"
 
-# NOT mktemp for the "outside" fixture. buildSeatbeltProfile grants write access
-# to /dev, /private/tmp, /private/var/tmp and /private/var/folders so a contained
-# process has a usable temp directory -- and macOS mktemp returns a path under
-# /var/folders, which is a symlink into /private/var/folders. The first version
-# of this probe put its forbidden path there and reported that the sandbox had
-# been escaped, when the write had landed in a root the profile deliberately
-# allows.
+# NOT mktemp for the "outside" fixture. Until 2026-10-06 buildSeatbeltProfile
+# granted writes on all of /private/var/folders, where macOS mktemp puts its
+# directories, and the first version of this probe put its forbidden path there
+# and reported an escape that was the profile working as it then stood. The
+# shared temp trees are now asserted separately below.
 #
 # The real home is genuinely outside every write root. This script runs outside
 # the sandbox, so $HOME here is the actual home; the contained process gets an
