@@ -45,7 +45,7 @@ export const surfaces: SurfaceCard[] = [
   },
   {
     title: 'Installs, contained',
-    body: 'You type the same command. nvx runs it inside the platform sandbox (AppContainer, Landlock or Seatbelt) with a throwaway <code>HOME</code> and a scrubbed environment. It can write to the project and that home, and on macOS to the system temp folders. Outbound connections reach only the hosts the allowlist names or you approve.',
+    body: 'You type the same command. nvx runs it inside the platform sandbox (AppContainer, Landlock or Seatbelt) with a throwaway <code>HOME</code> and a scrubbed environment. It can write to the project and that home. Outbound connections reach only the hosts the allowlist names or you approve.',
     // Captured from a real contained install rather than composed: on
     // 2026-09-14 with left-pad, re-captured 2026-09-24 with sample-package.
     // What this replaced showed a blocked egress against an invented host, and

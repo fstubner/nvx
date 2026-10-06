@@ -23,8 +23,7 @@ var seatbeltExecPath = "/usr/bin/sandbox-exec"
 //
 // Both launch paths used os.CreateTemp("", ...), which on macOS lands under
 // $TMPDIR, and $TMPDIR is under /private/var/folders -- one of the roots the
-// profile itself grants file-write* on, so that contained code has a temp
-// directory. The file was 0600, but a concurrent contained process runs as
+// profile granted file-write* on until 2026-10-06 (see buildSeatbeltProfile). The file was 0600, but a concurrent contained process runs as
 // the same user. Between nvx writing the profile and sandbox-exec reading it,
 // that process could replace the contents with `(allow default)`, and the
 // launch it was racing then ran with no containment at all. A process that
@@ -157,13 +156,20 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 // nvxHome and the runtime binary directory as writable while the other passed the
 // intended two, and the compiler had no reason to object. Adding a writable root
 // should now require editing this signature and every caller with it.
+//
+// Until 2026-10-06 every profile also granted writes on /dev, /private/tmp,
+// /private/var/tmp and /private/var/folders. They came with the first Seatbelt
+// profile, with no stated need. The last holds every app's per-user temp and
+// cache directories, so a contained install could plant files that
+// uncontained programs read later. A contained process has a temp directory
+// without them, since scrubEnvironmentAllowing points TMPDIR into the guest
+// home.
+//
+// The roots are named as given and as resolved, because Seatbelt matches the
+// resolved path. A project made by mktemp is under /var/folders, really
+// /private/var/folders, and a rule naming only the first would match nothing.
 func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string) string {
-	writeRoots := append([]string{
-		"/dev",
-		"/private/tmp",
-		"/private/var/tmp",
-		"/private/var/folders",
-	}, sandboxWritableRoots(guestHome, workDir)...)
+	writeRoots := seatbeltPathForms(sandboxWritableRoots(guestHome, workDir))
 
 	var b strings.Builder
 	b.WriteString("(version 1)\n")
@@ -193,6 +199,9 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	// credential stores are carved back out further down.
 	b.WriteString("(allow file-read*)\n")
 	b.WriteString("(allow file-write*\n")
+	for _, dev := range seatbeltDeviceWrites {
+		b.WriteString("  " + dev + "\n")
+	}
 	for _, root := range dedupeStrings(writeRoots) {
 		if root == "" {
 			continue
@@ -279,6 +288,25 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir string
 	}
 
 	return b.String()
+}
+
+// seatbeltDeviceWrites are the device files a contained process may write, in
+// place of all of /dev. Shell scripts write /dev/null and /dev/fd/N, which
+// /dev/stdout and /dev/stderr resolve to. Programs prompt on /dev/tty, and a
+// terminal session is a /dev/ttysN that a pseudo-terminal opens through
+// /dev/ptmx. The dynamic linker registers DTrace probes through
+// /dev/dtracehelper. The rest of /dev stays read-only, the /dev/bpf* packet
+// devices among them.
+var seatbeltDeviceWrites = []string{
+	`(literal "/dev/null")`,
+	`(literal "/dev/zero")`,
+	`(literal "/dev/random")`,
+	`(literal "/dev/urandom")`,
+	`(literal "/dev/tty")`,
+	`(literal "/dev/ptmx")`,
+	`(literal "/dev/dtracehelper")`,
+	`(regex #"^/dev/fd/[0-9]+$")`,
+	`(regex #"^/dev/ttys[0-9]+$")`,
 }
 
 // Registry tokens, keys and cloud credentials, relative to the real home.

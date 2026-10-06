@@ -828,7 +828,7 @@ func TestBuildSeatbeltProfile(t *testing.T) {
 		"(allow file-write*",
 		`(subpath "/guest/home")`,
 		`(subpath "/work/dir")`,
-		`(subpath "/private/tmp")`,
+		`(literal "/dev/null")`,
 		`(allow network-outbound (remote tcp "localhost:8080"))`,
 	} {
 		if !strings.Contains(profile, expected) {

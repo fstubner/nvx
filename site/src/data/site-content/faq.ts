@@ -50,16 +50,16 @@ export const faq: FaqItem[] = [
   {
     group: 'Containment',
     q: 'What can a contained install actually reach?',
-    a: "Your project directory, including its lockfile and node_modules, and a throwaway home directory of its own. Environment variables are scrubbed. It can write to the project and that home, and on macOS also to the system temp folders. It can read the project's .git and cannot write it. Outbound connections are limited to an allowlist that by default names the npm registry and the OSV vulnerability API, and GitHub's download hosts for Bun.",
+    a: "Your project directory, including its lockfile and node_modules, and a throwaway home directory of its own. Environment variables are scrubbed. It can write to the project and that home. It can read the project's .git and cannot write it. Outbound connections are limited to an allowlist that by default names the npm registry and the OSV vulnerability API, and GitHub's download hosts for Bun.",
     aHtml:
-      "<p>Your project directory, including its lockfile and <code>node_modules</code>, and a throwaway home directory of its own. Environment variables are scrubbed. It can write to the project and that home, and on macOS also to the system temp folders. It can read the project's <code>.git</code> and cannot write it. Outbound connections are limited to an allowlist that by default names the npm registry and the OSV vulnerability API, and GitHub's download hosts for Bun.</p>",
+      "<p>Your project directory, including its lockfile and <code>node_modules</code>, and a throwaway home directory of its own. Environment variables are scrubbed. It can write to the project and that home. It can read the project's <code>.git</code> and cannot write it. Outbound connections are limited to an allowlist that by default names the npm registry and the OSV vulnerability API, and GitHub's download hosts for Bun.</p>",
   },
   {
     group: 'Containment',
     q: 'Is macOS protected the same way as Windows and Linux?',
-    a: 'No. On Windows and Linux a contained install cannot read your home directory. On macOS the Seatbelt profile allows filesystem reads and denies the known credential stores by path. SSH keys, cloud credentials and your npm token are out of reach on all three. On macOS other files in your home, other projects included, can still be read by absolute path. Writes and outbound connections are contained on macOS too. The difference is that the system temp folders are writable there.',
+    a: 'No. On Windows and Linux a contained install cannot read your home directory. On macOS the Seatbelt profile allows filesystem reads and denies the known credential stores by path. SSH keys, cloud credentials and your npm token are out of reach on all three. On macOS other files in your home, other projects included, can still be read by absolute path. Writes and outbound connections are contained on macOS too.',
     aHtml:
-      '<p><strong>No.</strong> On Windows and Linux a contained install cannot read your home directory. On macOS the Seatbelt profile allows filesystem reads and denies the known credential stores by path. SSH keys, cloud credentials and your npm token are out of reach on all three. On macOS other files in your home, other projects included, <em>can</em> still be read by absolute path. Writes and outbound connections are contained on macOS too. The difference is that the system temp folders are writable there.</p>',
+      '<p><strong>No.</strong> On Windows and Linux a contained install cannot read your home directory. On macOS the Seatbelt profile allows filesystem reads and denies the known credential stores by path. SSH keys, cloud credentials and your npm token are out of reach on all three. On macOS other files in your home, other projects included, <em>can</em> still be read by absolute path. Writes and outbound connections are contained on macOS too.</p>',
   },
   {
     // npm v12 shipped on 2026-07-08 with lifecycle scripts blocked by default.

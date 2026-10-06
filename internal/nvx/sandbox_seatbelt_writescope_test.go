@@ -84,23 +84,19 @@ func TestSeatbeltProfileWritableRootsAreExactlyExpected(t *testing.T) {
 	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "proxy"}, guestHome, workDir)
 	writes := seatbeltWriteSection(t, profile)
 
-	want := []string{
-		"/dev",
-		"/private/tmp",
-		"/private/var/tmp",
-		"/private/var/folders",
-		guestHome,
-		workDir,
-	}
+	want := append([]string{
+		`(subpath "` + guestHome + `")`,
+		`(subpath "` + workDir + `")`,
+	}, seatbeltDeviceWrites...)
 
 	got := 0
 	for _, line := range strings.Split(writes, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, `(subpath "`) || strings.HasPrefix(line, `(literal "`) {
+		if strings.HasPrefix(line, `(subpath "`) || strings.HasPrefix(line, `(literal "`) || strings.HasPrefix(line, `(regex `) {
 			got++
 			found := false
 			for _, w := range want {
-				if strings.Contains(line, `"`+w+`"`) {
+				if line == w {
 					found = true
 					break
 				}
@@ -112,5 +108,23 @@ func TestSeatbeltProfileWritableRootsAreExactlyExpected(t *testing.T) {
 	}
 	if got != len(want) {
 		t.Errorf("found %d writable roots, expected %d:\n%s", got, len(want), writes)
+	}
+}
+
+// The shared temp and cache trees were writable roots in every profile until
+// 2026-10-06. /private/var/folders holds every app's per-user temp and cache
+// directories, which uncontained programs read back, and /dev as a whole is
+// more than the device files a process needs. The exact-set test above would
+// also catch their return, and this one names what they are.
+func TestSeatbeltProfileDoesNotGrantWriteToSharedTempOrAllOfDev(t *testing.T) {
+	profile := buildSeatbeltProfile(NetworkLaunchContext{Mode: "proxy"},
+		"/Users/testuser/.nvx/sandbox_home/session1", "/Users/testuser/projects/app")
+	writes := seatbeltWriteSection(t, profile)
+	for _, root := range []string{"/dev", "/private/tmp", "/private/var/tmp", "/private/var/folders", "/tmp", "/var/folders"} {
+		for _, form := range []string{`(subpath "` + root + `")`, `(literal "` + root + `")`} {
+			if strings.Contains(writes, form) {
+				t.Errorf("the profile grants writes on %s via %s\nwrite section:\n%s", root, form, writes)
+			}
+		}
 	}
 }

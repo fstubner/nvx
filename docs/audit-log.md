@@ -1,8 +1,8 @@
 # The audit log
 
 nvx records its security decisions to `~/.nvx/audit.log` (`$NVX_HOME/audit.log`).
-Nothing is ever sent anywhere: there is no uploader in nvx, and this file is read
-by `nvx audit`, by `nvx audit export`, and by whatever you point at it.
+Nothing is ever sent anywhere. There is no uploader in nvx, and `nvx audit`,
+`nvx audit export` and whatever you point at it read this file.
 
 `nvx audit export` is the supported way to read it from another program. It
 ships in v0.7.0.
@@ -18,11 +18,11 @@ nvx audit export --since 7d --event egress_deny --format csv --out evidence.csv
 | `--format <fmt>`  | `jsonl` (default), `json`, or `csv`.                                              |
 | `--out <path>`    | Write here instead of stdout.                                                     |
 
-A line that cannot be parsed is reported on stderr and the command exits `1`,
-having exported everything that could be read and said how many records that was.
-A torn line happens: records are appended by concurrent processes and a crash
+The command reports a line it cannot parse on stderr and exits `1`. It still
+exports everything it could read and says how many records that was.
+A torn line happens. Concurrent processes append records, and a crash
 mid-write leaves one behind. `nvx audit` skips those silently because it is
-printing to a screen; an export is evidence, and evidence that quietly omits
+printing to a screen. An export is evidence, and evidence that quietly omits
 records is worse than none.
 
 ## The format
@@ -31,11 +31,11 @@ One JSON object per line. Every export renders every value as a **string**,
 including `pid`, whatever the on-disk record used, so a consumer never has to
 handle both.
 
-Values are sanitised on the way out: control characters, `DEL` and `|` become
-spaces, and runs of spaces collapse. Several fields are supplied by the contained
-process itself (a SOCKS5 request names its own destination host) and the log is a
-plain file anything on the machine can append to, so a newline in a value would
-otherwise forge an extra record and an escape sequence would rewrite a terminal.
+nvx sanitises values on the way out. Control characters, `DEL` and `|` become
+spaces, and runs of spaces collapse. The contained process itself supplies several
+fields (a SOCKS5 request names its own destination host). The log is a
+plain file anything on the machine can append to. A newline in a value would
+otherwise forge an extra record, and an escape sequence would rewrite a terminal.
 The `warnings` field keeps its ` | ` separator, which is what splits one run's
 warnings apart.
 
@@ -51,7 +51,7 @@ warnings apart.
 ### Events
 
 Security decisions are always recorded. The `run` and `hangup_watch` events are a
-debugging aid and are written only when `NVX_TRACE=1`.
+debugging aid and nvx writes them only when `NVX_TRACE=1`.
 
 | Event                            | Extra fields                                              | Written when                                                               |
 | -------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------- |
@@ -84,16 +84,16 @@ debugging aid and are written only when `NVX_TRACE=1`.
 
 `warnings` holds each warning's **format string**, never its rendered text, because
 rendering one put a live password in the log once. `nvx audit` replaces the printf
-verbs with `[…]` on the way out; the export does not, so a consumer sees exactly
-what was stored.
+verbs with `[…]` on the way out. The export does not, so a consumer sees exactly
+what nvx stored.
 
 In `csv` only, a value that starts with `=`, `+`, `-`, `@`, a tab or a carriage
 return, and is not a plain number, gets a leading `'`. Spreadsheets run such a cell
 as a formula, and the log is a file anything on the machine can append to.
 
 Arguments are never recorded. `action` holds only a subcommand nvx recognises by
-name (`install`, `run`, `add`), because a package spec or a script name can carry a
-registry token or an internal project name.
+name (`install`, `run`, `add`). This is because a package spec or a script name can
+carry a registry token or an internal project name.
 
 ## The stability guarantee
 
@@ -101,9 +101,9 @@ This is what a pipeline built on the export can rely on.
 
 **Will not change without a major version:**
 
-- The four fields on every record: `time`, `pid`, `event`, `cwd`.
+- The four fields on every record are `time`, `pid`, `event`, `cwd`.
 - `time` is RFC3339 in UTC.
-- One JSON object per line in `jsonl`; every value a string in every format.
+- One JSON object per line in `jsonl`, and every value a string in every format.
 - The event names in the table above, and the meaning of each.
 - The fields listed above for each of those events.
 
@@ -112,14 +112,14 @@ This is what a pipeline built on the export can rely on.
 - New event names, and new fields on an existing event. Treat an unknown event or
   an unexpected field as data to keep, not as an error.
 - The human-readable text inside a field: `reason`, `warnings`, and the contents
-  of `dropped` are messages, not identifiers. Do not match on them; match on the
+  of `dropped` are messages, not identifiers. Do not match on them. Match on the
   event name and the field that carries the identifier.
 - The order of CSV columns after the leading four (`time`, `pid`, `event`, `cwd`),
   which is the sorted union of whatever the selected records carry. Read a CSV by
   its header row.
-- Whether a given event is written at all under a given setting, and the rotation
+- Whether nvx writes a given event at all under a given setting, and the rotation
   size.
 
-**Not a guarantee at all:** the log is a local file with a size cap. One previous
-generation is kept (`audit.log.1`) and older records are discarded. A pipeline
+**Not a guarantee at all.** The log is a local file with a size cap. nvx keeps one
+previous generation (`audit.log.1`) and discards older records. A pipeline
 that needs to keep them must export on a schedule, or copy the file.

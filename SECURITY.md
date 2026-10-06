@@ -105,9 +105,10 @@ install and run scripts. Its defenses are layered:
    run inside an OS-native sandbox. The sandbox is Windows AppContainer, Linux
    Landlock + network namespace + seccomp, or macOS Seatbelt. It has a scrubbed
    environment. It can write only to the working directory and a guest home
-   under `~/.nvx`. The guest home is thrown away after each run, except for pnpm
-   and for tools approved as trusted, which keep one per project. On macOS it may also write to `/dev` and the system temp
-   directories.
+   under `~/.nvx`, which holds its temp directory. The guest home is thrown away
+   after each run, except for pnpm and for tools approved as trusted, which keep
+   one per project. On macOS it may also write a
+   few named device files such as `/dev/null` and `/dev/tty`.
 
    That is installs (`install`, `ci`, `add`, `update`, `rebuild`, `dedupe`,
    `audit fix`) and ad-hoc tool runners (`npx`, `bunx`, `npm exec`, `pnpm dlx`,

@@ -1,6 +1,6 @@
 # Exit codes
 
-`nvx policy check` is meant to gate a pipeline, so it exits with a different code
+`nvx policy check` exists to gate a pipeline, so it exits with a different code
 for each kind of failure. It ships in v0.7.0.
 
 ## Every other command
@@ -14,7 +14,7 @@ for each kind of failure. It ships in v0.7.0.
 | 127  | The command to run was not found. |
 | 129  | On Windows, nvx stopped the command because the program that started it had exited (`exitParentHungUp`). |
 
-A wrapped command's own exit code is passed through unchanged, so a contained
+nvx passes a wrapped command's own exit code through unchanged, so a contained
 `npm install` that fails exits with npm's code.
 
 ## `nvx policy check`
@@ -30,12 +30,12 @@ A wrapped command's own exit code is passed through unchanged, so a contained
 | 14   | `sandbox_unavailable` | `isolation.enabled` is true and this platform has no OS-native sandbox, so every contained command will refuse to run. |
 | 15   | `policy_file_invalid` | A policy file could not be read or parsed, so no verdict could be reached about the project. |
 
-When more than one class fails, all of them are reported and the exit code is the
+When more than one class fails, nvx reports all of them and the exit code is the
 most severe present. The order is `internal_error`, `policy_file_invalid`,
 `policy_violation`, `blocked_package`, `vulnerability`, `release_age`, then
 `sandbox_unavailable`. A run that could not
-finish outranks a verdict because it did not reach one; a platform that cannot
-contain is last because it is a property of the machine rather than of the change
+finish outranks a verdict because it did not reach one. A platform that cannot
+contain is last because it is a property of the machine instead of the change
 under review.
 
 `--format=json` prints the same verdict as data:
@@ -52,17 +52,17 @@ under review.
 }
 ```
 
-`checked` and `skipped` are part of the output on purpose: a green result that
+`checked` and `skipped` are part of the output on purpose. A green result that
 skipped the vulnerability scan is not the same claim as a green result that ran
-it, and a consumer should not have to infer which happened from the flags it
+it. A consumer should not have to infer which happened from the flags it
 passed.
 
 ## Stability
 
-These numbers are a contract. A class may be added, and the existing numbers will
-not be reassigned. `0` and `1` keep the meanings they have for every other nvx
-command, so a pipeline that only distinguishes zero from non-zero is unaffected by any of
-this.
+These numbers are a contract. nvx may add a class, and it will not reassign the
+existing numbers. `0` and `1` keep the meanings they have for every other nvx
+command. None of this affects a pipeline that only distinguishes zero from
+non-zero.
 
 `TestExitCodesMatchTheirDocumentation` compares this table against the constants
 in `internal/nvx/exit_codes.go`, so the two cannot drift apart silently.
@@ -70,10 +70,10 @@ in `internal/nvx/exit_codes.go`, so the two cannot drift apart silently.
 ## Behaviour in CI
 
 `nvx policy check` never prompts. A prompt in a pipeline is a hang, and a hang is
-worse than a failure because nothing reports it until the job times out. An
-untrusted project policy file is reported as a finding rather than asked about.
+worse than a failure because nothing reports it until the job times out. nvx
+reports an untrusted project policy file as a finding and does not ask about it.
 
-It makes no network request unless `--online` is passed. Reaching the npm registry
-and OSV turns the check into something that fails when a third party is down,
-which in a pipeline looks exactly like a real violation. The checks that need the
-network say they were skipped rather than passing silently.
+It makes no network request unless you pass `--online`. Reaching the npm registry
+and OSV turns the check into something that fails when a third party is down.
+In a pipeline, that looks exactly like a real violation. The checks that need the
+network say they skipped instead of passing silently.

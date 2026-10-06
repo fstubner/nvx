@@ -13,28 +13,28 @@ test, and submit changes.
 ## Project overview
 
 nvx is a single-module, **zero-dependency** Go program (standard library only).
-That constraint is intentional — it keeps the trusted computing base small and
+That constraint is intentional. It keeps the trusted computing base small and
 auditable. Please do not add third-party dependencies without discussing it
 first in an issue.
 
 Key areas:
 
-- **Runtime management** — `version.go` (the `RuntimeProvider` interface and
+- **Runtime management** is in `version.go` (the `RuntimeProvider` interface and
   `NodeProvider`), `download.go` (download + checksum verification + safe
   extraction), `env.go` (version detection, PATH, shims).
-- **Security layer** — `policy*.go` (policy model and loading), `security.go`
+- **Security layer** is in `policy*.go` (policy model and loading), `security.go`
   (typosquatting, OSV, release-age), `egress_proxy.go` (allowlist proxy).
-- **Sandboxing** — `sandbox*.go`, split per OS/primitive
+- **Sandboxing** is in `sandbox*.go`, split per OS/primitive
   (`sandbox_appcontainer_windows.go`, `sandbox_landlock_linux.go`,
   `sandbox_seatbelt.go`, etc.).
 
 ## Prerequisites
 
-- Go **1.23 or newer** (releases are built with 1.26.6, which `go.mod` names as the toolchain).
+- Go **1.23 or newer** (releases build with 1.26.6, which `go.mod` names as the toolchain).
 - To exercise sandboxing locally you need the platform primitives:
-  - **Linux:** kernel 5.13+ (Landlock), `iproute2` (network namespace).
-  - **macOS:** `/usr/bin/sandbox-exec`.
-  - **Windows:** AppContainer support (Windows 10+).
+  - **Linux** needs kernel 5.13+ (Landlock) and `iproute2` (network namespace).
+  - **macOS** needs `/usr/bin/sandbox-exec`.
+  - **Windows** needs AppContainer support (Windows 10+).
 
 ## Build and test
 
@@ -43,13 +43,13 @@ go build ./...
 go test -race ./...
 ```
 
-Platform sandbox smoke tests live in `scripts/` and are run by CI:
-`sandbox-smoke.sh` / `.ps1` and `sandbox-smoke-egress.*`.
+Platform sandbox smoke tests live in `scripts/` and CI runs them.
+They are `sandbox-smoke.sh` / `.ps1` and `sandbox-smoke-egress.*`.
 
 Alongside them are three **enforcement** probes, which are the ones that can
-fail. A smoke test checks that a contained process runs; an enforcement probe
-asserts what must be denied *and* what must still be allowed, so a sandbox that
-refuses everything fails it rather than passing:
+fail. A smoke test checks that a contained process runs. An enforcement probe
+asserts what it must deny *and* what it must still allow. A sandbox that
+refuses everything fails it instead of passing:
 
 | Script | Runs where |
 |---|---|
@@ -59,9 +59,9 @@ refuses everything fails it rather than passing:
 
 ### Running the Linux probe without a Linux machine
 
-WSL2 is enough, and it is worth doing: until 2026-09-01 the Linux column of
-`docs/enforcement-matrix.md` rested entirely on CI, which is the same evidence
-the Windows column had when it was found to be wrong. Cross-compile from
+WSL2 is enough, and it is worth doing. Until 2026-09-01 the Linux column of
+`docs/enforcement-matrix.md` rested entirely on CI. That is the same evidence
+the Windows column had when it turned out to be wrong. Cross-compile from
 Windows, stage into WSL's own filesystem (not `/mnt`, which is slow and has
 different permission semantics), and run:
 
@@ -72,12 +72,12 @@ GOOS=linux GOARCH=amd64 go test -c -o /tmp/nvx-linux.test ./internal/nvx   # the
 
 The test binary matters as much as the script. `sandbox_landlock_*_test.go` and
 `sandbox_network_mode_linux_test.go` are behind `//go:build linux`, so they never
-compile on a Windows developer machine — running the cross-compiled binary is the
+compile on a Windows developer machine. Running the cross-compiled binary is the
 only way to see them pass anywhere but CI. `-race` does not cross-compile (it
-needs cgo), so that run is without the detector; the Windows gate covers that.
+needs cgo), so that run is without the detector. The Windows gate covers that.
 
 Check `unshare -Urn -- ip link set lo up` succeeds first. If it does not, the
-script skips its egress assertion and still exits 0 — a pass that proves the
+script skips its egress assertion and still exits 0. That pass proves the
 filesystem half only.
 
 ### Before cutting a release, on Windows
@@ -100,53 +100,58 @@ gate skips itself and says only "run `nvx install`":
 ./nvx.exe -y install 22; ./nvx.exe -y default 22
 ```
 
-`nvx use 22` is not enough — it sets the active shell version, and these probes
+`nvx use 22` is not enough. It sets the active shell version, and these probes
 also accept a global default, which is what `nvx default` writes. Both probes
 behind the claim that contained `npx` needs no elevated setup are in this group.
-Measured 2026-09-03: the gate skipped 45 tests without a defaulted runtime and 6
+Measured on 2026-09-03, the gate skipped 45 tests without a defaulted runtime and 6
 with one.
 
-**`-race` is part of the gate, not an optional extra.** Without it, nothing in
-this project ever ran the probe tests under the detector: CI's unit step uses
-`-race` but not `NVX_PROBE`, and CI's probe step used `NVX_PROBE` but not
-`-race`, so the two were never combined and this line matched the latter. A
-probe test held a data race indefinitely as a result — a `strings.Builder`
-shared between `os/exec`'s copier goroutines and a poll loop — and it took an
+**`-race` is part of the gate and is never optional.** Without it, nothing in
+this project ever ran the probe tests under the detector. CI's unit step uses
+`-race` but not `NVX_PROBE`. CI's probe step used `NVX_PROBE` but not
+`-race`, so the two were never combined and this line matched the latter.
+
+A probe test held a data race indefinitely as a result. The race was a `strings.Builder`
+shared between `os/exec`'s copier goroutines and a poll loop. It took an
 acceptance pass running both flags together to see it. Both now use `-race`.
 
 CI runs this gate too, on a hosted Windows runner. Until 2026-09-21 it could
-not: hosted runners refused to create AppContainer children, so anything that
-launched a live contained process skipped there. Since PR #52 they launch them,
-and in run 37244525606 the enforcement script and the probe step both passed
-(the probe step had 8 skips, none of them a refusal to launch). The enforcement
+not. Hosted runners refused to create AppContainer children, so anything that
+launched a live contained process skipped there. Since PR #52 they launch them.
+In run 37244525606 the enforcement script and the probe step both passed
+(the probe step had 8 skips, none of them a refusal to launch).
+
+The enforcement
 script still detects a refused launch and skips, so a runner image that refuses
 again shows up as a skip. The by-hand run on a real machine stays part of the
 release checklist.
 
-**A Windows runner whose sockets are broken is a re-run, not a bug.** Seen
-2026-09-03: `listen tcp 127.0.0.1:0: socket: An operation was attempted on
-something that is not a socket` from three tests at once, with two probes
-skipping because the host could not create an AF_UNIX socket or find a
-non-loopback address. Winsock was in a bad state on that runner; the same
-commit went green on a re-run with no change. Two things follow. Re-running
-the failed job is the right response to *that* signature — a bare loopback
+**A Windows runner with broken sockets calls for a re-run.** Seen on
+2026-09-03, `listen tcp 127.0.0.1:0: socket: An operation was attempted on
+something that is not a socket` came from three tests at once. Two probes
+skipped because the host could not create an AF_UNIX socket or find a
+non-loopback address. Winsock was in a bad state on that runner. The same
+commit went green on a re-run with no change.
+
+Two things follow. Re-running
+the failed job is the right response to *that* signature. A bare loopback
 `listen` failing is not something this project can cause. And the skip check
-is right to fail on it rather than allowlisting it: a host that cannot make
+is right to fail on it instead of allowlisting it. A host that cannot make
 an AF_UNIX socket runs the relay probes as skips, which is the
 verifying-nothing case the check exists for. Do not add those reasons to the
 allowlist to make a flaky runner quiet.
 
 `NVX_PROBE=1` matters as much as the script. Those probes launch real
-AppContainers to check that a sandbox cannot read another project, that a deny
-ACE hides a secret, that one session cannot read another's guest home, and that
-the relay does not expose host loopback services — end-to-end containment
-assertions. They skipped on hosted CI until 2026-09-21 and run
+AppContainers for end-to-end containment assertions. They check that a sandbox
+cannot read another project and that a deny ACE hides a secret. They also check
+that one session cannot read another's guest home and that the relay does not
+expose host loopback services. They skipped on hosted CI until 2026-09-21 and run
 there now, so CI and this machine both exercise them.
 
 Expect **0 failures and exactly these 6 top-level skips**. `go test -v` also
 prints a further `--- SKIP` line for the subtest
 `TestStageAppContainerExecutableThroughALinkedDirectory/symlink`, which has the
-same Developer Mode cause as the third row — count top-level skips, or a reader
+same Developer Mode cause as the third row. Count top-level skips, or a reader
 following this literally goes looking for a phantom:
 
 | Skip | Why it is expected |
@@ -158,11 +163,11 @@ following this literally goes looking for a phantom:
 | `TestPipedStdioReachesRealAppContainerChild` | needs write access to the DACL on `C:\WINDOWS\System32\cmd.exe`, which an unelevated account does not have. **Expected on a normal run**, since nvx is meant to be used without elevation — run the gate elevated to make this one assert. |
 | `TestReportsItsOwnRaceBuildTag` | the child half of the uninstrumented-probe-child check — it only does anything when run as a child with `NVX_REPORT_RACE=1`, so in the parent it is a helper, not a test |
 
-A seventh means something is quietly not being checked — go and look at it rather
-than at this table. Last measured on Windows, 2026-09-03:
-**492 passing, 6 skipping, 0 failing**. Separately measured run time:
-163–209s under -race and 154s without, so the detector costs roughly a quarter, not the double
-this line claimed until an acceptance pass measured it.
+A seventh means something is quietly going unchecked. Go and look at it instead of
+at this table. The last Windows measurement, on 2026-09-03, was
+**492 passing, 6 skipping, 0 failing**. Run time, measured separately, was
+163 to 209s under -race and 154s without, so the detector costs roughly a quarter.
+This line claimed double until an acceptance pass measured it.
 
 `TestProxyRelayForwardsBothDirections` is sensitive to machine load, and fails in
 a way that reads like a product bug:
@@ -172,49 +177,54 @@ dial relay 127.0.0.1:61048: setsockopt: An operation was attempted on
 something that is not a socket.
 ```
 
-Measured 2026-09-02: it failed twice on a machine also running an Android
-emulator and three runaway test processes, and passed on the same commit once
-those were gone. Run the gate on an otherwise idle machine. It is worth naming
-because the obvious next step — bisecting whatever you last changed — produces a
-confident wrong answer: removing the newest test file "fixed" it, purely because
+Measured on 2026-09-02, it failed twice on a machine also running an Android
+emulator and three runaway test processes. It passed on the same commit once
+those had gone. Run the gate on an otherwise idle machine. It is worth naming
+because the obvious next step, bisecting whatever you last changed, produces a
+confident wrong answer. Removing the newest test file "fixed" it, purely because
 that run happened after the load dropped.
 
 The summary line must read `ok github.com/fstubner/nvx/internal/nvx <time>` and nothing else.
 `[no tests to run]` appended to it means a child process wrote to the test
-binary's stdout and `go test` attributed it to the package — the gate's headline
+binary's stdout and `go test` attributed it to the package. The gate's headline
 then reads exactly like a run in which nothing executed. See
 `probe_control_child_silent_test.go`.
 
-That duration used to be nine to twelve minutes, and the drop is a fix rather
-than a shortcut: nearly all of it was this binary waiting out the same stalled
+That duration used to be nine to twelve minutes, and the drop is a fix instead
+of a shortcut. Nearly all of it was this binary waiting out the same stalled
 ACL writes over and over. A permission write that overruns its deadline is
-abandoned, and a path that has stalled once is not retried now, so the hundreds
+abandoned. A path that has stalled once is not retried now, so the hundreds
 of launches in one test process no longer each pay the timeout. An acceptance
-pass found that accumulation the other way round — as a run that died with
-`runtime: SetWaitableTimer failed`, with 49 of 83 goroutines blocked in that
+pass found that accumulation the other way round, as a run that died with
+`runtime: SetWaitableTimer failed`. The run had 49 of 83 goroutines blocked in that
 write.
 
-**If you see this take many minutes again, that is the regression**, not a slow
-machine.
+**If you see this take many minutes again, that is the regression.** A slow
+machine does not explain it.
 
 ### The gate needs free memory, and says so when it does not
 
 The probes run a copy of the test binary inside each AppContainer. Under `-race`
 that child used to be race-instrumented too, which made a gate run cost several
-gigabytes of commit charge in bursts; on a machine near its commit limit, whatever
-happened to be allocating at that moment failed instead. Measured: three of ten
-`-race` runs failed against none of ten without it, wearing five different faces —
-"The paging file is too small for this operation to complete", `error code: 1455`
-(ERROR_COMMITMENT_LIMIT), `exit status 0xc0000142` (STATUS_DLL_INIT_FAILED), a
-`net.Listen` refusing, and interface enumeration coming back empty. Two of those
+gigabytes of commit charge in bursts. On a machine near its commit limit, whatever
+happened to be allocating at that moment failed instead. Measured, three of ten
+`-race` runs failed against none of ten without it, wearing five different faces:
+
+- "The paging file is too small for this operation to complete"
+- `error code: 1455` (ERROR_COMMITMENT_LIMIT)
+- `exit status 0xc0000142` (STATUS_DLL_INIT_FAILED)
+- a `net.Listen` refusing
+- interface enumeration coming back empty
+
+Two of those
 five arrived as SKIPS, so a run could go green having checked no containment at
 all.
 
 Two things now stop that. The child is rebuilt once per run without
-instrumentation, which is worth 212.5MB against 54.0MB of peak commit per child on
-the same workload — the parent keeps `-race`, which is the half that catches real
+instrumentation. That is worth 212.5MB against 54.0MB of peak commit per child on
+the same workload. The parent keeps `-race`, which is the half that catches real
 races. And a refused AppContainer launch is only excused after a control launch
-has shown this host genuinely cannot create them; on a host that can, a refusal is
+has shown this host genuinely cannot create them. On a host that can, a refusal is
 a failure with the machine's commit headroom printed next to it.
 
 **A run whose skip count exceeds the table above has not checked what it claims**,
@@ -223,16 +233,16 @@ whatever the failure count says. That is the number to read first.
 An extra skip beyond the table appeared once and is not in it:
 `TestDenyACEHidesSecretFromAppContainer` self-skips when it cannot stage the test
 binary as a contained child. The test documents that as intermittent on hosted
-runners; it ran normally on the next attempt.
+runners. It ran normally on the next attempt.
 
-**Adding a test? Update the pass count in the same commit.** The skip list is the
-tripwire; the pass count is a fact with a short shelf life, and it has now gone
-stale five times — at 337, 392, 394, 397 and 400, each time because a test
-was added in the commit after the count was written.
+**When you add a test, update the pass count in the same commit.** The skip list is the
+tripwire. The pass count is a fact with a short shelf life. It has now gone
+stale five times, at 337, 392, 394, 397 and 400. Each time, the commit after the
+one that wrote the count added a test.
 
 A seventh skip appeared once for a reason worth recording, because it looked like
-a product fault and was not: `TestDoctorDiagnosesAPolicyItCannotRead` needs
-`nvx doctor` to report a healthy baseline before it can assert anything, and an
+a product fault and was not. `TestDoctorDiagnosesAPolicyItCannotRead` needs
+`nvx doctor` to report a healthy baseline before it can assert anything. Here, an
 unrelated `package.json` in the home directory made doctor report every temporary
 directory as a project carrying leftover grants. Deleting that file restored the
 sixth-skip count. If this one starts skipping, look above the working directory
@@ -242,13 +252,15 @@ teaches the reader to ignore the table it sits in.
 That number is a tripwire and it has caught something three times. It read "3 skips"
 while the real count was 4, and the extra one was the loopback-exemption check
 verifying nothing on a healthy machine. Then it read "4 skips" and "337 passing"
-while an unelevated run — the normal way to run this, since nvx is built not to
-need elevation — produced 5 and 392: the `cmd.exe` row was missing, so the table
-told a maintainer on a clean checkout that something was quietly not being
-checked. All three were found by an acceptance pass noticing the mismatch, not
-by anyone re-reading the tests. The third time it read 394 against a real 396,
-again because tests were added after it was written -- which is what the note
-above is now for. Rows are named, so a mismatch says which one rather than only
+while an unelevated run produced 5 and 392. That run is the normal way to run this, since nvx runs without
+elevation by design. The `cmd.exe` row was missing, so the table
+told a maintainer on a clean checkout that something was quietly going
+unchecked.
+
+An acceptance pass found all three by noticing the mismatch. Nobody found them
+by re-reading the tests. The third time it read 394 against a real 396,
+again because a later commit added tests. The note
+above is now for that. Rows have names, so a mismatch says which one and also
 how many.
 
 That is why `docs/enforcement-matrix.md` says **measured** for the Windows
@@ -258,16 +270,16 @@ column and **CI** for the other two. Running both is what keeps the word
 ## Why this is one flat package
 
 `cmd/nvx` holds only the entry point, and everything else is one package,
-`nvx`, in `internal/nvx`. Measured 2026-09-26: 438 Go files in that directory,
-66,854 lines, no subpackages. This is the first
-thing a newcomer wants to change, so here is what is known about it — labelled,
-because part is reconstructed rather than recorded.
+`nvx`, in `internal/nvx`. Measured on 2026-09-26, that directory held 438 Go files and
+66,854 lines, with no subpackages. This is the first
+thing a newcomer wants to change. Here is what we know about it, labelled
+because we had to reconstruct part of it.
 
-**Not recorded:** nobody wrote down an original decision. The repo starts at
+**Not recorded.** Nobody wrote down an original decision. The repo starts at
 "Initial commit" on 2026-06-29 with the layout already flat, and it grew. On
 2026-09-12 the entry point moved to `cmd/nvx` and the rest to `internal/nvx`,
 still as one package.
-Do not read the rest of this section as the reason it was chosen.
+Do not read the rest of this section as the reason anyone chose it.
 
 **What now depends on it**, which is the part that matters if you want to split
 it:
@@ -284,16 +296,16 @@ it:
   the child halves. Move the sandbox into its own package and each probe needs
   a built artifact to launch instead of `os.Executable()`.
 - The two above are why `go vet` for all three platforms is a required check
-  and `go build` is not enough: the failure mode of getting a build tag wrong
+  and `go build` is not enough. The failure mode of getting a build tag wrong
   is invisible until another platform compiles the *tests*.
 
-**What it is not.** It is not a workaround for import cycles — `go vet` is
+**What it is not.** It is not a workaround for import cycles. `go vet` is
 clean and nothing here imports anything of ours, because there is nothing to
 import. `go.mod` has zero third-party dependencies.
 
-**What it costs**, so the trade is visible: no compiler-enforced boundary
-anywhere. Nothing stops a new file calling into ACL primitives, and the
-package's internal structure is carried entirely by file naming
+**What it costs**, so the trade is visible. There is no compiler-enforced boundary
+anywhere. Nothing stops a new file calling into ACL primitives, and file naming
+carries the package's internal structure entirely
 (`sandbox_*`, `probe_*`, `policy_*`). That convention is consistent today and
 is the only thing holding the shape.
 
@@ -303,14 +315,14 @@ If you do split it, record what forced it in this section.
 ## Making changes
 
 1. Fork and create a topic branch from `main`.
-2. Make your change with tests. New behavior needs a test; bug fixes need a
+2. Make your change with tests. New behavior needs a test. Bug fixes need a
    regression test.
-3. Run `go build ./...` and `go test -race ./...` — both must pass.
+3. Run `go build ./...` and `go test -race ./...`. Both must pass.
 
    **To check another platform, use `go vet`, not `go build`.** `go build` does
    not compile test files, so a cross-platform build check passes while the other
-   platforms' test jobs cannot build at all. That shipped once: a helper used by
-   a test file with no build tag was defined in a `_windows_test.go` one, three
+   platforms' test jobs cannot build at all. That shipped once. A `_windows_test.go` file defined a helper that
+   a test file with no build tag used. Three
    `GOOS=... go build ./...` checks all passed, and CI's macOS unit job failed on
    the push.
 
@@ -321,9 +333,9 @@ If you do split it, record what forced it in this section.
 
    **Vet catches what does not compile. It does not catch what compiles and
    fails.** A test that spelled its paths with backslashes passed on Windows,
-   vetted clean for Linux and macOS, and failed on both — `filepath.Base` does
+   vetted clean for Linux and macOS, and failed on both. `filepath.Base` does
    not split at a backslash there. Before pushing anything that touches paths,
-   file layout or process launching, run the whole suite on real Linux; with
+   file layout or process launching, run the whole suite on real Linux. With
    Docker Desktop it is one command and takes a few seconds after the first pull:
 
    ```sh
@@ -332,15 +344,15 @@ If you do split it, record what forced it in this section.
      golang:1.26 go test -count=1 ./...
    ```
 
-   From Git Bash, prefix it with `MSYS_NO_PATHCONV=1` or `-w /src` is rewritten
-   into a Windows path. macOS still has to wait for CI; nothing here runs it.
+   From Git Bash, prefix it with `MSYS_NO_PATHCONV=1` or Git Bash rewrites `-w /src`
+   into a Windows path. macOS still has to wait for CI. Nothing here runs it.
 4. Run `gofmt -w` on changed files. CI runs `govulncheck` and `gosec`
-   (`-severity=high -confidence=high`); avoid introducing new findings.
+   (`-severity=high -confidence=high`). Avoid introducing new findings.
 5. Open a PR describing **what** changed and **why**. Link any related issue.
 
 ### Guidance for security-sensitive changes
 
-- Preserve the **fail-closed** invariant: if you touch policy loading, sandbox
+- Preserve the **fail-closed** invariant. If you touch policy loading, sandbox
   setup, or egress control, a failure must deny the operation, not allow it.
 - Never widen what a *project-local* policy can do without an explicit,
   fail-closed user confirmation.

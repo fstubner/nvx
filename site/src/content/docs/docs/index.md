@@ -17,7 +17,7 @@ strangers with your credentials within reach. nvx runs it inside the platform's
 own sandbox. That is AppContainer on Windows, Landlock with a network namespace
 and seccomp on Linux, and Seatbelt on macOS. The install gets a throwaway `HOME`,
 scrubbed environment variables and an outbound allowlist. It can write to the
-project and that home, and on macOS to the system temp folders as well.
+project and that home.
 
 You do not change how you type anything. nvx puts shims on `PATH`, so
 `npm install` is still `npm install`.
@@ -62,8 +62,7 @@ None of them certifies a package, which is why containment is the backstop.
 - **It does not contain every read on macOS.** Write containment and egress
   control apply there, and the credential stores are denied by path. Other reads
   are allowed, because the dynamic linker must read system libraries whose
-  locations vary by macOS version. The system temp folders are writable there
-  too.
+  locations vary by macOS version.
 
 :::caution[Read the enforcement matrix before relying on any of this]
 Guarantees differ by platform. Some rows are measured and others are read off a

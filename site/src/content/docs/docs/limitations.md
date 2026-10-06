@@ -72,11 +72,6 @@ and the evidence for each platform is in the
   stores by path, so `~/.ssh`, `~/.aws`, `~/.npmrc`, the other registry and cloud
   credential files, and your keychains cannot be read. Other files can, including
   other projects and any credential kept somewhere the list does not name.
-- **The system temp folders are writable.** Besides the project and its
-  throwaway home, the profile allows writes under `/dev`, `/private/tmp`,
-  `/private/var/tmp` and `/private/var/folders`, which holds your `$TMPDIR`. A
-  contained install can leave or change files there that your own programs later
-  read.
 - **DNS lookups are not blocked.** A contained process can still query the
   system resolver directly. Connections themselves go through the allowlist.
 

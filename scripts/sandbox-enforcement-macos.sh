@@ -50,13 +50,11 @@ fi
 
 PROJ="$(mktemp -d)"
 
-# NOT mktemp for the "outside" fixture. buildSeatbeltProfile grants write access
-# to /dev, /private/tmp, /private/var/tmp and /private/var/folders so a contained
-# process has a usable temp directory -- and macOS mktemp returns a path under
-# /var/folders, which is a symlink into /private/var/folders. The first version
-# of this probe put its forbidden path there and reported that the sandbox had
-# been escaped, when the write had landed in a root the profile deliberately
-# allows.
+# NOT mktemp for the "outside" fixture. Until 2026-10-06 buildSeatbeltProfile
+# granted writes on all of /private/var/folders, where macOS mktemp puts its
+# directories, and the first version of this probe put its forbidden path there
+# and reported an escape that was the profile working as it then stood. The
+# shared temp trees are now asserted separately below.
 #
 # The real home is genuinely outside every write root. This script runs outside
 # the sandbox, so $HOME here is the actual home; the contained process gets an
@@ -68,7 +66,21 @@ mkdir -p "$OUTSIDE"
 # A throwaway home for phase 3, holding planted stand-ins for credential files
 # so the real ones are never read or written.
 FAKE_HOME="$(mktemp -d)"
-trap 'rm -rf "$PROJ" "$OUTSIDE" "$FAKE_HOME"' EXIT
+
+# The shared temp and cache trees that uncontained programs read back: the
+# system temp directories, and this user's own Darwin temp and cache
+# directories, which every app the user runs keeps files in. A contained process
+# gets its own temp directory in the guest home through TMPDIR, so it has no
+# need to write any of these. getconf asks libSystem, which is where Apple's
+# frameworks find these directories without reading TMPDIR.
+PROBE_TAG="nvx-enforcement-probe-$$"
+SHARED_TEMP_TARGETS=(
+  "/private/tmp/$PROBE_TAG"
+  "/private/var/tmp/$PROBE_TAG"
+  "$(getconf DARWIN_USER_TEMP_DIR)$PROBE_TAG"
+  "$(getconf DARWIN_USER_CACHE_DIR)$PROBE_TAG"
+)
+trap 'rm -rf "$PROJ" "$OUTSIDE" "$FAKE_HOME" "${SHARED_TEMP_TARGETS[@]}"' EXIT
 
 SECRET="$OUTSIDE/credentials"
 printf 'SECRET-CONTENT-DO-NOT-LEAK\n' > "$SECRET"
@@ -133,6 +145,29 @@ try {
   out.push('INSTALL_WRITE=ALLOWED');
 } catch (e) { out.push('INSTALL_WRITE=DENIED'); }
 
+// Must be DENIED: the shared temp and cache trees, in the order the script
+// passes them. Uncontained programs read files back from all four.
+['SYS_TMP_WRITE', 'SYS_VAR_TMP_WRITE', 'USER_TEMP_WRITE', 'USER_CACHE_WRITE'].forEach((name, i) => {
+  try { fs.writeFileSync(process.argv[5 + i], 'escaped'); out.push(name + '=ALLOWED'); }
+  catch (e) { out.push(name + (e.code === 'EPERM' || e.code === 'EACCES' ? '=DENIED' : '=ERROR ' + e.code)); }
+});
+
+// Must be ALLOWED: the controls for the denials above. The contained process's
+// own temp directory, the device files shell scripts write to, and an Xcode
+// tool started through its /usr/bin stand-in, which is how npm reaches git.
+const cp = require('child_process');
+const why = (e) => '# ' + String((e.stderr && e.stderr.length) ? e.stderr : e.message).trim().split('\n')[0];
+try { fs.writeFileSync(require('path').join(require('os').tmpdir(), 'probe'), 'ok'); out.push('OWN_TMP_WRITE=ALLOWED'); }
+catch (e) { out.push('OWN_TMP_WRITE=DENIED', why(e)); }
+try {
+  cp.execFileSync('/bin/sh', ['-c',
+    'printf x >/dev/null && printf x >/dev/zero && printf "" >/dev/stdout && printf "" >/dev/fd/1 && printf "" >/dev/stderr'],
+    { stdio: 'pipe' });
+  out.push('DEV_WRITE=ALLOWED');
+} catch (e) { out.push('DEV_WRITE=DENIED', why(e)); }
+try { cp.execFileSync('/usr/bin/git', ['--version'], { stdio: 'pipe' }); out.push('XCRUN_TOOL=ALLOWED'); }
+catch (e) { out.push('XCRUN_TOOL=DENIED', why(e)); }
+
 // Documented as ALLOWED on macOS. Asserted so a change in either direction is
 // caught rather than silently diverging from four documents.
 try {
@@ -184,7 +219,7 @@ PROBE
 REPORT="$PROJ/report.txt"
 echo "Running contained probe..."
 set +e
-"$NVX" -y --strict shim node probe.js "$SECRET" "$FORBIDDEN_WRITE" "$REPORT"
+"$NVX" -y --strict shim node probe.js "$SECRET" "$FORBIDDEN_WRITE" "$REPORT" "${SHARED_TEMP_TARGETS[@]}"
 rc=$?
 set -e
 
@@ -215,8 +250,21 @@ expect "GIT_HOOK_WRITE=DENIED"   "a contained process created a git hook; .git m
 expect "GIT_CONFIG_WRITE=DENIED" "a contained process wrote .git/config; .git must be read-only inside the project"
 expect "GIT_READ=ALLOWED"        "a contained process could not read .git/config; npm and install scripts read it"
 expect "INSTALL_WRITE=ALLOWED"   "a contained process could not write package.json or node_modules, so the .git checks above prove nothing"
+expect "SYS_TMP_WRITE=DENIED"     "a contained process wrote /private/tmp, which uncontained programs read"
+expect "SYS_VAR_TMP_WRITE=DENIED" "a contained process wrote /private/var/tmp, which uncontained programs read"
+expect "USER_TEMP_WRITE=DENIED"   "a contained process wrote the user's Darwin temp directory, where every app the user runs keeps its temp files"
+expect "USER_CACHE_WRITE=DENIED"  "a contained process wrote the user's Darwin cache directory, where other apps and tools keep caches"
+expect "OWN_TMP_WRITE=ALLOWED"    "a contained process could not write its own temp directory, so the temp denials above prove nothing"
+expect "DEV_WRITE=ALLOWED"        "a contained shell could not write /dev/null, /dev/zero, /dev/stdout, /dev/fd/1 or /dev/stderr"
+expect "XCRUN_TOOL=ALLOWED"       "a contained process could not run /usr/bin/git, which npm uses for git dependencies"
 
 # On disk, outside the sandbox: nothing reported as denied landed anyway.
+for p in "${SHARED_TEMP_TARGETS[@]}"; do
+  if [[ -e "$p" ]]; then
+    echo "FAIL: $p exists; a contained process wrote a shared temp or cache directory." >&2
+    fail=1
+  fi
+done
 if [[ -e .git/hooks/pre-commit ]]; then
   echo "FAIL: .git/hooks/pre-commit exists; a contained process created a git hook." >&2
   fail=1
