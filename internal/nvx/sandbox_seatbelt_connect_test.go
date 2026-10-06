@@ -19,7 +19,7 @@ func TestSeatbeltConnectOpensTheRelayPortAndNotTheService(t *testing.T) {
 		Mode:          "proxy",
 		HTTPProxyPort: 8080,
 		ConnectPorts:  []connectMapping{{Host: 9222, Inside: 19222}},
-	}, tempDir(t), tempDir(t))
+	}, tempDir(t), tempDir(t), "", nil)
 
 	if !strings.Contains(profile, `(allow network-outbound (remote tcp "localhost:19222"))`) {
 		t.Errorf("the contained process cannot reach nvx's relay, so --connect does nothing:\n%s", profile)
@@ -42,7 +42,7 @@ func TestSeatbeltConnectWorksInOfflineMode(t *testing.T) {
 	profile := buildSeatbeltProfile(NetworkLaunchContext{
 		Mode:         "offline",
 		ConnectPorts: []connectMapping{{Host: 5432, Inside: 15432}},
-	}, tempDir(t), tempDir(t))
+	}, tempDir(t), tempDir(t), "", nil)
 
 	if !strings.Contains(profile, `(allow network-outbound (remote tcp "localhost:15432"))`) {
 		t.Errorf("--connect was dropped in offline mode:\n%s", profile)
@@ -62,7 +62,7 @@ func TestSeatbeltConnectEmitsNoRuleForAnUnresolvedPort(t *testing.T) {
 	profile := buildSeatbeltProfile(NetworkLaunchContext{
 		Mode:         "proxy",
 		ConnectPorts: []connectMapping{{Host: 9222}},
-	}, tempDir(t), tempDir(t))
+	}, tempDir(t), tempDir(t), "", nil)
 
 	if strings.Contains(profile, `localhost:0`) {
 		t.Errorf("the profile names port 0:\n%s", profile)

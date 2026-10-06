@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -254,11 +253,8 @@ func landlockReadOnlyRules(nvxHome string, privateProc bool) []landlockRule {
 		// Landlock is allowlist-only -- there is no deny rule -- so narrowing the
 		// grant is the only way to exclude them. The guest home is granted
 		// separately with full access, including when it lives under tool_home.
-		paths = append(paths,
-			filepath.Join(nvxHome, "versions"), // runtimes: read+exec is the point
-			filepath.Join(nvxHome, "bin"),      // shims: PATH still resolves nested node/npm here
-			filepath.Join(nvxHome, "current"),  // symlink into versions; resolved at rule-add time
-		)
+		// The current symlink is resolved at rule-add time.
+		paths = append(paths, sandboxRuntimeReadRoots(nvxHome)...)
 	}
 
 	var rules []landlockRule
