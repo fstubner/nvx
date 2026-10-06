@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **A contained install on macOS or Linux can no longer read the project's
+  `.env` files.** The project has to be readable for an install, so `.env`,
+  `.env.local` and the rest were readable to every postinstall script. Now
+  `.env` and `.env.*` in any letter case are refused, except the templates
+  `.env.example`, `.env.sample`, `.env.template` and `.env.dist`. On Linux the
+  sandbox mounts an empty, unreadable, read-only file over each one present at
+  launch, outside `node_modules` and `.git`, and stops looking after 50,000
+  entries. On macOS the Seatbelt profile refuses reading and writing those
+  names anywhere, so a contained tool cannot create a `.env` there either.
+  Windows is unchanged: deny entries and an integrity label on the file were
+  both measured, and neither stopped the read.
+
 * **On macOS, a contained install can no longer read the rest of your home
   directory.** The sandbox allowed every read outside the credential stores, so
   a package could read other projects in the home directory, nvx's own settings
