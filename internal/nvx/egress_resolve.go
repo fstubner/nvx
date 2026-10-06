@@ -119,6 +119,25 @@ func anyLoopback(ips []net.IP) bool {
 // reports the DNS error in its own words. Nothing can rebind an answer that was
 // never obtained.
 func dialVetted(ips []net.IP, host string, port uint16) (net.Conn, error) {
+	ips, err := vettedOrResolve(ips, host)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for _, ip := range ips {
+		conn, err := net.Dial("tcp", net.JoinHostPort(ip.String(), strconv.Itoa(int(port))))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+// vettedOrResolve returns ips, or when there are none, host resolved and
+// vetted again. dialVetted and a socks5:// upstream proxy, which both connect
+// to addresses nvx resolved, use it.
+func vettedOrResolve(ips []net.IP, host string) ([]net.IP, error) {
 	if len(ips) == 0 {
 		// Resolve HERE rather than handing the name to net.Dial.
 		//
@@ -142,15 +161,7 @@ func dialVetted(ips []net.IP, host string, port uint16) (net.Conn, error) {
 		}
 		ips = resolved
 	}
-	var lastErr error
-	for _, ip := range ips {
-		conn, err := net.Dial("tcp", net.JoinHostPort(ip.String(), strconv.Itoa(int(port))))
-		if err == nil {
-			return conn, nil
-		}
-		lastErr = err
-	}
-	return nil, lastErr
+	return ips, nil
 }
 
 // formatEgressIPs renders the addresses a dial attempt covered, for the warning
