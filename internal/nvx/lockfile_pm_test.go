@@ -133,6 +133,14 @@ func TestEachLockfileFormatListsWhatItInstalls(t *testing.T) {
 				}
 			}
 
+			// pnpm 7 and 8 record that fsevents builds, which prompts like
+			// a package-lock.json entry's hasInstallScript.
+			for _, tg := range pmLockTargets(lock, mac, dir) {
+				if tg.name == "fsevents" && tg.hasInstallScript != (f.dir == "pnpm-v5" || f.dir == "pnpm-v6") {
+					t.Errorf("fsevents: hasInstallScript=%v", tg.hasInstallScript)
+				}
+			}
+
 			for _, tg := range pmLockTargets(lock, linux, dir) {
 				name := targetPackageName(tg)
 				// The project's own choices keep the typosquat check, and what
@@ -180,6 +188,9 @@ func TestPnpmEnvironmentDocumentIsRead(t *testing.T) {
 // that agrees with its lockfile.
 func fixtureWorld(t *testing.T, f lockFixture, policy string) *verifyWorld {
 	t.Helper()
+	// On macOS fsevents installs, and pnpm 7 and 8 record that it builds, so
+	// its install-script prompt would come first and refuse every run there.
+	policy = `{"install_scripts":{"trusted_packages":["fsevents"]},` + strings.TrimPrefix(policy, "{")
 	w := newVerifyWorld(t, policy)
 	copyFixture(t, f.dir, w.project)
 	lock, ok, err := readPMLockfile(f.cmd, w.project)
