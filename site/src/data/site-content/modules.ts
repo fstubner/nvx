@@ -8,4 +8,6 @@ import type { Modules } from './types';
 export const modules: Modules = {
   docs: true,
   changelog: true,
+  // Off: nvx has no written privacy text and no app-store listing that needs one.
+  privacy: false,
 };
