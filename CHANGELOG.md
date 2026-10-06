@@ -106,6 +106,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names anywhere, so a contained tool cannot create a `.env` there either.
   Windows is covered by the entry below.
 
+* **On Linux, a `.env` file created or replaced during a contained run is
+  hidden too.** Only the files present at launch were covered. A dev server or
+  MCP server that runs for hours could read a `.env` created after it started,
+  or one your editor or `git checkout` replaced, because replacing a file
+  removes the mount that covered it. The sandbox now watches the project's
+  folders and covers each new `.env` or `.env.*` within a few milliseconds, the
+  same way as at launch. A process that reads the file in that moment can still
+  see it. A contained process that creates a `.env` itself keeps
+  the file it has open, but cannot open it again, rename it or delete it. If
+  the watch cannot start, the run says so and goes on with the launch's
+  protection.
+
 * **A contained install on Windows can no longer read the project's `.env`
   files.** At each contained launch nvx now changes the permissions of the
   project's `.env` and `.env.*` files, the same files macOS and Linux hide.

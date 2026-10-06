@@ -9,3 +9,5 @@ import "syscall"
 // riscv64 and loong64, so PR_SET_NO_NEW_PRIVS was never set there and no error
 // said so.
 func prctlSyscall() uintptr { return syscall.SYS_PRCTL }
+
+func setnsSyscall() uintptr { return syscall.SYS_SETNS }

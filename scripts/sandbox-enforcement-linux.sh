@@ -257,8 +257,9 @@ fi
 # them a sandbox that refused every read in the project would pass. upper/.ENV
 # is a file of its own here, and is covered like .env, as it is on macOS.
 #
-# A dotenv file created after launch is not covered, and DOTENV_CREATE pins
-# that, so the documents that say so change with it.
+# A contained process may create a dotenv file. The supervisor covers it a
+# moment later, and from then on the process cannot read it again, move it or
+# delete it. DOTENV_NEW retries the read for up to 2s.
 echo "Dotenv: dotenv files must be unreadable while templates stay readable..."
 DOTENV_SECRET='API_KEY=DOTENV-SECRET-DO-NOT-LEAK'
 mkdir -p "$PROJ/sub" "$PROJ/upper"
@@ -293,6 +294,16 @@ read('DOTENV_CONTROL', 'plain.txt');
 act('DOTENV_STAT', () => fs.statSync('.env'));
 act('DOTENV_WRITE', () => fs.appendFileSync('.env', 'INJECTED=1\n'));
 act('DOTENV_CREATE', () => { fs.mkdirSync('fresh', { recursive: true }); fs.writeFileSync('fresh/.env', 'X=1\n'); });
+// Reads until refused. A read that still succeeds after 2s means nothing covered it.
+(function readUntilRefused(name, p) {
+  const until = Date.now() + 2000;
+  for (;;) {
+    try { fs.readFileSync(p); } catch (e) { out.push(name + '=' + outcome(e)); return; }
+    if (Date.now() > until) { out.push(name + '=ALLOWED'); return; }
+  }
+})('DOTENV_NEW', 'fresh/.env');
+act('DOTENV_NEW_RENAME', () => fs.renameSync('fresh/.env', 'fresh-moved.txt'));
+act('DOTENV_NEW_DELETE', () => fs.unlinkSync('fresh/.env'));
 leak('DOTENV_LINK', () => fs.linkSync('.env', 'linked.txt'), 'linked.txt');
 leak('DOTENV_COPY', () => fs.copyFileSync('.env', 'copied.txt', fs.constants.COPYFILE_FICLONE), 'copied.txt');
 leak('DOTENV_RENAME', () => fs.renameSync('.env', 'renamed.txt'), 'renamed.txt');
@@ -320,6 +331,9 @@ else
   expect_dotenv "DOTENV_STAT=ALLOWED"     "a contained process could not stat .env; only its contents are meant to be hidden"
   expect_dotenv "DOTENV_WRITE=DENIED"     "a contained process wrote a .env that existed at launch"
   expect_dotenv "DOTENV_CREATE=ALLOWED"   "creating a new .env is documented as allowed on Linux; update the documents with this"
+  expect_dotenv "DOTENV_NEW=DENIED"       "a contained process could still read a .env it created, 2s after creating it"
+  expect_dotenv "DOTENV_NEW_RENAME=DENIED" "a contained process renamed a .env it created after the supervisor covered it"
+  expect_dotenv "DOTENV_NEW_DELETE=DENIED" "a contained process deleted a .env it created after the supervisor covered it"
   expect_dotenv "DOTENV_LINK=DENIED"      "a contained process read .env through a hard link"
   expect_dotenv "DOTENV_COPY=DENIED"      "a contained process read .env through a copy"
   expect_dotenv "DOTENV_RENAME=DENIED"    "a contained process read .env after renaming it"

@@ -49,7 +49,7 @@ and do not verify whether the kernel honours it.
 | Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |
 | Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: the home directory denied outside what a run needs, other paths readable⁵ |
 | Project `.git` read-only, rest of project writable | Yes¹⁴ | Yes¹⁴ | Yes¹⁴ |
-| Project `.env` files unreadable | Yes¹⁵ (files present at launch) | Yes¹⁵ (files present at launch) | Yes¹⁵ |
+| Project `.env` files unreadable | Yes¹⁵ (files present at launch) | Yes¹⁵ | Yes¹⁵ |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
 | Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |
@@ -951,10 +951,21 @@ provider mounts the project as it is.
   as root in its user namespace, so the supervisor drops `CAP_DAC_OVERRIDE` and
   `CAP_DAC_READ_SEARCH` from it, which would read past the mode, and
   `CAP_SYS_ADMIN`, which would unmount the mask. A symbolic link named `.env` is
-  followed, and the file it names is covered. A `.env` created during the run is
-  an ordinary file until the next launch. `TestContainedProcessCannotReadDotenvFiles`
+  followed, and the file it names is covered. `TestContainedProcessCannotReadDotenvFiles`
   covers this in the privileged CI step, and `scripts/sandbox-enforcement-linux.sh`
   on the runner.
+
+  A file created during the run, or one an editor or git replaces from outside,
+  is covered too. A thread of the supervisor joins the target's mount namespace
+  and watches the project's directories with inotify, with the same exclusions
+  and limit. It mounts the same kind of mask over each new dotenv file. Measured
+  2026-10-07 on WSL2 kernel 6.18 in a privileged container, the mask landed
+  between 0.2 ms and 3.9 ms after the change, and in every run a process reading
+  the file in a loop read it before then. A process that created the file keeps the descriptor
+  it opened. If the watcher cannot start, the run says so and carries on with the
+  launch's masks. `TestContainedProcessCannotReadDotenvFilesCreatedDuringRun`
+  covers a created file, a replaced `.env` and a moved-in folder, and the
+  enforcement script covers a file the contained process creates itself.
 - **macOS** denies `file-read-data` and `file-write*` on these names anywhere
   on disk, after the profile's allows, `node_modules` included. Writes are
   denied because a process that could rename or hard-link `.env` could read it

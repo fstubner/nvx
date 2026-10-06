@@ -459,7 +459,8 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	}
 	// The project's dotenv files, unreadable, for the same reason and in the same
 	// way.
-	if err := maskDotenvFiles(workDir, guestHome, mountNSErr); err != nil {
+	launchMask, err := maskDotenvFiles(workDir, guestHome, mountNSErr)
+	if err != nil {
 		LogError("Could not hide this project's .env files from the sandbox (fail-closed): %v", err)
 		return 1
 	}
@@ -467,9 +468,20 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	// closed. Without it, every UNIX socket on the host is one connect() away on
 	// kernels below Landlock ABI v9. See enterSandboxRoot.
 	visible := sandboxVisiblePaths(guestHome, workDir, nvxHome, a.ReadExecRoots, privateProc, networkMode)
-	if err := enterSandboxRoot(sandboxBindPlan(visible)); err != nil {
+	plan := sandboxBindPlan(visible)
+	if err := enterSandboxRoot(plan); err != nil {
 		LogError("Could not build the sandbox's filesystem view (fail-closed): %v", err)
 		return 1
+	}
+	// The mask for dotenv files that appear during the run, while this thread can
+	// still mount. Without it the run goes on with the launch's masks only.
+	var watchMask string
+	var watchMaskInfo os.FileInfo
+	if workDir != "" {
+		watchMask, watchMaskInfo, err = createDotenvWatchMask()
+		if err != nil {
+			warnDotenvWatch(err)
+		}
 	}
 	if err := applyLandlockSandbox(guestHome, workDir, nvxHome, a.ReadExecRoots, privateProc); err != nil {
 		LogError("Landlock isolation failed: %v", err)
@@ -502,6 +514,9 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 		return 1
 	}
 	targetPid := cmd.Process.Pid
+	if watchMask != "" {
+		startDotenvWatcher(targetPid, workDir, watchMask, []os.FileInfo{launchMask, watchMaskInfo}, plan)
+	}
 	go func() {
 		for sig := range sigs {
 			_ = syscall.Kill(targetPid, sig.(syscall.Signal))
