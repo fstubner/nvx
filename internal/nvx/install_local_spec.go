@@ -61,8 +61,10 @@ func nonRegistrySpecKind(spec string) string {
 	case strings.HasPrefix(lower, "github:"), strings.HasPrefix(lower, "gitlab:"),
 		strings.HasPrefix(lower, "bitbucket:"), strings.HasPrefix(lower, "gist:"):
 		return "a hosted-repository spec"
+	// "~/" is a home-directory path. A bare "~" starts a tilde range such as
+	// ~1.2.3, which comes from the registry.
 	case strings.HasPrefix(s, "./"), strings.HasPrefix(s, "../"), strings.HasPrefix(s, ".\\"),
-		strings.HasPrefix(s, "..\\"), strings.HasPrefix(s, "/"), strings.HasPrefix(s, "~"):
+		strings.HasPrefix(s, "..\\"), strings.HasPrefix(s, "/"), strings.HasPrefix(s, "~/"), strings.HasPrefix(s, "~\\"):
 		return "a local path"
 	case strings.Contains(s, `\`):
 		// A Windows path, relative or absolute. No registry name contains a
