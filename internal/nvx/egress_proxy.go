@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -88,7 +89,11 @@ type EgressProxy struct {
 	promptMu sync.Mutex
 	session  map[string]bool
 	prompted map[string]bool
-	cancel   context.CancelFunc
+	// allowAudited holds the host:port keys whose first connection in this run has
+	// been written to the audit log as an egress_allow. A sync.Map because every
+	// connection is its own goroutine and the first one to a host is a race.
+	allowAudited sync.Map
+	cancel       context.CancelFunc
 	// upstream is the user's own proxy, which allowed connections go through.
 	// nil dials directly. See egress_upstream.go.
 	upstream *upstreamProxy
@@ -387,7 +392,7 @@ func (p *EgressProxy) admit(hp hostPort, resolve func(string) ([]net.IP, error))
 	// via allow_hosts"). network.mode "loopback" is the exception, because
 	// permitting exactly these is the entire definition of that mode.
 	if isLoopback(hp.host) && mode == "loopback" {
-		return p.resolveAdmitted(hp, key, resolve)
+		return p.admitAllowed(hp, key, allowRuleModeLoopback, resolve)
 	}
 	// offline is no network at all, as README.md defines it, and that includes
 	// hosts the allowlist names. The allowlist was consulted before this check,
@@ -405,7 +410,7 @@ func (p *EgressProxy) admit(hp hostPort, resolve func(string) ([]net.IP, error))
 	keys := allowKeysFor(hp)
 	for _, k := range keys {
 		if p.allow[k] {
-			return p.resolveAdmitted(hp, key, resolve)
+			return p.admitAllowed(hp, key, p.allowRule(k), resolve)
 		}
 	}
 	if mode == "loopback" {
@@ -435,6 +440,20 @@ func (p *EgressProxy) admit(hp hostPort, resolve func(string) ([]net.IP, error))
 	// looked up.
 	if isLoopback(hp.host) {
 		p.refuseLoopbackGrant(key)
+		return nil, false
+	}
+	// A literal link-local address is refused the same way, and for the same
+	// reason. 169.254.169.254 is the cloud metadata endpoint, where one
+	// unauthenticated GET returns credentials, so a question the contained process
+	// chose to ask is not a reviewed decision about it. resolveEgressAddresses
+	// refuses a NAME that resolves there but returns a literal address as itself,
+	// so without this the literal went through on a yes.
+	//
+	// A policy entry naming the address still works, as it does for loopback,
+	// because the allowlist was consulted above. A name that resolves to one is
+	// refused after it is approved, by resolveEgressAddresses.
+	if isLinkLocalLiteral(hp.host) {
+		p.refuseLinkLocalGrant(key)
 		return nil, false
 	}
 
@@ -488,6 +507,52 @@ func (p *EgressProxy) resolveAdmitted(hp hostPort, key string, resolve func(stri
 	return ips, true
 }
 
+// The rules an egress_allow audit record can name. They are the settings a person
+// can open and change, so a reader of the log knows where to look.
+const (
+	allowRuleDefaultAllow = "default_allow"
+	allowRuleAllowHosts   = "allow_hosts"
+	allowRuleModeLoopback = "mode_loopback"
+)
+
+// admitAllowed finishes admitting a destination the policy allows. It resolves
+// the name once, as resolveAdmitted does, and records the first connection this
+// run makes to it. See auditAllowOnce.
+func (p *EgressProxy) admitAllowed(hp hostPort, key, rule string, resolve func(string) ([]net.IP, error)) ([]net.IP, bool) {
+	ips, ok := p.resolveAdmitted(hp, key, resolve)
+	if ok {
+		p.auditAllowOnce(key, rule)
+	}
+	return ips, ok
+}
+
+// auditAllowOnce writes an egress_allow record for key, naming the rule that
+// allowed it, the first time this run reaches it and never again.
+//
+// Once, because a package manager opens many connections to one registry and a
+// record for each would bury the refusals this log is read for. A host approved
+// at the prompt is not written here. Its own record, egress_allow_prompted, was
+// written when the person answered.
+func (p *EgressProxy) auditAllowOnce(key, rule string) {
+	if _, seen := p.allowAudited.LoadOrStore(key, true); seen {
+		return
+	}
+	auditLog(p.nvxHome, "egress_allow", map[string]string{"host": key, "rule": rule})
+}
+
+// allowRule names the policy setting that put entry on the allowlist. That is
+// allow_hosts when a person listed it there, even if default_allow holds it too,
+// and default_allow for everything else on the list. Those are the shipped hosts,
+// and the runtime's own when the policy sets none.
+func (p *EgressProxy) allowRule(entry string) string {
+	for _, h := range p.policy.Isolation.Network.AllowHosts {
+		if normalizeAllowEntry(h) == entry {
+			return allowRuleAllowHosts
+		}
+	}
+	return allowRuleDefaultAllow
+}
+
 // refuseLoopbackGrant reports a local service refused on the prompt path. See
 // the loopback refusal in admit.
 func (p *EgressProxy) refuseLoopbackGrant(key string) {
@@ -495,6 +560,16 @@ func (p *EgressProxy) refuseLoopbackGrant(key string) {
 	LogInfo("nvx does not offer local services through a prompt, because the contained process is what triggers it. "+
 		"If this is meant, add %q to isolation.network.allow_hosts in the project policy, or use --connect for one run.", key)
 	auditLog(p.nvxHome, "egress_deny_loopback_prompt", map[string]string{"host": key})
+}
+
+// refuseLinkLocalGrant reports a link-local address refused on the prompt path.
+// See the link-local refusal in admit. The remedy names allow_hosts alone,
+// because --connect reaches a service on this machine's loopback and nothing else.
+func (p *EgressProxy) refuseLinkLocalGrant(key string) {
+	LogWarn("Blocked egress to a link-local address: %s", key)
+	LogInfo("nvx does not offer link-local addresses, such as the cloud metadata endpoint, through a prompt, because the contained process is what triggers it. "+
+		"If this is meant, add %q to isolation.network.allow_hosts in the project policy.", key)
+	auditLog(p.nvxHome, "egress_deny_link_local_prompt", map[string]string{"host": key})
 }
 
 // askUnknownHost asks once per run whether key may be reached, and reports the
@@ -644,8 +719,16 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 		// The destination is judged after that as well, as on the SOCKS path. An
 		// invalid host used to be refused first, with a terminal warning and an
 		// audit record, for anyone who could reach the listener.
+		//
+		// The 407 is a complete response that says the connection ends. git sends
+		// its first CONNECT with no credential and waits for a 407 to choose an
+		// authentication method, and libcurl gave up with "Proxy CONNECT aborted"
+		// on a 407 that had no Content-Length and then closed, for every host. Measured
+		// with git 2.39.5 (libcurl 7.88.1) in a contained run on Linux, Content-Length: 0
+		// alone did not help and adding Connection: close did, because libcurl then
+		// reconnects with the credential instead of reusing a connection about to end.
 		if !p.authorized(auth) {
-			_, _ = fmt.Fprintf(client, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"nvx\"\r\n\r\n")
+			_, _ = fmt.Fprintf(client, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"nvx\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 			return
 		}
 		// A port that does not parse is refused. The parse error used to be
@@ -876,17 +959,160 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 	_, _ = io.Copy(conn, remote)
 }
 
-func applyProxyEnv(cleanEnv []string, proxy *EgressProxy) []string {
+// nodeUseEnvProxy is the variable that makes Node's own HTTP clients read the
+// proxy variables. Without it fetch(), http and https ignore HTTP_PROXY and
+// HTTPS_PROXY, so a contained program using them connected directly, and the
+// sandbox refused that. Measured 2026-10-07, a contained fetch() to an allowlisted
+// name failed with ENOTFOUND on Windows and EAI_AGAIN on Linux, and the proxy was
+// never asked.
+//
+// Which Node reads it, from the Node changelogs and the CLI docs at each release:
+//
+//   - 24.0.0 and later read it for fetch() (nodejs/node#57165).
+//   - 24.5.0 and later read it for http and https requests too (#58980).
+//   - 22.21.0 and later read it for fetch, http and https together.
+//   - Every other release ignores it. That is 18, 19, 20, 21, 22.0.0 to 22.20.x
+//     and 23. Setting it there changes nothing, and those programs behave as they
+//     did.
+//
+// Measured with a test proxy, 22.23.2, 24.14.1 and 24.21.0 sent their fetch,
+// https.get and http.get to it. 18.5.0, 18.20.4, 19.9.0, 20.11.0 and 21.7.3 sent
+// nothing and tried to resolve the names themselves.
+//
+// Node reads it at startup, so it has to be in the environment the process is
+// launched with, and a child that Node starts inherits it. A request given its own
+// agent ignores it, and so does a raw socket. Every other request goes to the
+// proxy, including one to 127.0.0.1. Measured on Windows and on Linux with
+// 22.23.2, a server and a client in the same sandbox could no longer reach each
+// other with fetch (rejected) or http.get (405). NO_PROXY is how a request to
+// loopback avoids it. See applyProxyEnv.
+//
+// 22.23.2 prints "[UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental" to
+// stderr when a process that has it set exits, whether or not the process made a
+// request. 24.14.1 and 24.21.0 print nothing.
+//
+// Bun's fetch reads the proxy variables on its own and needs no such switch.
+const nodeUseEnvProxy = "NODE_USE_ENV_PROXY"
+
+// Yarn 2 and later (Yarn Berry) ignores HTTP_PROXY and HTTPS_PROXY. Its own
+// settings, httpProxy and httpsProxy, are read from these two variables as well.
+// Without them a contained `yarn install` never asked the proxy for anything and
+// failed on its first fetch with a DNS error for registry.yarnpkg.com, which the
+// allowlist names.
+const (
+	yarnHTTPProxy  = "YARN_HTTP_PROXY"
+	yarnHTTPSProxy = "YARN_HTTPS_PROXY"
+)
+
+// proxyEnvNames are the variables nvx writes into a contained process's
+// environment to point it at the proxy. Whatever the environment already holds
+// under one of these names is removed first, so a value is never duplicated and
+// the host's own proxy settings cannot leak in.
+var proxyEnvNames = map[string]bool{
+	"HTTP_PROXY":    true,
+	"HTTPS_PROXY":   true,
+	"ALL_PROXY":     true,
+	"NO_PROXY":      true,
+	nodeUseEnvProxy: true,
+	yarnHTTPProxy:   true,
+	yarnHTTPSProxy:  true,
+}
+
+// isProxyEnvName reports whether the environment entry e is one of proxyEnvNames,
+// by name and in any letter case, as Windows compares them.
+func isProxyEnvName(e string) bool {
+	name, _, _ := strings.Cut(e, "=")
+	return proxyEnvNames[strings.ToUpper(name)]
+}
+
+// loopbackNoProxy is NO_PROXY when requests to this machine's own names connect
+// directly instead of going to the proxy. "[::1]" as well as "::1": measured
+// 2026-10-07, Node 22.23.2, 24.14.1 and 24.21.0 sent http://[::1]:port/ to the proxy
+// with only "::1" listed, and connected directly once "[::1]" was added.
+const loopbackNoProxy = "localhost,127.0.0.1,::1,[::1]"
+
+// admitsLoopback reports whether the proxy lets a contained process reach an
+// address on this machine's loopback. admit does so in two cases. network.mode
+// loopback is defined by it, and an allowlist entry can name 127.0.0.1, localhost
+// or ::1. offline admits nothing, whatever the allowlist holds, and a prompt is
+// never offered for loopback.
+func (p *EgressProxy) admitsLoopback() bool {
+	if p == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(p.policy.Isolation.Network.Mode)) {
+	case "loopback":
+		return true
+	case "offline":
+		return false
+	}
+	for entry := range p.allow {
+		if allowEntryNamesLoopback(entry) {
+			return true
+		}
+	}
+	return false
+}
+
+// allowEntryNamesLoopback reports whether entry, as normalizeAllowEntry wrote it,
+// is one admit can match a loopback destination with. allowKeysFor looks a
+// loopback destination up as 127.0.0.1, localhost and ::1, each with its port or
+// *, so those are the entries that count. Any other spelling, such as [::1]:80,
+// never matches and routes nothing.
+func allowEntryNamesLoopback(entry string) bool {
+	i := strings.LastIndex(entry, ":")
+	if i < 0 {
+		return false
+	}
+	switch entry[:i] {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	return false
+}
+
+// sandboxHasOwnLoopback reports whether 127.0.0.1 inside the sandbox is a
+// different address from the one on this machine. It is on Windows, where an
+// AppContainer keeps its loopback to itself, and on Linux, which gives the
+// sandbox a network namespace. On macOS the sandbox shares this machine's
+// loopback.
+func sandboxHasOwnLoopback() bool {
+	return runtime.GOOS == "windows" || runtime.GOOS == "linux"
+}
+
+// loopbackViaProxy reports whether a contained process's requests to a loopback
+// address go to the proxy, as opposed to connecting directly. They do where the
+// sandbox has a loopback of its own and the policy has the proxy admit loopback.
+// A service on this machine is then reached through the proxy, which dials it.
+func loopbackViaProxy(proxy *EgressProxy) bool {
+	return sandboxHasOwnLoopback() && proxy.admitsLoopback()
+}
+
+// applyProxyEnv adds the proxy variables to the contained process's environment,
+// after the scrub, so the scrub's short list of names cannot take them away. Any
+// inherited value of a name set here is replaced rather than duplicated.
+//
+// NO_PROXY lists this machine's own names, so a client that follows the proxy
+// variables connects to them directly. Without the list a server and a client in
+// the same sandbox, which talk over 127.0.0.1, could not reach each other once
+// Node followed the variables. The request went to the proxy, which dials that
+// port on this machine instead and refuses it. Connecting directly reaches what
+// the sandbox itself runs. Where the sandbox's loopback is its own, it reaches
+// nothing on this machine.
+//
+// loopbackToProxy leaves the names off the list. The policy then has the proxy
+// admit loopback, and a service on this machine, such as a local registry named
+// in allow_hosts, is reached through the proxy, which dials it. See
+// loopbackViaProxy.
+func applyProxyEnv(cleanEnv []string, proxy *EgressProxy, loopbackToProxy bool) []string {
 	if proxy == nil {
 		return cleanEnv
 	}
 	httpURL := proxy.HTTProxyURL()
 	socksURL := proxy.SOCKSProxyURL()
-	filtered := make([]string, 0, len(cleanEnv)+4)
+	filtered := make([]string, 0, len(cleanEnv)+7)
 	for _, e := range cleanEnv {
-		key := strings.ToUpper(strings.SplitN(e, "=", 2)[0])
-		switch key {
-		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY":
+		if isProxyEnvName(e) {
 			continue
 		}
 		filtered = append(filtered, e)
@@ -895,7 +1121,12 @@ func applyProxyEnv(cleanEnv []string, proxy *EgressProxy) []string {
 		"HTTP_PROXY="+httpURL,
 		"HTTPS_PROXY="+httpURL,
 		"ALL_PROXY="+socksURL,
-		"NO_PROXY=127.0.0.1,localhost,::1",
+		nodeUseEnvProxy+"=1",
+		yarnHTTPProxy+"="+httpURL,
+		yarnHTTPSProxy+"="+httpURL,
 	)
+	if !loopbackToProxy {
+		filtered = append(filtered, "NO_PROXY="+loopbackNoProxy)
+	}
 	return filtered
 }

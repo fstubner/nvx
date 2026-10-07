@@ -75,11 +75,13 @@ EOF
 # Ask the proxy for a tunnel, rather than making an ordinary HTTPS request and
 # hoping it goes through the proxy.
 #
-# It did not. Node's classic `https.get` ignores HTTPS_PROXY -- nothing in core
-# reads it -- so the old probe attempted a direct connection every time. Inside a
-# loopback-only network namespace that dies at DNS, which made phase 1 pass
-# without the allowlist being consulted at all, and made phase 2 impossible to
-# pass however correct the allowlist was.
+# It did not, at the time. Node's `https.get` ignores HTTPS_PROXY unless
+# NODE_USE_ENV_PROXY=1 is set, and nvx did not set it, so the old probe attempted a
+# direct connection every time. Inside a loopback-only network namespace that dies
+# at DNS, which made phase 1 pass without the allowlist being consulted at all, and
+# made phase 2 impossible to pass however correct the allowlist was. nvx sets it
+# now, and phase 3 below checks that. This probe stays a CONNECT for the reason
+# that follows.
 #
 # CONNECT is what a proxy-aware client sends, and its status code is the
 # allowlist decision itself: 200 tunnel established, 403 refused. That also
@@ -88,7 +90,10 @@ EOF
 CONNECT=$(cat <<'JS'
 const http = require('http');
 const u = new URL(process.env.HTTPS_PROXY);
+// agent: false, so this request is not itself sent to the proxy. Node's default
+// agent follows HTTPS_PROXY now that nvx sets NODE_USE_ENV_PROXY=1.
 const req = http.request({
+  agent: false,
   host: u.hostname, port: u.port, method: 'CONNECT', path: 'example.com:443',
   headers: { 'Proxy-Authorization': 'Basic ' +
     Buffer.from(decodeURIComponent(u.username) + ':' + decodeURIComponent(u.password)).toString('base64') },
@@ -166,5 +171,45 @@ case "$OUT2" in
     exit 1
     ;;
 esac
+
+# Phase 3: a plain fetch() reaches the proxy without being told to.
+#
+# Both probes above dial the proxy themselves, so neither shows that nvx hands node
+# the setting that makes it use the proxy (NODE_USE_ENV_PROXY=1). A postinstall
+# script that calls fetch() is the client that needs it. Node ignored the proxy
+# variables for fetch() and left the request to the namespace's own DNS, which is
+# how it failed for an allowlisted host.
+#
+# What the proxy decided is read from the audit log, where it writes each decision:
+# egress_allow for a host the policy names, egress_deny for one it does not. A fetch
+# that never reached the proxy writes neither. The hosts here are not the one phase
+# 2 used, so a record from that CONNECT cannot stand in for these. Neither lookup
+# has to succeed for the record to exist, so this does not need the internet.
+echo "Phase 3: a plain fetch() must reach the proxy..."
+cat > .nvx-policy.json <<'EOF'
+{
+  "isolation": {
+    "enabled": true,
+    "network": {
+      "mode": "proxy",
+      "default_allow": ["example.com:443", "www.example.com:443"],
+      "prompt_unknown": false
+    }
+  }
+}
+EOF
+"$NVX" -y --strict shim node -e "fetch('https://www.example.com/').catch(() => {})" >/dev/null 2>&1 || true
+"$NVX" -y --strict shim node -e "fetch('https://refused.example.com/').catch(() => {})" >/dev/null 2>&1 || true
+if ! grep -q '"event":"egress_allow","host":"www.example.com:443"' "$NVX_HOME/audit.log" 2>/dev/null; then
+  echo "a contained fetch() to an allowlisted host never reached the proxy: no egress_allow for it in the audit log" >&2
+  tail -5 "$NVX_HOME/audit.log" >&2 || true
+  exit 1
+fi
+if ! grep -q '"event":"egress_deny","host":"refused.example.com:443"' "$NVX_HOME/audit.log" 2>/dev/null; then
+  echo "a contained fetch() to a host off the allowlist never reached the proxy: no egress_deny for it in the audit log" >&2
+  tail -5 "$NVX_HOME/audit.log" >&2 || true
+  exit 1
+fi
+echo "  the proxy decided both: allowed www.example.com, refused refused.example.com"
 
 echo "Egress smoke passed: denied what it should, allowed what it should."

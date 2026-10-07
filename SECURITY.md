@@ -167,6 +167,12 @@ install and run scripts. Its defenses are layered:
    `http://`, `https://` or `socks5h://` proxy resolves the name itself, so
    nvx's link-local check covers only what nvx's own resolver returned. A
    `socks5://` proxy is sent the addresses nvx resolved and checked.
+   `audit.log` records each host a contained run reaches through the allowlist,
+   once for each host and port in a run, with the setting that allowed it. It
+   records every refusal too. nvx sets `NODE_USE_ENV_PROXY=1`, so Node's own
+   `fetch`, `http` and `https` follow the proxy on the Node versions that read
+   it. That is a convenience. The operating system refuses a direct connection
+   whether or not a program follows the proxy variables.
 
 **Design stance.** Security-relevant failures **fail closed**. If a sandbox
 primitive is unavailable or a policy cannot be parsed, nvx refuses to run the
@@ -268,7 +274,15 @@ These are deliberate trade-offs, and this section documents each one:
   policy file or `--connect`. The prompt is raised by whatever the sandbox is
   running, which is the untrusted code. Localhost is where the services that take
   no credentials listen. So a postinstall must not be able to ask for the
-  developer's database. Approving any other host at that prompt lasts for the current run and
+  developer's database.
+
+  A literal link-local address gets the same refusal. 169.254.169.254 is the
+  cloud metadata endpoint, where one unauthenticated request returns
+  credentials, and the code asking would be the untrusted code. Only an
+  `allow_hosts` entry that names the address allows it. A name that resolves to
+  a link-local address is refused after you approve it.
+
+  Approving any other host at that prompt lasts for the current run and
   is no longer recorded.
 
 - **On Windows, a loopback exemption left by a pre-0.5.0 `nvx setup` opens every

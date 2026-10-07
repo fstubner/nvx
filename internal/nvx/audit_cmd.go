@@ -340,9 +340,10 @@ func securityEventDetail(e map[string]string) string {
 	// the same uselessness the instrumentation was added to fix. `check`,
 	// `package`, `version`, `by` and `detail` are the pre-install check events'
 	// (check_approved, check_refused); without them an approval printed as its
-	// event name alone, which says nothing about what was approved.
+	// event name alone, which says nothing about what was approved. `rule` belongs
+	// to egress_allow and names the setting that allowed the host.
 	var parts []string
-	for _, k := range []string{"host", "tool", "project", "path", "mode", "state", "reason", "check", "package", "version", "by", "detail", "advisory", "severity"} {
+	for _, k := range []string{"host", "rule", "tool", "project", "path", "mode", "state", "reason", "check", "package", "version", "by", "detail", "advisory", "severity"} {
 		if v := e[k]; v != "" {
 			parts = append(parts, k+"="+v)
 		}
