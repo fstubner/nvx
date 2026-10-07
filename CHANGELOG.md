@@ -220,6 +220,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.zprofile`. The integration stays in `~/.zshrc`, which interactive shells
   read.
 
+* **`npx` runs a tool that is already in `node_modules/.bin` as your own
+  code.** `npx vitest`, `npx tsx`, `npx vite`, `npx prisma`, `npx next` and
+  `npx husky` ran inside the sandbox and were checked as a fetch, although
+  `npx` fetches nothing for a tool the project has installed. The same tools
+  through `npm run` run uncontained at the default level. Measured 2026-10-07
+  on Windows, in a project with `fakecli` 1.0.0 installed from a local
+  registry that logs every request, `nvx npx fakecli` asked whether to run
+  the install scripts of `fakecli` 2.0.0, the registry's newest version, and
+  exited 77 when nobody answered. Approved, it ran inside the sandbox. It now
+  runs directly, asks nothing and makes no request. `npx`, `npm exec`, `npm x`,
+  `bunx` and `bun x` are classified as `npm run` is when they name a tool in
+  the project's `node_modules/.bin`, so `--strict` still contains them. nvx
+  looks in the project's folder and, in a workspace, in the workspace root's.
+
+  nvx makes this call only where the package manager does. Against a local
+  registry that logs every request, npm 8.12.1, 9.6.3, 10.2.4, 10.9.8 and
+  11.19.0 and bun 1.4.2 ran an installed tool by its bare name and made no
+  request. These stay contained tool runs, because the package manager may
+  fetch for them. They are a name with a version, scope or path, `--package`,
+  `-c`, a flag nvx does not read, a `package` setting in an `.npmrc` or in
+  `npm_config_package`, a name the project's own `package.json` lists under
+  `bin`, a `.bin` entry that links out of the project, and a tool found only
+  in a folder above the project. `npm exec` reads a flag that
+  follows the tool's name as its own, and fetched `fakecli` 2.0.0 for
+  `npm exec fakecli --package=fakecli@2.0.0` on each of those npm versions,
+  so such a flag keeps it contained unless it follows `--`. The advice to run
+  `npx husky` after a contained install now holds at the default level.
+
 * **Abbreviated npm commands are contained and checked.** npm accepts any
   unambiguous prefix of a command, and camelCase, so `npm exe` is `npm exec`,
   `npm cre` is `npm create` and `npm installTest` is `npm install-test`. nvx

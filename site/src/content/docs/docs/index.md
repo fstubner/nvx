@@ -33,8 +33,8 @@ Before an install runs, nvx checks what it is about to fetch.
   characters or fewer only one edit, two swapped letters or characters added
   around a popular name count. Packages that arrive as dependencies of others
   were named by their authors, so they skip this check and get the others.
-- **Known vulnerabilities.** Direct installs, `npx`-style tool runs and the
-  packages in `package-lock.json` are checked against the OSV database. Without
+- **Known vulnerabilities.** Direct installs, `npx`-style tool runs that fetch a
+  package, and the packages in `package-lock.json` are checked against the OSV database. Without
   a `package-lock.json`, which pnpm, yarn and bun do not write, the checks use
   the versions `package.json` declares. A package OSV lists as malicious is
   refused, and `-y` does not change that.
