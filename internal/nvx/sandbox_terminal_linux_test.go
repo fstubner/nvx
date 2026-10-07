@@ -63,6 +63,7 @@ const (
 	terminalABIEnv   = "NVX_TEST_TERMINAL_ABI"
 	terminalCmdEnv   = "NVX_TEST_TERMINAL_COMMAND"
 	terminalRootsEnv = "NVX_TEST_TERMINAL_ROOTS"
+	terminalNetEnv   = "NVX_TEST_TERMINAL_NETWORK"
 	terminalTestName = "^TestContainedProcessGetsTheTerminalsInterruptOnce$"
 )
 
@@ -211,6 +212,7 @@ type terminalOpts struct {
 	prepare func(work, guest string)
 	// joinGroup puts nvx into this existing process group, without a terminal.
 	joinGroup int
+	network   string // the network mode, open when empty
 }
 
 func startTerminalRun(t *testing.T, o terminalOpts) *terminalRun {
@@ -220,7 +222,10 @@ func startTerminalRun(t *testing.T, o terminalOpts) *terminalRun {
 	} else {
 		_ = syscall.Close(fd)
 	}
-	requireNamespaceSupport(t, supervisorSysProcAttr("open"))
+	if o.network == "" {
+		o.network = "open"
+	}
+	requireNamespaceSupport(t, supervisorSysProcAttr(o.network))
 
 	r := &terminalRun{t: t, out: &syncBuffer{}, work: tempDir(t), guest: tempDir(t), done: make(chan struct{})}
 	if o.prepare != nil {
@@ -238,6 +243,7 @@ func startTerminalRun(t *testing.T, o terminalOpts) *terminalRun {
 		terminalGuestEnv+"="+r.guest,
 		terminalHomeEnv+"="+tempDir(t),
 		terminalABIEnv+"="+strconv.Itoa(o.abi),
+		terminalNetEnv+"="+o.network,
 	)
 	if len(o.command) > 0 {
 		cmdJSON, _ := json.Marshal(o.command)
@@ -445,7 +451,7 @@ func terminalParent() int {
 	guest := os.Getenv(terminalGuestEnv)
 	writeSessionOwner(guest, time.Now())
 	cmd := terminalChild("supervisor")
-	cmd.SysProcAttr = supervisorSysProcAttr("open")
+	cmd.SysProcAttr = supervisorSysProcAttr(os.Getenv(terminalNetEnv))
 	if err := runSupervisor(cmd, guest); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return childExitCode(exitErr)
@@ -478,7 +484,7 @@ func terminalSupervisor() int {
 		GuestHome:     os.Getenv(terminalGuestEnv),
 		WorkDir:       os.Getenv(terminalDirEnv),
 		NvxHome:       os.Getenv(terminalHomeEnv),
-		NetworkMode:   "open",
+		NetworkMode:   os.Getenv(terminalNetEnv),
 		ReadExecRoots: roots,
 		CmdPath:       command[0],
 		CmdArgs:       command[1:],
@@ -525,6 +531,8 @@ func terminalTarget() int {
 		_ = terminalWrite(filepath.Join(dir, "ready"), nil, 0o600)
 		_ = syscall.Kill(0, syscall.SIGKILL)
 		return 0
+	case "tiocsti":
+		return terminalTypeInto(dir)
 	case "abstract":
 		// The result of connecting to the abstract socket the test listens on.
 		_ = terminalWrite(filepath.Join(dir, "ready"), nil, 0o600)

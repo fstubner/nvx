@@ -268,7 +268,12 @@ jobs:
           # remote on the host's behalf. A host that cannot reach its own
           # non-loopback listener leaves the relay nothing to connect to, and
           # the allowlist assertions then measure the network.
-          'stopped answering on its own non-loopback listener'
+          'stopped answering on its own non-loopback listener',
+          # The console-injection probe needs a console to attempt to inject
+          # into. A step launched with no console attached has none to reach, so
+          # the probe exercises nothing. pwsh gives this step one, so the skip is
+          # not expected here, but it is a true environmental limit when it fires.
+          'no Windows console in this environment'
         )
         $unexpected = $reasons | Where-Object {
           $r = $_; -not ($allowed | Where-Object { $r -match [regex]::Escape($_) })
@@ -626,6 +631,21 @@ jobs:
       run: |
         chmod +x scripts/sandbox-launch-escape-macos.sh
         ./scripts/sandbox-launch-escape-macos.sh
+
+    # A contained process must not type into nvx's terminal with TIOCSTI. The
+    # Seatbelt content tests pin the deny; this runs the real attempt on a
+    # controlling terminal, with an uncontained control that must inject.
+    - name: macOS terminal injection
+      if: matrix.os == 'macos-latest'
+      shell: bash
+      run: |
+        go build -o nvx ./cmd/nvx
+        chmod +x scripts/sandbox-terminal-injection-macos.sh
+        ./scripts/sandbox-terminal-injection-macos.sh 2>&1 | tee /tmp/tiocsti.log
+        if ! grep -q '^macOS terminal-injection probe passed' /tmp/tiocsti.log; then
+          echo "::error::the macOS terminal-injection probe did not pass"
+          exit 1
+        fi
 
   security-scan:
     name: Security Scan

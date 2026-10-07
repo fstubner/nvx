@@ -60,6 +60,7 @@ and do not verify whether the kernel honours it.
 | Another project's sandbox reachable over loopback | No¹⁰ (per-project package) | No (each has its own netns) | Untested |
 | A contained server reachable from the host | Only via `--expose`⁹ | Only via `--expose`¹⁶, except in `network.mode: open` | Not measured¹⁶ |
 | Processes outside the sandbox safe from its signals | Not measured¹⁷ | Yes on 6.12 and later, otherwise a process group of its own¹⁷ | Not measured¹⁷ |
+| Contained process cannot type into your terminal | Yes (the OS refuses `WriteConsoleInput`)¹⁸ | Yes (seccomp refuses `TIOCSTI`/`TIOCLINUX`)¹⁸ | Profile denies `TIOCSTI`; CI probe¹⁸ |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
 
 ² On macOS the Seatbelt profile allows filesystem reads outside the home
@@ -1232,6 +1233,62 @@ catch Ctrl-C, and can read again and be stopped before they have exited.
 On macOS the Seatbelt profile allows the `signal` operation only with
 `(target self)`. Nothing has measured a contained process signalling another
 process there. On Windows nothing has measured it either.
+
+¹⁸ **On Linux a contained process cannot type into the terminal nvx runs on.**
+The contained process gets that terminal as its stdin, and since the
+signal-scope work (¹⁷) it shares nvx's process group, so the terminal is also
+its controlling terminal. `ioctl(fd, TIOCSTI, &c)` pushes one byte into the
+terminal's input queue, which the user's shell reads after nvx exits, so a
+postinstall could leave a command and an Enter to run as the user outside the
+sandbox. This is the class of bubblewrap's CVE-2017-5226. `TIOCLINUX` pastes a
+selection on a Linux virtual console the same way. Kernels from 6.2 refuse
+`TIOCSTI` themselves when `dev.tty.legacy_tiocsti` is 0, but kernels before 6.2,
+and any with the sysctl at 1, allow it. Ubuntu 22.04's 5.15 is one, and nvx runs
+there because Landlock needs 5.13. nvx's seccomp filter refuses `TIOCSTI` and
+`TIOCLINUX` with `EPERM`. It is a filter of its own, installed where the network
+filter is, so it applies in every network mode (open mode installs no network
+filter) and on every architecture nvx builds for, amd64 and arm64. The low 32
+bits of the request are compared, as Flatpak and bubblewrap do, because the
+kernel reads the request as 32 bits and a high bit set would otherwise slip a
+match. Measured 2026-10-07 on amd64 in a QEMU VM on kernel 5.15, where `TIOCSTI`
+is allowed, a contained process typed a marker into the terminal before the
+filter and the terminal echoed it; with the filter both requests returned
+`EPERM`, unprivileged and as root. On WSL2 kernel 6.18, where the kernel refuses
+`TIOCSTI` with `EIO`, the filter's `EPERM` is distinguishable from that refusal.
+A fresh pseudo-terminal the contained process opens itself is its own and
+reaches nothing outside the sandbox; the filter blocks `TIOCSTI` on it too,
+which is harmless. `TestContainedProcessCannotTypeIntoTheTerminal` drives a real
+contained process on a pseudo-terminal, and
+`TestTerminalFilterRefusesTypingAndNothingElse` checks the filter on the running
+kernel, both in the privileged CI step.
+
+On Windows the analogue is `WriteConsoleInput` on a console input handle, which
+pushes key records into the console nvx shares with the user's shell. The
+contained process shares that console, because nvx creates it with neither
+`DETACHED_PROCESS` nor `CREATE_NEW_CONSOLE`. Measured 2026-10-07 on Windows 11
+through `TestAContainedProcessCannotInjectConsoleInput` (`NVX_PROBE=1`): a
+contained AppContainer process opened `CONIN$`, and its `WriteConsoleInput` was
+refused with "Access is denied"; the other doors (`STD_INPUT_HANDLE` and
+`AttachConsole` to the parent's console) were refused too. The read-back path
+the probe uses was confirmed to catch an injection by planting the same records
+uncontained and reading them back. The OS enforces this, so nvx adds nothing,
+and the probe guards against a future Windows that stops.
+
+On macOS the analogue is `ioctl(TIOCSTI)` on the tty. `file-ioctl` is its own
+Seatbelt operation, not implied by `file-read*` or `file-write*`, so
+`(deny default)` already refuses it, and the profile grants `file-ioctl`
+nowhere. The profile also denies `TIOCSTI` by command number,
+`(deny file-ioctl (ioctl-command 2147578994))` after the write allow, as cheap
+insurance for the macOS versions where the default-deny of this one command is
+not confirmed. `TestSeatbeltDeniesTerminalInputInjection` pins the rule and that
+nothing re-grants `file-ioctl`. `scripts/sandbox-terminal-injection-macos.sh`,
+in the macOS CI job, runs the real attempt on a controlling terminal built with
+`forkpty`: a contained node spawns the runner's `python3`, which inherits the
+sandbox and the terminal and attempts `TIOCSTI`, and an uncontained control runs
+the same. The job requires the contained attempt to be refused while the control
+injects. macOS restricts `TIOCSTI` itself (XNU `tty.c`: a non-root caller needs
+the fd readable and its controlling terminal), which the control establishes so
+the contained refusal is attributable to the sandbox.
 
 ## Measured costs and platform floors
 
