@@ -27,6 +27,83 @@ func packageManagerBehind(cmd string, args []string) (string, []string) {
 	return cmd, args
 }
 
+// readCommand returns args as the package manager reads its command, and
+// whether that command is one nvx knows is safe to run as your own code.
+//
+// npm's command is spelled in full, so `npm exe` reads as `npm exec` (see
+// npmCommandLine). Only npm's commands are judged unsafe when unknown. npm
+// refuses a command it does not know, while pnpm, yarn and bun run the
+// package.json script of that name, which is your own code.
+//
+// A pnpm or yarn command that runs another command has that one read in its
+// place, as in `pnpm recursive remove x` (or `multi`, `m`), `pnpm with 10 add
+// x`, `yarn workspace web remove x` and `yarn workspaces foreach -A unplug x`.
+// Install verbs that only count where the command is read, such as remove,
+// were missed behind them.
+func readCommand(pm string, args []string) ([]string, bool) {
+	switch pm = strings.ToLower(pm); pm {
+	case "npm":
+		return npmCommandLine(args)
+	case "pnpm", "yarn":
+		return innerCommand(pm, args), true
+	}
+	return args, true
+}
+
+// innerCommand takes off the pnpm and yarn command prefixes readCommand lists.
+// Matched exactly, as pnpm and yarn match them.
+func innerCommand(pm string, args []string) []string {
+	for range 4 {
+		i := commandIndex(args)
+		if i < 0 {
+			return args
+		}
+		end := i + 1 // the prefix ends before args[end]
+		switch {
+		case pm == "pnpm" && (args[i] == "recursive" || args[i] == "multi" || args[i] == "m"):
+		case pm == "pnpm" && args[i] == "with", pm == "yarn" && args[i] == "workspace":
+			// The pnpm version, or the workspace's name, comes next.
+			j := commandIndex(args[end:])
+			if j < 0 {
+				return args
+			}
+			end += j + 1
+		case pm == "yarn" && args[i] == "workspaces":
+			j := commandIndex(args[end:])
+			if j < 0 || args[end+j] != "foreach" {
+				return args
+			}
+			end += j + 1
+		default:
+			return args
+		}
+		args = append(append([]string(nil), args[:i]...), args[end:]...)
+	}
+	return args
+}
+
+// commandIndex returns the index of the first positional, where a package
+// manager reads its command, or -1.
+func commandIndex(args []string) int {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			if i+1 < len(args) {
+				return i + 1
+			}
+			return -1
+		}
+		if strings.HasPrefix(a, "-") {
+			if flagTakesValue(a) && !strings.Contains(a, "=") {
+				i++
+			}
+			continue
+		}
+		return i
+	}
+	return -1
+}
+
 func innerPackageManager(cmd string, args []string) (string, []string, bool) {
 	switch strings.ToLower(cmd) {
 	case "corepack":

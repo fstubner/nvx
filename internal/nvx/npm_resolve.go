@@ -41,17 +41,18 @@ var launchNpmResolution = runNpmResolution
 // npmResolvedTargets returns what npm will install for this command, or nil
 // when the command is not one npm resolves for, or cannot be resolved on a
 // copy, and the caller should read the command line and project instead. A
-// non-zero code is a refusal.
-func npmResolvedTargets(req verifyRequest, platform nodePlatform) ([]verifyTarget, int, string) {
-	i := commandVerbIndex(req.pmArgs, npmResolveVerbs...)
+// non-zero code is a refusal. args is the command as npm reads it (see
+// readCommand), and req.pmArgs as typed is what npm's resolution step runs.
+func npmResolvedTargets(req verifyRequest, args []string, platform nodePlatform) ([]verifyTarget, int, string) {
+	i := commandVerbIndex(args, npmResolveVerbs...)
 	if i < 0 {
 		return nil, 0, ""
 	}
-	verb := strings.ToLower(req.pmArgs[i])
+	verb := strings.ToLower(args[i])
 	if verb == "rebuild" || verb == "rb" {
 		return nil, 0, ""
 	}
-	named := positionalsAfter(req.pmArgs, i)
+	named := positionalsAfter(args, i)
 	// A named package on the blocklist is refused before npm is asked about
 	// it. The full checks run on the resolved set below.
 	if policy, err := LoadPolicy(req.nvxHome); err == nil {

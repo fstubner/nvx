@@ -29,14 +29,18 @@ Before an install runs, nvx checks what it is about to fetch.
 - **Typosquats.** The names you chose, on the command line or as the project's
   direct dependencies, are compared with a list of popular packages. The npm
   download counts tell a lookalike apart from a real package with a similar
-  name. Packages that arrive as dependencies of others were named by their
-  authors, so they skip this check and get the others.
+  name. Short names sit close to each other by chance, so for a name of four
+  characters or fewer only one edit, two swapped letters or characters added
+  around a popular name count. Packages that arrive as dependencies of others
+  were named by their authors, so they skip this check and get the others.
 - **Known vulnerabilities.** Direct installs, `npx`-style tool runs and the
   packages in `package-lock.json` are checked against the OSV database. Without
   a `package-lock.json`, which pnpm, yarn and bun do not write, the checks use
-  the versions `package.json` declares.
+  the versions `package.json` declares. A package OSV lists as malicious is
+  refused, and `-y` does not change that.
 - **Fresh releases.** A version published inside a configurable window, 24
-  hours by default, is held for your approval.
+  hours by default, is held for your approval. So is a version the registry
+  gives no publish time for.
 
 An npm install that brings in new packages runs npm twice. The first run only
 resolves versions, contained, so each package can be checked before the second

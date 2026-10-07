@@ -18,10 +18,12 @@ type checkScenario struct {
 	policy  string
 	version string
 	age     time.Duration // since publication
-	scripts bool
-	regErr  error
-	vulns   map[string][]OSVVuln
-	osvErr  error
+	// noPublishTime is a registry that gives no publish time for the version.
+	noPublishTime bool
+	scripts       bool
+	regErr        error
+	vulns         map[string][]OSVVuln
+	osvErr        error
 	// command, when set, runs verifyBeforeRun for this package manager command
 	// (pm first, then its arguments) so flags on the command line are seen.
 	command []string
@@ -49,6 +51,11 @@ func checkScenarios() []checkScenario {
 			name: "release age", pkg: "some-pkg", check: "release_age", by: "non_interactive",
 			policy: `{"typosquatting":{"enabled":false}}`, age: 2 * time.Hour,
 			remedy: []string{"release_age.trusted_packages", `{"release_age":{"trusted_packages":["some-pkg"]}}`},
+		},
+		{
+			name: "release age unknown", pkg: "some-pkg", check: "release_age", by: "non_interactive",
+			policy: `{"typosquatting":{"enabled":false}}`, noPublishTime: true,
+			remedy: []string{"release_age.trusted_packages", `{"release_age":{"trusted_packages":["some-pkg"]}}`, "release_age.enabled"},
 		},
 		{
 			name: "vulnerability", pkg: "some-pkg", check: "vulnerability", by: "non_interactive",
@@ -86,6 +93,9 @@ func runScenario(t *testing.T, sc checkScenario, args ...string) (int, string, s
 	resolveNpmPackageDetailsForVerify = func(pkgName, versionQuery string) (string, time.Time, bool, error) {
 		if sc.regErr != nil {
 			return "", time.Time{}, false, sc.regErr
+		}
+		if sc.noPublishTime {
+			return "1.0.0", time.Time{}, sc.scripts, nil
 		}
 		return "1.0.0", time.Now().Add(-sc.age), sc.scripts, nil
 	}

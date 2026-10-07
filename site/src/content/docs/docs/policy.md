@@ -65,7 +65,7 @@ stricter. `isolation.filesystem.mode` is not a setting, and a policy naming it
 gets an unknown-key warning.
 
 ## Reference
-* **`enforce_ignore_scripts`**: When `true`, nvx refuses to install a package that has hook scripts (`preinstall`/`postinstall`/`install`). Supply chain attacks often use these to download and execute arbitrary binaries on the host machine. A command that already turns scripts off is not refused, because the package manager runs none of them. That is `--ignore-scripts` on the command line (npm, pnpm, yarn and bun), `npm_config_ignore_scripts=true` in the environment, or `ignore-scripts=true` in the project `.npmrc`. A run inside the sandbox gets no `npm_config_*` variables, so the environment counts only outside it. `--ignore-scripts=false` does not count. The same holds for the install-script prompt, which is not asked when scripts are off. Otherwise the refusal comes before the package manager starts. Name the package in `install_scripts.trusted_packages` to let it through.
+* **`enforce_ignore_scripts`**: When `true`, nvx refuses to install a package that has hook scripts (`preinstall`/`postinstall`/`install`). Supply chain attacks often use these to download and execute arbitrary binaries on the host machine. A command that already turns scripts off is not refused, because the package manager runs none of them. nvx counts only the settings each package manager reads. For every one of them that is `--ignore-scripts` on the command line. For npm and pnpm it is also `npm_config_ignore_scripts=true` in the environment or `ignore-scripts=true` in the project `.npmrc`. A run inside the sandbox gets no `npm_config_*` variables, so the environment counts only outside it. yarn reads neither of those. Yarn 2 and later also turn scripts off with `--mode=skip-build` or `enableScripts: false` in `.yarnrc.yml`. nvx counts them when `packageManager` in `package.json` names Yarn 2 or later, or `.yarnrc.yml` sets `yarnPath`, because Yarn 1 ignores both. `enableScripts: false` does not count when `YARN_ENABLE_SCRIPTS` is set to anything but `false`, or a `dependenciesMeta` entry in `package.json` sets `built: true`, because Yarn runs those scripts anyway. `--ignore-scripts=false` does not count. The same holds for the install-script prompt, which is not asked when scripts are off. Otherwise the refusal comes before the package manager starts. Name the package in `install_scripts.trusted_packages` to let it through.
 * **Per-check exemptions.** Every install-time check applies to every package
   until a policy names an exception, and each list waives only its own check.
   Naming a package in one never affects another. Adding an entry to any of them is
@@ -76,6 +76,10 @@ gets an unknown-key warning.
     package. Use it for a package that publishes often and is started
     non-interactively, such as an MCP server. An MCP server launched by an
     editor cannot prompt, so a release inside the window stops it starting.
+    A version the registry gives no publish time for is asked about the same
+    way, because nvx cannot tell its age. If your registry sends no publish
+    times, list its packages here by scope, such as `"@your-scope/*"`, or set
+    `release_age.enabled` to `false`.
   - **`install_scripts.trusted_packages`**: run this package's install scripts
     without asking, and past `enforce_ignore_scripts`. That is how "block
     install scripts except for these" is written. `esbuild`, `sharp` and
@@ -84,14 +88,17 @@ gets an unknown-key warning.
     one says which package it let through.
   - **`vulnerabilities.allowed_advisories`**: accept an OSV advisory you have
     assessed, by ID. The exemption is per advisory, so a finding published after
-    your assessment still stops the install.
+    your assessment still stops the install. A package OSV lists as malicious,
+    with an advisory ID starting `MAL-`, is refused without a prompt. Only an
+    entry naming that ID lets it through. A pattern such as `"MAL-*"` does not,
+    and neither do `-y`, `--agent-mode`, `NVX_YES` or `NVX_TRUST_YES`.
   - **`vulnerabilities.min_severity`**: `low`, `moderate` (or `medium`), `high` or
     `critical`. Advisories below the floor are reported and do not stop the
     install. Unset by default, which stops on every advisory. An advisory nvx
     could not rate stops the install at every floor. The rating comes from a
     network lookup, and a failed lookup must never be why a finding slipped under
     the line. An unrecognised value is no floor at all, and is reported at load
-    time.
+    time. The floor never applies to a `MAL-` advisory.
 * **What the audit log holds for these checks.** Every check above that would
   have prompted is written to `~/.nvx/audit.log`. That holds whether a person answered it,
   `-y`, `--agent-mode` or `NVX_YES` approved it without asking, or nobody was there
@@ -140,6 +147,11 @@ written to any log.
 `${VAR}` in `.npmrc` is filled in from nvx's environment, as
 npm does. Only `_authToken` is read. Without a token, a 401 or 403 counts as a
 lookup that failed. nvx asks before going on, and refuses when nobody can answer.
+
+The release-age check reads each version's publish time from the registry's
+`time` field. A registry that leaves it out gets every package asked about,
+and refused when nobody can answer. List that registry's packages in
+`release_age.trusted_packages`, or set `release_age.enabled` to `false`.
 
 **Which hosts the checks contact.** nvx makes these requests itself.
 

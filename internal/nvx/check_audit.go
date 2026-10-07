@@ -34,6 +34,7 @@ const (
 	checkReleaseAge         = "release_age"
 	checkInstallScripts     = "install_scripts"
 	checkVulnerability      = "vulnerability"
+	checkMaliciousPackage   = "malicious_package"
 	checkRegistryLookup     = "registry_unreachable"
 	checkOSVLookup          = "osv_unreachable"
 	checkBlockedPackage     = "blocked_package"
@@ -154,6 +155,14 @@ func releaseAgeRemedy(pkg string) string {
 	return policyEntryRemedy("release_age", "trusted_packages", []string{pkg}, "this package inside the cooling-off window")
 }
 
+// releaseAgeUnknownRemedy is for a version with no publish time, which a
+// registry that never sends one gives for every package.
+func releaseAgeUnknownRemedy(pkg string) string {
+	return `To allow this package without a publish time, add it to release_age.trusted_packages in ~/.nvx/policy.json: {"release_age":{"trusted_packages":[` +
+		jsonList([]string{pkg}) + `]}}. For a registry that sends no publish times, list its packages there by scope, such as "@your-scope/*", or set release_age.enabled to false.` +
+		blanketNote
+}
+
 func installScriptsRemedy(pkg string) string {
 	return policyEntryRemedy("install_scripts", "trusted_packages", []string{pkg}, "this package's install scripts")
 }
@@ -224,6 +233,10 @@ func scriptsOffBy(source string) string {
 		return "ignore_scripts_flag"
 	case scriptsOffByEnv:
 		return "ignore_scripts_env"
+	case scriptsOffByYarnMode:
+		return "yarn_mode_skip_build"
+	case scriptsOffByYarnrc:
+		return "yarnrc_enable_scripts"
 	}
 	return "ignore_scripts_npmrc"
 }
@@ -232,6 +245,39 @@ func scriptsOffBy(source string) string {
 func unreachableRemedy(what string) string {
 	return "No policy setting waives a failed " + what + " lookup. Retry once it is reachable." +
 		" To proceed without it, pass -y or set NVX_YES=true, which approves every check in the run."
+}
+
+// maliciousAdvisories returns the MAL- advisories in a scan result and the
+// packages they name, each sorted.
+func maliciousAdvisories(found map[string][]OSVVuln) (ids, pkgs []string) {
+	seen := map[string]bool{}
+	for pkgKey, list := range found {
+		named := false
+		for _, v := range list {
+			if !isMaliciousAdvisory(v.ID) {
+				continue
+			}
+			named = true
+			if !seen[v.ID] {
+				seen[v.ID] = true
+				ids = append(ids, v.ID)
+			}
+		}
+		if named {
+			pkgs = append(pkgs, pkgKey)
+		}
+	}
+	sort.Strings(ids)
+	sort.Strings(pkgs)
+	return ids, pkgs
+}
+
+// maliciousRemedy says that nothing but an entry naming the advisory allows a
+// malicious package.
+func maliciousRemedy(ids []string) string {
+	return "-y, --agent-mode, NVX_YES, NVX_TRUST_YES and vulnerabilities.min_severity do not allow a package known to be malicious. " +
+		"If you have checked that the advisory does not apply, add its ID to vulnerabilities.allowed_advisories in ~/.nvx/policy.json: " +
+		`{"vulnerabilities":{"allowed_advisories":[` + jsonList(ids) + `]}}. A pattern such as "MAL-*" does not allow it.`
 }
 
 // advisoryIDs returns the distinct advisory IDs in a scan result, sorted so the
