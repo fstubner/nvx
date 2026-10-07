@@ -21,6 +21,13 @@ and the evidence and measurements for each platform are in the
 - **A `.env` inside the project is readable by a contained install.** The project
   directory has to be readable for the install to work, and `.env` lives in it.
   Scrubbing covers environment *variables* only.
+- **A browser that a contained install downloads is deleted with the
+  sandbox.** puppeteer and Playwright keep their browsers in a cache under the
+  home directory, and a contained command gets a home of its own, which nvx
+  deletes when the command ends. nvx warns when this happens. Install the
+  browser outside the sandbox with
+  `nvx --no-sandbox npx puppeteer browsers install chrome` or
+  `nvx --no-sandbox npx playwright install`.
 - **Only an `http://` upstream proxy is used.** An `https://` or `socks5://`
   value in `HTTPS_PROXY` is ignored with a warning, and contained connections
   are then made directly. Behind a proxy, a host nvx's own resolver cannot look

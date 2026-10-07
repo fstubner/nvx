@@ -741,6 +741,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   root, a contained process still runs as root, so the archive still fails to
   unpack.
 
+* **nvx says when a browser that a contained install downloaded is deleted
+  with the sandbox.** puppeteer's postinstall and `playwright install` keep
+  their browsers under the home directory, and a contained command's home is
+  the sandbox's own, which nvx deletes when the command ends. The install
+  exited 0 and nothing said the browser was gone. Measured 2026-10-07 in a
+  Debian 13 container with `storage.googleapis.com` allowed, the puppeteer
+  cache in the sandbox's home reached 856 MB during a contained `npm install
+  puppeteer`, and no browser was left afterwards. nvx now warns when this
+  happens and prints the command that installs the browser where the tool
+  looks for it, such as `nvx --no-sandbox npx puppeteer browsers install
+  chrome`. It also names `PUPPETEER_CACHE_DIR` and `PLAYWRIGHT_BROWSERS_PATH`
+  when it removes them from a contained command's environment.
+
 ### Security
 
 * **A contained process can no longer type into your terminal.** nvx gives the

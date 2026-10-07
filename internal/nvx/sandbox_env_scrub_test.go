@@ -149,10 +149,13 @@ func TestACredentialNamedBySuffixIsRefused(t *testing.T) {
 // furniture (COMPUTERNAME, PROCESSOR_LEVEL). Naming them all on every run would
 // be noise nobody reads, which is its own way of saying nothing.
 func TestOnlyBehaviourChangingVariablesAreWorthPrinting(t *testing.T) {
-	dropped := []string{"COMPUTERNAME", "PROCESSOR_LEVEL", "CI", "ONEDRIVE", "NODE_ENV", "npm_config_yes"}
+	dropped := []string{"COMPUTERNAME", "PROCESSOR_LEVEL", "CI", "ONEDRIVE", "NODE_ENV", "npm_config_yes",
+		"PUPPETEER_CACHE_DIR", "PLAYWRIGHT_BROWSERS_PATH"}
 	notable := notableDropped(dropped)
 
-	for _, want := range []string{"CI", "NODE_ENV"} {
+	// Without the last two a browser download lands in the guest home and is
+	// deleted with it.
+	for _, want := range []string{"CI", "NODE_ENV", "PUPPETEER_CACHE_DIR", "PLAYWRIGHT_BROWSERS_PATH"} {
 		if !containsString(notable, want) {
 			t.Errorf("%q changes how tools behave and would not be reported: %v", want, notable)
 		}

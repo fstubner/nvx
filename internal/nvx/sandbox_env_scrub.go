@@ -61,6 +61,10 @@ var notableEnvKeys = map[string]bool{
 	"DEBUG":       true,
 	"FORCE_COLOR": true,
 	"NO_COLOR":    true,
+	// Where puppeteer and Playwright put a browser. Without them it goes into
+	// the guest home and is deleted with it (see warnLostBrowserDownloads).
+	"PUPPETEER_CACHE_DIR":      true,
+	"PLAYWRIGHT_BROWSERS_PATH": true,
 }
 
 // notableEnvPrefixes catch families rather than single names.
