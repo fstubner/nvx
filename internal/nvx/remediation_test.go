@@ -649,7 +649,8 @@ func TestRunVerifyInstallFailsClosedOnMetadataFailure(t *testing.T) {
 func TestRunVerifyInstallFailsClosedOnOSVFailure(t *testing.T) {
 	if os.Getenv("NVX_TEST_VERIFY_OSV_FAILURE") == "1" {
 		resolveNpmPackageDetailsForVerify = func(pkgName, versionQuery string) (string, time.Time, bool, error) {
-			return "1.0.0", time.Time{}, false, nil
+			// Published long ago, so the OSV failure is what stops it.
+			return "1.0.0", time.Now().Add(-1000 * time.Hour), false, nil
 		}
 		scanVulnerabilitiesBatchForVerify = func(packages []OSVQuery) (map[string][]OSVVuln, error) {
 			return nil, fmt.Errorf("osv unavailable")

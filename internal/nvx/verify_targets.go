@@ -100,9 +100,12 @@ type verifyRequest struct {
 // the first package checked.
 func verifyBeforeRun(req verifyRequest) (int, string, string) {
 	platform := installPlatform(req)
+	// The command as the package manager reads it, `npm exe` as `npm exec`. npm's
+	// own resolution step is still given the arguments as typed.
+	args, _ := readCommand(req.pmCmd, req.pmArgs)
 	var targets []verifyTarget
 	if strings.EqualFold(req.pmCmd, "npm") {
-		resolved, code, reason := npmResolvedTargets(req, platform)
+		resolved, code, reason := npmResolvedTargets(req, args, platform)
 		if code != 0 {
 			return code, reason, ""
 		}
@@ -110,7 +113,7 @@ func verifyBeforeRun(req verifyRequest) (int, string, string) {
 	}
 	if targets == nil {
 		var err error
-		targets, err = detectTargets(req.pmCmd, req.pmArgs, platform)
+		targets, err = detectTargets(req.pmCmd, args, platform)
 		if err != nil {
 			// The lockfile is what installs, and nvx could not read it. Checking
 			// package.json instead checked the newest version of each range in
@@ -176,7 +179,8 @@ func detectTargets(cmdName string, args []string, platform nodePlatform) ([]veri
 		if pkgs := installPackagesArg(args, "a"); len(pkgs) > 0 {
 			return specTargets(pkgs), nil
 		}
-		if hasInstallVerb(args, "a") {
+		// `bun ci` is bun's install with a frozen lockfile.
+		if hasInstallVerb(args, "a") || commandVerbIndex(args, "ci") >= 0 {
 			return projectTargets(cmd, platform)
 		}
 		if commandVerbIndex(args, refreshVerbs...) >= 0 {

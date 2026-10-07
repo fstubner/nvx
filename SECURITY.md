@@ -54,6 +54,13 @@ install and run scripts. Its defenses are layered:
    lookups, package release-age warnings, install-script prompts and the
    `blocked_packages` list run before untrusted code executes.
 
+   A package OSV lists as malicious, with an advisory ID starting `MAL-`, is
+   refused without a prompt. `-y`, `--agent-mode`, `NVX_YES` and
+   `NVX_TRUST_YES` do not let it through, and neither does
+   `vulnerabilities.min_severity`. Only a `vulnerabilities.allowed_advisories`
+   entry naming that advisory does. A version whose publish time the registry
+   does not give is asked about like one inside the release-age window.
+
    What they run on depends on the command. For `npm install`, `npm update`
    and `npm dedupe`, nvx first runs npm's own resolver with
    `--package-lock-only --ignore-scripts`, contained like the install, on a
@@ -137,6 +144,13 @@ install and run scripts. Its defenses are layered:
    That is installs (`install`, `ci`, `add`, `update`, `rebuild`, `dedupe`,
    `audit fix`) and ad-hoc tool runners (`npx`, `bunx`, `npm exec`, `pnpm dlx`,
    `bun x`, `npm create`, `npm init <initializer>`). It is **not** your own code.
+   nvx reads the command as the package manager does. npm accepts any
+   unambiguous prefix of a command, and camelCase, so `npm exe` is `npm exec`
+   and `npm installTest` is `npm install-test`. nvx applies npm's rule as the
+   releases bundled with Node.js 18 to 26, and npm 12, apply it. An npm command
+   nvx does not recognise is contained. pnpm's
+   `uni`, `dislink` and `recursive <command>`, yarn's
+   `workspace <name> <command>` and bun's `r` and `ci` are read as well.
    `npm run build`, `npm test` and a bare `node app.js` run uncontained at the
    default `standard` level, by design. `isolation.level: strict` extends
    containment to those too. This entry said "shimmed commands" without the
@@ -284,7 +298,10 @@ These are deliberate trade-offs, and this section documents each one:
   change stays readable, with a warning. On every platform a contained process
   cannot read the project's `.env` or `.env.*` files, except the templates
   `.env.example`, `.env.sample`, `.env.template` and `.env.dist`. On Linux and
-  Windows that covers the files present when the run starts.
+  Windows that covers the files present when the run starts. On Linux it also
+  covers a file created or replaced while the run lasts, a contained process
+  cannot reach one by making a user namespace of its own, and nvx keeps covering
+  new files even when the machine runs out of file-watch slots.
   `docs/enforcement-matrix.md` note 15 has the details. Secrets outside the
   project, such as `~/.ssh`, `~/.aws` and `~/.npmrc`, stay unreachable on Windows
   and Linux. On macOS the Seatbelt profile denies reads under the home
@@ -704,7 +721,7 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   `release_age.min_age_hours` does not. That setting widens the window for every
   package you install. The third is the broadest. `NVX_YES` also approves the
   typosquat, install-script and known-advisory checks for that server, so it is
-  the last resort. Each check it approves is printed on stderr and written to
+  the last resort. It never approves a package OSV lists as malicious. Each check it approves is printed on stderr and written to
   `~/.nvx/audit.log` as a `check_approved` record.
 
   Until 0.6.0 the only exemption list was `typosquatting.trusted_packages`, which

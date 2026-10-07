@@ -85,6 +85,19 @@ func namespaceSetupRefused(err error, out string) bool {
 		(strings.Contains(low, "network isolation failed") || strings.Contains(low, "sandbox execution failed"))
 }
 
+// namespaceRefusedHint is the one line a failed run prints when the kernel
+// refused the sandbox its namespaces, so the failure itself points at the help
+// rather than ending on a bare "operation not permitted". doctor prints the full
+// diagnosis (sandboxLaunchAdvice); this names the same cause and sends the user
+// there. The sysctl is the one doctor names, kept in step through the shared
+// constant.
+func namespaceRefusedHint() string {
+	return "The kernel refused the sandbox its user and network namespaces. On Ubuntu 23.10 " +
+		"and later this is AppArmor restricting unprivileged user namespaces (" +
+		doctorSandboxApparmorSysctl + "). Run `nvx doctor` for how to fix it, or rerun with " +
+		"--no-sandbox to go without containment."
+}
+
 // lastLines returns up to n non-empty trailing lines of s, joined for display.
 func lastLines(s string, n int) string {
 	var lines []string

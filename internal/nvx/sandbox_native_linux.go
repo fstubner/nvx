@@ -175,6 +175,15 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return childExitCode(exitErr), nil
 		}
+		// The common refusal here is a host that will not let the sandbox create
+		// its namespaces (default Docker, AppArmor-hardened Ubuntu). Left as the
+		// raw "fork/exec ...: operation not permitted" it tells the user nothing;
+		// name what happened and point at the diagnosis doctor already prints.
+		if namespaceSetupRefused(err, "") {
+			LogError("nvx could not create the sandbox to contain this command, so it did not run.")
+			LogRefusalDetail("%s", namespaceRefusedHint())
+			return 1, refusedToStart("the kernel refused the sandbox its namespaces")
+		}
 		LogError("Landlock sandbox execution failed: %v", err)
 		return 1, refusedToStart("the landlock sandbox could not be launched")
 	}
