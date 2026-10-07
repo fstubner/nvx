@@ -141,6 +141,19 @@ install and run scripts. Its defenses are layered:
    one per project. On macOS it may also write a
    few named device files such as `/dev/null` and `/dev/tty`.
 
+   On Linux the contained process cannot type into the terminal nvx runs on. It
+   has that terminal as its stdin, and shares nvx's process group, so a byte
+   pushed into the terminal's input queue with `ioctl(TIOCSTI)` would be read by
+   your shell after nvx exits and run as you, outside the sandbox. This is the
+   class of bubblewrap's CVE-2017-5226. Recent kernels refuse `TIOCSTI`
+   themselves, but kernels before 6.2 and any with `dev.tty.legacy_tiocsti` at 1
+   allow it, so nvx's seccomp filter refuses `TIOCSTI` and `TIOCLINUX` on every
+   kernel. On Windows the analogue is `WriteConsoleInput` on a console input
+   handle, and the OS already refuses it to an AppContainer, measured on Windows
+   11. On macOS the analogue is `ioctl(TIOCSTI)`, which the Seatbelt profile
+   denies, and a macOS CI probe checks a real kernel refuses it. The per-platform
+   detail and evidence are in `docs/enforcement-matrix.md` (¹⁸).
+
    That is installs (`install`, `ci`, `add`, `update`, `rebuild`, `dedupe`,
    `audit fix`) and ad-hoc tool runners (`npx`, `bunx`, `npm exec`, `pnpm dlx`,
    `bun x`, `npm create`, `npm init <initializer>`). It is **not** your own code.

@@ -143,6 +143,10 @@ func errnoName(e syscall.Errno) string {
 		return "EPERM"
 	case syscall.ENOSYS:
 		return "ENOSYS"
+	case syscall.EIO:
+		return "EIO"
+	case syscall.ENOTTY:
+		return "ENOTTY"
 	}
 	return fmt.Sprintf("errno%d", int(e))
 }

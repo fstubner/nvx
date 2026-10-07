@@ -726,6 +726,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   junction is compared by where the junction leads, and a path nvx cannot
   resolve counts as outside the home.
 
+### Security
+
+* **A contained process can no longer type into your terminal.** nvx gives the
+  contained process the terminal it runs on as stdin, shared with nvx, so the
+  terminal is its controlling terminal too. `ioctl(fd, TIOCSTI, &c)` pushes a
+  byte into that terminal's input queue, and when nvx exits the shell reads the
+  queue as if it were typed. A package postinstall could leave a command and an
+  Enter behind that then run as you, outside the sandbox. `TIOCLINUX` does the
+  same by pasting a selection on a Linux virtual console. This is the class of
+  bubblewrap's CVE-2017-5226.
+
+  On Linux, kernels from 6.2 refuse `TIOCSTI` when `dev.tty.legacy_tiocsti` is 0,
+  but older kernels allow it, and Ubuntu 22.04's 5.15, which nvx supports, is one
+  of them. Measured on a 5.15 kernel in a QEMU VM, a contained process typed
+  `nvx-typed-this` into the terminal before this change and the terminal echoed
+  it. nvx's seccomp filter now refuses `TIOCSTI` and `TIOCLINUX` with `EPERM`,
+  and the same process is refused after, in both the open and proxy network
+  modes. The filter is installed the same way the network filter is, so it covers
+  every architecture nvx builds for, amd64 and arm64. Other terminal ioctls, such
+  as the window-size query, still work.
+
+  On macOS the Seatbelt profile denies `TIOCSTI` by command number, and ioctls
+  are denied by default besides. On Windows the operating system already refuses
+  a contained AppContainer process `WriteConsoleInput` on the shared console,
+  measured on Windows 11. The evidence for each platform is in
+  `docs/enforcement-matrix.md`.
+
 ## [0.7.0] - 2026-10-06
 
 ### Added
