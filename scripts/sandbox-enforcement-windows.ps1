@@ -191,9 +191,10 @@ function finish() {
 
 // No host is allowlisted, so this must not complete. The AppContainer holds no
 // network capability at all, so the OS refuses the connection and DNS does not
-// resolve -- this does not depend on the request honouring HTTP_PROXY, which
-// Node's classic https API does not do.
-const req = https.get('https://example.com', () => { out.push('EGRESS=ALLOWED'); done(); });
+// resolve. agent: false makes the request dial on its own. Node's default agent
+// follows HTTP_PROXY now that nvx sets NODE_USE_ENV_PROXY=1, and a request sent to
+// the proxy is refused by the allowlist, which says nothing about the AppContainer.
+const req = https.get('https://example.com', { agent: false }, () => { out.push('EGRESS=ALLOWED'); done(); });
 req.on('error', () => { out.push('EGRESS=DENIED'); done(); });
 req.setTimeout(15000, () => { req.destroy(); out.push('EGRESS=TIMEOUT'); done(); });
 

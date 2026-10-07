@@ -90,13 +90,18 @@ New-Item -ItemType Directory -Force -Path $env:NVX_HOME | Out-Null
 try {
 Set-Location $proj
 
-# Node 24 specifically, and installed rather than discovered: Node core ignores
-# HTTP_PROXY without --use-env-proxy, which arrived in 24, so on anything older
-# the allowlisted half could never pass -- the request would go direct and the
-# sandbox would correctly refuse it. This used to probe the version on PATH and
-# skip when it was too old, which meant the half that tells enforcement from
-# breakage was silently not run on most machines. Pinning the runtime removes the
-# skip rather than reporting it.
+# Node 24 specifically, and installed rather than discovered: Node core reads
+# HTTP_PROXY only when NODE_USE_ENV_PROXY=1, which nvx puts in the contained
+# environment, and the https module this script calls reads it from 24.5.0 (and
+# from 22.21.0). On anything older the allowlisted half could never pass -- the
+# request would go direct and the sandbox would correctly refuse it. This used to
+# probe the version on PATH and skip when it was too old, which meant the half that
+# tells enforcement from breakage was silently not run on most machines. Pinning
+# the runtime removes the skip rather than reporting it.
+#
+# The node command lines below carry no --use-env-proxy. They used to, which sent
+# the request to the proxy whether or not nvx had told node to. Without the flag, a
+# pass here means nvx delivered the setting.
 Write-Host "Installing an nvx-managed runtime..."
 $installCode = (Invoke-NativeCapture $nvx @('-y', 'install', '24')).ExitCode
 $defaultCode = (Invoke-NativeCapture $nvx @('-y', 'default', '24')).ExitCode
@@ -150,7 +155,7 @@ if ($probe -match 'AppContainer launch failed') {
 }
 
 Write-Host "Testing blocked egress via sandboxed node..."
-$blocked = Invoke-NativeCapture $nvx @('shim', 'node', '--use-env-proxy', '-e', $fetch)
+$blocked = Invoke-NativeCapture $nvx @('shim', 'node', '-e', $fetch)
 if ($blocked.ExitCode -eq 0) {
     Write-Error "expected blocked egress to fail, got exit 0"
 }
@@ -173,7 +178,7 @@ Write-Host "Testing allowlisted egress via sandboxed node..."
 }
 '@.Replace("TARGET", $target) | Write-PolicyFile
 
-$allowed = Invoke-NativeCapture $nvx @('shim', 'node', '--use-env-proxy', '-e', $fetch)
+$allowed = Invoke-NativeCapture $nvx @('shim', 'node', '-e', $fetch)
 if ($allowed.ExitCode -ne 0) {
     Write-Error "an allowlisted host was blocked; the sandbox is denying everything rather than enforcing a policy (this phase needs outbound network access)"
 }
