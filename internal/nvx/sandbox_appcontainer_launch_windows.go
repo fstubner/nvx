@@ -4,6 +4,7 @@ package nvx
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"syscall"
 	"unicode/utf16"
@@ -88,6 +89,12 @@ func launchAppContainerProcess(
 ) (exitCode int, err error) {
 	return launchAppContainerProcessOnce(cmdPath, args, env, workDir, appContainerSID, lowILToken, capabilitySIDs)
 }
+
+// beforeCreateProcess runs just before CreateProcess and is nil outside tests.
+// A test runs a garbage collection here, which is how a broken lifetime below
+// shows up on every launch rather than on about one in a hundred. See
+// TestALaunchSurvivesACollectionJustBeforeCreateProcess.
+var beforeCreateProcess func()
 
 // Long on purpose, and kept that way.
 //
@@ -247,6 +254,9 @@ func launchAppContainerProcessOnce(
 	var pi processInformation
 	var createOK uintptr
 	var createErr error
+	if beforeCreateProcess != nil {
+		beforeCreateProcess()
+	}
 	// lpApplicationName is cmdPath, so Windows runs exactly that file rather than
 	// searching for the first token of lpCommandLine. The command line still
 	// starts with the same path, as argv[0].
@@ -277,11 +287,22 @@ func launchAppContainerProcessOnce(
 		)
 	}
 
-	// Keep the attribute buffer, capability SID array and handle list alive
-	// through CreateProcess: the attribute list holds pointers into all three.
-	_ = attrBuf
-	_ = capAttrs
-	_ = handleList
+	// Keep the attribute buffer, the security capabilities, the capability SID
+	// array and the handle list alive through CreateProcess. The attribute list
+	// holds their addresses as plain integers, which the garbage collector does
+	// not follow, so nothing else here keeps them.
+	//
+	// This said `_ = attrBuf` and the like until 2026-10-07, which keeps nothing
+	// alive: Go drops a blank assignment, so all four could be freed and their
+	// memory handed out again before CreateProcess read them. Measured with a
+	// collection forced throughout, 1000 launches failed 7 times with "The
+	// parameter is incorrect" and twice with "A device attached to the system is
+	// not functioning". That first message is the transient launch failure seen
+	// about once in a hundred ordinary contained launches.
+	runtime.KeepAlive(attrBuf)
+	runtime.KeepAlive(&secCaps)
+	runtime.KeepAlive(capAttrs)
+	runtime.KeepAlive(handleList)
 
 	if createOK == 0 {
 		// %w, not %v: the caller distinguishes a corrupted staged image from other

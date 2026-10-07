@@ -452,6 +452,60 @@ func TestAFailedResolutionIsAskedAbout(t *testing.T) {
 	}
 }
 
+// A resolution step the sandbox never started is not npm failing, and NVX_YES
+// cannot approve it. Measured 2026-10-07: a transient "The parameter is
+// incorrect" on the resolution step's launch, then "Approved without asking
+// (NVX_YES): the install goes ahead with only the named packages checked".
+func TestAResolutionTheSandboxNeverStartedIsRefusedEvenWithYes(t *testing.T) {
+	w := newVerifyWorld(t, `{"typosquatting":{"enabled":false}}`)
+	w.write("package.json", `{"name":"app"}`)
+	w.addTsx(fakeRegistryPkg{})
+	w.lock = tsxLock(t)
+	t.Setenv("NVX_YES", "1")
+
+	launches := 0
+	launch := launchNpmResolution
+	refuse := func(failures int) {
+		launchNpmResolution = func(cfg SandboxConfig, contain bool) int {
+			launches++
+			if launches <= failures {
+				if cfg.OnRefusal != nil {
+					cfg.OnRefusal("the appcontainer launch failed")
+				}
+				return exitRefused
+			}
+			return launch(cfg, contain)
+		}
+	}
+
+	// Refused twice: the run stops.
+	refuse(2)
+	code, out := w.run("npm", "install", "tsx")
+	if code == 0 {
+		t.Fatalf("a resolution step that never started was approved by NVX_YES:\n%s", out)
+	}
+	if code != exitRefused {
+		t.Errorf("exit %d, want %d", code, exitRefused)
+	}
+	if launches != 2 {
+		t.Errorf("the resolution step was launched %d times, want 2 (one retry)", launches)
+	}
+	if len(w.askedNames()) != 0 {
+		t.Errorf("the checks ran on %v although nothing was resolved", w.askedNames())
+	}
+
+	// Refused once: the retry resolves, and the transitive packages are checked.
+	launches = 0
+	w.asked = nil
+	refuse(1)
+	if code, out := w.run("npm", "install", "tsx"); code != 0 {
+		t.Fatalf("a resolution step that started on the retry was refused:\n%s", out)
+	}
+	if got := w.askedNames(); len(got) < 2 {
+		t.Errorf("after the retry the checks saw only %v, want tsx and what it brings in", got)
+	}
+}
+
 // A lockfile lists every platform's optional binaries, and npm installs only
 // this platform's.
 func TestAnotherPlatformsOptionalPackageIsNotChecked(t *testing.T) {

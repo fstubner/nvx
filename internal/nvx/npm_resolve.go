@@ -79,6 +79,16 @@ func npmResolvedTargets(req verifyRequest, args []string, platform nodePlatform)
 	}
 
 	targets, err := resolveNpmInstall(req, root, platform)
+	// The sandbox never started npm, so nothing was resolved and nothing was
+	// learned about the install. That is nvx failing, and no answer to a
+	// question about npm may wave it through. See resolutionNotStarted.
+	var notStarted resolutionNotStarted
+	if errors.As(err, &notStarted) {
+		LogError("nvx could not start npm's resolution step in the sandbox (%s), so it cannot check the packages this install brings in.", notStarted.reason)
+		LogInfo("Run the command again. -y and NVX_YES do not approve this, because nothing was checked.")
+		recordCheckRefused(req.nvxHome, checkInfo{check: checkResolution, detail: notStarted.Error()})
+		return nil, exitRefused, resolutionSetupReason
+	}
 	if err == nil {
 		// The user chose what they named, or with no names the project's own
 		// dependencies. Everything else in the tree came with those.
@@ -119,6 +129,20 @@ type resolutionFailed struct{ code int }
 
 func (e resolutionFailed) Error() string {
 	return fmt.Sprintf("its lockfile-only run exited with %d", e.code)
+}
+
+// resolutionNotStarted is the sandbox refusing to start npm's resolution step,
+// with the refusal's reason.
+//
+// It was a resolutionFailed carrying nvx's own exit code 77, which made it look
+// like npm failing and put it behind the same question. With NVX_YES set,
+// measured 2026-10-07: "CreateProcess(AppContainer) ... The parameter is
+// incorrect" on the resolution step, then "Approved without asking (NVX_YES):
+// the install goes ahead with only the named packages checked".
+type resolutionNotStarted struct{ reason string }
+
+func (e resolutionNotStarted) Error() string {
+	return "the sandbox did not start it: " + e.reason
 }
 
 const resolutionRemedy = "npm's own message, above, says why it could not resolve the install. No policy setting waives this." +
@@ -196,9 +220,21 @@ func resolveNpmInstall(req verifyRequest, root string, platform nodePlatform) ([
 	cfg.Args = npmResolutionArgs(req.pmArgs, scratch)
 	cfg.WorkDir = root
 	cfg.ToolName = ""
-	cfg.OnRefusal = nil
+	// A refusal means npm never ran. Tried once more, since the launch failure
+	// seen in practice was transient, and then reported as not started.
+	refusal := ""
+	cfg.OnRefusal = func(reason string) { refusal = reason }
 	LogDetail("Asking npm which packages this command installs, so each one is checked first.")
-	if code := launchNpmResolution(cfg, req.contain); code != 0 {
+	code := launchNpmResolution(cfg, req.contain)
+	if refusal != "" {
+		LogWarn("The sandbox did not start npm's resolution step. Trying once more.")
+		refusal = ""
+		code = launchNpmResolution(cfg, req.contain)
+		if refusal != "" {
+			return nil, resolutionNotStarted{reason: refusal}
+		}
+	}
+	if code != 0 {
 		return nil, resolutionFailed{code: code}
 	}
 	lock, ok, err := readProjectLockfile(scratch)
