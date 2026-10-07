@@ -39,8 +39,10 @@ and the evidence and measurements for each platform are in the
   reads `YARN_HTTP_PROXY` and `YARN_HTTPS_PROXY`, which nvx sets to the same
   address. Node 22.23.2 prints `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is
   experimental` to stderr when a process with the variable set exits. nvx adds
-  `--disable-warning=UNDICI-EHPA` to `NODE_OPTIONS` for a Node it resolved that
-  reads the variable. A Node found elsewhere on your `PATH` still prints it.
+  `--disable-warning=UNDICI-EHPA` to `NODE_OPTIONS` when the command it runs
+  lives in a Node it installed and that Node reads the variable. A command found
+  elsewhere on your `PATH`, such as a `yarn` you installed yourself, still prints
+  it.
 - **A request to `localhost`, `127.0.0.1` or `::1` goes to the proxy only when
   the policy lets the proxy reach this machine.** By default nvx lists those
   names in `NO_PROXY`, so a request to one connects directly. On Windows and on

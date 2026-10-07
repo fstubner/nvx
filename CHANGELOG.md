@@ -193,9 +193,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   22.23.2 prints `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental` to
   stderr when a process with the variable set exits, and a contained
   `npm install` printed it twice. nvx adds `--disable-warning=UNDICI-EHPA` to
-  `NODE_OPTIONS` for a Node it resolved that reads the variable, and for no
-  other, because the Node 18 and 19 releases measured refuse to start with it.
-  The same install now prints nothing on Windows and on Linux.
+  `NODE_OPTIONS` when the command lives in a Node it installed and that Node
+  reads the variable, and for no other, because the Node 18 and 19 releases
+  measured refuse to start with it. The same install now prints nothing on
+  Windows and on Linux.
 
 * **A contained npm reaches a service opened with `--connect`.** npm sent the
   request to nvx's proxy, which does not forward a plain `http://` request and
