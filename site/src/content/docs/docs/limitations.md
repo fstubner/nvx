@@ -29,6 +29,29 @@ and the evidence and measurements for each platform are in the
   `isolation.filesystem.provider: docker` with the default `network.mode: proxy`
   is refused. Docker runs `offline` and `loopback` with no network at all, and
   `open` unfiltered. Use the native provider for an egress allowlist.
+- **Only some Node programs follow the proxy.** nvx sets `NODE_USE_ENV_PROXY=1`
+  beside `HTTP_PROXY` and `HTTPS_PROXY`. Node reads it for `fetch` from 24.0.0,
+  for `http` and `https` as well from 24.5.0, and for all three from 22.21.0.
+  Earlier releases ignore it, so a request from one connects directly and the
+  sandbox refuses it. Bun's `fetch` follows the proxy variables with no help. A
+  request that carries its own agent, such as `agent: false`, ignores them on
+  every version, and so does a raw socket. Measured with Node 22.23.2, each
+  contained Node process prints `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is
+  experimental` to stderr when it exits. Node 24.14.1 and 24.21.0 print nothing.
+- **A request to `127.0.0.1` from a contained Node program goes to the proxy.**
+  A request that follows the proxy variables no longer reaches a server that
+  your own code started in the same sandbox. The proxy refuses a local address
+  the policy does not allow. Measured on Windows and on Linux with Node 22.23.2,
+  a server and a client in one sandbox could no longer reach each other.
+  `fetch` was rejected and `http.get` received 405. A port that nvx opened, with
+  `--connect` or `--expose`, is listed in `NO_PROXY` and still connects directly.
+  Give any other request its own agent, or use a raw socket, to dial inside the
+  sandbox.
+- **The proxy refuses a plain `http://` request in proxy form.** It tunnels with
+  CONNECT and speaks SOCKS5. A client that sends it a plain `http://` request
+  gets `405 Method Not Allowed`. `https://` requests work. So does Node's `fetch`
+  for both schemes, because it tunnels. Measured with Node 22.23.2, `http.get`
+  to an `http://` address received 405.
 
 ## Windows
 
