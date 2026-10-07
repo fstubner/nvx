@@ -160,8 +160,12 @@ install and run scripts. Its defenses are layered:
    containment to those too. This entry said "shimmed commands" without the
    distinction until 0.5.6, which was less careful than README on the same point.
 4. **Egress control.** A loopback allowlist proxy mediates outbound network
-   access. A host the allowlist does not name is refused. nvx never asks about
-   one, and prints the `nvx allow-host` command a person runs to allow it.
+   access. The shipped allowlist names the npm registry under both of its
+   names, `registry.npmjs.org` and `registry.yarnpkg.com`. It also names
+   `repo.yarnpkg.com`, where corepack gets Yarn 2 and later, and `api.osv.dev`.
+   For Bun it also names GitHub's download hosts. A host the allowlist
+   does not name is refused. nvx never asks about one, and prints the
+   `nvx allow-host` command a person runs to allow it.
    When nvx's own environment sets `HTTPS_PROXY` or
    `HTTP_PROXY`, an allowed connection is forwarded through that proxy. The
    egress proxy dials `NO_PROXY` and loopback destinations directly. The allowlist decides

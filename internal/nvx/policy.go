@@ -379,6 +379,12 @@ func DefaultPolicy() Policy {
 					// registry, so allowing it widens nothing; without it every
 					// contained `yarn install` was refused on its first fetch.
 					"registry.yarnpkg.com:443",
+					// Where corepack downloads Yarn 2 and later, and where it looks
+					// up Yarn's versions for a range such as yarn@4 or yarn@1.
+					// Without it a contained `corepack yarn@4 install` was refused
+					// on its first fetch. corepack downloads pnpm and Yarn 1 from
+					// the two registries above.
+					"repo.yarnpkg.com:443",
 					"api.osv.dev:443",
 				},
 				PromptUnknown: true,

@@ -221,6 +221,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2026-10-07, a contained `pnpm install` through corepack's `pnpm.cmd` stopped at
   launch with `Access is denied.`, and it now installs and exits 0.
 
+* **A contained `corepack yarn@4 install` no longer fails on its first fetch.**
+  corepack downloads Yarn 2 and later from `repo.yarnpkg.com`, and looks up
+  Yarn's versions there for a range such as `yarn@4` or `yarn@1`. The default
+  allowlist did not name that host. Measured 2026-10-07 in a Linux container
+  with corepack 0.36.0, nvx refused both `corepack yarn@4 install` and
+  `corepack yarn@1 install` a connection to it. `default_allow` now names
+  `repo.yarnpkg.com:443`, and both commands install. corepack downloads pnpm
+  and Yarn 1 from `registry.npmjs.org` and `registry.yarnpkg.com`, which the
+  list already named, so `corepack pnpm@10 install` worked before.
+
 * **`nvx doctor` reports what is wrong with the shim directory.** It now reads
   the directory. It fails and names the fix, `nvx init-shims`, for a link or
   launcher that is not nvx's, for shims that run an older nvx, and on Linux and

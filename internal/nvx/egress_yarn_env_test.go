@@ -41,6 +41,18 @@ func TestProxyEnvironmentPointsYarnAtTheProxy(t *testing.T) {
 	}
 }
 
+// corepack downloads Yarn 2 and later from repo.yarnpkg.com, and looks up Yarn's
+// versions there for a range. The default allowlist did not name it, so a
+// contained `corepack yarn@4 install` was refused on its first fetch.
+func TestTheDefaultAllowlistLetsCorepackFetchYarn(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.Isolation.Network.PromptUnknown = false
+	p := proxyWithPolicy(t, policy)
+	if !p.allowed(parseHostPortSpec("repo.yarnpkg.com", 443), publicAddr) {
+		t.Fatal("the default allowlist refused repo.yarnpkg.com:443, where corepack gets Yarn 2 and later")
+	}
+}
+
 // The supervisor inside the sandbox rewrites the proxy address to the relay's, and
 // Yarn has to follow, or it would dial the parent's own listener, which is not
 // reachable from in there.

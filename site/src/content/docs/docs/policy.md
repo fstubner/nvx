@@ -41,7 +41,7 @@ An example global policy:
     },
     "network": {
       "mode": "proxy",
-      "default_allow": ["registry.npmjs.org:443", "registry.yarnpkg.com:443", "api.osv.dev:443"],
+      "default_allow": ["registry.npmjs.org:443", "registry.yarnpkg.com:443", "repo.yarnpkg.com:443", "api.osv.dev:443"],
       "allow_hosts": ["localhost:5432"],
       "prompt_unknown": true
     }

@@ -57,9 +57,9 @@ export const faq: FaqItem[] = [
   {
     group: 'Containment',
     q: 'What can a contained install actually reach?',
-    a: "Your project directory, including its lockfile and node_modules, and a throwaway home directory of its own. Environment variables are scrubbed. It can write to the project and that home. It can read the project's .git and cannot write it. Outbound connections are limited to an allowlist that by default names the npm registry and the OSV vulnerability API, and GitHub's download hosts for Bun.",
+    a: "Your project directory, including its lockfile and node_modules, and a throwaway home directory of its own. Environment variables are scrubbed. It can write to the project and that home. It can read the project's .git and cannot write it. Outbound connections are limited to an allowlist that by default names the npm registry, Yarn's download host for corepack and the OSV vulnerability API, and GitHub's download hosts for Bun.",
     aHtml:
-      "<p>Your project directory, including its lockfile and <code>node_modules</code>, and a throwaway home directory of its own. Environment variables are scrubbed. It can write to the project and that home. It can read the project's <code>.git</code> and cannot write it. Outbound connections are limited to an allowlist that by default names the npm registry and the OSV vulnerability API, and GitHub's download hosts for Bun.</p>",
+      "<p>Your project directory, including its lockfile and <code>node_modules</code>, and a throwaway home directory of its own. Environment variables are scrubbed. It can write to the project and that home. It can read the project's <code>.git</code> and cannot write it. Outbound connections are limited to an allowlist that by default names the npm registry, Yarn's download host for corepack and the OSV vulnerability API, and GitHub's download hosts for Bun.</p>",
   },
   {
     group: 'Containment',
