@@ -451,6 +451,9 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 			return 1
 		}
 		LogInfo("Linux loopback-only network namespace active")
+		if err := allowLowPortsInNamespace(); err != nil {
+			LogWarn("A contained server cannot listen on a port below 1024 in this run (%v).", err)
+		}
 	}
 
 	// The egress proxy runs in the parent, outside this namespace, because a
@@ -582,6 +585,13 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	// In every network mode, open included. See applyLinuxTerminalSeccomp.
 	if err := applyLinuxTerminalSeccomp(); err != nil {
 		LogError("Could not stop the sandbox typing into the terminal (fail-closed): %v", err)
+		return 1
+	}
+	// Last, because `ip` and `iptables` above got their capabilities from this
+	// thread. Fail closed, or the target starts with this thread's ambient
+	// capabilities.
+	if err := dropTargetCapabilities(); err != nil {
+		LogError("Could not take the sandbox's capabilities away from the command (fail-closed): %v", err)
 		return 1
 	}
 

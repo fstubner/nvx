@@ -149,6 +149,12 @@ and the evidence and measurements for each platform are in the
   only the directories it is granted, so host sockets such as Docker's are
   absent. A socket placed in the project directory, or in a directory added with
   `allow_read_exec`, can still be connected to.
+- **Run as root, nvx cannot install every prebuilt binary contained.** A
+  contained process runs as the user who started nvx, so for root it is root,
+  in a user namespace that holds no other user. A tool that unpacks an archive
+  as root gives each file the owner the archive records, and any other owner
+  fails with `EINVAL`. sqlite3's prebuilt binary is one such archive. Run nvx as
+  an ordinary user.
 - **On Ubuntu 23.10 and later, the sandbox may refuse to start.** Ubuntu
   restricts the user namespaces it is built on, through
   `kernel.apparmor_restrict_unprivileged_userns`. Contained commands then fail

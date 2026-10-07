@@ -4,6 +4,7 @@ package nvx
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -32,6 +33,20 @@ func bringUpLoopback() error {
 		return fmt.Errorf("bring up loopback (install iproute2): %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// unprivilegedPortStartPath is the lowest port a process without
+// CAP_NET_BIND_SERVICE may bind in the caller's network namespace. It covers
+// IPv6 as well, and a new namespace starts at 1024.
+const unprivilegedPortStartPath = "/proc/sys/net/ipv4/ip_unprivileged_port_start"
+
+// allowLowPortsInNamespace lets the target listen on any port in its own network
+// namespace. As root in its user namespace it could, and running as the user
+// it could not listen below 1024. The namespace holds only its own loopback,
+// so a low port there reaches nothing a high one does not. Docker sets the same
+// value for its containers, 0 as read from one on 2026-10-07.
+func allowLowPortsInNamespace() error {
+	return os.WriteFile(unprivilegedPortStartPath, []byte("0"), 0)
 }
 
 // networkModeRequiresNamespace reports whether mode needs a loopback-only

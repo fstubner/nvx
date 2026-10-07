@@ -7,14 +7,119 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+// The contained process runs as the user who started nvx and holds no
+// capabilities, and it can still listen on a port below 1024 in its own network
+// namespace, as it could when it ran as root there.
+//
+// Until 2026-10-07 the supervisor mapped the user to root and the target ran as
+// that root, holding every capability but the four the supervisor dropped. A
+// tar library restores an archive's owners when it runs as root, and with one
+// id mapped every other owner is EINVAL. That is how a contained `npm install
+// sqlite3` failed, on its prebuilt binary's archive owned by 1001.
+//
+// The supervisor is the real one, with this test binary as its target. CI runs
+// it again as root in the privileged step, where the user is root in the
+// namespace too, and the capability sets still have to be empty.
+func TestContainedProcessRunsAsTheUserWithNoCapabilities(t *testing.T) {
+	const name = "TestContainedProcessRunsAsTheUserWithNoCapabilities"
+	switch {
+	case os.Getenv("NVX_TEST_IDENTITY_TARGET") == "1":
+		runIdentityProbe()
+		return
+	case os.Getenv("NVX_TEST_IDENTITY_SUPERVISOR") == "1":
+		exe, err := os.Executable()
+		if err != nil {
+			fmt.Printf("setup_failed=%v\n", err)
+			os.Exit(1)
+		}
+		// Inherited by the target, which is how it knows to probe.
+		_ = os.Setenv("NVX_TEST_IDENTITY_TARGET", "1")
+		os.Exit(runLandlockExecChild(supervisorExecArgs{
+			GuestHome:     os.Getenv("NVX_TEST_GUEST"),
+			WorkDir:       os.Getenv("NVX_TEST_WORK"),
+			NvxHome:       os.Getenv("NVX_TEST_NVXHOME"),
+			NetworkMode:   "proxy",
+			ReadExecRoots: []string{filepath.Dir(exe)},
+			CmdPath:       exe,
+			CmdArgs:       []string{"-test.run=^" + name + "$"},
+		}))
+	}
+
+	if _, err := exec.LookPath("ip"); err != nil {
+		t.Skip("iproute2 not installed; bringUpLoopback needs `ip`")
+	}
+	if fd, err := landlockCreateRuleset(landlockHandledAccess()); err != nil {
+		t.Skipf("landlock unavailable on this kernel: %v", err)
+	} else {
+		_ = syscall.Close(fd)
+	}
+	attr := supervisorSysProcAttr("proxy")
+	requireLoopbackControl(t, attr)
+
+	cmd := exec.Command(os.Args[0], "-test.run=^"+name+"$")
+	cmd.Env = append(os.Environ(),
+		"NVX_TEST_IDENTITY_SUPERVISOR=1",
+		"NVX_TEST_GUEST="+tempDir(t),
+		"NVX_TEST_WORK="+tempDir(t),
+		"NVX_TEST_NVXHOME="+tempDir(t),
+	)
+	cmd.SysProcAttr = attr
+	out, err := cmd.CombinedOutput()
+	skipWithoutMountNamespace(t, out)
+	if err != nil {
+		t.Fatalf("supervisor failed: %v\noutput:\n%s", err, out)
+	}
+	got := parseProbeResults(string(out))
+
+	const none = "0000000000000000"
+	for _, want := range []struct{ key, val string }{
+		{"uid", strconv.Itoa(os.Getuid())},
+		{"gid", strconv.Itoa(os.Getgid())},
+		{"CapInh", none},
+		{"CapPrm", none},
+		{"CapEff", none},
+		{"CapBnd", none},
+		{"CapAmb", none},
+		{"low_port", "ok"},
+	} {
+		if got[want.key] != want.val {
+			t.Errorf("%s = %q, want %q\noutput:\n%s", want.key, got[want.key], want.val, out)
+		}
+	}
+}
+
+// runIdentityProbe runs as the contained target. It reports its ids, its
+// capability sets and whether it can listen on port 80.
+func runIdentityProbe() {
+	fmt.Printf("uid=%d\ngid=%d\n", os.Getuid(), os.Getgid())
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		fmt.Printf("status_error=%v\n", err)
+	}
+	for _, line := range strings.Split(string(status), "\n") {
+		if k, v, ok := strings.Cut(line, ":"); ok && strings.HasPrefix(k, "Cap") {
+			fmt.Printf("%s=%s\n", k, strings.TrimSpace(v))
+		}
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:80")
+	if err != nil {
+		fmt.Printf("low_port=%v\n", err)
+		return
+	}
+	_ = ln.Close()
+	fmt.Println("low_port=ok")
+}
 
 // A contained process cannot create a user namespace of its own, so it cannot
 // use a nested user+mount namespace to escape the run-time .env watcher.

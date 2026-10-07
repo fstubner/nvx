@@ -175,8 +175,9 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// still in the old namespace and one reached the public internet. Supplying the
 	// flag at clone time puts the whole child process in the new namespace from
 	// birth, which is deterministic and needs no thread pinning.
-	// CLONE_NEWUSER, with this user mapped to root inside it, is what makes the
-	// rest of these flags possible without privileges.
+	// CLONE_NEWUSER, which grants the capabilities the new namespace needs (see
+	// supervisorSysProcAttr for how they last past exec), is what makes the rest
+	// of these flags possible without privileges.
 	//
 	// CLONE_NEWPID and CLONE_NEWNET both require CAP_SYS_ADMIN in the current
 	// user namespace. Without CLONE_NEWUSER an ordinary user has none, so the

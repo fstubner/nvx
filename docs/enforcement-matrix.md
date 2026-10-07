@@ -988,9 +988,10 @@ provider mounts the project as it is.
   file with mode 0000 over each one in its private mount namespace, before
   Landlock applies. A read or a write fails with `EACCES`, a `chmod` with
   `EROFS`, a rename with `EBUSY` and a hard link with `EXDEV`. The target runs
-  as root in its user namespace, so the supervisor drops `CAP_DAC_OVERRIDE` and
-  `CAP_DAC_READ_SEARCH` from it, which would read past the mode, and
-  `CAP_SYS_ADMIN`, which would unmount the mask. The target could otherwise make
+  as you in its user namespace and starts with no capabilities, so it holds
+  neither `CAP_DAC_OVERRIDE` nor `CAP_DAC_READ_SEARCH`, which would read past the
+  mode, nor `CAP_SYS_ADMIN`, which would unmount the mask. The supervisor also
+  drops all three from its bounding set. The target could otherwise make
   a user namespace of its own, where it holds `CAP_SYS_ADMIN` again and can build
   a mount namespace the run-time masks never reach. The supervisor stops that by
   writing 0 to `/proc/sys/user/max_user_namespaces` before Landlock keeps `/proc`

@@ -26,12 +26,14 @@ import (
 //     EXDEV, so the real file cannot be moved to a name nothing covers.
 //
 // Mode 0000 holds only against a process without CAP_DAC_OVERRIDE and
-// CAP_DAC_READ_SEARCH. The target runs as root in the supervisor's user
-// namespace, where it holds both over every file the user owns, the mask
-// included. So they leave the bounding set with CAP_SYS_ADMIN, which would let
-// the target unmount the mask. Without them the target reads and writes the
-// user's files as the user does outside the sandbox. They go even when the
-// launch finds no dotenv file, because watchDotenvFiles may cover one later.
+// CAP_DAC_READ_SEARCH. Root in the supervisor's user namespace holds both over
+// every file the user owns, the mask included, and the target ran as that root
+// until 2026-10-07. So they leave the bounding set with CAP_SYS_ADMIN, which
+// would let the target unmount the mask. The target runs as the user now and
+// dropTargetCapabilities empties the bounding set, so these drops are a second
+// layer. Without the capabilities the target reads and writes the user's files
+// as the user does outside the sandbox. They go even when the launch finds no
+// dotenv file, because watchDotenvFiles may cover one later.
 //
 // This covers the files present at launch. watchDotenvFiles covers those
 // created or replaced during the run. The walk stops after dotenvScanLimit

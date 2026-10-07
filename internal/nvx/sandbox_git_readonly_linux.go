@@ -84,11 +84,12 @@ const (
 // dropSysAdminFromBoundingSet removes CAP_SYS_ADMIN from what the target can
 // hold after exec.
 //
-// The supervisor is root in its own user namespace, and the target runs as that
-// root, so without this the target holds every capability there, CAP_SYS_ADMIN
-// over the mount namespace that carries the read-only .git mount included.
-// Landlock refuses mount, umount and remount to a restricted process. This does
-// not rely on that covering every interface that can change a mount's
+// The target ran as root in the supervisor's user namespace until 2026-10-07,
+// and held every capability there, CAP_SYS_ADMIN over the mount namespace that
+// carries the read-only .git mount included. It runs as the user now and
+// dropTargetCapabilities empties the bounding set, so this drop is a second
+// layer. Landlock refuses mount, umount and remount to a restricted process.
+// This does not rely on that covering every interface that can change a mount's
 // attributes: without CAP_SYS_ADMIN the target cannot change any of them.
 //
 // The bounding set limits what exec grants and leaves this thread's own
