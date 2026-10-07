@@ -188,7 +188,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Administrators full control (and you, for your profile). Otherwise it says
   why and changes nothing. `nvx doctor` points at `nvx setup` for this.
 
+### Security
+
+* **Windows: in 0.7.0 a contained launch could, rarely, start the command
+  outside the AppContainer.** The command then ran with your own unrestricted
+  account, with no sandbox around it. The memory that tells Windows to start a
+  command in its AppContainer could be freed and reused before Windows read it.
+  With garbage collection forced throughout, 1000 launches started 7 commands
+  outside the AppContainer and failed 9 more with "The parameter is incorrect".
+  That second error is the one seen about once in a hundred ordinary contained
+  launches. How often an ordinary launch ran uncontained was not measured.
+  After the fix, 1000 launches under the same forced collection all ran
+  contained. The same mistake in two permission writes, one of them the write
+  that hides `.env` files from the sandbox, is fixed as well.
+
 ### Fixed
+
+* **Windows: an install script that gives its child a piped stdin and nothing
+  else piped no longer hangs nvx.** `@prisma/client`'s postinstall does this,
+  so a contained `npm install` of a Prisma 6 project never returned once
+  `binaries.prisma.sh` was allowed. The whole process spun on one core and
+  no timer ran again. Every mix of `pipe`, `inherit` and `ignore` in
+  `spawn` and `spawnSync` now completes inside the sandbox.
+
+* **Windows: a scaffolder run from a large folder that is not a project keeps
+  what it creates.** nvx gave up granting such a folder after 1.5 s and ran
+  the command in the sandbox's home, so `npm create vite@latest myvite`
+  printed "Done", exited 0 and lost the project when the home was deleted. A
+  folder of 20,200 files was enough. nvx now lets the sandbox create new files
+  and folders there at once, whatever the folder's size, and says that what was
+  already in it may be out of reach.
+
+* **A command that cannot run where it was started no longer reports success
+  while its output is deleted.** A command started in your home folder, above
+  it or inside nvx's own folder runs in a temporary folder inside the sandbox.
+  It still does. When it writes something there, nvx now names what it wrote,
+  deletes it and exits 77, where it used to exit 0. A command that writes
+  nothing there, such as an MCP server, ends as before.
+
+* **A failed launch of npm's resolution step no longer counts as nothing to
+  check.** With `NVX_YES` or `-y` set, nvx printed the launch error and then
+  approved the install with only the named packages checked. It now tries the
+  launch once more and, if the sandbox still does not start, refuses with exit
+  77. `NVX_YES` and `-y` do not approve it.
 
 * **A `-y`, `--yes` or `--agent-mode` typed after a wrapped command is no
   longer ignored in silence.** nvx reads its own flags only before the

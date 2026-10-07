@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,16 +149,76 @@ func workDirReachesControlPlane(nvxHome, workDir string) bool {
 }
 
 // containedWorkDir is the directory a contained command starts in and may write
-// as its own: workDir, or the guest home when workDir would reach nvx's own
-// directory or the user's home.
+// as its own: workDir, or a folder inside the guest home when workDir would
+// reach nvx's own directory or the user's home. See relocatedWorkDir.
 func containedWorkDir(nvxHome, guestHome, workDir string) string {
 	if !workDirReachesControlPlane(nvxHome, workDir) {
 		return workDir
 	}
 	warnWorkDirNotWritable(workDir)
-	return guestHome
+	return relocatedWorkDir(guestHome)
 }
 
 func warnWorkDirNotWritable(workDir string) {
-	LogWarn("The sandbox may not write %s: it contains your home directory or nvx's own settings. The command starts in the sandbox's home instead; run it from a project folder to work on files there.", workDir)
+	LogWarn("The sandbox may not write %s: it contains your home directory or nvx's own settings. The command starts in a temporary folder inside the sandbox instead, and anything it writes there is deleted when it ends. Run it from a project folder to work on files there.", workDir)
+}
+
+// relocatedWorkDirName names the folder inside the guest home that a command
+// starts in when it may not start in its own working directory.
+const relocatedWorkDirName = "workdir"
+
+// relocatedWorkDir creates the folder a command starts in when it may not start
+// in its own working directory, empty, and returns it.
+//
+// A folder of its own rather than the guest home itself, so that what is in it
+// when the command ends is what the command wrote to its working directory and
+// not the caches a tool keeps in its home. See reportRelocatedWrites. Emptied
+// first because a persistent profile keeps it from one run to the next. The
+// guest home stands in when the folder cannot be made.
+func relocatedWorkDir(guestHome string) string {
+	dir := filepath.Join(guestHome, relocatedWorkDirName)
+	_ = os.RemoveAll(dir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return guestHome
+	}
+	return dir
+}
+
+// reportRelocatedWrites ends a run that started in relocatedWorkDir, and
+// returns the exit code to give for it.
+//
+// What the command left there was meant for its working directory, and nvx
+// cannot put it there. Measured 2026-10-07 on Windows, run from C:\Users: a
+// contained scaffold printed "Done" and exited 0, and the folder it made was
+// deleted with the sandbox's home. So the run names what is deleted, and a
+// command that exited 0 exits 77 instead. One that failed keeps its own code.
+//
+// A command that writes nothing there, as an MCP server or a one-off npx tool
+// usually does, ends exactly as before.
+func reportRelocatedWrites(command, dir string, code int) int {
+	if filepath.Base(dir) != relocatedWorkDirName {
+		return code
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return code
+	}
+	names := make([]string, 0, 3)
+	for _, e := range entries {
+		if len(names) == cap(names) {
+			break
+		}
+		names = append(names, e.Name())
+	}
+	what := strings.Join(names, ", ")
+	if more := len(entries) - len(names); more > 0 {
+		what += fmt.Sprintf(" and %d more", more)
+	}
+	_ = os.RemoveAll(dir)
+	LogError("%s wrote %s to its working folder, which was a temporary folder inside the sandbox. nvx has deleted it.", command, what)
+	LogInfo("Run the command from a project folder or an empty folder to keep what it writes.")
+	if code == 0 {
+		return exitRefused
+	}
+	return code
 }

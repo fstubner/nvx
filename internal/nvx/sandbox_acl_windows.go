@@ -5,6 +5,7 @@ package nvx
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -434,6 +435,32 @@ func writeDACLEntryDropping(path, sidStr string, mask uint32, flags uint8, drop 
 // no longer says, so when sidStr already holds an inheritable entry here the
 // write goes through writeDACLEntry, which does the walk.
 func writeThisFolderEntry(path, sidStr string, mask uint32) error {
+	return writeEntryWithoutWalk(path, sidStr, mask, 0)
+}
+
+// writeEntryForNewChildren gives sidStr exactly mask on path and on whatever is
+// created in it from now on, and leaves what is already inside path as it is.
+//
+// Windows hands an inheritable entry to a new file or folder when it creates
+// one, from the parent's list as it stands then. What already exists gets a
+// copy only from the propagation walk. So the same inheritable entry, written
+// without the walk, covers the folder and everything made in it afterwards, at
+// the cost of one folder's write. Measured 2026-10-07 on a folder holding
+// 20,200 entries, the walk took longer than the 1.5 s a non-project folder is
+// allowed, and the command that needed it scaffolded its project into the
+// sandbox's home, where it was deleted.
+//
+// An entry sidStr already holds here is left alone when it is this one, and is
+// an error when it is anything else, since replacing it without the walk would
+// leave descendants with copies of the old one.
+func writeEntryForNewChildren(path, sidStr string, mask uint32) error {
+	return writeEntryWithoutWalk(path, sidStr, mask, nvxInheritFlags)
+}
+
+// writeEntryWithoutWalk writes sidStr's entry on path with SetFileSecurityW,
+// which touches nothing beneath path. flags 0 is writeThisFolderEntry and
+// nvxInheritFlags is writeEntryForNewChildren.
+func writeEntryWithoutWalk(path, sidStr string, mask uint32, flags uint8) error {
 	sid, err := sidFromString(sidStr)
 	if err != nil {
 		return err
@@ -459,7 +486,8 @@ func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 		size uint16
 	}
 	var explicitDeny, explicitAllow, inherited []rawACE
-	ours, oursInheritable := false, false
+	ours, oursInheritable := 0, false
+	oursAsAsked := false
 	if dacl != nil {
 		for i := uint16(0); i < dacl.AceCount; i++ {
 			var ace *accessAllowedACE
@@ -472,9 +500,12 @@ func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 				inherited = append(inherited, raw)
 			case ace.Header.AceType == accessAllowedAceType || ace.Header.AceType == accessDeniedAceType:
 				if eq, _, _ := procEqualSid.Call(uintptr(unsafe.Pointer(aceSID(ace))), uintptr(unsafe.Pointer(sid))); eq != 0 {
-					ours = true
+					ours++
 					if ace.Header.AceFlags&(objectInheritACE|containerInheritACE) != 0 {
 						oursInheritable = true
+					}
+					if ace.Header.AceType == accessAllowedAceType && ace.Mask == mask && ace.Header.AceFlags == flags {
+						oursAsAsked = true
 					}
 					continue // ours; replaced below
 				}
@@ -489,10 +520,16 @@ func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 		}
 	}
 
+	if flags != 0 && ours > 0 {
+		if ours == 1 && oursAsAsked {
+			return nil
+		}
+		return fmt.Errorf("%s already carries a different permission for this sandbox identity", path)
+	}
 	if oursInheritable {
 		return writeDACLEntry(path, sidStr, mask, 0)
 	}
-	if mask == 0 && !ours {
+	if mask == 0 && ours == 0 {
 		return nil
 	}
 
@@ -529,7 +566,7 @@ func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 	}
 	if mask != 0 {
 		if ret, _, e := procAddAccessAllowedAceEx.Call(
-			uintptr(newACL), aclRevision, 0, uintptr(mask),
+			uintptr(newACL), aclRevision, uintptr(flags), uintptr(mask),
 			uintptr(unsafe.Pointer(sid))); ret == 0 {
 			return fmt.Errorf("add a permission on %s: %v", path, e)
 		}
@@ -570,6 +607,10 @@ func writeThisFolderEntry(path, sidStr string, mask uint32) error {
 	if ret, _, e := procSetFileSecurityW.Call(uintptr(unsafe.Pointer(p)), daclSecurityInformation, uintptr(unsafe.Pointer(&desc[0]))); ret == 0 {
 		return fmt.Errorf("set permissions on %s: %v", path, e)
 	}
+	// The descriptor holds the list's address as bytes, which the garbage
+	// collector does not follow, so the list is kept alive by hand until the
+	// write has read it.
+	runtime.KeepAlive(buf)
 	return nil
 }
 

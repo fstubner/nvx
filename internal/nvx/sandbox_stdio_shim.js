@@ -32,8 +32,8 @@ try {
   const realExecFileSync = cp.execFileSync;
   const realExecSync = cp.execSync;
 
-  // Slots the caller wants captured. Both the default (undefined) and an explicit
-  // 'pipe' mean capture; 'inherit', 'ignore' and raw fds are left alone, since none
+  // Slots the caller wants piped. Both the default (undefined) and an explicit
+  // 'pipe' mean a pipe; 'inherit', 'ignore' and raw fds are left alone, since none
   // of them create a pipe.
   function slot(stdio, i) {
     if (stdio === undefined || stdio === null) return 'pipe';
@@ -45,9 +45,13 @@ try {
     return stdio;
   }
 
+  // A pipe in ANY of the three slots, stdin included. A piped stdin with nothing
+  // piped after it went to the real call, and libuv retries a refused pipe name
+  // forever: `spawnSync(node, args, {stdio: ['pipe', 'inherit', 'inherit']})`
+  // spun on one core until killed, measured 2026-10-07.
   function needsSubstitution(options) {
     const stdio = options ? options.stdio : undefined;
-    return slot(stdio, 1) === 'pipe' || slot(stdio, 2) === 'pipe';
+    return slot(stdio, 0) === 'pipe' || slot(stdio, 1) === 'pipe' || slot(stdio, 2) === 'pipe';
   }
 
   // A scratch directory inside the guest home. os.tmpdir() is the AppContainer's
@@ -392,7 +396,12 @@ try {
       const wanted = [];
       if (slot(stdio, 1) === 'pipe') wanted.push(1);
       if (slot(stdio, 2) === 'pipe') wanted.push(2);
-      if (!wanted.length) {
+      // A piped stdin alone needs the substitution as much as a piped stdout.
+      // It went to the real spawn, which retries the refused pipe forever and
+      // takes every timer in the process with it. @prisma/client's postinstall
+      // spawns with ['pipe', 'inherit', 'inherit'], so a contained `npm install`
+      // of a Prisma 6 project never returned (measured 2026-10-07).
+      if (!wanted.length && slot(stdio, 0) !== 'pipe') {
         return realSpawn.apply(cp, arguments);
       }
 

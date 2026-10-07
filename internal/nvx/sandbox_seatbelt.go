@@ -92,7 +92,9 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	cwd = containedWorkDir(config.NvxHome, guestHome, cwd)
+	launchDir := containedWorkDir(config.NvxHome, guestHome, cwd)
+	relocated := launchDir != cwd
+	cwd = launchDir
 
 	cmdPath, err := exec.LookPath(config.Command)
 	if err != nil {
@@ -141,14 +143,19 @@ func runSeatbeltSandbox(config SandboxConfig, netCtx NetworkLaunchContext) int {
 
 	LogInfo("Running in Seatbelt sandbox (session %s): %s %s", sandboxID, config.Command, strings.Join(config.Args, " "))
 	// Not cmd.Run: a signalled nvx has to take the sandboxed process with it.
+	code := 0
 	if err := runChildForwardingSignals(cmd); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return childExitCode(exitErr)
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok {
+			LogError("Seatbelt execution failed: %v", err)
+			return 1
 		}
-		LogError("Seatbelt execution failed: %v", err)
-		return 1
+		code = childExitCode(exitErr)
 	}
-	return 0
+	if relocated {
+		code = reportRelocatedWrites(config.Command, cwd, code)
+	}
+	return code
 }
 
 // buildSeatbeltProfile renders the Seatbelt policy. The writable roots are named

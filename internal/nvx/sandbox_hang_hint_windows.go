@@ -22,12 +22,12 @@ import (
 // case for weeks afterwards, which an acceptance pass caught by installing
 // esbuild and watching it succeed.
 //
-// What is still true is narrower: a child's stdin. `child.stdin` is null inside
-// the sandbox, so an install script that feeds input to a subprocess cannot, and
-// how that surfaces depends on the script -- a crash, or a wait for a prompt that
-// will never be answered. So the hint no longer asserts a cause. It reports the
-// symptom, offers the escape hatch, and leaves the diagnosis open, which is the
-// honest shape for something firing on a timer.
+// The hint then named a child's stdin as the known case. A piped stdin with
+// nothing piped after it did hang until 2026-10-07, which is how a Prisma 6
+// install never returned, and the preload substitutes it now as well. So the
+// hint asserts no cause. It reports the symptom, offers the escape hatch, and
+// leaves the diagnosis open, which is the honest shape for something firing on
+// a timer.
 //
 // A hint, not a kill: a large install legitimately takes minutes, and terminating
 // someone's install on a timer would be a worse failure than the one being
@@ -58,7 +58,7 @@ func startHangHint(command string, args []string) (stop func()) {
 		case <-done:
 		case <-time.After(delay):
 			LogWarn("This install has been running for %s with no result.", delay)
-			LogWarn("That can be a large install, or a package whose install script does something the sandbox does not allow -- writing to a subprocess's stdin is the known one on Windows.")
+			LogWarn("That can be a large install, or a package whose install script does something the sandbox does not allow.")
 			LogWarn("If it never finishes, install that package with: nvx --no-sandbox <your install command>")
 		}
 	}()
