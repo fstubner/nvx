@@ -188,16 +188,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Administrators full control (and you, for your profile). Otherwise it says
   why and changes nothing. `nvx doctor` points at `nvx setup` for this.
 
-### Fixed
+### Security
 
-* **Windows: a contained command no longer starts, now and then, outside the
-  sandbox.** The memory that tells Windows to start a command in its
-  AppContainer could be freed and reused before Windows read it. The usual
-  result was a launch that failed with "The parameter is incorrect", seen about
-  once in a hundred contained launches. It could also start the command with
-  your own unrestricted account. With garbage collection forced throughout,
-  1000 launches failed 9 times and started 7 commands outside the AppContainer.
-  After the fix, 1000 launches under the same conditions all ran contained.
+* **Windows: in 0.7.0 a contained launch could, rarely, start the command
+  outside the AppContainer.** The command then ran with your own unrestricted
+  account, with no sandbox around it. The memory that tells Windows to start a
+  command in its AppContainer could be freed and reused before Windows read it.
+  With garbage collection forced throughout, 1000 launches started 7 commands
+  outside the AppContainer and failed 9 more with "The parameter is incorrect".
+  That second error is the one seen about once in a hundred ordinary contained
+  launches. How often an ordinary launch ran uncontained was not measured.
+  After the fix, 1000 launches under the same forced collection all ran
+  contained. The same mistake in two permission writes, one of them the write
+  that hides `.env` files from the sandbox, is fixed as well.
+
+### Fixed
 
 * **Windows: an install script that gives its child a piped stdin and nothing
   else piped no longer hangs nvx.** `@prisma/client`'s postinstall does this,

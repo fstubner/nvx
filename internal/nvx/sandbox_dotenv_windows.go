@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -536,6 +537,9 @@ func writeProtectedDotenvACL(h syscall.Handle, acl dotenvACL) error {
 	if ret, _, e := procSetKernelObjectSecurity.Call(uintptr(h), daclSecurityInformation, uintptr(unsafe.Pointer(&desc[0]))); ret == 0 {
 		return fmt.Errorf("set permissions: %v", e)
 	}
+	// The descriptor holds the list's address as bytes, which the garbage
+	// collector does not follow. See writeEntryWithoutWalk.
+	runtime.KeepAlive(buf)
 	after, err := readDotenvACL(h)
 	if err != nil {
 		return err
