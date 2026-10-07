@@ -48,8 +48,9 @@ func hostNodeDir(t *testing.T) string {
 }
 
 // TestBatchFileArgumentsRoundTrip runs an npm batch shim with each of
-// batchArgCases, by the command line a contained launch uses and by the
-// uncontained launch, and has node print the arguments it was given.
+// batchArgCases, by the command line a contained launch uses, by the
+// uncontained launch and by a run nested in a sandbox session, and has node
+// print the arguments it was given.
 func TestBatchFileArgumentsRoundTrip(t *testing.T) {
 	nodeDir := hostNodeDir(t)
 	project := tempDir(t)
@@ -111,6 +112,18 @@ func TestBatchFileArgumentsRoundTrip(t *testing.T) {
 	}
 	if _, _, err := windowsBatchLaunch(batch, []string{"a\nb"}); err == nil {
 		t.Error("an argument with a line break was accepted, and cmd.exe drops everything after it")
+	}
+
+	// A run nested in a sandbox session starts the command itself, found on
+	// PATH, and hands it this process's standard output.
+	t.Setenv("PATH", filepath.Dir(batch)+string(os.PathListSeparator)+nodeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	code := 0
+	out := captureStdout(t, func() {
+		code = execBareCommand(SandboxConfig{Command: "argv", Args: want, NvxHome: nvxHome, WorkDir: project})
+	})
+	requireArgsRoundTrip(t, "nested sandbox launch", want, []byte(out))
+	if _, err := os.Stat(marker); err == nil {
+		t.Errorf("nested sandbox launch: an argument ran a command of its own, which wrote %s (exit %d)", marker, code)
 	}
 }
 

@@ -426,8 +426,11 @@ func TestTheCorepackShimStartsCorepackWithTheInstallDirectory(t *testing.T) {
 	stub := filepath.Join(GetVersionBinDir(versionDir), "corepack")
 	body := "#!/bin/sh\necho \"ARGS: $@\"\n"
 	if runtime.GOOS == "windows" {
+		// Each argument as the batch file reads it, without the quotes nvx puts
+		// around one that holds anything but letters, digits and #$*+-./:?@\_,
+		// such as the ~ of an 8.3 name.
 		stub = filepath.Join(versionDir, "corepack.cmd")
-		body = "@echo ARGS: %*\r\n"
+		body = "@echo ARGS: %~1 %~2 %~3 %~4\r\n"
 	}
 	if err := os.MkdirAll(filepath.Dir(stub), 0o700); err != nil {
 		t.Fatal(err)

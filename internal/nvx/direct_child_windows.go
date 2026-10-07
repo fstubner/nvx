@@ -36,20 +36,22 @@ func runDirectChild(cmd *exec.Cmd) error {
 	return cmd.Wait()
 }
 
-// directExecCommand builds the uncontained launch of path. A batch file is
-// started through cmd.exe with its arguments escaped for cmd.exe, as a
-// contained launch does (see windowsBatchLaunch). exec.Command escapes
-// arguments the way the C runtime reads them, and Windows hands a batch file's
-// command line to cmd.exe, which does not. So an argument such as
-// x&echo.INJECTED>file ran a second command, as the user, outside the sandbox.
+// directExecCommand builds a launch of path outside the sandbox: the shim's
+// uncontained run, a run nested in a sandbox session (execBareCommand), and the
+// docker CLI. A batch file is started through cmd.exe with its arguments
+// escaped for cmd.exe, as a contained launch does (see windowsBatchLaunch).
+// exec.Command escapes arguments the way the C runtime reads them, and Windows
+// hands a batch file's command line to cmd.exe, which does not. So an argument
+// such as x&echo.INJECTED>file ran a second command, as the user, outside the
+// sandbox.
 //
 // Args still names the batch file and its arguments, so the caller can tell
 // what runs. cmd.Path is cmd.exe, and the command line it gets is
 // SysProcAttr.CmdLine, which Windows is given in place of Args.
 func directExecCommand(path string, args []string) (*exec.Cmd, error) {
 	if !isWindowsBatchFile(path) {
-		// #nosec G702 -- running the runtime nvx resolved for this project is what
-		// a shim is for. path comes from nvx's own resolution, not from input.
+		// #nosec G702 -- path is a program nvx resolved itself, the runtime a
+		// shim exists to run or the docker CLI. It does not come from input.
 		return exec.Command(path, args...), nil
 	}
 	exe, line, err := windowsBatchLaunch(path, args)

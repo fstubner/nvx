@@ -641,7 +641,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the rest of the line. A batch file run outside the sandbox, such as a
   project's own bin, gets the same escaping. Before, Go's escaping was used
   there, which `cmd.exe` does not follow, and an argument such as
-  `x&echo.INJECTED>file` ran a second command as you.
+  `x&echo.INJECTED>file` ran a second command as you. The path outside the
+  sandbox was affected in 0.7.0 too, where the second command also ran as you,
+  outside the sandbox. Measured with 0.7.0,
+  `nvx shim tsc "x&echo.INJECTED>file"` in a project wrote the file.
 
 * **Project commands run under strict isolation on Windows.** With
   `isolation.level: strict`, `tsc`, `eslint` and every other command in

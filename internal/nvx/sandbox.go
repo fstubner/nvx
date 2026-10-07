@@ -457,14 +457,28 @@ func runDockerSandbox(config SandboxConfig, nvxHome string, pinnedVer string, eg
 	}
 
 	dockerArgs := dockerRunArgs(imageName, cwd, config, egress, netCtx)
-	cmd := exec.Command("docker", dockerArgs...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 
 	// Variables by name, never by value: this line also reaches debug.log and
 	// the report bundle. See dockerLaunchLine.
 	LogInfo("Running in Docker sandbox: docker %s", dockerLaunchLine(dockerArgs))
+
+	// Looked up first, so a docker that is a batch file, such as a wrapper
+	// around another engine, gets its arguments escaped for cmd.exe (see
+	// directExecCommand). They carry the command's own arguments and the
+	// environment's values.
+	dockerPath, err := exec.LookPath("docker")
+	if err != nil {
+		LogError("Docker execution failed: %v. Make sure Docker is running.", err)
+		return 1
+	}
+	cmd, err := directExecCommand(dockerPath, dockerArgs)
+	if err != nil {
+		LogError("Docker execution failed: %v", err)
+		return 1
+	}
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode()
@@ -675,7 +689,12 @@ func execBareCommand(config SandboxConfig) int {
 			return 127
 		}
 	}
-	cmd := exec.Command(binaryPath, config.Args...)
+	// A batch file's arguments are escaped for cmd.exe. See directExecCommand.
+	cmd, err := directExecCommand(binaryPath, config.Args)
+	if err != nil {
+		LogError("Failed to execute %s: %v", config.Command, err)
+		return 1
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

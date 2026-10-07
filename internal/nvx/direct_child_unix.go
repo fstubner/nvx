@@ -17,10 +17,10 @@ func runDirectChild(cmd *exec.Cmd) error {
 	return runChildForwardingSignals(cmd)
 }
 
-// directExecCommand builds the uncontained launch of path. Only Windows has
-// batch files to treat differently, see the Windows version.
+// directExecCommand builds a launch of path outside the sandbox. Only Windows
+// has batch files to treat differently, see the Windows version.
 func directExecCommand(path string, args []string) (*exec.Cmd, error) {
-	// #nosec G702 -- running the runtime nvx resolved for this project is what
-	// a shim is for. path comes from nvx's own resolution, not from input.
+	// #nosec G702 -- path is a program nvx resolved itself, the runtime a
+	// shim exists to run or the docker CLI. It does not come from input.
 	return exec.Command(path, args...), nil
 }
