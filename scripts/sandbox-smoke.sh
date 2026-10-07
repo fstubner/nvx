@@ -118,15 +118,21 @@ SVC_PORT="$(cat "$PROJ/port.txt")"
 
 # Dials NVX_CONNECT_<port> when nvx published it, and the service's own port
 # otherwise -- which is what the unreachable-without-it check needs.
+#
+# A raw socket and a hand-written request, so that this client knows nothing about
+# HTTP_PROXY. Node's own http and fetch read it now that nvx sets
+# NODE_USE_ENV_PROXY=1, and without --connect a request from either goes to nvx's
+# proxy instead of dialling this port, which would hide the failure this check
+# looks for. The --connect run below also uses both of them.
 cat > "$PROJ/client.js" <<'JS'
-const http = require('http');
+const net = require('net');
 const host = process.argv[2];
 const port = process.env['NVX_CONNECT_' + host] || host;
-http.get({ host: '127.0.0.1', port: Number(port) }, res => {
-  let b = '';
-  res.on('data', d => (b += d));
-  res.on('end', () => console.log('GOT ' + b));
-}).on('error', e => console.log('FAILED ' + e.code));
+const s = net.connect({ host: '127.0.0.1', port: Number(port) }, () => s.write('GET / HTTP/1.0\r\n\r\n'));
+let b = '';
+s.on('data', d => (b += d));
+s.on('end', () => console.log('GOT ' + b.split('\r\n\r\n').slice(1).join('')));
+s.on('error', e => console.log('FAILED ' + e.code));
 JS
 
 set +e
@@ -153,6 +159,106 @@ if [[ $CRC -ne 0 ]] || ! grep -q "GOT SERVICE_OK" <<<"$CONNECTED"; then
   exit 1
 fi
 
+# Node's own http and fetch follow HTTP_PROXY now, so they reach a --connect port
+# only because nvx lists loopback in NO_PROXY. Measured with no listing, the
+# service answered 200 and then 405 for http.get and a rejection for fetch.
+# Both are asked, with the clients' default settings, because that is the call a
+# tool makes.
+cat > "$PROJ/node-clients.js" <<'JS'
+const http = require('http');
+const host = process.argv[2];
+const port = process.env['NVX_CONNECT_' + host] || host;
+const url = 'http://127.0.0.1:' + port + '/';
+http.get(url, res => {
+  let b = '';
+  res.on('data', d => (b += d));
+  res.on('end', () => {
+    console.log('HTTP_GET ' + res.statusCode + ' ' + b);
+    fetch(url).then(async r => console.log('FETCH ' + r.status + ' ' + (await r.text())))
+      .catch(e => console.log('FETCH failed ' + ((e.cause && (e.cause.code || e.cause.message)) || e.message)));
+  });
+}).on('error', e => console.log('HTTP_GET failed ' + e.code));
+JS
+set +e
+NODE_CLIENTS="$("$NVX" -y --strict --connect "$SVC_PORT" shim node "$PROJ/node-clients.js" "$SVC_PORT" 2>&1)"
+set -e
+if ! grep -q "HTTP_GET 200 SERVICE_OK" <<<"$NODE_CLIENTS" || ! grep -q "FETCH 200 SERVICE_OK" <<<"$NODE_CLIENTS"; then
+  echo "$NODE_CLIENTS" >&2
+  echo "node's own http.get or fetch did not reach the --connect port: nvx sets NODE_USE_ENV_PROXY=1, so its proxy variables have to list loopback in NO_PROXY" >&2
+  exit 1
+fi
+
+# A server and a client in one sandbox reach each other, and the policy names
+# nothing for that. They talk over 127.0.0.1 and Node's fetch and http follow the
+# proxy variables, so unless NO_PROXY lists loopback each request goes to nvx's
+# proxy, which dials that port on this machine instead and refuses it. The port
+# here is not one nvx opened, so only the loopback listing can make this pass.
+cat > "$PROJ/pair.js" <<'JS'
+const http = require('http');
+const srv = http.createServer((q, r) => r.end('INSIDE_OK'));
+srv.listen(0, '127.0.0.1', async () => {
+  const url = 'http://127.0.0.1:' + srv.address().port + '/';
+  const out = [];
+  try { const r = await fetch(url); out.push('fetch=' + r.status + ':' + (await r.text())); } catch (e) { out.push('fetch=failed'); }
+  await new Promise(done => http.get(url, r => { let b = ''; r.on('data', d => (b += d)); r.on('end', () => { out.push('get=' + r.statusCode + ':' + b); done(); }); })
+    .on('error', () => { out.push('get=failed'); done(); }));
+  console.log('PAIR ' + out.join(' '));
+  srv.close();
+});
+JS
+set +e
+PAIR="$("$NVX" -y --strict shim node "$PROJ/pair.js" 2>&1)"
+set -e
+if ! grep -q "PAIR fetch=200:INSIDE_OK get=200:INSIDE_OK" <<<"$PAIR"; then
+  echo "$PAIR" >&2
+  echo "a server and a client in one sandbox could not reach each other: the request went to nvx's proxy" >&2
+  exit 1
+fi
+
+# An allow_hosts entry for a loopback host sends requests to it through the proxy
+# instead, so a service on this machine stays reachable for a client that tunnels.
+# fetch tunnels with CONNECT, which the proxy serves. The proxy is the only thing
+# that writes egress_allow, so the record shows the request went through it.
+# Without the entry the same request connects inside the sandbox, where nothing
+# listens, and must not reach the service. Both are run, the one without the entry
+# first, because a sandbox that shared this machine's loopback would answer 200
+# to both.
+cat > "$PROJ/host-fetch.js" <<'JS'
+fetch('http://127.0.0.1:' + process.argv[2] + '/')
+  .then(async r => console.log('HOSTFETCH ' + r.status + ' ' + (await r.text())))
+  .catch(e => console.log('HOSTFETCH failed ' + ((e.cause && (e.cause.code || e.cause.message)) || e.message)));
+JS
+set +e
+NO_ENTRY="$("$NVX" -y --strict shim node "$PROJ/host-fetch.js" "$SVC_PORT" 2>&1)"
+set -e
+if grep -q "HOSTFETCH 200 SERVICE_OK" <<<"$NO_ENTRY"; then
+  echo "$NO_ENTRY" >&2
+  echo "a contained fetch reached 127.0.0.1:$SVC_PORT on this machine with no allow_hosts entry" >&2
+  exit 1
+fi
+if ! grep -q "HOSTFETCH failed" <<<"$NO_ENTRY"; then
+  echo "$NO_ENTRY" >&2
+  echo "the unreachable-without-an-entry check did not run: the probe neither connected nor reported a failure" >&2
+  exit 1
+fi
+cat > "$PROJ/.nvx-policy.json" <<JSON
+{ "isolation": { "network": { "allow_hosts": ["127.0.0.1:$SVC_PORT"] } } }
+JSON
+set +e
+WITH_ENTRY="$(NVX_TRUST_YES=true "$NVX" -y --strict shim node "$PROJ/host-fetch.js" "$SVC_PORT" 2>&1)"
+set -e
+rm -f "$PROJ/.nvx-policy.json"
+if ! grep -q "HOSTFETCH 200 SERVICE_OK" <<<"$WITH_ENTRY"; then
+  echo "$WITH_ENTRY" >&2
+  echo "an allow_hosts entry for 127.0.0.1:$SVC_PORT did not reach the service through the proxy" >&2
+  exit 1
+fi
+if ! grep "\"event\":\"egress_allow\",\"host\":\"127.0.0.1:$SVC_PORT\"" "$NVX_HOME/audit.log" 2>/dev/null | grep -q '"rule":"allow_hosts"'; then
+  tail -5 "$NVX_HOME/audit.log" >&2 || true
+  echo "the request reached the service, but the proxy wrote no egress_allow for it: it did not go through the proxy" >&2
+  exit 1
+fi
+
 # network.mode: loopback reaches the same service, and the default mode does not.
 #
 # The mode's definition lives in the egress proxy: a loopback destination is
@@ -163,8 +269,8 @@ fi
 # mode was of that proxy rule, in a state where the proxy could not be consulted.
 #
 # Asked as a CONNECT to the proxy, for the reason spelled out in
-# scripts/sandbox-smoke-egress.sh: nothing in Node core reads HTTPS_PROXY, so an
-# ordinary request measures a direct connection, which inside this namespace dies
+# scripts/sandbox-smoke-egress.sh: an ordinary request measured a direct connection
+# until nvx began setting NODE_USE_ENV_PROXY=1, and that dies inside this namespace
 # without the allowlist ever being consulted. The status code IS the decision --
 # 200 tunnelled, 403 refused -- which an exit code cannot tell apart from "never
 # reached the proxy".
@@ -175,7 +281,11 @@ echo "Testing network.mode loopback against the same service..."
 LOOPBACK_PROBE=$(cat <<JS
 const http = require('http');
 const u = new URL(process.env.HTTPS_PROXY);
+// agent: false, so this request is not itself sent to the proxy. Node's default
+// agent follows HTTPS_PROXY now that nvx sets NODE_USE_ENV_PROXY=1, and it turns
+// a CONNECT to an IP address into a request line the proxy cannot read.
 const req = http.request({
+  agent: false,
   host: u.hostname, port: u.port, method: 'CONNECT', path: '127.0.0.1:$SVC_PORT',
   headers: { 'Proxy-Authorization': 'Basic ' +
     Buffer.from(decodeURIComponent(u.username) + ':' + decodeURIComponent(u.password)).toString('base64') },

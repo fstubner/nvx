@@ -219,11 +219,12 @@ and the macOS smoke's contained `npm install` and the launch-escape probe
 passed (run 37514151891).
 
 **Which layer refuses.** `EGRESS=DENIED` alone does not say. The probe's
-request is a direct one (Node's classic `https` API ignores `HTTPS_PROXY`, so
-it never reaches the proxy), and it needs a lookup first, which the resolver
+request is a direct one, and it needs a lookup first, which the resolver
 checks above show refused. `TCP_DIRECT` connects to an address, with no lookup,
 and the kernel refuses it with EPERM. So each layer refuses on its own. This
-was left open until 2026-10-06.
+was left open until 2026-10-06. Node's `https` API ignored `HTTPS_PROXY` when
+those runs were taken. nvx now sets `NODE_USE_ENV_PROXY=1`, which Node's default
+agent follows, so the probe passes `agent: false` to keep its request direct.
 
 This footnote read "nobody has checked" until 2026-08-23. Before that the
 only macOS check in CI was `scripts/sandbox-smoke-macos.sh`, which asserted that a
@@ -760,6 +761,13 @@ could ask on its own behalf for the developer's local database. Localhost is
 exactly where the services that take no credentials live. nvx now refuses a
 loopback destination that is not already allowlisted, without asking, and points at
 `allow_hosts` and `--connect`.
+
+A literal link-local address gets the same refusal, for the same reason.
+169.254.169.254 is the cloud metadata endpoint, and one unauthenticated request
+there returns credentials. A policy entry that names the address still allows it.
+A name that resolves to a link-local address was already refused, after the
+lookup. `TestALiteralLinkLocalAddressIsNeverOfferedAtThePrompt` covers IPv4, the
+IPv4-mapped form and IPv6.
 
 Approving any other host at the prompt lasts for
 that run only. nvx used to write it into the grants store for ever.

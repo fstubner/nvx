@@ -156,7 +156,11 @@ function finish() {
 
 if (!testEgress) { out.push('EGRESS=SKIPPED'); finish(); }
 
-const req = https.get('https://example.com', () => { out.push('EGRESS=ALLOWED'); done(); });
+// agent: false, so the request dials on its own and the namespace has to refuse it.
+// Node's default agent follows HTTPS_PROXY now that nvx sets NODE_USE_ENV_PROXY=1,
+// and a request sent to the proxy is refused by the allowlist, which says nothing
+// about the network namespace.
+const req = https.get('https://example.com', { agent: false }, () => { out.push('EGRESS=ALLOWED'); done(); });
 req.on('error', () => { out.push('EGRESS=DENIED'); done(); });
 req.setTimeout(15000, () => { req.destroy(); out.push('EGRESS=TIMEOUT'); done(); });
 

@@ -254,7 +254,12 @@ sock.send(Buffer.from('x'), 53, '1.1.1.1', (err) => udp(err ? 'DENIED' : 'ALLOWE
 setTimeout(() => udp('TIMEOUT'), 8000);
 
 // Must be DENIED: no host is allowlisted, so this must not complete.
-const req = https.get('https://example.com', () => { out.push('EGRESS=ALLOWED'); step(); });
+//
+// agent: false, so the request dials on its own. Node's default agent follows
+// HTTPS_PROXY now that nvx sets NODE_USE_ENV_PROXY=1, and a request sent to the
+// proxy is refused by the allowlist, which says nothing about the profile. The
+// matrix's "which layer refuses" paragraph depends on this request being direct.
+const req = https.get('https://example.com', { agent: false }, () => { out.push('EGRESS=ALLOWED'); step(); });
 req.on('error', () => { out.push('EGRESS=DENIED'); step(); });
 req.setTimeout(15000, () => { req.destroy(); out.push('EGRESS=TIMEOUT'); step(); });
 
@@ -347,11 +352,11 @@ fi
 # from breakage, and it was the largest macOS cell still resting on the profile's
 # text rather than on a runner.
 #
-# CONNECT to the proxy directly rather than an ordinary HTTPS request: Node's
-# classic https API ignores HTTPS_PROXY, so a plain request goes direct and is
-# refused no matter how correct the allowlist is. Its status code IS the
-# allowlist decision -- 200 tunnelled, 403 refused -- which also tells a refusal
-# apart from an unreachable proxy, as an exit code cannot.
+# CONNECT to the proxy directly rather than an ordinary HTTPS request: a plain
+# request went direct until nvx began setting NODE_USE_ENV_PROXY=1, and was refused
+# no matter how correct the allowlist was. Its status code IS the allowlist
+# decision -- 200 tunnelled, 403 refused -- which also tells a refusal apart from an
+# unreachable proxy, as an exit code cannot.
 echo "Phase 2: an allowlisted host must be reachable through the proxy..."
 cat > .nvx-policy.json <<'POLICY'
 {
@@ -372,7 +377,10 @@ const http = require('http');
 const raw = process.env.HTTPS_PROXY || process.env.https_proxy || '';
 if (!raw) { console.log('CONNECT=no-proxy-env'); process.exit(0); }
 const u = new URL(raw);
+// agent: false, so this request is not itself sent to the proxy. Node's default
+// agent follows HTTPS_PROXY now that nvx sets NODE_USE_ENV_PROXY=1.
 const req = http.request({
+  agent: false,
   host: u.hostname, port: u.port, method: 'CONNECT', path: 'example.com:443',
   headers: { 'Proxy-Authorization': 'Basic ' +
     Buffer.from(decodeURIComponent(u.username) + ':' + decodeURIComponent(u.password)).toString('base64') },

@@ -2,7 +2,10 @@
 
 package nvx
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestWindowsSandboxNetworkDefaultUsesTheRelay pins the property the egress
 // allowlist depends on: in the default network mode the AppContainer is granted no
@@ -81,5 +84,27 @@ func TestWindowsSandboxNetworkOpenIsTheOnlyDirectMode(t *testing.T) {
 		if caps, _ := windowsSandboxNetwork(mode); len(caps) != 0 {
 			t.Errorf("mode %q granted %v; only \"open\" may grant a network capability", mode, caps)
 		}
+	}
+}
+
+// A launch with no relay carries no proxy variables, so it does not carry the ones
+// that tell Node and Yarn to read them either. A Node told to use a proxy that is not
+// there would fail where it would otherwise have been refused by the OS with the
+// same result and a worse message.
+func TestStripProxyEnvAlsoDropsTheNodeProxySwitch(t *testing.T) {
+	in := []string{
+		"PATH=Z:/bin",
+		"HTTP_PROXY=http://nvx:tok@127.0.0.1:1",
+		"https_proxy=http://nvx:tok@127.0.0.1:1",
+		"ALL_PROXY=socks5://nvx:tok@127.0.0.1:2",
+		"NO_PROXY=127.0.0.1",
+		"Node_Use_Env_Proxy=1",
+		"YARN_HTTP_PROXY=http://nvx:tok@127.0.0.1:1",
+		"Yarn_Https_Proxy=http://nvx:tok@127.0.0.1:1",
+		"KEEP=me",
+	}
+	out := stripProxyEnv(in)
+	if got := strings.Join(out, "|"); got != "PATH=Z:/bin|KEEP=me" {
+		t.Fatalf("stripProxyEnv left %q, want only PATH and KEEP", got)
 	}
 }
