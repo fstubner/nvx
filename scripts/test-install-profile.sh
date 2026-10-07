@@ -222,4 +222,165 @@ else
 fi
 rm -rf "$HOME_DIR" "$XDG"; echo
 
+# ---------------------------------------------------------------------------
+# A login sh has to be able to read what was written.
+#
+# ~/.profile is read by every login sh, and on Debian and Ubuntu that is dash.
+# `nvx env` prints bash syntax for any shell that is not zsh or fish, and the
+# profile ran it without a guard, so dash stopped at ${PATH//...} with "Bad
+# substitution" and `sh -l` aborted for as long as nvx was installed. The stub
+# nvx below prints a line of the same kind.
+# ---------------------------------------------------------------------------
+
+DASH="$(command -v dash || true)"
+BASH_BIN="$(command -v bash || true)"
+ZSH_BIN="$(command -v zsh || true)"
+
+make_nvx_stub() {
+    mkdir -p "$1/.nvx/bin"
+    cat > "$1/.nvx/bin/nvx" <<'STUB'
+#!/bin/sh
+if [ "$1" = "env" ]; then
+    printf '%s\n' 'PATH="${PATH//:nvx-test-absent:/:}"' 'export NVX_ENV_EVALUATED=1'
+else
+    echo NVX_RAN
+fi
+STUB
+    chmod +x "$1/.nvx/bin/nvx"
+}
+
+# try_shell <shell> <profile>: the shell starts in an empty environment, sources
+# the profile, and says where nvx is and whether the integration ran. Sets OUT and
+# RC. The shell's own path is $0 inside the script and the profile is $1.
+try_shell() {
+    RC=0
+    OUT=$(env -i HOME="$HOME" PATH=/usr/bin:/bin "$1" -c '. "$1"; echo "nvx=$(command -v nvx)"; echo "EVAL=${NVX_ENV_EVALUATED:-no}"' "$1" "$2" 2>&1) || RC=$?
+}
+
+# no_shell <name>: a shell this machine lacks is a failure in CI on Linux, where
+# dash is the login sh that broke, and a note elsewhere. A login sh that was
+# never tried proves nothing.
+no_shell() {
+    if [ -n "${CI:-}" ] && [ "$(uname -s)" = "Linux" ]; then
+        echo "FAIL: $1 is not installed, so it did not read the profile"; fail=1
+    else
+        echo "skip: $1 is not installed here, so it did not read the profile"
+    fi
+}
+
+# write_profile <name> <profile before the installer runs>: a fresh home whose
+# ~/.profile has been through setup_profile. Leaves HOME_DIR and PROFILE set.
+write_profile() {
+    HOME_DIR="$(mktemp -d)"
+    export HOME="$HOME_DIR"
+    PROFILE="$HOME_DIR/.profile"
+    printf '%s' "$2" > "$PROFILE"
+    ( eval "$(extract_setup)"; setup_profile "$PROFILE" "true" ) >/dev/null 2>&1
+    make_nvx_stub "$HOME_DIR"
+    echo "=== $1 ==="
+    cat "$PROFILE"
+    echo "--- checks ---"
+}
+
+# login_case <name> <profile before the installer runs>: write_profile, then each
+# shell reads the result.
+login_case() {
+    write_profile "$1" "$2"
+
+    if [ -n "$DASH" ]; then
+        try_shell "$DASH" "$PROFILE"
+        if [ "$RC" = "0" ] && printf '%s' "$OUT" | grep -Fq "nvx=$HOME_DIR/.nvx/bin/nvx"; then
+            echo "ok: a login sh (dash) reads the profile and finds nvx"
+        else
+            echo "FAIL: dash could not read the profile (rc=$RC): $OUT"; fail=1
+        fi
+        if printf '%s' "$OUT" | grep -Fq "EVAL=no"; then
+            echo "ok: dash does not run the bash-only integration"
+        else
+            echo "FAIL: dash ran the integration: $OUT"; fail=1
+        fi
+    else
+        no_shell dash
+    fi
+
+    if [ -n "$BASH_BIN" ]; then
+        try_shell "$BASH_BIN" "$PROFILE"
+        if [ "$RC" = "0" ] && printf '%s' "$OUT" | grep -Fq "EVAL=1"; then
+            echo "ok: bash still loads the integration"
+        else
+            echo "FAIL: bash did not load the integration (rc=$RC): $OUT"; fail=1
+        fi
+    else
+        no_shell bash
+    fi
+
+    if [ -n "$ZSH_BIN" ]; then
+        try_shell "$ZSH_BIN" "$PROFILE"
+        if [ "$RC" = "0" ] && printf '%s' "$OUT" | grep -Fq "EVAL=1"; then
+            echo "ok: zsh still loads the integration"
+        else
+            echo "FAIL: zsh did not load the integration (rc=$RC): $OUT"; fail=1
+        fi
+    else
+        echo "skip: zsh is not installed here, so it did not read the profile"
+    fi
+}
+
+login_case "a login sh reads a fresh profile" 'export EDITOR=vi
+'
+n=$(grep -Fc 'nvx env' "$PROFILE" || true)
+[ "$n" = "1" ] && echo "ok: one integration line" || { echo "FAIL: $n integration lines"; fail=1; }
+before=$(cksum < "$PROFILE")
+( eval "$(extract_setup)"; setup_profile "$PROFILE" "true" ) >/dev/null 2>&1
+[ "$(cksum < "$PROFILE")" = "$before" ] && echo "ok: a second run changes nothing" || { echo "FAIL: a second run changed the profile"; fail=1; }
+rm -rf "$HOME_DIR"; echo
+
+# The profile earlier versions wrote, which every existing install has. Running
+# the installer again has to repair it, or `sh -l` stays broken for them.
+login_case "a login sh reads the profile an earlier installer wrote" 'export EDITOR=vi
+
+# nvx (Node Version X-platform) shell integration
+export PATH="$HOME/.nvx/bin:$PATH"
+eval "$(nvx env)"
+'
+[ "$(grep -Fxc 'eval "$(nvx env)"' "$PROFILE" || true)" = "0" ] && echo "ok: the unguarded line is gone" || { echo "FAIL: the unguarded line is still there"; fail=1; }
+grep -Fq 'export EDITOR=vi' "$PROFILE" && echo "ok: the rest of the profile is kept" || { echo "FAIL: the profile lost its other lines"; fail=1; }
+if [ -f "$PROFILE.nvx-backup" ] && grep -Fxq 'eval "$(nvx env)"' "$PROFILE.nvx-backup"; then
+    echo "ok: the old contents are saved"
+else
+    echo "FAIL: no backup of the old contents"; fail=1
+fi
+rm -rf "$HOME_DIR"; echo
+
+# Only the exact line an earlier installer wrote is replaced. A line the user wrote
+# is theirs, and a shell that cannot read it is theirs to fix, so no shell reads
+# this one.
+write_profile "lines the user wrote are left alone" 'export EDITOR=vi
+# eval "$(nvx env)"
+eval "$(nvx env --shell=zsh)"
+'
+grep -Fxq '# eval "$(nvx env)"' "$PROFILE" && grep -Fxq 'eval "$(nvx env --shell=zsh)"' "$PROFILE" \
+    && echo "ok: a commented line and a different command are untouched" \
+    || { echo "FAIL: a line the user wrote was changed"; fail=1; }
+rm -rf "$HOME_DIR"; echo
+
+# ---------------------------------------------------------------------------
+# zsh: ~/.zprofile gets the PATH line, for `zsh -lc`, which reads it and not
+# ~/.zshrc. The integration stays in ~/.zshrc, where an interactive shell runs it.
+# ---------------------------------------------------------------------------
+echo "=== zsh .zprofile gets the PATH line and nothing else ==="
+HOME_DIR="$(mktemp -d)"; export HOME="$HOME_DIR"
+( eval "$(extract_setup)"; setup_path_only "$HOME/.zprofile"; setup_path_only "$HOME/.zprofile" ) >/dev/null 2>&1
+Z="$HOME_DIR/.zprofile"
+[ "$(grep -Fc '.nvx/bin' "$Z" || true)" = "1" ] && echo "ok: one PATH line across two runs" || { echo "FAIL: PATH lines in .zprofile: $(grep -Fc '.nvx/bin' "$Z" || true)"; fail=1; }
+if grep -Fq 'nvx env' "$Z"; then echo "FAIL: .zprofile holds the integration"; fail=1; else echo "ok: no integration line in .zprofile"; fi
+make_nvx_stub "$HOME_DIR"
+if [ -n "$ZSH_BIN" ]; then
+    got=$(env -i HOME="$HOME_DIR" PATH=/usr/bin:/bin "$ZSH_BIN" -lc 'command -v nvx' 2>/dev/null || true)
+    [ "$got" = "$HOME_DIR/.nvx/bin/nvx" ] && echo "ok: zsh -lc finds nvx" || { echo "FAIL: zsh -lc did not find nvx (got '$got')"; fail=1; }
+else
+    echo "skip: zsh is not installed here, so zsh -lc was not run"
+fi
+rm -rf "$HOME_DIR"; echo
+
 if [ "$fail" = "0" ]; then echo "ALL CHECKS PASSED"; else echo "SOME CHECKS FAILED"; exit 1; fi

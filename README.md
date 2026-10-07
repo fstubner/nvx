@@ -61,9 +61,14 @@ npm install -g @fstubner/nvx
 Prebuilt binaries, building from source and what the installer changes are in the
 **[install guide](https://nvx.run/docs/install/)**.
 
-To check a downloaded release asset, run
-`gh attestation verify <file> --repo fstubner/nvx` and compare the `.sha256` file
-beside it. The install guide has the steps for each platform.
+To check a downloaded release asset, run this and compare the `.sha256` file
+beside it:
+
+```bash
+gh attestation verify <file> --repo fstubner/nvx --signer-workflow fstubner/nvx/.github/workflows/release.yml
+```
+
+The install guide has the steps for each platform.
 
 ## Usage
 
