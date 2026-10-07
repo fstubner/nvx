@@ -103,6 +103,9 @@ func ResolveVersion(query string, releases []Release) (Release, error) {
 	}
 
 	if isLTS, codename := parseLTSQuery(query); isLTS {
+		if err := ltsOffsetError(query); err != nil {
+			return Release{}, err
+		}
 		for _, r := range releases {
 			if r.IsLTS() && (codename == "" || strings.EqualFold(r.LTSName(), codename)) {
 				return r, nil
@@ -272,6 +275,17 @@ func (n NodeProvider) DetectConfig(dir string) (version string, sourceFile strin
 	return DetectVersionConfig(dir)
 }
 
+// exactNodeVersion returns "v22.23.3" for "22.23.3" or "v22.23.3", and "" for a
+// query that is not a full version. A partial one, an alias or a range needs the
+// release list to say which version it means.
+func exactNodeVersion(query string) string {
+	v, parts, err := parseSemver(query)
+	if err != nil || parts != 3 {
+		return ""
+	}
+	return fmt.Sprintf("v%d.%d.%d", v.major, v.minor, v.patch)
+}
+
 func isNodeVersionInstalled(nvxHome, version string) bool {
 	versionDir := filepath.Join(nvxHome, "versions", "node", version)
 	binary := nodeBinaryPath(versionDir)
@@ -414,6 +428,13 @@ func installLockFileName(version string) (string, error) {
 func (n NodeProvider) Install(version string, nvxHome string) error {
 	if err := refuseGlibcBuildOnMusl(); err != nil {
 		return err
+	}
+	// An exact version that is already on disk needs no release list. The list was
+	// fetched first, so `nvx install 22.23.3` failed offline for a version that
+	// was sitting there, while `use`, `default`, `list` and the shims all worked.
+	if exact := exactNodeVersion(version); exact != "" && isNodeVersionInstalled(nvxHome, exact) {
+		LogSuccess("Node.js %s is already installed.", exact)
+		return nil
 	}
 	releases, err := FetchReleases()
 	if err != nil {

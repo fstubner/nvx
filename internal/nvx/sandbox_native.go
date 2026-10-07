@@ -176,7 +176,7 @@ func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
 
 	cmdPath, err := lookPathSkippingNvxShims(config.Command, config.NvxHome)
 	if err != nil {
-		LogError("Command not found: %s", config.Command)
+		reportNoRealExecutable(config.Command, config.NvxHome)
 		return ""
 	}
 	return preferWindowsRuntimeExe(cmdPath)

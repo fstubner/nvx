@@ -93,9 +93,32 @@ func npmResolvedTargets(req verifyRequest, args []string, platform nodePlatform)
 		what:    "the install goes ahead with only the named packages checked",
 		aborted: "Installation aborted: npm's dependency resolution failed and proceeding was not approved."},
 		msg, checkRemedy{text: resolutionRemedy}) {
-		return nil, 1, "npm could not resolve what this command installs"
+		// npm exiting non-zero is npm's failure. The resolver is npm running the
+		// command the person typed, so what stopped it stops the real install the
+		// same way. A project whose devEngines asks for another Node.js got
+		// EBADDEVENGINES from npm and exit 77 from nvx, the code for nvx itself
+		// refusing. Everything else that goes wrong here is nvx's, and stays a refusal.
+		var failed resolutionFailed
+		if errors.As(err, &failed) && failed.code > 0 {
+			return nil, failed.code, resolutionFailedReason
+		}
+		return nil, 1, resolutionSetupReason
 	}
 	return nil, 0, ""
+}
+
+// resolutionFailedReason is the refusal reason when npm's own resolver failed,
+// and resolutionSetupReason when nvx could not run it or read what it wrote.
+const (
+	resolutionFailedReason = "npm could not resolve what this command installs"
+	resolutionSetupReason  = "nvx could not check what npm would install"
+)
+
+// resolutionFailed is npm's lockfile-only run exiting non-zero, with its code.
+type resolutionFailed struct{ code int }
+
+func (e resolutionFailed) Error() string {
+	return fmt.Sprintf("its lockfile-only run exited with %d", e.code)
 }
 
 const resolutionRemedy = "npm's own message, above, says why it could not resolve the install. No policy setting waives this." +
@@ -176,7 +199,7 @@ func resolveNpmInstall(req verifyRequest, root string, platform nodePlatform) ([
 	cfg.OnRefusal = nil
 	LogDetail("Asking npm which packages this command installs, so each one is checked first.")
 	if code := launchNpmResolution(cfg, req.contain); code != 0 {
-		return nil, fmt.Errorf("its lockfile-only run exited with %d", code)
+		return nil, resolutionFailed{code: code}
 	}
 	lock, ok, err := readProjectLockfile(scratch)
 	if err != nil {
@@ -231,7 +254,7 @@ func runNpmResolution(cfg SandboxConfig, contain bool) int {
 	}
 	cmd, err := directCommand(cfg.Command, cfg.Args, cfg.NvxHome, false)
 	if err != nil {
-		LogError("Could not find real executable for %s", cfg.Command)
+		reportNoRealExecutable(cfg.Command, cfg.NvxHome)
 		return 127
 	}
 	cmd.Dir = cfg.WorkDir

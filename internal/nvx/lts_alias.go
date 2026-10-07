@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,12 +21,32 @@ import (
 func parseLTSQuery(query string) (isLTS bool, codename string) {
 	q := strings.ToLower(strings.TrimSpace(query))
 	switch {
-	case q == "lts", q == "lts/*":
+	// lts-latest is fnm's spelling of the same thing, and .node-version files
+	// written for fnm carry it.
+	case q == "lts", q == "lts/*", q == "lts-latest":
 		return true, ""
 	case strings.HasPrefix(q, "lts/"):
 		return true, strings.TrimPrefix(q, "lts/")
 	}
 	return false, ""
+}
+
+// ltsOffsetError is what a query like `lts/-1` gets. nvm reads it as "the LTS
+// line before the newest", which needs the release list to place the lines, so
+// nvx does not follow it. The message used to come out of the codename lookup as
+// "install it with 'nvx install lts/-1'", advice that failed the same way.
+// Returns nil for any other query.
+func ltsOffsetError(query string) error {
+	_, codename := parseLTSQuery(query)
+	if len(codename) < 2 || codename[0] != '-' {
+		return nil
+	}
+	for _, r := range codename[1:] {
+		if r < '0' || r > '9' {
+			return nil
+		}
+	}
+	return fmt.Errorf("nvx does not read %q, which counts back from the newest LTS line. Name the version (for example 22) or the line (for example lts/iron)", strings.TrimSpace(query))
 }
 
 // isVersionAlias reports whether query names a version by alias (`lts`,

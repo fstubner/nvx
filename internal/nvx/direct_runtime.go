@@ -28,8 +28,9 @@ import (
 // node -- and ONLY node, so a nested `npm install` inside a script still
 // resolves to the shim and stays intercepted.
 
-// windowsNpmCliLaunch resolves npm.cmd, npx.cmd or corepack.cmd to the node.exe and CLI script
-// the batch wrapper would run. nodeExeFallback is used when no node.exe sits
+// windowsNpmCliLaunch resolves npm.cmd, npx.cmd, corepack.cmd, or the yarn.cmd and
+// pnpm.cmd launchers corepack writes, to the node.exe and CLI script the batch
+// wrapper would run. nodeExeFallback is used when no node.exe sits
 // beside the .cmd, which is the layout of a self-updated npm in a version's
 // npm_global prefix: the CLI is kept beside the .cmd so that npm is the one that
 // runs, and only the interpreter falls back. ok is false when either file is
@@ -43,6 +44,13 @@ func windowsNpmCliLaunch(cmdPath, nodeExeFallback string) (nodeExe, cliPath stri
 		cliPath = filepath.Join(dir, "node_modules", "npm", "bin", "npx-cli.js")
 	case "corepack.cmd":
 		cliPath = filepath.Join(dir, "node_modules", "corepack", "dist", "corepack.js")
+	case "yarn.cmd", "pnpm.cmd":
+		// Only the launcher corepack wrote. A yarn.cmd or pnpm.cmd that came from
+		// `npm install -g` starts a different script and is launched as it is.
+		cliPath = corepackLauncherScript(cmdPath)
+		if cliPath == "" {
+			return "", "", false
+		}
 	default:
 		return "", "", false
 	}

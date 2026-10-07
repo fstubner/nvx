@@ -23,7 +23,8 @@ var nodeSandboxPreserveFlags = []string{"--preserve-symlinks-main", "--preserve-
 // rewriteWindowsNodeCommand adapts a resolved command for AppContainer launch:
 //   - npm.cmd / npx.cmd become a direct "node.exe <cli>.js" call, because batch
 //     files can't be CreateProcess'd and the cmd.exe fallback is denied inside
-//     the container.
+//     the container. So do corepack.cmd and the yarn.cmd and pnpm.cmd launchers
+//     corepack writes.
 //   - any node.exe invocation gains the preserve-symlinks flags (see above).
 //
 // nodeExeFallback is used when no node.exe sits beside the .cmd, which is the
@@ -37,7 +38,7 @@ var nodeSandboxPreserveFlags = []string{"--preserve-symlinks-main", "--preserve-
 // container.
 func rewriteWindowsNodeCommand(cmdPath string, args []string, nodeExeFallback string) (string, []string) {
 	switch strings.ToLower(filepath.Base(cmdPath)) {
-	case "npm.cmd", "npx.cmd", "corepack.cmd":
+	case "npm.cmd", "npx.cmd", "corepack.cmd", "yarn.cmd", "pnpm.cmd":
 		nodeExe, cliPath, ok := windowsNpmCliLaunch(cmdPath, nodeExeFallback)
 		if !ok {
 			return cmdPath, args

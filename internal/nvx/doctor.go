@@ -96,6 +96,34 @@ type doctorReport struct {
 	// of a runtime that has an installed version, are checked, since a machine
 	// that never installed Bun is not broken for lacking it.
 	noRuntime []string
+	// shimFiles is what the shim directory holds that is not as nvx wrote it. That
+	// means a link or launcher in the way, shims from an older nvx, and shims that
+	// are gone. Filled by the caller, since reading it costs file reads that the
+	// per-command shadow hint, which also calls diagnosePath, has no use for.
+	shimFiles shimDirReport
+}
+
+// shimFilesBroken reports a shim directory that needs `nvx init-shims`.
+func (r doctorReport) shimFilesBroken() bool {
+	return len(r.shimFiles.foreign) > 0 || len(r.shimFiles.stale) > 0 || len(r.otherMissingShims()) > 0
+}
+
+// otherMissingShims lists the wrapped commands with no shim that the report does
+// not already name. On Windows missingExeShims names the missing .exe shims of the
+// commands people run directly, with the explanation that goes with them, and this
+// is the rest (yarn, pnpm, corepack).
+func (r doctorReport) otherMissingShims() []string {
+	named := map[string]bool{}
+	for _, c := range r.missingExeShims {
+		named[c] = true
+	}
+	var rest []string
+	for _, c := range r.shimFiles.missing {
+		if !named[c] {
+			rest = append(rest, c)
+		}
+	}
+	return rest
 }
 
 // dirsEqual reports whether two directory paths are the same after cleaning
@@ -427,7 +455,12 @@ func runDoctor(nvxHome string, fix bool) int {
 	// is the same objection that moved the PATH repair behind --fix. Regeneration
 	// is now part of the repair, not part of the report.
 	cmds := coreShimCommands()
-	rep := diagnosePath(os.Getenv("PATH"), nvxHome, cmds)
+	diagnose := func() doctorReport {
+		r := diagnosePath(os.Getenv("PATH"), nvxHome, cmds)
+		r.shimFiles = inspectShimDir(nvxHome)
+		return r
+	}
+	rep := diagnose()
 	fmt.Print(formatDoctorReport(rep))
 
 	// Machine state that weakens containment without breaking anything visible --
@@ -460,7 +493,8 @@ func runDoctor(nvxHome string, fix bool) int {
 	// anyway. Closing over rep is deliberate: --fix reassigns it.
 	healthyNow := func() bool {
 		return rep.shimDirOnPath && len(rep.shadowedBy) == 0 && len(rep.bypassing()) == 0 &&
-			len(rep.missingExeShims) == 0 && len(rep.noRuntime) == 0 && !weakened && !policyBroken && !sandboxBroken
+			len(rep.missingExeShims) == 0 && len(rep.noRuntime) == 0 && !rep.shimFilesBroken() &&
+			!weakened && !policyBroken && !sandboxBroken
 	}
 
 	// Runs whichever way the interception verdict goes: a machine whose PATH is
@@ -478,10 +512,12 @@ func runDoctor(nvxHome string, fix bool) int {
 			LogWarn("Could not regenerate shims: %v", err)
 		} else if len(rep.missingExeShims) > 0 {
 			LogSuccess("Wrote the missing shims.")
+		} else if rep.shimFilesBroken() {
+			LogSuccess("Repaired the shim directory.")
 		}
 		// Re-diagnose so the caller is told the state after the repair rather
 		// than the state that prompted it.
-		rep = diagnosePath(os.Getenv("PATH"), nvxHome, cmds)
+		rep = diagnose()
 	} else if len(rep.missingExeShims) > 0 {
 		LogInfo("Run 'nvx doctor --fix' (or 'nvx init-shims') to write them.")
 	}
@@ -529,7 +565,7 @@ func runDoctor(nvxHome string, fix bool) int {
 	// which regenerates shims and cannot touch a problem that needs an Administrator
 	// terminal. Someone following it lands back on the same red report, having
 	// changed their PATH for no reason.
-	if !rep.shimDirOnPath || len(rep.shadowedBy) > 0 || len(rep.missingExeShims) > 0 {
+	if !rep.shimDirOnPath || len(rep.shadowedBy) > 0 || len(rep.missingExeShims) > 0 || len(rep.bypassing()) > 0 {
 		LogInfo("To fix the current shell now, run:")
 		LogInfo("  %s", shellPathFixLine(runtime.GOOS, defaultShell(), shimDirPath(nvxHome)))
 	}
@@ -627,6 +663,20 @@ func formatDoctorReport(rep doctorReport) string {
 		for _, s := range rep.shadowedBy {
 			fmt.Fprintf(&b, "         - %s (PATH position %d)\n", s.dir, s.index)
 		}
+	case len(rep.bypassing()) > 0:
+		// Not [OK]. This used to print the line below and then "[FAIL] node ->
+		// ... (bypasses nvx)" under it, with no word on what to do. A directory
+		// that is not one of nvx's own runtime directories can still hold a node
+		// that comes before the shims. Measured 2026-10-07 with a copy of node.exe
+		// ahead of the shim directory.
+		fmt.Fprintf(&b, "  [FAIL] shim dir is on PATH at position %d, but these commands resolve ahead of it:\n", rep.shimDirIndex)
+		for _, c := range rep.commands {
+			if c.resolved != "" && !c.viaShim {
+				fmt.Fprintf(&b, "         - %s -> %s\n", c.name, c.resolved)
+			}
+		}
+		b.WriteString("         They run without nvx. Put nvx's shim dir before those directories on PATH,\n")
+		b.WriteString("         or take those directories off PATH.\n")
 	default:
 		// Not "first on PATH": nothing here checks that, and saying so while
 		// printing "position 53" contradicted itself on the page. What the branch
@@ -642,6 +692,8 @@ func formatDoctorReport(rep doctorReport) string {
 		b.WriteString("         files instead, which Git Bash does not resolve, so these run unwrapped there.\n")
 		b.WriteString("         Fix: nvx init-shims\n")
 	}
+
+	b.WriteString(formatShimFiles(rep))
 
 	if len(rep.noRuntime) > 0 {
 		b.WriteString("  [FAIL] no runtime to run for: " + strings.Join(rep.noRuntime, ", ") + "\n")

@@ -286,6 +286,9 @@ func generateShims(nvxHome string) error {
 	}
 
 	exePath := stableShimTarget(nvxHome)
+	// Before anything is written, a link or a launcher that is not nvx's is taken
+	// out, and said so. See shim_dir.go.
+	clearForeignShims(shimDir)
 	if runtime.GOOS == "windows" {
 		// One nvx.exe under each command's name, rather than .cmd/.ps1/sh
 		// wrappers that each cost a shell process to reach it. See shim_exe.go
@@ -296,7 +299,7 @@ func generateShims(nvxHome string) error {
 		return writeWindowsExeShims(shimDir, exePath)
 	}
 	for _, cmd := range allShimCommands() {
-		content := fmt.Sprintf("#!/bin/sh\nexec %s shim %s \"$@\"\n", quotePOSIXShell(exePath), quotePOSIXShell(cmd))
+		content := shimScript(exePath, cmd)
 		shimPath := filepath.Join(shimDir, cmd)
 		if err := writeExecutableFile(shimPath, []byte(content)); err != nil {
 			return fmt.Errorf("write shim for %s: %w", cmd, err)
@@ -311,7 +314,23 @@ func quoteWindowsBatchArg(s string) string {
 	return `"` + escaped + `"`
 }
 
+// writeExecutableFile writes a shim. A link at path is replaced and the file
+// created in its place, never written through. os.WriteFile follows a link, and
+// a link in the shim directory is how `corepack enable` once got nvx to
+// overwrite corepack's own scripts inside the Node install. See shim_dir.go.
 func writeExecutableFile(path string, data []byte) error {
+	// On Unix the file is written beside the old one and renamed over it, so a
+	// shell starting at the same moment reads a whole shim and never half of one.
+	// Rename replaces a link without following it. Windows writes in place, since
+	// a .cmd that is running cannot be renamed over there.
+	if runtime.GOOS != "windows" {
+		return replaceFileAtomically(path, data, 0o700)
+	}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	}
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		return err
 	}
@@ -795,6 +814,25 @@ const exitParentHungUp = 129
 // sysexits.h -- "permission denied" -- which is the honest category.
 const exitRefused = 77
 
+// exitCommandNotFound is what a shim exits with when it has nothing to run. It is
+// the code a shell gives for a command it cannot find, and the one
+// docs/exit-codes.md lists for it. It was 1, which is also what a command that
+// ran and failed exits with.
+const exitCommandNotFound = 127
+
+// exitUsage is a command line nvx cannot read, such as an unknown command.
+const exitUsage = 2
+
+// verifyExitCode is what a run that pre-install verification stopped exits with:
+// exitRefused, except when the reason is npm's own resolver failing, which exits
+// with npm's code. See npmResolvedTargets.
+func verifyExitCode(code int, reason string) int {
+	if reason == resolutionFailedReason && code > 0 {
+		return code
+	}
+	return exitRefused
+}
+
 // The hangup watchdog ends the running child rather than calling os.Exit.
 //
 // os.Exit from the watchdog goroutine skipped every deferred cleanup on the way
@@ -870,6 +908,12 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		}
 	})
 
+	// `corepack enable` links yarn and pnpm next to its Node.js, not into nvx's
+	// shim directory. See corepack_enable.go.
+	if cmdName == "corepack" {
+		args = corepackInstallDirArgs(args, nvxHome)
+	}
+
 	opts := parseShimOptions(args)
 	// args is deliberately NOT replaced by a filtered copy. nvx reads its own
 	// flags out of these arguments; it does not take them away from the program
@@ -878,6 +922,9 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	opts.standardFlag = standardFlag
 
 	hintIfShadowed(nvxHome)
+	if trace.isTop() {
+		warnIfDevEnginesDisagree(nvxHome, cmdName)
+	}
 
 	if err := ensureProjectPolicyTrust(nvxHome); err != nil {
 		return refusePolicyBeforeRun(trace, err)
@@ -939,7 +986,7 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 			// "Connection closed" -- the same message an unrelated transport bug
 			// produces, which is exactly how this was misdiagnosed once already.
 			reportRefusalOverStdio(reason, label)
-			return exitRefused
+			return verifyExitCode(code, reason)
 		}
 	}
 	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" {
@@ -1024,9 +1071,10 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 
 	cmd, err := directCommand(cmdName, args, nvxHome, true)
 	if err != nil {
-		LogError("Could not find real executable for %s", cmdName)
-		return 1
+		reportNoRealExecutable(cmdName, nvxHome)
+		return exitCommandNotFound
 	}
+	cmd.Env = withDefaultNpmPrefix(cmd.Env, cmdName, nvxHome, cmd.Path, policy)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

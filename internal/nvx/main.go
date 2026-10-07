@@ -397,11 +397,11 @@ func Main() {
 		if near := nearestCommand(command); near != "" {
 			LogError("Unknown command: %s. Did you mean 'nvx %s'?", command, near)
 			LogInfo("Run 'nvx help' for the full list.")
-			os.Exit(1)
+			os.Exit(exitUsage)
 		}
 		LogError("Unknown command: %s", command)
 		printHelp()
-		os.Exit(1)
+		os.Exit(exitUsage)
 	}
 }
 
@@ -532,7 +532,7 @@ baseline: a project file may then make a setting stricter, and one that loosens
 a setting is refused rather than prompted for.
 `
 	case "init-shims":
-		return "nvx init-shims\n\nGenerate PATH shims in ~/.nvx/bin and project-bin shims for node_modules/.bin when run in a Node project.\n"
+		return "nvx init-shims\n\nGenerate PATH shims in ~/.nvx/bin and project-bin shims for node_modules/.bin when run in a Node project.\nA link or launcher in ~/.nvx/bin that stands in for a shim, such as one an old\n`corepack enable` left there, is removed and named.\n"
 	case "shim":
 		return "nvx shim <cmd> [args...]\n\nInternal shim router used by generated command wrappers.\n"
 	case "cleanup":
@@ -548,7 +548,7 @@ automatically, because a supervisor another nvx has staged but not yet executed
 cannot be told apart from an unused one.
 `
 	case "doctor":
-		return "nvx doctor [--fix]\n\nCheck that ~/.nvx/bin is first on PATH so nvx intercepts node/npm/npx/bun.\nRegenerates shims and reports what is wrong.\n\n--fix  Also repair a shadowed persistent PATH (Windows). That edits your\n       user PATH, so nvx does not do it unless you ask.\n"
+		return "nvx doctor [--fix]\n\nCheck that ~/.nvx/bin is first on PATH so nvx intercepts node/npm/npx/bun.\nAlso reports files in ~/.nvx/bin that are not nvx's shims, and shims that run an\nolder nvx. It changes no shim and no PATH without --fix.\n\n--fix  Regenerate the shims, and repair a shadowed persistent PATH (Windows).\n       That edits your user PATH, so nvx does not do it unless you ask.\n"
 	case "report":
 		return `nvx report [--out=FILE]
 
@@ -722,6 +722,10 @@ func useVersionArg(args []string) string {
 		if arg == "--shell" {
 			i++
 			continue
+		}
+		// `nvx use --lts`, as nvm spells it, is a version and not a flag.
+		if arg == "--lts" || strings.HasPrefix(arg, "--lts=") {
+			return arg
 		}
 		if strings.HasPrefix(arg, "-") || knownShells[strings.ToLower(arg)] {
 			continue
@@ -1064,6 +1068,9 @@ func resolveLocalVersion(provider RuntimeProvider, query string, nvxHome string)
 	// the version it had just put on disk. `use latest` worked throughout, which
 	// is what made the asymmetry obvious.
 	if isLTS, codename := parseLTSQuery(query); isLTS {
+		if err := ltsOffsetError(query); err != nil {
+			return "", err
+		}
 		lts := ltsVersionsAmong(provider, versions, nvxHome)
 		if codename != "" {
 			lts = filterByLTSCodename(nvxHome, lts, codename)
@@ -1136,6 +1143,43 @@ func requireRuntimeVersion(query, version string) {
 		LogError("No version given in %q. Put the version after the '@' (e.g. node@22), or drop the '@' for the latest.", query)
 		os.Exit(1)
 	}
+	// `deno@1` is a runtime nvx does not manage, and used to be answered with
+	// "deno@1 is not a version number".
+	if name := unknownRuntimeIn(query); name != "" {
+		LogError("nvx has no runtime called %q. It manages %s.", name, runtimeNamesForMessage())
+		LogInfo("Use a version alone for Node.js (nvx install 22), or name a runtime nvx manages (bun@1.2).")
+		os.Exit(1)
+	}
+	// Said before anything is looked up or offered for download.
+	if err := ltsOffsetError(version); err != nil {
+		LogError("%v", err)
+		os.Exit(1)
+	}
+}
+
+// unknownRuntimeIn returns the runtime named in a spec such as "deno@1" when nvx
+// does not manage it, and "" for every other spec.
+func unknownRuntimeIn(query string) string {
+	name, _, ok := strings.Cut(strings.TrimSpace(query), "@")
+	if !ok || name == "" {
+		return ""
+	}
+	if _, known := Providers[strings.ToLower(name)]; known {
+		return ""
+	}
+	return name
+}
+
+// runtimeNamesForMessage lists the runtimes nvx manages, such as "Node.js and Bun".
+func runtimeNamesForMessage() string {
+	var names []string
+	for _, name := range orderedRuntimeNames() {
+		names = append(names, runtimeDisplayName(name))
+	}
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 func runInstall(query string, nvxHome string) {
@@ -1153,6 +1197,9 @@ func runInstall(query string, nvxHome string) {
 		}
 		os.Exit(1)
 	}
+	// The shims are what make `node` run through nvx at all, and a home that
+	// got its nvx binary some other way (a Dockerfile, a CI cache) has none.
+	ensureShims(nvxHome)
 	// Do the sandbox's read/execute grant on the new tree now, where a second is
 	// invisible next to the download, rather than in front of someone's first
 	// contained command. Best-effort; the launch still does it if this did not.
@@ -1253,6 +1300,8 @@ func runUse(query string, nvxHome string, shell string, viaIntegration bool) int
 		}
 	}
 
+	resolvedVer = preferDefaultInRange(provider, version, resolvedVer, nvxHome)
+	ensureShims(nvxHome)
 	targetDir := filepath.Join(nvxHome, "versions", provider.Name(), resolvedVer)
 	// Only when something is going to read it. See shouldPrintShellEnv: to a
 	// person at a terminal this is 6,000 characters of PATH with the sentence
@@ -1332,6 +1381,7 @@ func runDefault(query string, nvxHome string) {
 	// No PATH advice: the shim directory is the only one that belongs on PATH,
 	// and a runtime directory ahead of it is what doctor reports as shadowing.
 	LogSuccess("Global default %s version set to %s.", runtimeDisplayName(provider.Name()), resolvedVer)
+	ensureShims(nvxHome)
 }
 
 func runList(nvxHome string) {
@@ -1692,6 +1742,9 @@ func runAuto(nvxHome string, shell string) int {
 		provider := Providers[name]
 		query, sourceFile, derr := provider.DetectConfig(cwd)
 		if derr != nil || query == "" {
+			if derr == nil && name == "node" {
+				noteDevEnginesInAuto(nvxHome)
+			}
 			continue
 		}
 		display := runtimeDisplayName(name)
@@ -1725,6 +1778,7 @@ func runAuto(nvxHome string, shell string) int {
 			}
 		}
 
+		resolvedVer = preferDefaultInRange(provider, query, resolvedVer, nvxHome)
 		if getActiveShellVersionFor(nvxHome, name) == resolvedVer {
 			continue
 		}
@@ -1769,14 +1823,30 @@ func autoExitCode(unmet int) int {
 // otherwise the per-version npm_global dir shared across projects.
 func resolveNpmPrefixDir(nvxHome, targetVersionDir string) string {
 	policy, err := LoadPolicy(nvxHome)
-	if err == nil && policy.Environment.IsolatedTools && policy.ProjectDir != "" {
+	if err != nil {
+		policy = Policy{}
+	}
+	return npmPrefixDirFor(policy, targetVersionDir)
+}
+
+// npmPrefixDirFor is resolveNpmPrefixDir for a caller that has the policy.
+//
+// The version-level directory is created here. `nvx use` pointed
+// NPM_CONFIG_PREFIX at it and nothing made it, so `npm ls -g` failed with ENOENT
+// (exit 254 on Linux) until a first global install happened to create it.
+func npmPrefixDirFor(policy Policy, targetVersionDir string) string {
+	if policy.Environment.IsolatedTools && policy.ProjectDir != "" {
 		prefixDir := filepath.Join(policy.ProjectDir, ".nvx", "npm_global")
-		if mkErr := os.MkdirAll(prefixDir, 0700); mkErr == nil {
+		if mkErr := makeNpmPrefixDir(prefixDir); mkErr == nil {
 			return prefixDir
 		}
 		LogWarn("Failed to create project tools directory %s; falling back to version-level npm prefix.", prefixDir)
 	}
-	return filepath.Join(targetVersionDir, "npm_global")
+	prefixDir := filepath.Join(targetVersionDir, "npm_global")
+	if mkErr := makeNpmPrefixDir(prefixDir); mkErr != nil {
+		LogDetail("Could not create %s: %v", prefixDir, mkErr)
+	}
+	return prefixDir
 }
 
 // emitSessionEnv prints the shell statements that activate a Node version

@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shell profile or an agent's settings, and nothing in a later run shows they
   are there. The warning does not change doctor's exit code.
 
+* **`--lts` and fnm's `lts-latest` work wherever a version goes.**
+  `nvx install --lts`, `nvx use --lts` and `--lts=iron` read as nvm reads
+  them, and `lts-latest` in a `.node-version` file reads as `lts`. Measured
+  2026-10-07 in a Debian 12 container, `nvx use lts-latest` answered
+  `prerelease and build metadata are not supported in "lts-latest"` and `nvx use
+  --lts` answered "Please specify a version to use".
+
 * **Contained installs work behind an `https://`, `socks5://` or `socks5h://`
   proxy.** Only an `http://` value in `HTTPS_PROXY` or `HTTP_PROXY` was used.
   Any other was ignored with a warning, and contained connections were made
@@ -189,6 +196,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   how to give it to nvx, as `NVX_YES=true npm ...` or `nvx -y npm ...`. A
   `-y` that no check needed, such as npx's own, is passed on as before and not
   mentioned.
+
+* **`corepack enable` no longer replaces nvx's `yarn` and `pnpm` shims.**
+  Corepack puts its links beside the `corepack` it finds first on `PATH`, and
+  that was nvx's shim directory, so they replaced the shims there. Measured
+  2026-10-07 on Debian 12 with Node.js 22.23.3 and corepack 0.36.0, a bare
+  `yarn install` then ran with no sandbox, and a dependency's postinstall wrote
+  a file into the real home directory. The next `nvx env`, `nvx init-shims` or
+  `nvx doctor --fix` wrote nvx's shim text through the links and overwrote
+  corepack's own `dist/yarn.js` and `dist/pnpm.js` inside the Node.js install,
+  from 186 bytes each to 57. On Windows, `nvx init-shims` deleted corepack's
+  launchers, and `pnpm` then failed with `Could not find real executable for
+  pnpm`. The corepack shim now passes `--install-directory` to `corepack
+  enable` and `corepack disable`, so the links go in the `bin` folder of the
+  Node.js that has corepack, beside `node.exe` on Windows. nvx's `yarn` and
+  `pnpm` shims find them there and contain what they run. In the same Debian
+  test the postinstall is denied and nothing reaches the home directory. nvx
+  also never writes through a link in its shim directory. `nvx env`, `nvx
+  init-shims` and `nvx doctor --fix` remove a link or launcher that stands in
+  for a shim, such as one an older nvx let `corepack enable` leave, and say what
+  they removed. Run `corepack enable` again after that. On Windows the
+  `yarn.cmd` and `pnpm.cmd` that corepack writes now start through `node.exe`,
+  as `npm.cmd` does, because the sandbox cannot start a `.cmd` file. Measured
+  2026-10-07, a contained `pnpm install` through corepack's `pnpm.cmd` stopped at
+  launch with `Access is denied.`, and it now installs and exits 0.
+
+* **`nvx doctor` reports what is wrong with the shim directory.** It now reads
+  the directory. It fails and names the fix, `nvx init-shims`, for a link or
+  launcher that is not nvx's, for shims that run an older nvx, and on Linux and
+  macOS for shims that are missing. Measured 2026-10-07, after a new `nvx.exe`
+  was moved over the old one the way `install.ps1` does, the Windows shims
+  stayed 12,467,712 bytes beside an `nvx.exe` of 12,492,288, and doctor printed
+  "nvx is intercepting commands correctly". On Debian 12 with the nvx binary and
+  no shims it printed `node: not found on PATH` and then that same sentence,
+  with exit 0.
+  A copy of `node.exe` ahead of the shims printed `[OK] shim dir is on PATH at
+  position 1, with no raw-runtime dir ahead of it`, then `[FAIL] node -> ...
+  (bypasses nvx)` and no word on what to do. It now fails the first line, lists
+  the commands that resolve ahead of the shims, and prints the one-line fix for
+  the shell.
+
+* **`nvx install`, `nvx use` and `nvx default` write the shims when they are
+  missing.** A Dockerfile or CI job that puts the nvx binary in place without
+  the installers got none. Measured 2026-10-07 in Debian 12 with only the nvx
+  binary in `~/.nvx/bin`, `nvx install 22.23.3` left the directory holding nvx
+  alone, and `sh -c 'node -v'` printed `node: not found` and exited 127. The
+  same install now writes the eight shims, and `node -v` prints v22.23.3. It
+  says where it wrote them, and when that directory is not on `PATH` it says to
+  put it first.
+
+* **A shim with nothing to run says what to do and exits 127.** `node` or `yarn`
+  with no runtime installed printed `Could not find real executable` and
+  exited 1, the code a command that ran and failed also exits with.
+  docs/exit-codes.md lists 127 for a command that was not found. The shim now
+  exits 127 and names the fix for the cause. That is `nvx install lts` with no
+  runtime, `nvx default <version>` with none set, `corepack enable` for `yarn`
+  and `pnpm`, and a reinstall for an install that lost a file. An unknown nvx
+  command, such as `nvx instal`, now exits 2, which the same page lists for a
+  usage error. It exited 1.
+
+* **A global npm install lands in one place, and `npm ls -g` works after `nvx
+  use`.** `nvx use` pointed `NPM_CONFIG_PREFIX` at a folder nothing created.
+  Measured 2026-10-07 on Debian 12 with npm 10.9.9, `npm ls -g` right after `nvx
+  use 22` exited 254 with ENOENT until a first global install made it. nvx now
+  creates the prefix, with the `lib` folder npm reads. A shell without the shell
+  integration also left npm on its own default prefix, so `nvx --no-sandbox npm i
+  -g cowsay` put the tool in the Node.js install's `bin` folder there and in
+  `npm_global` where the integration is loaded, and `npm ls -g` listed
+  different tools in each. The shim now gives npm the prefix the integration
+  sets. It leaves one alone that `NPM_CONFIG_PREFIX` or a `prefix` line in your
+  `~/.npmrc` already chooses. A tool installed earlier
+  into the Node.js install's own folder stays where it is. `npm ls -g` lists the
+  ones in `npm_global` from now on, and a `corepack`, `yarn` or `pnpm` installed
+  there with `npm install -g` is found without `PATH` leading to it.
+
+* **The shim and `nvx auto` say when `devEngines.runtime` asks for another
+  Node.js.** npm enforces the field and nvx does not read it to choose a
+  version. Measured 2026-10-07 with `devEngines.runtime` asking for 24.21.0 and
+  the default at 22.23.3, `node -v` and `nvx auto` printed nothing, and
+  `npm install` stopped with EBADDEVENGINES. The shim now warns, and `nvx auto`
+  says so too. Both stay quiet when `.nvmrc`, `.node-version` or `engines` names
+  a version, when the running version satisfies the request, and when `onFail`
+  is `warn`, `ignore` or `download`.
+
+* **An `npm install` that npm's own resolver stops exits with npm's code.** With
+  the project above and no terminal to answer nvx's question, `npm install`
+  exited 77, the code for "nvx refused", though npm's resolution had failed
+  with EBADDEVENGINES. It now exits 1, which is what npm exited with. Every
+  refusal that is nvx's own still exits 77.
+
+* **An open `engines` range keeps the default version when the default
+  satisfies it.** With 20, 22 and 26 installed and 22 the default, `engines.node`
+  `>=18` ran v26.10.0, the highest installed. Measured 2026-10-07, it now runs
+  v22.23.3. This holds for the shim, `nvx use` and the switch on `cd`. A partial
+  version such as `22` still picks the newest installed 22.x.
+
+* **`nvx install` of a version that is already installed works offline.**
+  Measured 2026-10-07 with `NVX_NODE_MIRROR` pointing at a port nothing listens
+  on, `nvx install 22.23.3` failed with `failed to fetch release list` for a
+  version that was on disk. It now prints that the version is already
+  installed and exits 0. A version that is not on disk, and anything that is not
+  a full version, still needs the release list.
+
+* **`lts/-1` and `deno@1` get a message that says what nvx does not read.**
+  Measured 2026-10-07, `nvx use lts/-1` said to run `nvx install lts/-1`, which
+  fails the same way, and `nvx install deno@1` said `"deno@1" is not a version
+  number`. They now say nvx does not read an LTS line counted back from the
+  newest, and that nvx manages Node.js and Bun and has no runtime called deno.
 
 * **After `install.sh`, a login `sh` no longer stops at `~/.profile`.** The
   profile ran `eval "$(nvx env)"`, which prints bash syntax. On Debian and

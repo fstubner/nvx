@@ -19,7 +19,7 @@ import (
 // A token before "@" is treated as a runtime only when it is a registered
 // provider; otherwise the whole argument is a node version query.
 func parseRuntimeSpec(arg string) (RuntimeProvider, string) {
-	arg = strings.TrimSpace(arg)
+	arg = ltsFlagAsSpec(strings.TrimSpace(arg))
 	if i := strings.Index(arg, "@"); i > 0 {
 		name := strings.ToLower(arg[:i])
 		if p, ok := Providers[name]; ok {
@@ -38,6 +38,19 @@ func parseRuntimeSpec(arg string) (RuntimeProvider, string) {
 		return p, "latest"
 	}
 	return Providers["node"], arg
+}
+
+// ltsFlagAsSpec reads the spelling nvm and fnm users type, `--lts` (and nvm's
+// `--lts=iron`), as the spec nvx takes. It answered `prerelease and build metadata
+// are not supported in "--lts"`.
+func ltsFlagAsSpec(arg string) string {
+	switch {
+	case arg == "--lts":
+		return "lts"
+	case strings.HasPrefix(arg, "--lts="):
+		return "lts/" + strings.TrimPrefix(arg, "--lts=")
+	}
+	return arg
 }
 
 // orderedRuntimeNames lists registered runtimes with node first, then the rest
@@ -172,8 +185,40 @@ func sessionRuntimeVersion(nvxHome string, rt RuntimeProvider, pin projectPin) s
 	}
 	if pin.query != "" {
 		if v, err := resolveLocalVersion(rt, pin.query, nvxHome); err == nil {
-			return v
+			return preferDefaultInRange(rt, pin.query, v, nvxHome)
 		}
 	}
 	return getGlobalDefaultVersionFor(nvxHome, rt.Name())
+}
+
+// isOpenRange reports a version expression that names a set of versions, such as
+// ">=18" or "^20 || ^22", as opposed to one version, a partial one ("22") or an
+// alias. For a partial version the newest installed match is the answer, as with
+// nvm. A range says any of them will do.
+func isOpenRange(query string) bool {
+	q := strings.TrimSpace(query)
+	return strings.ContainsAny(q, "<>^~|") || strings.Contains(q, " ")
+}
+
+// preferDefaultInRange keeps the global default when the project asks for a range
+// the default satisfies. resolved is what resolveLocalVersion chose, the newest
+// installed version in the range, and that is rarely what anyone picked. With the
+// default at 22 and engines.node ">=18", the shim ran v26.10.0 because someone had
+// once installed the newest release. Measured 2026-10-07.
+func preferDefaultInRange(rt RuntimeProvider, query, resolved, nvxHome string) string {
+	if !isOpenRange(query) {
+		return resolved
+	}
+	def := getGlobalDefaultVersionFor(nvxHome, rt.Name())
+	if def == "" || def == resolved {
+		return resolved
+	}
+	// A default whose directory is gone is no default.
+	if installed, err := resolveLocalVersion(rt, def, nvxHome); err != nil || installed != def {
+		return resolved
+	}
+	if versionSatisfies(nvxHome, def, query) {
+		return def
+	}
+	return resolved
 }
