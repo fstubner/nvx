@@ -65,6 +65,11 @@ func difference(a, b []string) []string {
 // would not have caught it either; what matters is whether the parser agrees
 // with the prose, so this asks the parser.
 func TestDocumentedLeadingFlagsAreParsedAsLeading(t *testing.T) {
+	// parseStartupFlags sets these package globals as it reads -q, --verbose and
+	// --agent-mode. Left set, --agent-mode makes every later test's check refuse
+	// without asking.
+	savedQuiet, savedVerbose, savedAgent := quietFlag, verboseFlag, agentModeFlag
+	t.Cleanup(func() { quietFlag, verboseFlag, agentModeFlag = savedQuiet, savedVerbose, savedAgent })
 	leading := []string{"--no-sandbox", "--strict", "--standard", "-y", "--yes", "-q", "--quiet", "--agent-mode"}
 	for _, flag := range leading {
 		args, _, _, _, _ := parseStartupFlags([]string{"nvx", flag, "npm", "install"})

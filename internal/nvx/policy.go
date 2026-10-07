@@ -20,8 +20,8 @@ type Policy struct {
 	// granting itself the authority the setting exists to take away, so it is
 	// refused there and said out loud rather than dropped (warnEnforcedInProjectFile).
 	//
-	// Absent, which is the default, nothing changes: a loosening project file is
-	// gated by the existing approve-once trust prompt exactly as before.
+	// Absent, which is the default, nothing changes. A loosening project file
+	// applies once it is trusted for the project, as before.
 	Enforced             bool                `json:"enforced,omitempty"`
 	BlockedPackages      []string            `json:"blocked_packages"`
 	EnforceIgnoreScripts bool                `json:"enforce_ignore_scripts"`
@@ -241,7 +241,7 @@ type FilesystemPolicy struct {
 	// the one real request for reaching outside the project -- a tool whose
 	// program lives elsewhere -- is served by AllowReadExec, which is never
 	// writable. If this is ever wanted, it needs a policyLoosens clause too, or a
-	// project-local file could add writable roots with no trust prompt.
+	// project-local file could add writable roots without being trusted.
 	// Unknown-key warnings will now name it, which is the correct answer for
 	// anyone who had it in a file.
 	// AllowReadExec are extra directories a contained process may READ and
@@ -789,21 +789,31 @@ func readProjectPolicyFile(path string) (Policy, []byte, error) {
 // markPolicyFieldPresence claimed the stripped bytes were "what pins a trusted
 // project policy"; they never were, and it now says so.
 func readAndHashProjectPolicyFile(path string) (Policy, []byte, string, error) {
-	var lp Policy
-	lp.Typosquatting.Enabled = true
 	raw, err := os.ReadFile(path)
 	if err != nil {
+		var lp Policy
+		lp.Typosquatting.Enabled = true
 		return lp, nil, "", fmt.Errorf("read local policy %s: %w", path, err)
 	}
-	hash := hashPolicyBytes(raw)
+	lp, data, err := parseProjectPolicyBytes(path, raw)
+	if err != nil {
+		return lp, nil, "", err
+	}
+	return lp, data, hashPolicyBytes(raw), nil
+}
 
+// parseProjectPolicyBytes parses a project policy file's raw bytes, for a caller
+// that has them before they are on disk.
+func parseProjectPolicyBytes(path string, raw []byte) (Policy, []byte, error) {
+	var lp Policy
+	lp.Typosquatting.Enabled = true
 	data := withoutUTF8BOM(raw)
 	if err := json.Unmarshal(data, &lp); err != nil {
-		return lp, nil, "", fmt.Errorf("parse local policy %s: %w", path, err)
+		return lp, nil, fmt.Errorf("parse local policy %s: %w", path, err)
 	}
 	warnAboutUnknownPolicyKeys(path, data)
 	markPolicyFieldPresence(data, &lp)
-	return lp, data, hash, nil
+	return lp, data, nil
 }
 
 // LoadPolicy builds the effective policy from the global policy, the project
@@ -831,7 +841,7 @@ func warnIgnoredPolicyOnce(path string) {
 	if _, seen := ignoredPolicyWarned.LoadOrStore(filepath.Clean(path), true); seen {
 		return
 	}
-	LogWarn("Ignoring project policy %s: it loosens nvx security settings and has not been trusted for this project.", path)
+	LogWarn("Ignoring project policy %s: it loosens nvx security settings and has not been trusted for this project. `nvx trust` in this folder trusts it.", path)
 }
 
 func LoadPolicy(nvxHome string) (Policy, error) {
@@ -861,7 +871,7 @@ func LoadPolicy(nvxHome string) (Policy, error) {
 				return policy, err
 			}
 			if policyLoosens(policy, candidate) {
-				if grants.PolicyPins[filepath.Clean(localPath)] != hash {
+				if !policyPinned(nvxHome, grants, localPath, hash) {
 					warnIgnoredPolicyOnce(localPath)
 					continue
 				}
@@ -912,78 +922,132 @@ func ledgerHostsUnderBaseline(policy Policy, ledger []string) []string {
 	return kept
 }
 
-// ensureProjectPolicyTrust prompts once for any project policy file that would
-// loosen security and has not been trusted. Accepting records a pin (keyed by
-// file contents) under ~/.nvx; declining, or a non-interactive environment,
-// leaves the file untrusted so LoadPolicy will ignore it. This runs on the
-// execution path before a sandboxed command starts.
+// projectPolicyStep is one project policy file that applies in a directory, as
+// ensureProjectPolicyTrust and `nvx trust` see it.
+type projectPolicyStep struct {
+	path string // cleaned
+	// hash pins the bytes that were parsed, so a pin recorded from this step
+	// is for exactly the content whose loosenings were shown.
+	hash       string
+	loosenings []policyLoosening // over the files that apply above it
+	trusted    bool              // pinned at hash
+	over       Policy            // what it is merged over
+}
+
+// walkProjectPolicies visits the project policy files that apply in cwd,
+// farthest first, the order LoadPolicy applies them in. visit reports whether a
+// file applies, which decides whether the files nearer cwd are compared with
+// it. It returns the policy the walk ends on.
+//
+// One walk for the two callers that decide trust, so the file a refusal names
+// and the file `nvx trust` records are compared over the same baseline.
+func walkProjectPolicies(nvxHome, cwd string, grants projectGrants, visit func(projectPolicyStep) bool) (Policy, error) {
+	policy, err := loadGlobalPolicy(nvxHome)
+	if err != nil {
+		return policy, err
+	}
+	paths := collectProjectPolicyPaths(cwd, nvxHome)
+	for i := len(paths) - 1; i >= 0; i-- {
+		// One read, so the bytes hashed are the bytes parsed. This is where a pin
+		// is WRITTEN, and hashing a different read than the one shown would record
+		// a pin for bytes nobody agreed to.
+		local, _, hash, err := readAndHashProjectPolicyFile(paths[i])
+		if err != nil {
+			return policy, err
+		}
+		// Refused before anything is offered, because under an enforced baseline
+		// trusting this file is not the developer's decision to make.
+		merged, err := MergeUnderBaseline(policy, local, paths[i])
+		if err != nil {
+			return policy, err
+		}
+		step := projectPolicyStep{path: filepath.Clean(paths[i]), hash: hash, over: policy}
+		step.loosenings = policyLoosenings(policy, merged)
+		step.trusted = policyPinned(nvxHome, grants, step.path, hash)
+		if visit(step) {
+			policy = merged
+		}
+	}
+	return policy, nil
+}
+
+// loosenedSettings renders loosenings one per line, for a person to read.
+func loosenedSettings(loosenings []policyLoosening) []string {
+	out := make([]string, len(loosenings))
+	for i, l := range loosenings {
+		out[i] = fmt.Sprintf("%s: %s -> %s", l.Field, l.Before, l.After)
+	}
+	return out
+}
+
+// ensureProjectPolicyTrust refuses to run under a project policy file that
+// loosens nvx's settings and has not been trusted at its current content. It
+// returns errUntrustedProjectPolicy for that, having said which file and what it
+// loosens, and the run stops with exit 77.
+//
+// It used to ask. That made trusting a cloned repository's policy one keystroke
+// from whatever could type into the terminal, an agent included. Trust is now
+// recorded only by `nvx trust`, which a person runs, or by NVX_TRUST_YES. See
+// trust_boundary.go. This runs on the execution path before a command starts.
 func ensureProjectPolicyTrust(nvxHome string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil
 	}
-	localPaths := collectProjectPolicyPaths(cwd, nvxHome)
-	if len(localPaths) == 0 {
+	if len(collectProjectPolicyPaths(cwd, nvxHome)) == 0 {
 		return nil
 	}
+	grants := loadProjectGrants(nvxHome, projectScopeDir())
+	acceptedNow := map[string]string{}
+	refused := false
 
-	baseline, err := loadGlobalPolicy(nvxHome)
+	_, err = walkProjectPolicies(nvxHome, cwd, grants, func(s projectPolicyStep) bool {
+		if len(s.loosenings) == 0 || s.trusted {
+			return true
+		}
+		// The refusal names what is loosened. Without it, deciding meant opening
+		// the file and diffing it by hand. The command carries the hash of what
+		// was shown, so it trusts that and not whatever the file says by then.
+		if !approveWidening(wideningRequest{
+			what:    "project policy " + s.path + ", which loosens nvx's security settings",
+			refusal: fmt.Sprintf("nvx refused to run under project policy %s. It loosens nvx's security settings, and it has not been trusted:", s.path),
+			details: loosenedSettings(s.loosenings),
+			command: "nvx trust " + policyFileArg(cwd, s.path) + " --hash " + s.hash[:trustHashLen],
+		}) {
+			auditLog(nvxHome, "policy_pin_changed_denied", map[string]string{"path": s.path})
+			refused = true
+			return false
+		}
+		acceptedNow[s.path] = s.hash
+		auditLog(nvxHome, "policy_pin_accepted", map[string]string{"path": s.path, "by": "nvx_trust_yes"})
+		return true
+	})
 	if err != nil {
 		return err
 	}
-	scope := projectScopeDir()
-	grants := loadProjectGrants(nvxHome, scope)
-	changed := false
-	acceptedNow := map[string]string{}
 
-	for i := len(localPaths) - 1; i >= 0; i-- {
-		localPath := localPaths[i]
-		// One read here too, and for a second reason: this is where the pin is
-		// WRITTEN. Hashing a different read than the one the user was shown and
-		// approved would record a pin for bytes nobody agreed to.
-		localPolicy, _, hash, err := readAndHashProjectPolicyFile(localPath)
-		if err != nil {
-			return err
-		}
-		// Refused here too, and before the prompt: under an enforced baseline the
-		// question "do you trust this file" is not the developer's to answer, so
-		// asking it would be offering a choice that does not exist.
-		candidate, err := MergeUnderBaseline(baseline, localPolicy, localPath)
-		if err != nil {
-			return err
-		}
-		if loosenings := policyLoosenings(baseline, candidate); len(loosenings) > 0 {
-			cleanPath := filepath.Clean(localPath)
-			if grants.PolicyPins[cleanPath] != hash {
-				// The question names what is being loosened. Asked without it, the
-				// only way to answer was to open the file and diff it by hand.
-				if !PromptTrustBoundary(policyTrustQuestion(localPath, loosenings)) {
-					auditLog(nvxHome, "policy_pin_changed_denied", map[string]string{"path": cleanPath})
-					continue
-				}
-				grants.PolicyPins[cleanPath] = hash
-				acceptedNow[cleanPath] = hash
-				changed = true
-				auditLog(nvxHome, "policy_pin_accepted", map[string]string{"path": cleanPath})
-			}
-		}
-		baseline = candidate
-	}
-
-	if changed {
-		// Re-read under the ledger's lock and add only the pins accepted here,
-		// so a concurrent nvx's entries survive rather than being overwritten by
-		// the copy loaded before the prompts.
-		if err := updateProjectGrants(nvxHome, scope, func(g *projectGrants) error {
-			for path, hash := range acceptedNow {
-				g.PolicyPins[path] = hash
-			}
-			return nil
-		}); err != nil {
+	if len(acceptedNow) > 0 {
+		if err := recordPolicyPins(nvxHome, acceptedNow); err != nil {
 			LogWarn("Failed to record project policy trust: %v", err)
 		}
 	}
+	if refused {
+		return errUntrustedProjectPolicy
+	}
 	return nil
+}
+
+// policyFileArg names a project policy file for a command typed in cwd. The
+// file is always in cwd or a folder above it, so the relative path is dots, a
+// separator and the file name, and cannot carry anything a shell would run if
+// the folder names did. The separator is a forward slash, which every shell
+// passes on unchanged. Pasted into Git Bash, ..\..\.nvx-policy.json arrived as
+// .....nvx-policy.json.
+func policyFileArg(cwd, path string) string {
+	if rel, err := filepath.Rel(cwd, path); err == nil {
+		return filepath.ToSlash(rel)
+	}
+	return quoteForShellHint(path)
 }
 
 // networkModeRank orders the modes by how much a contained process can reach,
@@ -1048,18 +1112,6 @@ type policyLoosening struct {
 	Field  string
 	Before string
 	After  string
-}
-
-// policyTrustQuestion is the prompt for trusting a project policy file, with
-// one line per setting it loosens.
-func policyTrustQuestion(path string, loosenings []policyLoosening) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Project policy %s loosens nvx security settings:", path)
-	for _, l := range loosenings {
-		fmt.Fprintf(&b, "\n    %s: %s -> %s", l.Field, l.Before, l.After)
-	}
-	b.WriteString("\n  Trust it for this project?")
-	return b.String()
 }
 
 // policyLoosens reports whether the after policy is more permissive than before.

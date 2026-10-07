@@ -34,9 +34,9 @@ func auditContains(t *testing.T, nvxHome, event string) bool {
 // being able to raise "allow outbound connection to 127.0.0.1:5432?" is a
 // postinstall being able to ask for the developer's database.
 //
-// The audit event is what distinguishes this from an ordinary denial: a test
-// process is non-interactive, so PromptTrustBoundary would refuse anyway and a
-// bare false would prove nothing about whether the prompt was reached.
+// The audit event is what distinguishes this from an ordinary denial. Without
+// NVX_TRUST_YES the unknown-host path refuses anyway, and a bare false would
+// prove nothing about whether that path was reached.
 func TestLoopbackIsNeverOfferedAtThePrompt(t *testing.T) {
 	// NVX_TRUST_YES would approve any prompt that IS reached, so if the loopback
 	// branch ever stops short-circuiting, this test fails loudly rather than

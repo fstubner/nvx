@@ -25,9 +25,9 @@ import (
 //
 //   - It never prompts. A prompt in CI is a hang, and a hang is worse than a
 //     failure because nothing reports it until the job times out. Nothing here
-//     calls a Prompt function, and ensureProjectPolicyTrust -- the one part of
-//     policy loading that asks anything -- is deliberately not on this path. An
-//     untrusted project policy is reported as a finding instead.
+//     calls a Prompt function. ensureProjectPolicyTrust, the one part of policy
+//     loading that stops a run, is deliberately not on this path. An untrusted
+//     project policy is reported as a finding instead.
 //   - It makes no network request unless asked. Reaching the registry and OSV
 //     turns a check into something that fails when a third party is down, which
 //     in a pipeline is indistinguishable from a real violation. --online opts in,

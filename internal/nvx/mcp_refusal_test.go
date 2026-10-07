@@ -146,13 +146,15 @@ func TestTheRemedyMatchesTheRefusal(t *testing.T) {
 		}
 	}
 
-	// A policy decision must never be answered with "approve the prompt".
+	// A policy decision must never be answered with "approve the prompt". The
+	// paragraph for an agent names NVX_YES to say not to use it, so what is
+	// looked for is the suggestion, NVX_YES=true.
 	for _, reason := range []string{
 		"the security policy blocks one of its packages",
 		"the security policy disallows package install scripts",
 		"its security policy could not be read",
 	} {
-		if strings.Contains(remedyFor(reason), "NVX_YES") {
+		if strings.Contains(remedyFor(reason), "NVX_YES=true") {
 			t.Errorf("reason %q was answered with NVX_YES, which cannot affect a policy decision", reason)
 		}
 	}
