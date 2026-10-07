@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared helpers for the publish-*.sh scripts.
+# Shared helpers for the publish-*.sh scripts and release.yml.
 #
 # Source this, don't execute it:
 #   . "$(dirname "$0")/lib.sh"
@@ -23,6 +23,38 @@ validate_tag() {
     echo "       expected vMAJOR.MINOR.PATCH[-prerelease]" >&2
     return 1
   fi
+}
+
+# --- CI verdict ----------------------------------------------------------
+#
+# release.yml waits for CI on the commit it is about to release. Reads the
+# JSON that this prints:
+#   gh run list --workflow=ci.yml --commit "$sha" --json status,conclusion,createdAt,databaseId
+# and says what the wait should do:
+#
+#   none     no run yet
+#   running  the newest run has not finished
+#   passed   the newest run finished with success
+#   failed   the newest run finished any other way, cancelled included
+#
+# Input that jq cannot read prints nothing, and the wait treats that as no result
+# yet. Only the newest run counts. This used to look at every run listed for the
+# commit, so one old failed or cancelled run blocked a release after a newer
+# run of the same commit had passed. The newest run is the one with the latest
+# creation time, and the larger run id settles a tie. A re-run of a run is the
+# same run, and `gh run list` shows it with its newest attempt.
+#
+# Usage: verdict=$(printf '%s' "$runs" | ci_verdict)
+ci_verdict() {
+  jq -r '
+    if length == 0 then "none"
+    else
+      (sort_by([.createdAt, .databaseId]) | .[-1]) as $newest
+      | if $newest.status != "completed" then "running"
+        elif $newest.conclusion == "success" then "passed"
+        else "failed"
+        end
+    end'
 }
 
 # --- Asset availability --------------------------------------------------
