@@ -579,6 +579,11 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 		LogError("Network seccomp failed: %v", err)
 		return 1
 	}
+	// In every network mode, open included. See applyLinuxTerminalSeccomp.
+	if err := applyLinuxTerminalSeccomp(); err != nil {
+		LogError("Could not stop the sandbox typing into the terminal (fail-closed): %v", err)
+		return 1
+	}
 
 	cmd := exec.Command(cmdPath, args...)
 	cmd.Stdin = os.Stdin

@@ -222,6 +222,18 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir, nvxHo
 		fmt.Fprintf(&b, "  (subpath %q)\n", root)
 	}
 	b.WriteString(")\n")
+	// A contained process cannot type into the terminal nvx runs on. It gets
+	// that terminal as its stdin, shared with nvx, so TIOCSTI would push a byte
+	// into its input queue for the user's shell to read as typed input after nvx
+	// exits -- the macOS analogue of the Linux seccomp rule. file-ioctl is its
+	// own Seatbelt operation, so (deny default) already refuses it (the profile
+	// grants file-ioctl nowhere, and ttys here are allowed only file-read* and
+	// file-write*), but that is only confirmed on recent macOS, so this denies
+	// TIOCSTI by number as cheap insurance. The command is given in decimal:
+	// 2147578994 is 0x80017472, TIOCSTI (_IOW('t', 114, char)). The symbol and a
+	// hex literal do not parse on macOS 13 and 14. After the write allow above,
+	// so the deny wins where that granted /dev/tty and /dev/ptmx.
+	b.WriteString(seatbeltTerminalInputDeny + "\n")
 	// The repository's git metadata stays read-only inside the writable roots;
 	// see gitMetadataPaths. Seatbelt lets a later rule override an earlier one,
 	// so these come after the allow. Each path is named as given and as resolved,
@@ -336,6 +348,12 @@ func buildSeatbeltProfile(netCtx NetworkLaunchContext, guestHome, workDir, nvxHo
 var seatbeltResolverDenies = []string{
 	`(deny mach-lookup (global-name "com.apple.dnssd.service"))`,
 }
+
+// seatbeltTerminalInputDeny refuses ioctl TIOCSTI, which would let a contained
+// process type into the terminal it shares with nvx. 2147578994 is 0x80017472,
+// TIOCSTI (_IOW('t', 114, char)). Decimal on purpose: the TIOCSTI symbol and a
+// hex literal both fail to parse under sandbox-exec on macOS 13 and 14.
+const seatbeltTerminalInputDeny = `(deny file-ioctl (ioctl-command 2147578994))`
 
 // seatbeltDeviceWrites are the device files a contained process may write, in
 // place of all of /dev. Shell scripts write /dev/null and /dev/fd/N, which
