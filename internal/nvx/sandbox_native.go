@@ -130,6 +130,9 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 	// lookup finds the pinned runtime rather than nvx's shim. See
 	// withRuntimeBinOnPath for the install this was measured to break.
 	cleanEnv = withRuntimeBinOnPath(cleanEnv, cmdPath, config.NvxHome)
+	// Only for the Node nvx resolved, and only when it reads the variable that
+	// proxy mode sets. See envProxyWarningFlag.
+	cleanEnv = withEnvProxyWarningSilenced(cleanEnv, egress, cmdPath, config.NvxHome)
 
 	workDir := config.WorkDir
 	if workDir == "" {

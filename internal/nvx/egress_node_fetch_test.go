@@ -26,10 +26,10 @@ import (
 // variables it would try to look them up itself and fail with ENOTFOUND, which is
 // how the allowlisted half failed before nvx set NODE_USE_ENV_PROXY.
 
-// nodeHonoursEnvProxy returns the node on PATH if it is one that reads
+// nodeOnPathHonoursEnvProxy returns the node on PATH if it is one that reads
 // NODE_USE_ENV_PROXY for fetch(). That is 24.0.0 and later, and 22.21.0 and
 // later. See nodeUseEnvProxy.
-func nodeHonoursEnvProxy(t *testing.T) string {
+func nodeOnPathHonoursEnvProxy(t *testing.T) string {
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -50,7 +50,7 @@ func nodeHonoursEnvProxy(t *testing.T) string {
 }
 
 func TestNodeFetchUsesTheProxyNvxPutsInItsEnvironment(t *testing.T) {
-	node := nodeHonoursEnvProxy(t)
+	node := nodeOnPathHonoursEnvProxy(t)
 
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("origin-ok"))
@@ -102,7 +102,7 @@ func TestNodeFetchUsesTheProxyNvxPutsInItsEnvironment(t *testing.T) {
 // service answered a fetch with 200 before nvx set NODE_USE_ENV_PROXY=1 and
 // refused it after, until the port was listed in NO_PROXY.
 func TestNodeFetchToAPortNvxOpenedInsideTheSandboxBypassesTheProxy(t *testing.T) {
-	node := nodeHonoursEnvProxy(t)
+	node := nodeOnPathHonoursEnvProxy(t)
 
 	newOrigin := func(body string) (port string) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
