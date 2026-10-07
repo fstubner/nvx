@@ -105,12 +105,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entries. While the run lasts it watches the project's folders and covers
   each `.env` that is created, moved in, or replaced by your editor or
   `git checkout` within a few milliseconds. A process that reads the file in
-  that moment can still see it. A contained process that creates a `.env`
-  itself keeps the file it has open, but cannot open it again, rename it or
-  delete it. If the watch cannot start, the run says so and goes on with the
-  launch's protection. On macOS the Seatbelt profile refuses reading and writing those
-  names anywhere, so a contained tool cannot create a `.env` there either.
-  Windows is covered by the entry below.
+  that moment can still see it. A contained process cannot get around this by
+  making its own user namespace, because nvx stops it creating one. If the
+  machine runs out of file-watch slots, nvx searches the project again every
+  two seconds so a `.env` in a folder it could not watch is still covered. A
+  contained process that creates a `.env` itself keeps the file it has open, but
+  cannot open it again, rename it or delete it. If the watch cannot start, the
+  run says so and goes on with the launch's protection. On macOS the Seatbelt
+  profile refuses reading and writing those names anywhere, so a contained tool
+  cannot create a `.env` there either. Windows is covered by the entry below.
 
 * **A contained install on Windows can no longer read the project's `.env`
   files.** At each contained launch nvx now changes the permissions of the
@@ -128,6 +131,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nvx records each file's earlier permissions, and `nvx grants reset` puts
   them back. A file nvx may not change stays readable in the sandbox, and the
   run says so and carries on. A link named `.env` is left alone.
+
+* **When a host refuses the sandbox its namespaces on Linux, the message now
+  says what happened and what to do.** On default Docker and AppArmor-hardened
+  Ubuntu the kernel refuses the sandbox its user and network namespaces, so a
+  contained command fails closed and does not run. That part is right, but the
+  message was `Landlock sandbox execution failed: fork/exec ...: operation not
+  permitted`, which named neither the cause nor a fix. nvx now says it could not
+  create the sandbox, names the AppArmor restriction that usually causes it, and
+  points to `nvx doctor` for how to fix it or `--no-sandbox` to run without
+  containment. The command still does not run.
 
 * **On Windows, `yarn` classic installs in a project under your user profile
   even when you have a `~/.yarnrc` or `~/.npmrc`.** yarn reads those files from

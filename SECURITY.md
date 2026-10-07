@@ -284,7 +284,10 @@ These are deliberate trade-offs, and this section documents each one:
   change stays readable, with a warning. On every platform a contained process
   cannot read the project's `.env` or `.env.*` files, except the templates
   `.env.example`, `.env.sample`, `.env.template` and `.env.dist`. On Linux and
-  Windows that covers the files present when the run starts.
+  Windows that covers the files present when the run starts. On Linux it also
+  covers a file created or replaced while the run lasts, a contained process
+  cannot reach one by making a user namespace of its own, and nvx keeps covering
+  new files even when the machine runs out of file-watch slots.
   `docs/enforcement-matrix.md` note 15 has the details. Secrets outside the
   project, such as `~/.ssh`, `~/.aws` and `~/.npmrc`, stay unreachable on Windows
   and Linux. On macOS the Seatbelt profile denies reads under the home

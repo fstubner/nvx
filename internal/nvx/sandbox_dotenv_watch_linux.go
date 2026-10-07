@@ -11,8 +11,22 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
+
+// dotenvRescanInterval is how often the watcher re-searches the whole project
+// once the per-user inotify watch limit (fs.inotify.max_user_watches) is
+// exhausted and a directory can no longer be watched. Until that happens inotify
+// reports every new file and no rescan runs. After it, a new .env in an
+// unwatched folder raises no event, so the watcher re-walks the project on this
+// interval and masks what it finds, which bounds how long such a file stays
+// readable. The walk is the same bounded one the overflow path runs (capped at
+// dotenvScanLimit entries). Measured 2026-10-07 in a golang:1.23 container on
+// WSL2 kernel 6.18, with the watch limit exhausted so each watch add fails fast:
+// one rescan of a 5,400-entry project took about 16 ms, run once every 2 s, so
+// the watcher stays idle almost all the time.
+const dotenvRescanInterval = 2 * time.Second
 
 // watchDotenvFiles covers the dotenv files that appear during a run, which
 // maskDotenvFiles cannot see at launch. Long-running contained processes (dev
@@ -155,12 +169,24 @@ func (w *dotenvWatcher) run() {
 	events := make([]syscall.EpollEvent, 2)
 	buf := make([]byte, 64*1024)
 	for {
-		n, err := syscall.EpollWait(w.epoll, events, -1)
+		// Block forever until a directory could not be watched; from then on wake
+		// every dotenvRescanInterval to re-search the project, because a file in an
+		// unwatched folder raises no inotify event. The pidfd still makes EpollWait
+		// return at once when the target exits, so the timeout only fires when idle.
+		timeout := -1
+		if w.warnedFull {
+			timeout = int(dotenvRescanInterval.Milliseconds())
+		}
+		n, err := syscall.EpollWait(w.epoll, events, timeout)
 		if err == syscall.EINTR {
 			continue
 		}
 		if err != nil {
 			return
+		}
+		if n == 0 {
+			w.walk(w.workDir) // periodic rescan after watch exhaustion
+			continue
 		}
 		for _, e := range events[:n] {
 			if int(e.Fd) == w.pidfd {
