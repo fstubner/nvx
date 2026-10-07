@@ -58,6 +58,50 @@ func TestContainedProcessCannotTypeIntoTheTerminal(t *testing.T) {
 	}
 }
 
+// The /proxy case of the injection test needs a network namespace, which an
+// unprivileged Ubuntu 24.04 host refuses to configure (CAP_NET_ADMIN inside an
+// unprivileged user namespace). The supervisor then fails closed with "Network
+// isolation failed", the target never starts, and that must be a skip, not a
+// failure, since the privileged CI step runs it under sudo where it works. The
+// /open case has no namespace and skips on the mount-namespace refusal instead.
+// A genuine startup failure must still fail. See failOrSkip.
+func TestTerminalStartupSkipReasonRecognisesUnprivilegedRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		out  string
+		skip bool
+	}{
+		{
+			"network namespace refused unprivileged",
+			"✘ Network isolation failed (fail-closed): bring up loopback (install iproute2): " +
+				"exit status 2: RTNETLINK answers: Operation not permitted",
+			true,
+		},
+		{
+			"mount namespace refused unprivileged",
+			"could not unshare mount namespace: operation not permitted",
+			true,
+		},
+		{
+			"a genuine failure is not skipped",
+			"panic: the target crashed on startup",
+			false,
+		},
+		{
+			"a network error that is not a permission refusal is not skipped",
+			"Network isolation failed (fail-closed): bring up loopback: no such device",
+			false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, skip := terminalStartupSkipReason(tc.out)
+			if skip != tc.skip {
+				t.Errorf("terminalStartupSkipReason(%q) skip=%v, want %v", tc.out, skip, tc.skip)
+			}
+		})
+	}
+}
+
 // terminalTypeInto is the target. It tries to type into its terminal, and into a
 // pseudo-terminal of its own, and writes what each attempt returned.
 func terminalTypeInto(dir string) int {

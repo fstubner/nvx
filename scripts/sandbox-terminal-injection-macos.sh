@@ -13,17 +13,21 @@
 #
 # The attempt runs on a real controlling terminal, built with forkpty so the
 # process that runs the probe is the session leader and the pty is its
-# controlling terminal, as a user's shell is. Node cannot call ioctl, so the
-# contained node spawns the runner's python3, which inherits the Seatbelt sandbox
-# (a child does, unlike something launchd starts) and the controlling tty on
-# fd 0.
+# controlling terminal, as a user's shell is. The ioctl is done by a small C
+# helper compiled here, not by a script runtime: /usr/bin/python3 on a runner is
+# an Xcode shim that writes an xcrun cache outside the sandbox's writable paths,
+# so it misbehaves contained. node is what nvx contains, so the contained node
+# spawns the helper, which inherits the Seatbelt sandbox (a child does, unlike
+# something launchd starts) and the controlling tty on fd 0. The helper path is
+# passed as an argument, not an environment variable, because nvx scrubs the
+# environment of a contained process.
 #
 # Two runs, like the launch-escape probe: once UNCONTAINED as the positive
 # control, which must inject, and once contained, which must be refused. A
 # contained refusal only counts when the control proved the vector works on this
-# runner, because macOS restricts TIOCSTI itself (non-root needs the fd readable
-# and the controlling terminal), and a refusal from a vector that never works
-# here would say nothing about the sandbox.
+# runner, because macOS restricts TIOCSTI itself (XNU tty.c: a non-root caller
+# needs the fd readable and its controlling terminal), and a refusal from a
+# vector that never works here would say nothing about the sandbox.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -34,7 +38,8 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 0
 fi
 [[ -x "$NVX" ]] || { echo "Build nvx first: go build -o nvx ./cmd/nvx" >&2; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo "python3 not available; skipping the terminal-injection probe." >&2; exit 0; }
+command -v python3 >/dev/null 2>&1 || { echo "python3 not available to host the controlling terminal; skipping." >&2; exit 0; }
+command -v cc >/dev/null 2>&1 || { echo "cc not available to build the probe; skipping." >&2; exit 0; }
 
 PROJ="$(mktemp -d)"
 export NVX_HOME="$(mktemp -d)"
@@ -56,26 +61,39 @@ if ! "$NVX" -y install 22 >/dev/null 2>&1 || ! "$NVX" -y default 22 >/dev/null 2
   exit 1
 fi
 
-# TIOCSTI is _IOW('t', 114, char) = 0x80017472 on macOS. The probe tries to type
-# one byte into its own stdin and says what the ioctl returned. no-tty means its
-# stdin was not a terminal, so the attempt proved nothing.
-cat > tiocsti.py <<'PY'
-import os, fcntl, sys
-TIOCSTI = 0x80017472
-if not os.isatty(0):
-    print("TIOCSTI=no-tty"); sys.exit(0)
-try:
-    fcntl.ioctl(0, TIOCSTI, b"X")
-    print("TIOCSTI=ok")
-except OSError as e:
-    print("TIOCSTI=err:%d:%s" % (e.errno, os.strerror(e.errno)))
-PY
+# The ioctl, in C so it needs no script runtime at run time. TIOCSTI comes from
+# the system headers (sys/ttycom.h via sys/ioctl.h), so the number is the
+# kernel's own. It types one byte into its stdin and says what the ioctl
+# returned; no-tty means stdin was not a terminal, so the attempt proved nothing.
+cat > tiocsti.c <<'C'
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <errno.h>
+#include <string.h>
+int main(void) {
+    if (!isatty(0)) { printf("TIOCSTI=no-tty\n"); fflush(stdout); return 0; }
+    char c = 'X';
+    if (ioctl(0, TIOCSTI, &c) == 0) printf("TIOCSTI=ok\n");
+    else printf("TIOCSTI=err:%d:%s\n", errno, strerror(errno));
+    fflush(stdout);
+    return 0;
+}
+C
+cc -o tiocsti tiocsti.c || { echo "FAIL: could not build the probe helper." >&2; exit 1; }
 
-# The contained side: node is what nvx contains, so node spawns python3. python3
-# inherits the sandbox and the controlling tty on fd 0.
+# The contained side: node is what nvx contains, so node spawns the helper. The
+# helper inherits the sandbox and the controlling tty on fd 0. Its path is
+# resolved against the working directory, which is the sandbox's own view of the
+# project, because a bare name would be searched on PATH.
 cat > run_tiocsti.js <<'JS'
 const { spawnSync } = require('child_process');
-const r = spawnSync('/usr/bin/python3', [process.env.TIOCSTI_PY], { stdio: ['inherit', 'inherit', 'inherit'] });
+const path = require('path');
+const arg = process.argv[2];
+if (!arg) { console.log('TIOCSTI=no-helper-arg'); process.exit(1); }
+const helper = path.resolve(arg);
+const r = spawnSync(helper, [], { stdio: ['inherit', 'inherit', 'inherit'] });
+if (r.error) { console.log('TIOCSTI=spawn-error:' + (r.error.code || r.error.message)); process.exit(1); }
 process.exit(r.status === null ? 1 : r.status);
 JS
 
@@ -121,18 +139,16 @@ def run(argv):
 run(sys.argv[1:])
 PY
 
-export TIOCSTI_PY="$PROJ/tiocsti.py"
-
 # Line the probe prints, pulled out of whatever else the pty carried.
 result_of() { grep -oE 'TIOCSTI=[^[:space:]]*' <<<"$1" | tail -1; }
 
-echo "== control: uncontrolled python3 on a controlling terminal =="
-control_raw="$(python3 harness.py python3 "$TIOCSTI_PY" 2>&1)"
+echo "== control: the helper on a controlling terminal, uncontained =="
+control_raw="$(python3 harness.py ./tiocsti 2>&1)"
 control="$(result_of "$control_raw")"
 echo "control: ${control:-<none>}"
 
-echo "== contained: nvx --strict shim node, which spawns python3 =="
-contained_raw="$(python3 harness.py "$NVX" -y --strict shim node "$PROJ/run_tiocsti.js" 2>&1)"
+echo "== contained: nvx --strict shim node, which spawns the helper =="
+contained_raw="$(python3 harness.py "$NVX" -y --strict shim node run_tiocsti.js tiocsti 2>&1)"
 contained="$(result_of "$contained_raw")"
 echo "contained: ${contained:-<none>}"
 

@@ -401,16 +401,42 @@ func (r *terminalRun) waitExit(limit time.Duration) bool {
 	}
 }
 
-// failOrSkip ends a test whose chain did not start. Ubuntu 24.04 refuses a mount
-// namespace inside an unprivileged user namespace, and that is a skip.
+// failOrSkip ends a test whose chain did not start. Two unprivileged-host
+// refusals are a skip, not a failure, because the privileged CI step runs the
+// same cases under sudo where neither fires.
+//
+//   - Ubuntu 24.04 refuses a mount namespace inside an unprivileged user
+//     namespace (AppArmor), so the supervisor cannot give the sandbox its own
+//     /proc. The open-mode cases hit this.
+//   - The same host lets an unprivileged user namespace be created but refuses
+//     CAP_NET_ADMIN inside it, so the supervisor's bringUpLoopback gets EPERM
+//     and fails closed with "Network isolation failed". A network-mode case
+//     (proxy, loopback, offline) hits this before it reaches the mount namespace.
+//     requireNamespaceSupport cannot catch it, because creating the namespace
+//     succeeds and only configuring it inside is refused.
 func (r *terminalRun) failOrSkip(why string) {
 	r.t.Helper()
 	out := r.out.String()
-	if strings.Contains(out, "unshare mount namespace") && strings.Contains(out, "operation not permitted") {
-		r.t.Skipf("this host refuses a mount namespace inside an unprivileged user namespace "+
-			"(Ubuntu 24.04 AppArmor), and the privileged CI step covers it:\n%s", out)
+	if reason, skip := terminalStartupSkipReason(out); skip {
+		r.t.Skipf("%s, and the privileged CI step covers it:\n%s", reason, out)
 	}
 	r.t.Fatalf("%s\noutput:\n%s", why, out)
+}
+
+// terminalStartupSkipReason decides whether a chain that did not start was
+// refused by this host's unprivileged limits (a skip) rather than broken (a
+// failure). Pure so it can be tested without a host that refuses, which the
+// machine these are written on is not. See failOrSkip.
+func terminalStartupSkipReason(out string) (string, bool) {
+	lower := strings.ToLower(out)
+	switch {
+	case strings.Contains(out, "unshare mount namespace") && strings.Contains(lower, "operation not permitted"):
+		return "this host refuses a mount namespace inside an unprivileged user namespace (Ubuntu 24.04 AppArmor)", true
+	case strings.Contains(out, "Network isolation failed") && strings.Contains(lower, "operation not permitted"):
+		return "this host refuses the sandbox's network namespace setup unprivileged " +
+			"(Ubuntu 24.04 AppArmor restricts CAP_NET_ADMIN in an unprivileged user namespace)", true
+	}
+	return "", false
 }
 
 // runTerminalRole runs one role of the chain when this process is one, and does
