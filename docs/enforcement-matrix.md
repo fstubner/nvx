@@ -1102,6 +1102,12 @@ way. In `offline` mode the seccomp filter denies the sandbox every IP socket, so
 a server cannot listen. `listen` fails with `EPERM`, and `--expose` is refused
 with a warning.
 
+The tunnel dials the contained server only when the first bytes of a request
+arrive, so a server that speaks first shows nothing until the client does.
+Measured the same day with a contained server that wrote a greeting on connect,
+the client saw nothing in 4 seconds and got the greeting after it sent one line.
+An HTTP client speaks first, and the dev server above answered it.
+
 On macOS nothing has measured a contained server. The Seatbelt profile grants no
 `network-bind` in `proxy` or `offline` mode, on purpose
 (`TestSeatbeltGrantsLoopbackOnlyWhereTheModeMeansIt`), so a contained server may
