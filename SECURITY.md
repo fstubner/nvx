@@ -679,8 +679,9 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   shows what is currently granted and `nvx grants reset` withdraws it immediately.
 
   Three cases are not automatic. `nvx grants reset --all`, which sweeps every
-  project, clears the first. It can only report the other two, because in both
-  it no longer knows which permission it would be removing.
+  project, clears the first. It can only report the second, because it no longer
+  knows which permission it would be removing, and the third when the record
+  has no directory ID, as below.
 
   The identity is derived from the project root, so *moving* that root leaves the
   permission granted under the old identity unreconciled. The root is the nearest
@@ -698,10 +699,17 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   The third is a granted directory that is **renamed**. The permission is attached
   to the directory, so it travels with it. nvx's record still names the old path.
 
-  nvx cannot follow it and does not pretend to. It reports that the directory is
-  gone, and that the permission moved with it if it was renamed and not deleted.
-  It leaves you to remove it at the new location with `icacls`.
-  Moving a granted directory is worth avoiding for that reason.
+  A record now keeps the directory's file ID beside the path, and `nvx grants
+  reset` follows it. It finds a renamed or moved directory by that ID and
+  withdraws the permission where it is now. It finds that a deleted one is gone,
+  and has nothing to withdraw. A record from before IDs were kept gets one the next
+  time a contained run starts in that project with the directory still in
+  `allow_read_exec`. Until then, and on a volume that gives no IDs, nvx cannot
+  follow it and does not pretend to. It
+  reports that the directory is gone, and that the permission moved with it if it
+  was renamed and not deleted. It leaves you to remove it at the new location with
+  `icacls`, and `reset` exits non-zero. Moving a granted directory is worth
+  avoiding for that reason.
 
   A fourth case needs nothing cleaned up but is worth knowing about. A directory
   nvx granted read/execute may later be used as a working directory by the same
