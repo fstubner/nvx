@@ -189,4 +189,10 @@ func TestProbeContainedNodeStartsWhenItsFileLacksTheSandboxEntry(t *testing.T) {
 	if !strings.Contains(out, "PROBE node ran") {
 		t.Fatalf("contained node did not start (%v):\n%s", err, out)
 	}
+	// Started from this node.exe, not from a staged copy of its folder. A copy
+	// starts too, which is how this passed with the temp folder spelled in 8.3
+	// names while the launch failed to see the runtime as nvx's.
+	if !appContainerHasGrantFor(runtimeCap, nodeExe, grantReadExec) {
+		t.Error("node ran, but node.exe still lacks the sandbox's read and execute; the launch went around it")
+	}
 }

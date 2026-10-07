@@ -15,6 +15,10 @@ var procQueryFullProcessImageNameW = modKernel32.NewProc("QueryFullProcessImageN
 // which process to stop. A process this user may not query is not listed. If
 // one of those is running from dir, the delete stops on its file, and the
 // rename in removeInstalledVersion keeps that outcome consistent.
+//
+// Both sides go through comparablePath. Windows reports an image path the way
+// the process was started, so a node.exe started by an 8.3 spelling was not
+// found under the long one.
 func processesRunningFrom(dir string) []runningProcess {
 	const th32csSnapProcess = 0x00000002
 	const processQueryLimitedInformation = 0x1000
@@ -24,6 +28,7 @@ func processesRunningFrom(dir string) []runningProcess {
 	}
 	defer syscall.CloseHandle(syscall.Handle(snap))
 
+	root := comparablePath(dir)
 	var found []runningProcess
 	var entry processEntry32W
 	entry.Size = uint32(unsafe.Sizeof(entry))
@@ -40,7 +45,7 @@ func processesRunningFrom(dir string) []runningProcess {
 		if ok == 0 {
 			continue
 		}
-		if image := syscall.UTF16ToString(buf[:size]); isPathStrictlyUnder(image, dir) {
+		if image := syscall.UTF16ToString(buf[:size]); isPathStrictlyUnder(comparablePath(image), root) {
 			found = append(found, runningProcess{Name: image, PID: entry.ProcessID})
 		}
 	}

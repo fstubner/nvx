@@ -636,12 +636,31 @@ func isNvxManagedRuntimePath(nvxHome, cmdPath string) bool {
 	if nvxHome == "" {
 		return false
 	}
-	versionsRoot := filepath.Join(nvxHome, "versions")
-	rel, err := filepath.Rel(versionsRoot, cmdPath)
+	versionsRoot := comparablePath(filepath.Join(nvxHome, "versions"))
+	rel, err := filepath.Rel(versionsRoot, comparablePath(cmdPath))
 	if err != nil {
 		return false
 	}
 	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
+}
+
+// comparablePath spells path the way filepath.EvalSymlinks does, with links
+// resolved and 8.3 short names expanded, so two spellings of one folder compare
+// equal. A path that cannot be resolved is returned cleaned, as given.
+//
+// ensureAppContainerCommand resolves the command with EvalSymlinks and then
+// asks whether it lies under the nvx home, which is spelled however NVX_HOME
+// or the temp folder spelled it. On GitHub's Windows runners TEMP is
+// C:\Users\RUNNER~1\..., and EvalSymlinks answers C:\Users\runneradmin\..., so
+// the two never matched. pnpm from a version's npm_global was sent to staging
+// and refused with "is not in a Node or Bun install", and every other runtime
+// was copied for the sandbox where a grant would do. Reproduced with TEMP set
+// to an 8.3 alias of a local folder.
+func comparablePath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
 }
 
 func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {

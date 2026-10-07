@@ -659,6 +659,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   folder, so nothing cleared it. It now checks the file it is about to start and
   gives it the permission the folder already holds.
 
+* **On Windows, a runtime under an `NVX_HOME` spelled with 8.3 short names is
+  used where it is.** nvx resolves the command it is about to start to long
+  names, and compared that with the home as spelled, so a home such as
+  `C:\Users\RUNNER~1\...` never matched its own runtimes. Each one was copied
+  into nvx's folder for the sandbox, and pnpm from a version's `npm_global` was
+  refused. Measured 2026-10-07 with a short alias of a local folder, the copy
+  for Node 22.23.3 was 99 MB in 2024 files. Both spellings now compare equal,
+  and uninstall finds a `node.exe` started by either one.
+
 ## [0.7.0] - 2026-10-06
 
 ### Added
