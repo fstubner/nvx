@@ -88,7 +88,11 @@ type EgressProxy struct {
 	promptMu sync.Mutex
 	session  map[string]bool
 	prompted map[string]bool
-	cancel   context.CancelFunc
+	// allowAudited holds the host:port keys whose first connection in this run has
+	// been written to the audit log as an egress_allow. A sync.Map because every
+	// connection is its own goroutine and the first one to a host is a race.
+	allowAudited sync.Map
+	cancel       context.CancelFunc
 	// upstream is the user's own proxy, which allowed connections go through.
 	// nil dials directly. See egress_upstream.go.
 	upstream *upstreamProxy
@@ -387,7 +391,7 @@ func (p *EgressProxy) admit(hp hostPort, resolve func(string) ([]net.IP, error))
 	// via allow_hosts"). network.mode "loopback" is the exception, because
 	// permitting exactly these is the entire definition of that mode.
 	if isLoopback(hp.host) && mode == "loopback" {
-		return p.resolveAdmitted(hp, key, resolve)
+		return p.admitAllowed(hp, key, allowRuleModeLoopback, resolve)
 	}
 	// offline is no network at all, as README.md defines it, and that includes
 	// hosts the allowlist names. The allowlist was consulted before this check,
@@ -405,7 +409,7 @@ func (p *EgressProxy) admit(hp hostPort, resolve func(string) ([]net.IP, error))
 	keys := allowKeysFor(hp)
 	for _, k := range keys {
 		if p.allow[k] {
-			return p.resolveAdmitted(hp, key, resolve)
+			return p.admitAllowed(hp, key, p.allowRule(k), resolve)
 		}
 	}
 	if mode == "loopback" {
@@ -500,6 +504,52 @@ func (p *EgressProxy) resolveAdmitted(hp hostPort, key string, resolve func(stri
 		return nil, false
 	}
 	return ips, true
+}
+
+// The rules an egress_allow audit record can name. They are the settings a person
+// can open and change, so a reader of the log knows where to look.
+const (
+	allowRuleDefaultAllow = "default_allow"
+	allowRuleAllowHosts   = "allow_hosts"
+	allowRuleModeLoopback = "mode_loopback"
+)
+
+// admitAllowed finishes admitting a destination the policy allows. It resolves
+// the name once, as resolveAdmitted does, and records the first connection this
+// run makes to it. See auditAllowOnce.
+func (p *EgressProxy) admitAllowed(hp hostPort, key, rule string, resolve func(string) ([]net.IP, error)) ([]net.IP, bool) {
+	ips, ok := p.resolveAdmitted(hp, key, resolve)
+	if ok {
+		p.auditAllowOnce(key, rule)
+	}
+	return ips, ok
+}
+
+// auditAllowOnce writes an egress_allow record for key, naming the rule that
+// allowed it, the first time this run reaches it and never again.
+//
+// Once, because a package manager opens many connections to one registry and a
+// record for each would bury the refusals this log is read for. A host approved
+// at the prompt is not written here. Its own record, egress_allow_prompted, was
+// written when the person answered.
+func (p *EgressProxy) auditAllowOnce(key, rule string) {
+	if _, seen := p.allowAudited.LoadOrStore(key, true); seen {
+		return
+	}
+	auditLog(p.nvxHome, "egress_allow", map[string]string{"host": key, "rule": rule})
+}
+
+// allowRule names the policy setting that put entry on the allowlist. That is
+// allow_hosts when a person listed it there, even if default_allow holds it too,
+// and default_allow for everything else on the list. Those are the shipped hosts,
+// and the runtime's own when the policy sets none.
+func (p *EgressProxy) allowRule(entry string) string {
+	for _, h := range p.policy.Isolation.Network.AllowHosts {
+		if normalizeAllowEntry(h) == entry {
+			return allowRuleAllowHosts
+		}
+	}
+	return allowRuleDefaultAllow
 }
 
 // refuseLoopbackGrant reports a local service refused on the prompt path. See
