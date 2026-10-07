@@ -12,8 +12,8 @@ the result against the uploaded `.sha256` sidecar before pushing anything
 downstream. A sidecar that disagrees with its asset fails the publish instead
 of propagating. The npm, Homebrew, Scoop and Winget jobs then check the asset's
 build provenance from `release.yml` too (`verified_sha` in
-`scripts/release/lib.sh`). The Winget job then checks that the manifest Komac
-writes carries the digest it verified.
+`scripts/release/lib.sh`). The Winget job then checks that the manifests Komac
+writes carry the digest it verified, and sends those same files.
 
 That ordering is the point, and it is easy to get backwards. Reading the
 hash out of the sidecar and writing it into a manifest verifies nothing. The

@@ -391,6 +391,14 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: ./scripts/release/check-winget-sha_test.ps1
+    # The script around that check, which also runs only during a release. Nothing
+    # is sent before the manifests are checked, a pull request that already exists
+    # is not opened twice, and a package that is not in winget-pkgs stops the job.
+    # Komac and GitHub are stand-ins.
+    - name: Winget submit test
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/release/submit-winget_test.ps1
     # The whole installer, the documented way: through Invoke-Expression. The
     # tests above reach its functions from a file, where $PSScriptRoot is set;
     # under iex it is not, and every one-line install failed on it.
