@@ -87,8 +87,8 @@ func TestWindowsSandboxNetworkOpenIsTheOnlyDirectMode(t *testing.T) {
 	}
 }
 
-// A launch with no relay carries no proxy variables, so it does not carry the one
-// that tells Node to read them either. A Node told to use a proxy that is not
+// A launch with no relay carries no proxy variables, so it does not carry the ones
+// that tell Node and Yarn to read them either. A Node told to use a proxy that is not
 // there would fail where it would otherwise have been refused by the OS with the
 // same result and a worse message.
 func TestStripProxyEnvAlsoDropsTheNodeProxySwitch(t *testing.T) {
@@ -99,6 +99,8 @@ func TestStripProxyEnvAlsoDropsTheNodeProxySwitch(t *testing.T) {
 		"ALL_PROXY=socks5://nvx:tok@127.0.0.1:2",
 		"NO_PROXY=127.0.0.1",
 		"Node_Use_Env_Proxy=1",
+		"YARN_HTTP_PROXY=http://nvx:tok@127.0.0.1:1",
+		"Yarn_Https_Proxy=http://nvx:tok@127.0.0.1:1",
 		"KEEP=me",
 	}
 	out := stripProxyEnv(in)

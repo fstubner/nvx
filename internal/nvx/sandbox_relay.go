@@ -89,10 +89,9 @@ func applyRelayProxyEnv(env []string, addr, noProxy string) []string {
 	// passed as an argument on purpose: command lines are readable machine-wide.
 	cred := proxyCredentialFromEnv(env)
 
-	out := make([]string, 0, len(env)+5)
+	out := make([]string, 0, len(env)+7)
 	for _, e := range env {
-		switch strings.ToUpper(strings.SplitN(e, "=", 2)[0]) {
-		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", nodeUseEnvProxy:
+		if isProxyEnvName(e) {
 			continue
 		}
 		out = append(out, e)
@@ -106,8 +105,10 @@ func applyRelayProxyEnv(env []string, addr, noProxy string) []string {
 		"HTTPS_PROXY="+url,
 		"http_proxy="+url,
 		"https_proxy="+url,
-		// With the variables Node reads. See nodeUseEnvProxy.
+		// With the variables Node and Yarn read. See nodeUseEnvProxy and yarnHTTPProxy.
 		nodeUseEnvProxy+"=1",
+		yarnHTTPProxy+"="+url,
+		yarnHTTPSProxy+"="+url,
 	)
 	if noProxy != "" {
 		out = append(out, "NO_PROXY="+noProxy, "no_proxy="+noProxy)

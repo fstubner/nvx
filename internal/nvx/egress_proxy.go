@@ -993,6 +993,37 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 // Bun's fetch reads the proxy variables on its own and needs no such switch.
 const nodeUseEnvProxy = "NODE_USE_ENV_PROXY"
 
+// Yarn 2 and later (Yarn Berry) ignores HTTP_PROXY and HTTPS_PROXY. Its own
+// settings, httpProxy and httpsProxy, are read from these two variables as well.
+// Without them a contained `yarn install` never asked the proxy for anything and
+// failed on its first fetch with a DNS error for registry.yarnpkg.com, which the
+// allowlist names.
+const (
+	yarnHTTPProxy  = "YARN_HTTP_PROXY"
+	yarnHTTPSProxy = "YARN_HTTPS_PROXY"
+)
+
+// proxyEnvNames are the variables nvx writes into a contained process's
+// environment to point it at the proxy. Whatever the environment already holds
+// under one of these names is removed first, so a value is never duplicated and
+// the host's own proxy settings cannot leak in.
+var proxyEnvNames = map[string]bool{
+	"HTTP_PROXY":    true,
+	"HTTPS_PROXY":   true,
+	"ALL_PROXY":     true,
+	"NO_PROXY":      true,
+	nodeUseEnvProxy: true,
+	yarnHTTPProxy:   true,
+	yarnHTTPSProxy:  true,
+}
+
+// isProxyEnvName reports whether the environment entry e is one of proxyEnvNames,
+// by name and in any letter case, as Windows compares them.
+func isProxyEnvName(e string) bool {
+	name, _, _ := strings.Cut(e, "=")
+	return proxyEnvNames[strings.ToUpper(name)]
+}
+
 // applyProxyEnv adds the proxy variables to the contained process's environment,
 // after the scrub, so the scrub's short list of names cannot take them away. Any
 // inherited value of a name set here is replaced rather than duplicated.
@@ -1002,11 +1033,9 @@ func applyProxyEnv(cleanEnv []string, proxy *EgressProxy) []string {
 	}
 	httpURL := proxy.HTTProxyURL()
 	socksURL := proxy.SOCKSProxyURL()
-	filtered := make([]string, 0, len(cleanEnv)+5)
+	filtered := make([]string, 0, len(cleanEnv)+7)
 	for _, e := range cleanEnv {
-		key := strings.ToUpper(strings.SplitN(e, "=", 2)[0])
-		switch key {
-		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", nodeUseEnvProxy:
+		if isProxyEnvName(e) {
 			continue
 		}
 		filtered = append(filtered, e)
@@ -1017,6 +1046,8 @@ func applyProxyEnv(cleanEnv []string, proxy *EgressProxy) []string {
 		"ALL_PROXY="+socksURL,
 		"NO_PROXY=127.0.0.1,localhost,::1",
 		nodeUseEnvProxy+"=1",
+		yarnHTTPProxy+"="+httpURL,
+		yarnHTTPSProxy+"="+httpURL,
 	)
 	return filtered
 }
