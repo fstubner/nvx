@@ -6,7 +6,8 @@
 # nvx at all where a working one had been. Nothing tested the download half of
 # the installer, so this runs it for real against a stub curl that serves local
 # files, with HOME pointed at a scratch directory. The same harness covers the
-# checks install.sh makes before downloading, and what it tells a fish user.
+# checks install.sh makes before downloading, the shims it writes afterwards, what
+# a login sh and zsh find in the profile it writes, and what it tells a fish user.
 #
 # Run from the repo root: sh scripts/test-install-download.sh
 set -e
@@ -26,6 +27,24 @@ sha() {
     if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
     else shasum -a 256 "$1" | awk '{print $1}'; fi
 }
+
+# The binary the stub serves. It is a script because install.sh runs the binary it
+# installs, for `init-shims`. Each call is logged with the directory it was made
+# from. `env` prints a line only bash can read, as the real one does, and
+# init-shims exits with $NVX_TEST_SHIMS_EXIT, which a case can set.
+cat > "$WORK/fake-nvx" <<'STUB'
+#!/bin/sh
+# NVX_TEST_BINARY
+echo "$PWD $*" >> "$HOME/nvx-calls.log"
+case "$1" in
+    init-shims) exit "${NVX_TEST_SHIMS_EXIT:-0}" ;;
+    env) printf '%s\n' 'PATH="${PATH//:nvx-test-absent:/:}"' 'export NVX_ENV_EVALUATED=1' ;;
+esac
+STUB
+chmod +x "$WORK/fake-nvx"
+
+# Is the installed nvx the one the stub served?
+is_new() { grep -q NVX_TEST_BINARY "$HOME/.nvx/bin/nvx"; }
 
 # The stub serves $SERVE/bin for the binary and $SERVE/sums for its .sha256,
 # and fails (as curl -f does on a 404) when the file is not there.
@@ -57,9 +76,10 @@ exec "$(command -v uname)" "\$@"
 STUB
 chmod +x "$WORK/stub/uname"
 
-# The stub gh answers like gh 2.49 or newer. It logs each call to $GH_LOG, and
+# The stub gh answers like gh 2.51 or newer. It logs each call to $GH_LOG, and
 # GH_FAIL=1 makes `attestation verify` fail, GH_OLD=1 makes it an unknown
-# command (as in gh before 2.49), GH_NOAUTH=1 makes `auth status` fail. It sits
+# command (as in gh before 2.49), GH_NOSIGNER=1 leaves --signer-workflow out of
+# its help (as in gh 2.49 and 2.50), GH_NOAUTH=1 makes `auth status` fail. It sits
 # in its own directory so a case can leave it off PATH.
 mkdir -p "$WORK/ghstub"
 cat > "$WORK/ghstub/gh" <<'STUB'
@@ -69,7 +89,11 @@ case "$1 $2" in
     "auth status") [ -z "${GH_NOAUTH:-}" ]; exit $? ;;
     "attestation verify")
         [ -z "${GH_OLD:-}" ] || exit 1
-        case " $* " in *" --help "*) exit 0 ;; esac
+        case " $* " in *" --help "*)
+            echo "Usage: gh attestation verify [<file-path> | oci://<image-uri>] [--owner | --repo]"
+            [ -n "${GH_NOSIGNER:-}" ] || echo "      --signer-workflow string   Filter to workflows that match a path"
+            exit 0 ;;
+        esac
         if [ -n "${GH_FAIL:-}" ]; then echo "stub gh: no attestation found" >&2; exit 1; fi
         exit 0 ;;
 esac
@@ -122,10 +146,10 @@ check() { # label, condition-result (0 = ok)
 export SERVE="$WORK/serve"
 
 echo "A matching checksum installs:"
-mkdir -p "$SERVE"; printf 'NEW' > "$SERVE/bin"; echo "$(sha "$SERVE/bin")  nvx" > "$SERVE/sums"
+mkdir -p "$SERVE"; cp "$WORK/fake-nvx" "$SERVE/bin"; echo "$(sha "$SERVE/bin")  nvx" > "$SERVE/sums"
 run match
 check "succeeds" "$status"
-[ "$(cat "$HOME/.nvx/bin/nvx")" = "NEW" ]; check "nvx is the new binary" $?
+is_new; check "nvx is the new binary" $?
 [ ! -e "$HOME/.nvx/bin/nvx.download" ] && [ ! -e "$HOME/.nvx/bin/nvx.sha256" ]; check "no side files left" $?
 
 echo "A mismatch is refused and leaves the previous nvx:"
@@ -144,7 +168,7 @@ run missing
 echo "A missing checksum installs with NVX_INSECURE_SKIP_CHECKSUM=1:"
 run skip NVX_INSECURE_SKIP_CHECKSUM=1
 check "succeeds" "$status"
-[ "$(cat "$HOME/.nvx/bin/nvx")" = "NEW" ]; check "nvx is the new binary" $?
+is_new; check "nvx is the new binary" $?
 
 # The three cases below put the checksum back, so each one fails, if it does,
 # for the reason it names.
@@ -153,9 +177,9 @@ echo "$(sha "$SERVE/bin")  nvx" > "$SERVE/sums"
 echo "Build provenance is checked with gh when gh can do it:"
 run prov-pass
 check "succeeds" "$status"
-grep -q "attestation verify .*nvx.download --repo fstubner/nvx" "$GH_LOG"; check "gh checked the download against fstubner/nvx" $?
+grep -q "attestation verify .*nvx.download --repo fstubner/nvx --signer-workflow fstubner/nvx/.github/workflows/release.yml" "$GH_LOG"; check "gh checked the download against release.yml in fstubner/nvx" $?
 grep -q "Build provenance verified" "$WORK/out-prov-pass"; check "says it was verified" $?
-[ "$(cat "$HOME/.nvx/bin/nvx")" = "NEW" ]; check "nvx is the new binary" $?
+is_new; check "nvx is the new binary" $?
 
 echo "A provenance failure is refused and leaves the previous nvx:"
 run prov-fail GH_FAIL=1
@@ -165,17 +189,24 @@ grep -q "no attestation found" "$WORK/out-prov-fail"; check "shows gh's own mess
 [ "$(cat "$HOME/.nvx/bin/nvx")" = "PREVIOUS" ]; check "previous nvx untouched" $?
 [ ! -e "$HOME/.nvx/bin/nvx.download" ]; check "download removed" $?
 
-echo "Without gh the check is skipped, with one line saying how to run it:"
+echo "Without gh the check is skipped, and says how to run it by hand:"
 run prov-nogh PATH="$WORK/stub:$NOGH"
 check "succeeds" "$status"
 [ "$(grep -c "Provenance check skipped" "$WORK/out-prov-nogh")" -eq 1 ]; check "one skip line" $?
-grep -q "gh attestation verify .* --repo fstubner/nvx" "$WORK/out-prov-nogh"; check "gives the command" $?
-[ "$(cat "$HOME/.nvx/bin/nvx")" = "NEW" ]; check "nvx is the new binary" $?
+grep -q "nothing has shown this download came from the release workflow" "$WORK/out-prov-nogh"; check "says nothing was shown about where the download came from" $?
+grep -q "gh attestation verify .* --repo fstubner/nvx --signer-workflow fstubner/nvx/.github/workflows/release.yml" "$WORK/out-prov-nogh"; check "gives the command, with the signer workflow" $?
+is_new; check "nvx is the new binary" $?
 
 echo "A gh that is too old, or not signed in, skips rather than fails the install:"
 run prov-old GH_OLD=1
 check "old gh succeeds" "$status"
 grep -q "Provenance check skipped" "$WORK/out-prov-old"; check "old gh says it skipped" $?
+# gh 2.49 and 2.50 have the attestation command and not --signer-workflow. Asking
+# them for it would fail the install for a reason that is not a bad download.
+run prov-nosigner GH_NOSIGNER=1
+check "gh without --signer-workflow succeeds" "$status"
+grep -q "Provenance check skipped" "$WORK/out-prov-nosigner"; check "gh without --signer-workflow says it skipped" $?
+! grep -q "attestation verify .*nvx.download" "$GH_LOG"; check "gh without --signer-workflow was not asked to verify" $?
 run prov-noauth GH_NOAUTH=1
 check "signed-out gh succeeds" "$status"
 grep -q "Provenance check skipped" "$WORK/out-prov-noauth"; check "signed-out gh says it skipped" $?
@@ -208,6 +239,48 @@ check "succeeds" "$status"
 grep -Fq "nvx env --shell=fish | source" "$HOME/.config/fish/conf.d/nvx.fish"; check "writes the fish integration to conf.d" $?
 grep -q "source .*nvx.fish" "$WORK/out-fish"; check "prints how to load it in this shell" $?
 ! grep -q "profile has been updated" "$WORK/out-fish"; check "does not claim a profile was updated" $?
+
+echo "The shims are written, from /, before the shell profile is touched:"
+run shims
+check "succeeds" "$status"
+[ "$(grep -c "init-shims" "$HOME/nvx-calls.log")" -eq 1 ]; check "init-shims ran once" $?
+grep -q "^/ init-shims$" "$HOME/nvx-calls.log"; check "from /, so no project's shims are written too" $?
+
+echo "A failing shim step stops the install and leaves the profile alone:"
+run shims-fail NVX_TEST_SHIMS_EXIT=1
+[ "$status" -ne 0 ]; check "fails" $?
+grep -q "creating the nvx shims failed" "$WORK/out-shims-fail"; check "says the shims failed" $?
+[ ! -e "$HOME/.profile" ] && [ ! -e "$HOME/.bashrc" ]; check "no profile written" $?
+
+echo "A login sh can read the profile this wrote:"
+# SHELL=/bin/sh takes the branch that writes ~/.profile, which every login sh reads.
+run loginsh
+check "succeeds" "$status"
+DASH="$(command -v dash || true)"
+if [ -n "$DASH" ]; then
+    # Reads ~/.profile, as a login dash does, and not /etc/profile, which belongs to
+    # the machine: Git for Windows' fails under dash before it reaches ours.
+    got=$(env -i HOME="$HOME" PATH=/usr/bin:/bin "$DASH" -c '. "$HOME/.profile"; command -v nvx' 2>&1 || true)
+    [ "$got" = "$HOME/.nvx/bin/nvx" ]; check "dash reads ~/.profile and finds nvx" $?
+elif [ -n "${CI:-}" ] && [ "$(uname -s)" = "Linux" ]; then
+    echo "  FAIL dash is not installed, so a login sh did not read the profile"; fail=1
+else
+    echo "  skip dash is not installed here, so a login sh did not read the profile"
+fi
+
+echo "zsh gets the PATH line in ~/.zprofile as well as the block in ~/.zshrc:"
+run zsh SHELL=/usr/bin/zsh
+check "succeeds" "$status"
+grep -Fq ".nvx/bin" "$HOME/.zprofile"; check ".zprofile has the PATH line" $?
+! grep -q "nvx env" "$HOME/.zprofile"; check ".zprofile has no integration line" $?
+grep -q "nvx env" "$HOME/.zshrc"; check ".zshrc has the integration" $?
+ZSH_BIN="$(command -v zsh || true)"
+if [ -n "$ZSH_BIN" ]; then
+    got=$(env -i HOME="$HOME" PATH=/usr/bin:/bin "$ZSH_BIN" -lc 'command -v nvx' 2>&1 || true)
+    [ "$got" = "$HOME/.nvx/bin/nvx" ]; check "zsh -lc finds nvx" $?
+else
+    echo "  skip zsh is not installed here, so zsh -lc was not run"
+fi
 
 if [ "$fail" -ne 0 ]; then
     echo "install.sh download checks failed" >&2

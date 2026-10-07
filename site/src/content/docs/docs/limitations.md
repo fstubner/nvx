@@ -29,6 +29,57 @@ and the evidence and measurements for each platform are in the
   `isolation.filesystem.provider: docker` with the default `network.mode: proxy`
   is refused. Docker runs `offline` and `loopback` with no network at all, and
   `open` unfiltered. Use the native provider for an egress allowlist.
+- **Only some Node programs follow the proxy.** nvx sets `NODE_USE_ENV_PROXY=1`
+  beside `HTTP_PROXY` and `HTTPS_PROXY`. Node reads it for `fetch` from 24.0.0,
+  for `http` and `https` as well from 24.5.0, and for all three from 22.21.0.
+  Earlier releases ignore it, so a request from one connects directly and the
+  sandbox refuses it. Bun's `fetch` follows the proxy variables with no help. A
+  request that carries its own agent, such as `agent: false`, ignores them on
+  every version, and so does a raw socket. Yarn 2 and later ignores them too. It
+  reads `YARN_HTTP_PROXY` and `YARN_HTTPS_PROXY`, which nvx sets to the same
+  address. Node 22.23.2 prints `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is
+  experimental` to stderr when a process with the variable set exits. nvx adds
+  `--disable-warning=UNDICI-EHPA` to `NODE_OPTIONS` when the command it runs
+  lives in a Node it installed and that Node reads the variable. A command found
+  elsewhere on your `PATH`, such as a `yarn` you installed yourself, still prints
+  it.
+- **A request to `localhost`, `127.0.0.1` or `::1` goes to the proxy only when
+  the policy lets the proxy reach this machine.** By default nvx lists those
+  names in `NO_PROXY`, so a request to one connects directly. On Windows and on
+  Linux the sandbox has a loopback of its own, so that reaches what runs in the
+  sandbox and nothing on your machine. A server and a client in one sandbox
+  reach each other. Measured on both with Node 22.23.2, `fetch` and `http.get`
+  each returned 200 from a server in the same sandbox, by `127.0.0.1` and by
+  `localhost`. A request to a service on your machine that no policy entry names
+  fails. Measured with `fetch`, it failed with `ECONNREFUSED` on Linux and
+  `ETIMEDOUT` on Windows, and nvx printed nothing, because the proxy never saw
+  it.
+
+  An `allow_hosts` or `default_allow` entry for one of those names, or
+  `network.mode: loopback`, changes that. nvx leaves the names off `NO_PROXY`,
+  and a request that follows the proxy variables goes to the proxy, which dials
+  the service on your machine. A server and a client in one sandbox then reach
+  each other only on a port nvx opened, with `--connect` or `--expose`. Measured
+  on Windows and on Linux with Node 22.23.2 under `network.mode: loopback`,
+  `fetch` to a server in the same sandbox was rejected and `http.get` received
+  405. nvx lists the ports it opened in `NO_PROXY` by number, which Node reads
+  and npm does not. Any
+  other loopback port goes to the proxy, which refuses it unless the policy names
+  it or the mode is `loopback`. A request with its own agent, and a raw socket,
+  connect directly in every case. macOS shares your machine's loopback, so nvx
+  always lists the names there.
+- **The proxy refuses a plain `http://` request in proxy form.** It tunnels with
+  CONNECT and speaks SOCKS5. A client that sends it a plain `http://` request
+  gets `405 Method Not Allowed`. `https://` requests work. So does Node's `fetch`
+  for both schemes, because it tunnels. Measured with Node 22.23.2, `http.get`
+  to an `http://` address received 405. So did the npm that ships with it, on
+  Windows, for an `http://` registry on this machine that `allow_hosts` named.
+  Reach such a registry with `--connect`, and leave loopback entries out of the
+  policy. npm matches `NO_PROXY` by host name and ignores the port, so with a
+  loopback entry it sends a request to a `--connect` port to the proxy as well.
+  Measured on Windows and on Linux, a contained `npm view` of a package on an
+  `http://` registry opened with `--connect` returned the version under the
+  default policy and failed with `E405` under a policy with a loopback entry.
 
 ## Windows
 

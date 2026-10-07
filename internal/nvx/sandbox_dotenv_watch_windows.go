@@ -30,6 +30,12 @@ import (
 // with and can finish writing it, but cannot open it again afterwards. macOS
 // refuses the create itself.
 //
+// The watch reacts to a file that already exists, so a new .env is open to the
+// sandbox for milliseconds. Measured 2026-10-07 on Windows 11 26300, a
+// contained node process polling for the file read it in ten of ten trials. The
+// launch scan has no such gap, as it runs before the contained process does.
+// docs/enforcement-matrix.md note 15 has the numbers.
+//
 // Best effort, like the launch. If the watch cannot start, the run goes ahead
 // with one line saying so. stop ends the watch and returns once nothing of it
 // is left running.
@@ -63,6 +69,11 @@ type dotenvWatch struct {
 	ov             syscall.Overlapped
 	buf            []byte
 	done           chan struct{}
+
+	// recorded is set once the project's record is full (see
+	// maxProtectedDotenv): the files that have a record, by dotenvKey. Only
+	// those are looked at from then on.
+	recorded map[string]bool
 
 	// mu orders issuing a read against stop's cancel. Without it a read issued
 	// just after the cancel would wait for good, and stop with it.
@@ -128,12 +139,12 @@ func (w *dotenvWatch) run() {
 		switch {
 		case errors.Is(err, errorNotifyEnumDir) || (err == nil && n == 0):
 			found, _ := findDotenvFiles(w.scope, dotenvScanLimit)
-			protectDotenvFiles(w.nvxHome, w.scope, found)
+			w.protect(found)
 		case err != nil:
 			LogWarn("Stopped watching %s for new .env files, so one created during the rest of this run stays readable in the sandbox until the next launch: %v", w.scope, err)
 			return
 		default:
-			protectDotenvFiles(w.nvxHome, w.scope, w.dotenvFilesIn(w.buf[:n]))
+			w.protect(w.dotenvFilesIn(w.buf[:n]))
 		}
 
 		w.mu.Lock()
@@ -161,6 +172,30 @@ func (w *dotenvWatch) stop() {
 	<-w.done
 	syscall.CloseHandle(w.event)
 	syscall.CloseHandle(w.dir)
+}
+
+// protect hides found from the sandbox. Once the project's record is full it
+// warns, once, and from then on looks only at files that already have a record,
+// which an editor or git may still replace. A contained process creating files
+// by the thousand then costs nothing further, and nothing more is written.
+func (w *dotenvWatch) protect(found []string) {
+	if w.recorded != nil {
+		found = slices.DeleteFunc(found, func(p string) bool { return !w.recorded[dotenvKey(p)] })
+	}
+	if !protectDotenvFiles(w.nvxHome, w.scope, found) || w.recorded != nil {
+		return
+	}
+	warnDotenvCap(w.scope)
+	w.recorded = map[string]bool{}
+	for _, r := range loadProjectGrants(w.nvxHome, w.scope).ProtectedDotenv {
+		w.recorded[dotenvKey(r.Path)] = true
+	}
+}
+
+// dotenvKey is how a path is compared with a recorded one: the way
+// sameGrantPath does, with the case folded so it can be a map key.
+func dotenvKey(path string) string {
+	return strings.ToLower(filepath.Clean(path))
 }
 
 // dotenvFilesIn returns the dotenv files a batch of change records names: the

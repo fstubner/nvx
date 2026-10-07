@@ -219,11 +219,12 @@ and the macOS smoke's contained `npm install` and the launch-escape probe
 passed (run 37514151891).
 
 **Which layer refuses.** `EGRESS=DENIED` alone does not say. The probe's
-request is a direct one (Node's classic `https` API ignores `HTTPS_PROXY`, so
-it never reaches the proxy), and it needs a lookup first, which the resolver
+request is a direct one, and it needs a lookup first, which the resolver
 checks above show refused. `TCP_DIRECT` connects to an address, with no lookup,
 and the kernel refuses it with EPERM. So each layer refuses on its own. This
-was left open until 2026-10-06.
+was left open until 2026-10-06. Node's `https` API ignored `HTTPS_PROXY` when
+those runs were taken. nvx now sets `NODE_USE_ENV_PROXY=1`, which Node's default
+agent follows, so the probe passes `agent: false` to keep its request direct.
 
 This footnote read "nobody has checked" until 2026-08-23. Before that the
 only macOS check in CI was `scripts/sandbox-smoke-macos.sh`, which asserted that a
@@ -698,9 +699,9 @@ how you notice they changed.
 asserts the same five outcomes as the Linux probe (writes and reads denied
 outside, both allowed inside, egress denied with an empty allowlist). It also runs
 on a real Windows machine before a release (see CONTRIBUTING.md). It runs in
-CI as well, where it now gets as far as its assertions. It still detects the two
-refusals a host is known to give and skips. So a runner image that refuses again
-shows up as a skip in the step's log.
+CI as well, where it now gets as far as its assertions. It detects the two
+refusals a host is known to give. It skips on a developer machine and fails on
+GitHub Actions, so a runner image that refuses again turns the step red.
 
 Two things it deliberately does not cover. First, egress denial there is
 direct-connection only. The AppContainer holds no network capability, so the
@@ -778,6 +779,13 @@ could ask on its own behalf for the developer's local database. Localhost is
 exactly where the services that take no credentials live. nvx now refuses a
 loopback destination that is not already allowlisted, without asking, and points at
 `allow_hosts` and `--connect`.
+
+A literal link-local address gets the same refusal, for the same reason.
+169.254.169.254 is the cloud metadata endpoint, and one unauthenticated request
+there returns credentials. A policy entry that names the address still allows it.
+A name that resolves to a link-local address was already refused, after the
+lookup. `TestALiteralLinkLocalAddressIsNeverOfferedAtThePrompt` covers IPv4, the
+IPv4-mapped form and IPv6.
 
 Approving any other host at the prompt lasts for
 that run only. nvx used to write it into the grants store for ever.
@@ -1026,13 +1034,11 @@ provider mounts the project as it is.
   the project with `ReadDirectoryChangesW` and changes each such file as it
   appears, along with a `.env` created or moved in, outside `node_modules` and
   `.git`. When Windows reports that changes were lost, it searches the whole
-  project again. Measured 2026-10-07 on Windows 11 26300, a new or replaced
-  `.env` was changed between 4 and 13 ms after it appeared, and a contained
-  process can open it in that time. A contained process that creates a `.env`
-  itself keeps the handle it created it with. It can finish writing the file
-  and cannot open it again. If the watch cannot start, the run goes on with a
-  warning and the next launch changes the file. A launch that finds every file
-  already changed reads permissions and writes none. Each changed file is recorded with its earlier permissions in the
+  project again. A contained process that creates a `.env` itself keeps the
+  handle it created it with. It can finish writing the file and cannot open it
+  again. If the watch cannot start, the run goes on with a warning and the next
+  launch changes the file. A launch that finds every file already changed reads
+  permissions and writes none. Each changed file is recorded with its earlier permissions in the
   project's grant record under `~/.nvx/grants`, and `nvx grants reset` puts
   them back, unless someone changed them again since. A file nvx may not
   change, such as one the user does not own, stays readable, with a warning,
@@ -1043,6 +1049,46 @@ provider mounts the project as it is.
   `.env.example` and `package.json`. `TestWatchHidesNewDotenvFromRunningProcess`
   (NVX_PROBE=1) has a running contained node process read a `.env` created and
   then replaced after its launch.
+
+  **The change is not instant, and a process that is watching for the file gets
+  in first.** nvx reacts to a file that already exists. Measured 2026-10-07 on
+  Windows 11 26300, a new `.env` was readable to a contained process for 6.14,
+  11.16, 4.31, 3.41 and 3.77 ms in five trials, and between 4.3 and 33.1 ms in
+  twelve more. A `.env` replaced by renaming a new file over it was readable for
+  between 6.3 and 25.5 ms in twelve trials. A contained node process that polled
+  `fs.readFileSync('.env')` in a loop read the new file in ten of ten trials. So
+  a secret written into the project during a long contained run can be read by
+  that process. A file that exists when the run starts is changed before the
+  contained process starts, so the launch has no such gap. Linux has the same
+  gap, at the figures above, and macOS has none, because it refuses the read by
+  name.
+
+  **A hard link is changed like any other file.** It is the same file as its
+  other names, so every name gets the new permissions. That is what a `.env`
+  shared between two git worktrees by a hard link needs. What would matter is a
+  contained process linking a file it may not change, because nvx would then
+  change that file's permissions.
+  `TestContainedProcessCannotLinkDotenvToAFileItCannotWrite` (NVX_PROBE=1)
+  measured on 2026-10-07 on Windows 11 26300 that a contained node process
+  linked a file it wrote in the project and one in its own home, and was
+  refused with `EPERM` for the node runtime's `LICENSE`, `.git\config` and
+  System32's `hosts`, which it can only read.
+
+  **nvx hides at most 200 `.env` files per project.** A project holds a
+  handful, and the most under any project in `H:\projects` on 2026-10-07 was 2.
+  A contained process can create dotenv files too, and every batch the watch
+  handles reads and rewrites the project's whole record. Before there was a
+  limit, 800 files handled one per batch took 90.53 s, against 0.64 s handled
+  as one batch, and 3000 files created in a loop left a 3,550,994 byte record.
+  With the limit, 3000 files leave 237,396 bytes. A launch looks at the first
+  200 files it finds. The watch protects new files until the record holds 200,
+  warns once, and from then on looks only at files that already have a record,
+  so one an editor replaces is hidden again and a flood of new names costs
+  almost nothing. The rest stay readable, with a warning at each launch. A
+  contained process that creates 200 files uses up the allowance, and a `.env`
+  created after that stays readable until the extra files are deleted and the
+  next run starts. `TestProtectDotenvFilesStopsAtTheCap` and
+  `TestWatchDotenvFilesStopsAtTheCap` cover it, with the limit lowered to 5.
 
   Deny entries and integrity labels do not work here. On 2026-08-18 a deny
   entry on `.env` for the container's SID and for ALL APPLICATION PACKAGES left

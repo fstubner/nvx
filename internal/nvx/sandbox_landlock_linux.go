@@ -538,7 +538,7 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = applyRelayProxyEnv(os.Environ(), proxyEnvAddr)
+	cmd.Env = applyRelayProxyEnv(os.Environ(), proxyEnvAddr, inSandboxNoProxy(a))
 	if workDir != "" {
 		cmd.Dir = workDir
 	}

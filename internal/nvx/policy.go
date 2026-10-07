@@ -464,6 +464,8 @@ func normalizePolicy(p *Policy) {
 	if len(p.Isolation.Network.DefaultAllow) == 0 && !p.Isolation.Network.DefaultAllowSet {
 		p.Isolation.Network.DefaultAllow = DefaultPolicy().Isolation.Network.DefaultAllow
 	}
+	warnWildcardAllowEntries("isolation.network.default_allow", p.Isolation.Network.DefaultAllow)
+	warnWildcardAllowEntries("isolation.network.allow_hosts", p.Isolation.Network.AllowHosts)
 	// prompts.* is not defaulted either, for the same reason and with a sharper
 	// edge: defaulting it wrote a value that reads as a security decision
 	// ("non_interactive": "deny") into every policy while nothing consulted it.
@@ -1406,4 +1408,40 @@ func warnUnknownNetworkModeOnce(mode string) {
 	}
 	LogWarn("Unrecognized isolation.network.mode %q in policy; using proxy (allowlisted egress).", mode)
 	LogInfo("Valid modes: proxy, offline, loopback, open.")
+}
+
+// allowEntryHostHasWildcard reports whether the host part of an allowlist entry
+// ("host", "host:port" or "host:*") contains a '*'.
+//
+// A '*' as the port is the one wildcard there is. The allowlist is compared with
+// the exact host name a client asks for (see allowKeysFor), and no client sends a
+// name with a '*' in it, so "*.example.com" reads like a subdomain wildcard and
+// matches nothing at all, not even example.com. Everything to that domain was
+// refused, and nothing said why.
+func allowEntryHostHasWildcard(entry string) bool {
+	host := strings.TrimSpace(entry)
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		host = host[:i]
+	}
+	return strings.Contains(host, "*")
+}
+
+// warnedWildcardAllowEntries remembers which entries this process has reported.
+// normalizePolicy runs more than once per command, and the same warning twice
+// reads as two problems.
+var warnedWildcardAllowEntries sync.Map
+
+// warnWildcardAllowEntries says, once per entry, that an entry with a '*' in its
+// host matches no host. It does not remove the entry. The entry stays as written,
+// so `nvx policy explain` shows the file.
+func warnWildcardAllowEntries(field string, entries []string) {
+	for _, entry := range entries {
+		if !allowEntryHostHasWildcard(entry) {
+			continue
+		}
+		if _, seen := warnedWildcardAllowEntries.LoadOrStore(field+" "+entry, true); seen {
+			continue
+		}
+		LogWarn("%s lists %q, which matches no host. nvx compares host names exactly and does not expand *, so list each host in full, such as registry.example.com:443.", field, entry)
+	}
 }

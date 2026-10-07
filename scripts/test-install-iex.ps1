@@ -66,4 +66,14 @@ if ($LASTEXITCODE -ne 0 -or $version -notmatch '^nvx version ') {
     Write-Error "The installed nvx did not run: $version"
     exit 1
 }
+# The shims come from the installer itself. It used to leave them for the first
+# PowerShell profile that ran `nvx env`, so a first terminal that never loaded
+# one had nvx on PATH and nothing to intercept with.
+foreach ($shim in 'node.exe', 'npm.exe', 'npx.exe', 'bun.exe', 'bunx.exe') {
+    $path = Join-Path (Join-Path $HOME '.nvx') (Join-Path 'bin' $shim)
+    if (-not (Test-Path $path)) {
+        Write-Error "install.ps1 through Invoke-Expression left no $shim shim at $path."
+        exit 1
+    }
+}
 Write-Host "install.ps1 through Invoke-Expression installed: $version"

@@ -167,6 +167,12 @@ install and run scripts. Its defenses are layered:
    `http://`, `https://` or `socks5h://` proxy resolves the name itself, so
    nvx's link-local check covers only what nvx's own resolver returned. A
    `socks5://` proxy is sent the addresses nvx resolved and checked.
+   `audit.log` records each host a contained run reaches through the allowlist,
+   once for each host and port in a run, with the setting that allowed it. It
+   records every refusal too. nvx sets `NODE_USE_ENV_PROXY=1`, so Node's own
+   `fetch`, `http` and `https` follow the proxy on the Node versions that read
+   it. That is a convenience. The operating system refuses a direct connection
+   whether or not a program follows the proxy variables.
 
 **Design stance.** Security-relevant failures **fail closed**. If a sandbox
 primitive is unavailable or a policy cannot be parsed, nvx refuses to run the
@@ -268,7 +274,15 @@ These are deliberate trade-offs, and this section documents each one:
   policy file or `--connect`. The prompt is raised by whatever the sandbox is
   running, which is the untrusted code. Localhost is where the services that take
   no credentials listen. So a postinstall must not be able to ask for the
-  developer's database. Approving any other host at that prompt lasts for the current run and
+  developer's database.
+
+  A literal link-local address gets the same refusal. 169.254.169.254 is the
+  cloud metadata endpoint, where one unauthenticated request returns
+  credentials, and the code asking would be the untrusted code. Only an
+  `allow_hosts` entry that names the address allows it. A name that resolves to
+  a link-local address is refused after you approve it.
+
+  Approving any other host at that prompt lasts for the current run and
   is no longer recorded.
 
 - **On Windows, a loopback exemption left by a pre-0.5.0 `nvx setup` opens every
@@ -292,16 +306,29 @@ These are deliberate trade-offs, and this section documents each one:
   contained launch nvx gives each `.env` and `.env.*` file a permission list
   that does not inherit from the project folder and has no entry for a
   sandboxed process. Every other entry is kept, so you read and edit the file
-  as before. `nvx grants reset` puts the earlier permissions back. A file an
-  editor or `git checkout` replaces is readable to a contained process that is
-  already running, until the next launch changes it again. A file nvx may not
-  change stays readable, with a warning. On every platform a contained process
-  cannot read the project's `.env` or `.env.*` files, except the templates
-  `.env.example`, `.env.sample`, `.env.template` and `.env.dist`. On Linux and
-  Windows that covers the files present when the run starts. On Linux it also
-  covers a file created or replaced while the run lasts, a contained process
-  cannot reach one by making a user namespace of its own, and nvx keeps covering
-  new files even when the machine runs out of file-watch slots.
+  as before. `nvx grants reset` puts the earlier permissions back. While a
+  contained process runs, nvx watches the project and does the same to each
+  `.env` that appears, such as one an editor or `git checkout` replaces. That
+  takes milliseconds, and a contained process can read the file in that time.
+  Measured 2026-10-07 on Windows 11 26300, a new `.env` stayed readable for
+  between 3.4 and 11.2 ms in five trials and up to 33.1 ms in twelve more, and
+  a replaced one for between 6.3 and 25.5 ms in twelve. A contained node
+  process that polled for a new `.env` read it in ten of ten trials. So a
+  secret written into the project during a long contained run can be read. A
+  `.env` that exists when the run starts is not affected. Linux has the same
+  gap, and macOS does not, because it refuses the read by name. nvx hides at
+  most 200 `.env` files per project. A contained process could otherwise
+  create thousands and keep nvx busy. Past 200, nvx warns and leaves the rest
+  readable. A contained process that creates 200 files uses up that allowance,
+  and a `.env` you create after that stays readable until you delete the extra
+  files and start the next run. A file nvx may not change stays readable, with
+  a warning. On every platform a contained process cannot read the project's
+  `.env` or `.env.*` files, except the templates `.env.example`,
+  `.env.sample`, `.env.template` and `.env.dist`. On Linux and Windows that
+  covers the files present when the run starts, and the files that appear
+  during it apart from the gap above. On Linux a contained process cannot
+  reach one by making a user namespace of its own, and nvx keeps covering new
+  files even when the machine runs out of file-watch slots.
   `docs/enforcement-matrix.md` note 15 has the details. Secrets outside the
   project, such as `~/.ssh`, `~/.aws` and `~/.npmrc`, stay unreachable on Windows
   and Linux. On macOS the Seatbelt profile denies reads under the home

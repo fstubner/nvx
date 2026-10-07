@@ -117,44 +117,141 @@ function Test-NvxAffirmative {
     return $Answer -match '^\s*(y|yes)\s*$'
 }
 
-# Optional second check on a downloaded binary. The .sha256 file comes from the
-# same release as the binary, so it cannot tell a replaced release from a real
-# one. The build attestation is signed by release.yml and checked against
-# GitHub. It needs gh 2.49 or newer (the attestation command) and a signed-in
-# gh, so a gh that cannot run it skips the check instead of failing the install.
-# A gh that runs it and reports a failure throws.
+# Does the signer's subject name the expected publisher? Both the common name
+# and the organization must match exactly, and each must appear once.
+#
+# Decode with UseNewLines puts one name part on each line and keeps the quotes
+# round a value that holds a comma. A part smuggled inside such a value
+# therefore cannot equal a plain "CN=..." or "O=..." line, which a search
+# through the one-line Subject string would have found. A part joined to
+# another with a + shares their line, and that does not match either.
+# A value holding a line break splits into lines of its own, some of which look
+# like name parts, so any subject with a line break in it is refused first.
+function Test-NvxSignerName {
+    param(
+        [Parameter(Mandatory)]$Certificate,
+        [Parameter(Mandatory)][string]$CommonName,
+        [Parameter(Mandatory)][string]$Organization
+    )
+    if ($Certificate.Subject -match '[\r\n]') { return $false }
+    $flag = [System.Security.Cryptography.X509Certificates.X500DistinguishedNameFlags]::UseNewLines
+    $parts = @($Certificate.SubjectName.Decode($flag) -split '\r?\n')
+    return (@($parts -ceq "CN=$CommonName").Count -eq 1) -and (@($parts -ceq "O=$Organization").Count -eq 1)
+}
+
+# Throws unless the file carries a valid Authenticode signature from the nvx
+# publisher. The release workflow signs nvx.exe with a Certum certificate. The
+# checksum comes from the same release page as the file, and the attestation
+# check needs gh, which many machines lack. This check needs nothing installed,
+# and a replaced release cannot pass it without the publisher's key.
+#
+# The publisher is pinned by the certificate's CN and O and not by thumbprint,
+# so a renewed certificate for the same publisher keeps working. Read from the
+# 0.7.0 nvx.exe on 2026-10-07: "CN=Open Source Developer Felix Stubner, O=Open
+# Source Developer, L=Cork, S=Munster, C=IE", issued by Certum Code Signing 2021
+# CA. This script is served from main and checks the LATEST release, so if
+# signing ever moves to another name, change the two values below in a commit
+# that is live before that release is published. Until then the new release is
+# refused.
+#
+# An unsigned file is refused. Every release from 0.7.0 on is signed, because
+# release.yml cannot publish without its signing job, and the installer fetches
+# only the latest release. Skipping an unsigned one instead would let a replaced
+# release pass by dropping the signature. The parameters exist so a test can ask
+# the same question about a file signed by someone else. The install never
+# passes them.
+function Assert-NvxSignedByPublisher {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$CommonName = 'Open Source Developer Felix Stubner',
+        [string]$Organization = 'Open Source Developer'
+    )
+    $signature = Get-AuthenticodeSignature -FilePath $Path
+    if ($signature.Status -ne 'Valid') {
+        throw ("nvx.exe has no valid Authenticode signature (status $($signature.Status)). " +
+            "Releases from 0.7.0 on are signed, so this is not a file the release workflow built. " +
+            "If the status is NotTrusted, this machine may not trust Certum's certificates.")
+    }
+    $subject = $signature.SignerCertificate.Subject
+    if (-not (Test-NvxSignerName -Certificate $signature.SignerCertificate -CommonName $CommonName -Organization $Organization)) {
+        throw "nvx.exe is signed by '$subject', which is not the nvx publisher (CN=$CommonName, O=$Organization)."
+    }
+    Write-Host "Authenticode signature verified: $subject"
+}
+
+# Second check on a downloaded binary, when gh can make it. The .sha256 file
+# comes from the same release as the binary, so it cannot tell a replaced
+# release from a real one. The build attestation is signed by release.yml and
+# checked against GitHub. Only an attestation made by release.yml counts, as in
+# scripts/release/lib.sh: without --signer-workflow, one from any workflow in
+# this repository would pass.
+#
+# gh has to be signed in and new enough. The attestation command arrived in gh
+# 2.49 and --signer-workflow in 2.51, so the help text is asked for the flag. A
+# gh that cannot make the check skips it. A gh that makes it and reports a
+# failure, or cannot reach GitHub, throws.
 function Test-NvxProvenance {
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][string]$InstalledPath
     )
-    $hint = "gh attestation verify $InstalledPath --repo fstubner/nvx"
+    $signerWorkflow = 'fstubner/nvx/.github/workflows/release.yml'
+    $hint = "gh attestation verify $InstalledPath --repo fstubner/nvx --signer-workflow $signerWorkflow"
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-        Write-Host "Provenance check skipped: gh is not installed. To run it later: $hint"
+        Write-Host "Provenance check skipped: gh is not installed, so nothing has shown this download came from the release workflow."
+        Write-Host "  The checksum only shows it matches its release page. To check by hand, install gh 2.51 or newer,"
+        Write-Host "  sign in with 'gh auth login', then run: $hint"
         return
     }
     # gh writes progress to stderr, which Stop turns into a terminating error.
     $ErrorActionPreference = 'Continue'
-    & gh attestation verify --help *> $null
-    $canVerify = ($LASTEXITCODE -eq 0)
+    $help = & gh attestation verify --help 2>&1 | Out-String
+    $canVerify = ($LASTEXITCODE -eq 0) -and ($help -match '--signer-workflow')
     if ($canVerify) {
         & gh auth status *> $null
         $canVerify = ($LASTEXITCODE -eq 0)
     }
     if (-not $canVerify) {
-        Write-Host "Provenance check skipped: gh is too old or not signed in. To run it later: $hint"
+        Write-Host "Provenance check skipped: gh is older than 2.51 or not signed in, so nothing has shown this download came from the release workflow."
+        Write-Host "  The checksum only shows it matches its release page. To check by hand, update gh,"
+        Write-Host "  sign in with 'gh auth login', then run: $hint"
         return
     }
     Write-Host "Verifying build provenance..."
-    $output = & gh attestation verify $Path --repo fstubner/nvx 2>&1 | Out-String
+    $output = & gh attestation verify $Path --repo fstubner/nvx --signer-workflow $signerWorkflow 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
         throw "Provenance verification failed: $($output.Trim())"
     }
     Write-Host "Build provenance verified."
 }
 
-# Verifies a downloaded nvx.exe against its published SHA-256 and moves it into
-# place, or throws and leaves Destination as it was.
+# Writes the shims into the bin directory. They are what put nvx in front of npm,
+# node and the rest. Nothing else wrote them until a PowerShell profile first ran
+# `nvx env`, so a first terminal that never loads one (cmd, Git Bash, a declined
+# execution-policy change, an agent started from a GUI app) had nvx on PATH and
+# nothing to intercept with.
+#
+# Run from the Windows directory, because `init-shims` also writes shims for the
+# project it is run in, and an install should not do that for whichever folder
+# the installer happened to be started from.
+function Initialize-NvxShims {
+    param([Parameter(Mandatory)][string]$NvxExe)
+    # nvx writes its progress to stderr, which Stop turns into a terminating error.
+    $ErrorActionPreference = 'Continue'
+    Push-Location $env:SystemRoot
+    try {
+        & $NvxExe init-shims
+        if ($LASTEXITCODE -ne 0) {
+            throw "nvx init-shims exited $LASTEXITCODE."
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
+# Verifies a downloaded nvx.exe against its published SHA-256, its Authenticode
+# signature and, when gh can, its build provenance, and moves it into place, or
+# throws and leaves Destination as it was.
 #
 # The download goes to a side path so a failed check never leaves an unverified
 # binary where the shims will run it. It used to be written straight to
@@ -186,6 +283,8 @@ function Install-NvxDownloadedBinary {
         } else {
             throw "Checksum file not available. Refusing to install without verification."
         }
+        # Not skippable. -AllowMissingChecksum is about the checksum file only.
+        Assert-NvxSignedByPublisher -Path $DownloadPath
         Test-NvxProvenance -Path $DownloadPath -InstalledPath $Destination
         Move-Item -Path $DownloadPath -Destination $Destination -Force
     } finally {
@@ -257,7 +356,17 @@ if ($useLocalBinary -and $localBinary -and (Test-Path $localBinary)) {
     }
 }
 
-# 2. Update PATH environment variables for User
+# 2. Create the shims, before PATH changes.
+#
+# So they exist whenever PATH takes effect, and so a failure leaves PATH and the
+# profile as they were.
+try {
+    Initialize-NvxShims -NvxExe (Join-Path $binDir "nvx.exe")
+} catch {
+    throw "Creating the nvx shims failed, so PATH and your profile were not changed. nvx.exe is in $binDir. $_"
+}
+
+# 3. Update PATH environment variables for User
 if (Set-NvxUserPath -BinDir $binDir) {
     Write-Host "Adding nvx paths to your User environment variables..."
     Send-NvxEnvironmentChange
@@ -265,11 +374,11 @@ if (Set-NvxUserPath -BinDir $binDir) {
 # Update current session path
 $env:PATH = "$binDir;$env:PATH"
 
-# 3. PowerShell execution policy.
+# 4. PowerShell execution policy.
 #
 # Load-bearing rather than a nicety: under Restricted -- the default on Windows
 # client editions -- PowerShell refuses to load $PROFILE at all, so the
-# integration line written in step 4 never runs and nvx never sees a shell.
+# integration line written in step 5 never runs and nvx never sees a shell.
 # RemoteSigned is the narrowest policy that allows it, and the CurrentUser scope
 # leaves the machine policy alone.
 #
@@ -310,7 +419,7 @@ if (Test-NvxProfileBlockedByPolicy -Policy $policy) {
     }
 }
 
-# 4. Add shell integration to PowerShell Profile
+# 5. Add shell integration to PowerShell Profile
 if (-not (Test-Path $PROFILE)) {
     Write-Host "Creating PowerShell profile..."
     $profileDir = Split-Path $PROFILE

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -46,20 +47,55 @@ func startProxyRelay(ctx context.Context, sockPath string) (addr string, stop fu
 	return ln.Addr().String(), func() { _ = ln.Close() }, nil
 }
 
+// inSandboxNoProxy names the loopback ports nvx itself opened inside the sandbox,
+// as NO_PROXY entries: the in-sandbox end of each --connect tunnel and each port
+// published with --expose.
+//
+// They are endpoints in the sandbox, so a request to one that went to the proxy
+// would be asking nvx to dial the same number on this machine, and could only be
+// refused or reach something else. A client that follows the proxy variables
+// needs telling. Node's fetch and http do since nvx sets NODE_USE_ENV_PROXY=1.
+// Measured on Linux with Node 22.23.2, a --connect service answered 200 before that
+// and 405 (http.get) or a rejection (fetch) after. Node reads host:port entries.
+//
+// They matter when the policy has the proxy admit loopback. NO_PROXY then leaves
+// loopback off, so every other loopback destination goes to the proxy, which is
+// how allow_hosts and network.mode loopback reach a service on this machine.
+// Otherwise the parent's NO_PROXY already lists all of loopback. See applyProxyEnv.
+func inSandboxNoProxy(a supervisorExecArgs) string {
+	var ports []int
+	for _, m := range a.ConnectPorts {
+		ports = append(ports, m.Inside)
+	}
+	ports = append(ports, a.ExposePorts...)
+	var entries []string
+	for _, port := range ports {
+		if port <= 0 {
+			continue
+		}
+		n := strconv.Itoa(port)
+		entries = append(entries, "127.0.0.1:"+n, "localhost:"+n)
+	}
+	return strings.Join(entries, ",")
+}
+
 // applyRelayProxyEnv points the standard proxy variables at the relay address.
 // An empty addr means no relay is in use (network.mode=open), in which case any
 // inherited proxy settings are stripped rather than left to leak host config in.
-func applyRelayProxyEnv(env []string, addr string) []string {
+// inSandbox lists more NO_PROXY entries to add to the parent's, and "" adds none.
+func applyRelayProxyEnv(env []string, addr, inSandbox string) []string {
 	// The parent's proxy URL carries this session's credential. Carry it across to
 	// the relay address, or the target would talk to the relay anonymously and the
 	// parent proxy would answer 407. It is read from the environment rather than
 	// passed as an argument on purpose: command lines are readable machine-wide.
 	cred := proxyCredentialFromEnv(env)
+	// The parent's NO_PROXY is its decision about loopback, made where the policy
+	// is known. Whatever the environment held before nvx set it was removed there.
+	noProxy := strings.Trim(noProxyFromEnv(env)+","+inSandbox, ",")
 
-	out := make([]string, 0, len(env)+4)
+	out := make([]string, 0, len(env)+7)
 	for _, e := range env {
-		switch strings.ToUpper(strings.SplitN(e, "=", 2)[0]) {
-		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY":
+		if isProxyEnvName(e) {
 			continue
 		}
 		out = append(out, e)
@@ -68,12 +104,30 @@ func applyRelayProxyEnv(env []string, addr string) []string {
 		return out
 	}
 	url := "http://" + cred + addr
-	return append(out,
+	out = append(out,
 		"HTTP_PROXY="+url,
 		"HTTPS_PROXY="+url,
 		"http_proxy="+url,
 		"https_proxy="+url,
+		// With the variables Node and Yarn read. See nodeUseEnvProxy and yarnHTTPProxy.
+		nodeUseEnvProxy+"=1",
+		yarnHTTPProxy+"="+url,
+		yarnHTTPSProxy+"="+url,
 	)
+	if noProxy != "" {
+		out = append(out, "NO_PROXY="+noProxy, "no_proxy="+noProxy)
+	}
+	return out
+}
+
+// noProxyFromEnv returns the value of NO_PROXY, or "" when it is not set.
+func noProxyFromEnv(env []string) string {
+	for _, e := range env {
+		if name, value, ok := strings.Cut(e, "="); ok && strings.EqualFold(name, "NO_PROXY") {
+			return value
+		}
+	}
+	return ""
 }
 
 // proxyCredentialFromEnv pulls the "user:pass@" userinfo out of whichever proxy

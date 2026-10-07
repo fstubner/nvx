@@ -43,6 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   updates, and Bun's binary `bun.lockb` are checked on what they name or
   declare, as before.
 
+* **The audit log records the hosts a contained run reaches.** It held the
+  hosts a run was refused and the ones you approved at the prompt, so a
+  contained install that reached `registry.npmjs.org` left nothing behind. Each
+  host and port the policy allows now gets an `egress_allow` record at its first
+  connection in a run, and no more after that. The record names the setting that
+  allowed it, `default_allow`, `allow_hosts` or `mode_loopback`, and `nvx audit`
+  prints it as `rule=`. A host you approve at the prompt keeps its own
+  `egress_allow_prompted` record.
+
 * **`--expose` publishes a contained server's port on Linux.** A contained
   server on Linux was unreachable from your machine, and the docs said it
   needed no flag. Outside `network.mode: open` the sandbox has a network
@@ -62,6 +71,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   say it is not measured.
 
 ### Changed
+
+* **`install.ps1` refuses an `nvx.exe` that is not signed by the nvx
+  publisher.** The `.sha256` file comes from the same release page as the
+  binary, and the build attestation is only checked when `gh` is installed and
+  signed in, so a replaced release could pass both. After the checksum, the
+  installer now reads the Authenticode signature of the download. The
+  signature must be valid, and the signer must be the certificate issued to
+  "Open Source Developer Felix Stubner". Both its common name and its
+  organization are checked, and its thumbprint is not, so a renewed
+  certificate under the same name keeps working. An unsigned file is refused,
+  and so is a file signed by anyone else. Every release from 0.7.0 on is
+  signed, and the installer only fetches the latest release, so no release it
+  can reach is refused for being old. `-InsecureSkipChecksum` does not skip
+  this check. The local-binary install is not checked.
+
+* **Both installers accept only a build attestation made by the release
+  workflow.** They ran `gh attestation verify` with `--repo fstubner/nvx`
+  alone, which also accepts an attestation from any other workflow in the
+  repository. They now add `--signer-workflow
+  fstubner/nvx/.github/workflows/release.yml`, as the publish scripts already
+  did. That flag arrived in gh 2.51, so the check needs gh 2.51 or newer where
+  it needed 2.49. An older gh skips the check and says so. A signed-in gh that
+  runs the check and reports a failure stops the install, as before. The line
+  printed when the check is skipped now says that nothing has shown where the
+  download came from, and gives the full command to run by hand.
 
 * **`nvx setup` on Windows now only removes what older versions left.** It no
   longer grants the sandbox access to drive roots and Users folders. Measured
@@ -87,6 +121,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   why and changes nothing. `nvx doctor` points at `nvx setup` for this.
 
 ### Fixed
+
+* **After `install.sh`, a login `sh` no longer stops at `~/.profile`.** The
+  profile ran `eval "$(nvx env)"`, which prints bash syntax. On Debian and
+  Ubuntu the login `sh` is dash, which stopped at `${PATH//...}` with `eval:
+  Bad substitution`, so anything that started `sh -l` broke for as long as nvx
+  was installed. Measured 2026-10-07 on Debian 12 with dash 0.5.12, reading the
+  old profile exited 2 and reading the new one exits 0 with `nvx` found. The
+  eval line now runs only in bash and zsh. The `PATH` line above it is plain
+  `sh`, so a login `sh` still finds the shims. Running the installer again
+  replaces the old line in an existing profile and keeps the previous contents
+  in a `.nvx-backup` file beside it. Only the exact line `eval "$(nvx env)"` is
+  replaced, so a line you wrote yourself is left alone.
+
+* **Both installers write the shims.** The shims put nvx in front of `node`,
+  `npm`, `npx`, `corepack`, `pnpm`, `yarn`, `bun` and `bunx`. Neither installer
+  wrote them. They appeared only when a shell profile first ran `nvx env`, so a
+  Windows user whose first terminal was Git Bash or cmd, a user who declined
+  the execution policy change, and an agent started from a GUI app all had nvx
+  on `PATH` and no shims. `npm` then ran with no protection and nothing said
+  so. Both installers now run `nvx init-shims` before they change `PATH` or
+  the profile, and stop with an error if it fails. It runs from `/` or the
+  Windows directory, so it does not write shims for the project the installer
+  was started in.
+
+* **zsh login shells get nvx on `PATH`.** For zsh, `install.sh` wrote only
+  `~/.zshrc`. Measured 2026-10-07 with zsh 5.9, `zsh -lc` reads `~/.zprofile`
+  and not `~/.zshrc`, so a tool that started a shell that way found no `nvx`.
+  The installer now also writes the `PATH` line, and nothing else, to
+  `~/.zprofile`. The integration stays in `~/.zshrc`, which interactive shells
+  read.
 
 * **Abbreviated npm commands are contained and checked.** npm accepts any
   unambiguous prefix of a command, and camelCase, so `npm exe` is `npm exec`,
@@ -193,14 +257,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the entries that let sandboxed processes in. You read and edit it as before.
   While the contained process runs, nvx watches the project and changes each
   `.env` file that is created, moved in, or replaced by an editor or
-  `git checkout` as it appears. So a dev server, MCP server or strict-mode
-  shell that runs for hours cannot read a `.env` that appeared after it
-  started. A contained process that creates a `.env` itself can finish
-  writing it, and cannot open it again afterwards. macOS refuses the create
-  itself. A launch that finds every file already changed writes nothing.
-  nvx records each file's earlier permissions, and `nvx grants reset` puts
-  them back. A file nvx may not change stays readable in the sandbox, and the
-  run says so and carries on. A link named `.env` is left alone.
+  `git checkout` as it appears. That takes milliseconds, and a process
+  that polls for a new `.env` reads it in that time. Measured 2026-10-07 on
+  Windows 11 26300, a contained node process did in ten of ten trials. Apart
+  from that gap, a dev server, MCP server or strict-mode shell that runs for
+  hours cannot read a `.env` that appeared after it started. A contained
+  process that creates a `.env` itself can finish writing it, and cannot open
+  it again afterwards. macOS refuses the create itself. A launch that finds
+  every file already changed writes nothing. nvx records each file's earlier
+  permissions, and `nvx grants reset` puts them back. A file nvx may not
+  change stays readable in the sandbox, and the run says so and carries on. A
+  link named `.env` is left alone, and a hard link is changed under every
+  name, because it is one file. nvx hides at most 200 `.env` files per project.
+  Past that it warns once and leaves the rest readable in the sandbox, so a
+  contained process that creates thousands cannot make nvx rewrite its record
+  without end.
 
 * **When a host refuses the sandbox its namespaces on Linux, the message now
   says what happened and what to do.** On default Docker and AppArmor-hardened
@@ -242,6 +313,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fresh name under a wildcard domain before the change and was refused after
   it, with `localhost` still resolving and a contained `npm install` still
   working through the proxy.
+
+* **Untrusted code can no longer ask for the cloud metadata address at the
+  prompt.** A contained process that asked for `169.254.169.254`, or any other
+  literal link-local address, got the same question as any unknown host, and a
+  yes gave it the address. nvx already refused a name that resolves there, and
+  refused a literal `127.0.0.1` at the prompt for the same reason. A literal
+  address in 169.254.0.0/16 or fe80::/10, the IPv4-mapped form included, is now
+  refused without asking, as a literal `127.0.0.1` is. An `allow_hosts` entry
+  that names the address still allows it, and the audit log records the refusal
+  as `egress_deny_link_local_prompt`.
+
+* **Node's built-in `fetch` works inside the sandbox.** Node ignores
+  `HTTP_PROXY` and `HTTPS_PROXY` for `fetch`, `http` and `https` unless
+  `NODE_USE_ENV_PROXY=1` is set, so a contained program using them connected
+  directly and was refused, even for a host on the allowlist. Measured on
+  2026-10-07 with Node 22.23.2, a contained `fetch` to `registry.npmjs.org`
+  failed with `ENOTFOUND` on Windows and `EAI_AGAIN` on Linux. nvx now sets the
+  variable beside the proxy variables. The same `fetch` returns 200, and a host
+  off the allowlist is refused by the proxy. At an interactive terminal, a host
+  the policy does not name now reaches the unknown-host prompt. Node reads the
+  variable from 24.0.0 for `fetch`, from 24.5.0 for `http` and `https`, and from
+  22.21.0 for all three. Older releases ignore it and behave as before. Node
+  22.23.2 prints `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental` to
+  stderr when a process with the variable set exits, and a contained
+  `npm install` printed it twice. nvx adds `--disable-warning=UNDICI-EHPA` to
+  `NODE_OPTIONS` when the command lives in a Node it installed and that Node
+  reads the variable, and for no other, because the Node 18 and 19 releases
+  measured refuse to start with it. The same install now prints nothing on
+  Windows and on Linux.
+
+* **A contained npm reaches a service opened with `--connect`.** npm sent the
+  request to nvx's proxy, which does not forward a plain `http://` request and
+  answered 405. Measured on Windows and on Linux with the npm that ships with
+  Node 22, a contained `npm view` of a package on an `http://` registry opened
+  with `--connect` failed with `E405`. nvx now lists `localhost`,
+  `127.0.0.1` and `::1` in `NO_PROXY`, so a request to them connects directly,
+  and the same command prints the version. A server and a client in one sandbox
+  reach each other the same way, with Node's `fetch` and `http` as well. A
+  policy with an `allow_hosts` or `default_allow` entry for one of those names,
+  or `network.mode: loopback`, keeps the names off the list, so a request to a
+  service on your machine goes to the proxy, which dials it. A port opened with
+  `--connect` or `--expose` is then listed by number, which Node reads and npm
+  does not. macOS is unchanged. The policy and known limitations pages describe
+  the rule.
+
+* **A contained `yarn install` works with Yarn 2 and later.** Yarn 2 and later
+  ignores `HTTP_PROXY` and `HTTPS_PROXY`. It reads its own `httpProxy` and
+  `httpsProxy` settings, which `YARN_HTTP_PROXY` and `YARN_HTTPS_PROXY` also
+  set. A contained install never asked the proxy for anything and failed on its
+  first fetch with a DNS error for `registry.yarnpkg.com`, a host the allowlist
+  names. Measured with Yarn 4.18.1 and Node 22.23.2, a contained install of
+  `ms` failed with `EAI_AGAIN` on Linux and `ENOTFOUND` on Windows. nvx now sets
+  both variables to the proxy's address, and the install completes on both.
+
+* **git over HTTPS works through the proxy.** git sends its first `CONNECT`
+  with no credential and waits for a 407 to choose how to authenticate. The
+  proxy's 407 had no `Content-Length` and the proxy then closed the connection,
+  so libcurl gave up with `Proxy CONNECT aborted` for every host, the
+  allowlisted ones included. Measured on Linux with git 2.39.5, run by a
+  contained Node process, `git ls-remote https://registry.npmjs.org/ms` failed
+  that way. The 407 now carries `Content-Length: 0` and `Connection: close`, and
+  the same command reaches the host. A host off the allowlist fails with
+  `CONNECT tunnel failed, response 403`.
+
+* **A `*.example.com` entry in `allow_hosts` now says it matches nothing.** nvx
+  matches host names exactly, so an entry with a `*` in its host allowed no host,
+  not even `example.com`, and everything to that domain was refused without a
+  word. nvx now warns when it loads one, and the policy page says to list each
+  host in full. The port may still be `*`, as in `localhost:*`.
 
 * **Ctrl-C stops a contained `npx` tool or `--strict` script on Linux, and a
   contained process can read the terminal.** The contained process was started

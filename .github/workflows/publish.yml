@@ -39,10 +39,11 @@ concurrency:
   group: publish-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
-# These jobs hold four publishing tokens between them (npm, the tap, the
-# bucket, winget) and none of them needs GITHUB_TOKEN to write to this repo.
-# Read is what the checkouts need. The npm job adds id-token for itself, and
-# the npm, Homebrew and Scoop jobs add attestation read for verified_sha.
+# These jobs hold three publishing tokens between them (the tap, the bucket,
+# winget) and none of them needs GITHUB_TOKEN to write to this repo. npm
+# publishes through OIDC and has no token. Read is what the checkouts need. The
+# npm job adds id-token for itself, and the npm, Homebrew, Scoop and Winget jobs
+# add attestation read for verified_sha.
 permissions:
   contents: read
 
@@ -150,34 +151,42 @@ jobs:
   # Forks microsoft/winget-pkgs under the token owner's account, generates a
   # manifest folder from the release, opens a PR. Moderator approval lands
   # it on the public catalog.
+  #
+  # nvx.exe is checked first, as in the other three jobs: against its sidecar
+  # and against the build provenance release.yml attested (verified_sha). Komac
+  # then downloads it for itself, and what it would submit has to carry the
+  # digest that was verified.
   winget:
     name: Winget
     runs-on: windows-latest
     timeout-minutes: 30
+    # attestations, so verified_sha can check release.yml's build provenance.
+    permissions:
+      contents: read
+      attestations: read
     steps:
-      # Komac downloads nvx.exe from the release and fails fast if it is not
-      # there yet. On the `workflow_dispatch` path that can easily be true,
-      # so poll the .sha256 sidecar before running it. The sidecar is a few
-      # hundred bytes and cheap to HEAD, and release.yml uploads it in the
-      # same step as the binary.
-      - name: Wait for the Windows release asset
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+
+      # verified_sha polls for the .sha256 sidecar for up to 15 minutes before it
+      # gives up, which is what the `workflow_dispatch` path needs when the tag's
+      # release.yml run is still building. The step that used to poll for it here
+      # is not needed.
+      #
+      # GITHUB_TOKEN reads the attestation. WINGET_TOKEN stays out of this step.
+      - name: Verify the Windows release asset
+        id: verify
         shell: bash
         env:
-          TAG: ${{ env.TAG }}
+          ATTESTATION_GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          url="https://github.com/fstubner/nvx/releases/download/${TAG}/nvx.exe.sha256"
-          echo "-> ${url}"
-          for i in {1..30}; do
-            if curl -fsSL --head "$url" >/dev/null 2>&1; then
-              echo "asset present"
-              exit 0
-            fi
-            echo "  not yet; retry in 30s ($i/30)"
-            sleep 30
-          done
-          echo "asset never appeared after 15 minutes" >&2
-          exit 1
+          . scripts/release/lib.sh
+          validate_tag "$TAG"
+          sha=$(verified_sha "https://github.com/fstubner/nvx/releases/download/${TAG}" "nvx.exe")
+          echo "-> nvx.exe sha256 ${sha}"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
       # `--version` is the PackageVersion that lands in the catalog, and it
       # must not carry the tag's `v`. Passing the tag as it is would submit
@@ -216,10 +225,20 @@ jobs:
       # This was vedantmgoyal9/winget-releaser, pinned by commit. Its own
       # steps then ran cargo-bins/cargo-binstall from that project's main
       # branch and `cargo binstall komac` for whatever Komac was newest, so
-      # the pin covered none of the code that held the token. The two komac
-      # commands below are the ones that action ran, with the same inputs.
-      # The digest is the one GitHub records for the asset, and it matches
-      # the release's own SHA256SUMS.
+      # the pin covered none of the code that held the token. The submission
+      # and the cleanup below are the two komac commands that action ran, with
+      # the same inputs. The digest is the one GitHub records for the asset,
+      # and it matches the release's own SHA256SUMS.
+      #
+      # Komac downloads nvx.exe for itself and puts the hash of what it got in
+      # the manifest, so the digest verified above does not reach winget-pkgs
+      # unless the manifest carries it. A dry run writes the manifests Komac
+      # would send and sends nothing, and they are checked before the real run.
+      # The real run downloads the file again, so the manifest it sends is
+      # written out too and checked once it is done. A file replaced between the
+      # two runs then fails this step, with the pull request open for someone to
+      # close. That run writes nothing when an open pull request for this
+      # version already exists, and then there is nothing to check.
       - name: Submit nvx to microsoft/winget-pkgs
         shell: pwsh
         env:
@@ -227,6 +246,7 @@ jobs:
           KOMAC_SHA256: 'bdc45baf028f750da7519cc8a5f2eab5dfef46dfe88650eeb0d0a9bf51446e4f'
           PACKAGE_VERSION: ${{ steps.pkg.outputs.version }}
           TAG: ${{ env.TAG }}
+          VERIFIED_SHA: ${{ steps.verify.outputs.sha }}
           KOMAC_FORK_OWNER: ${{ github.repository_owner }}
           GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
         run: |
@@ -241,8 +261,20 @@ jobs:
           }
 
           $installer = "https://github.com/fstubner/nvx/releases/download/$($env:TAG)/nvx.exe"
-          & $komac update 'fstubner.nvx' --version $env:PACKAGE_VERSION --submit --urls $installer
+
+          $dryRun = Join-Path $env:RUNNER_TEMP 'winget-dry-run'
+          & $komac update 'fstubner.nvx' --version $env:PACKAGE_VERSION --urls $installer --dry-run --output $dryRun
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/release/check-winget-sha.ps1 -ManifestDirectory $dryRun -ExpectedSha256 $env:VERIFIED_SHA
+
+          $sent = Join-Path $env:RUNNER_TEMP 'winget-submitted'
+          & $komac update 'fstubner.nvx' --version $env:PACKAGE_VERSION --submit --urls $installer --output $sent
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (Test-Path $sent) {
+            ./scripts/release/check-winget-sha.ps1 -ManifestDirectory $sent -ExpectedSha256 $env:VERIFIED_SHA
+          } else {
+            Write-Host "Komac sent nothing, so there is nothing to check."
+          }
           # Deletes the fork's branches whose pull requests have merged.
           & $komac cleanup --only-merged
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -524,7 +524,8 @@ func dockerRunArgs(imageName, cwd string, config SandboxConfig, egress *EgressPr
 
 	scrubbed := scrubEnvironmentAllowing("", config.PassEnv)
 	reportEnvScrub(config.NvxHome, scrubbed)
-	cleanEnv := applyProxyEnv(scrubbed.Env, egress)
+	// Loopback in a container is the container's own, so it connects directly.
+	cleanEnv := applyProxyEnv(scrubbed.Env, egress, false)
 	for _, envVar := range cleanEnv {
 		parts := strings.SplitN(envVar, "=", 2)
 		if len(parts) == 2 && parts[0] != "PATH" && parts[0] != "NVX_SANDBOX" {
