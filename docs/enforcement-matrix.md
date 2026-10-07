@@ -59,6 +59,7 @@ and do not verify whether the kernel honours it.
 | One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | Via `allow_hosts` for proxy-aware clients, or `--connect` for one run, except in `offline`¹¹ ¹² | Via `allow_hosts` for proxy-aware clients, or `--connect` for one run¹¹ ¹² |
 | Another project's sandbox reachable over loopback | No¹⁰ (per-project package) | No (each has its own netns) | Untested |
 | A contained server reachable from the host | Only via `--expose`⁹ | Only via `--expose`¹⁶, except in `network.mode: open` | Not measured¹⁶ |
+| Processes outside the sandbox safe from its signals | Not measured¹⁷ | Yes on 6.12 and later, otherwise a process group of its own¹⁷ | Not measured¹⁷ |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
 
 ² On macOS the Seatbelt profile allows filesystem reads outside the home
@@ -538,6 +539,16 @@ A socket inside a granted path stays reachable. The granted paths are
 the project, the guest home, and below ABI v9 also the system and runtime
 directories and any `allow_read_exec` root. In `network.mode: open` the host
 resolver sockets in `/run/systemd/resolve` and `/run/nscd` stay visible too.
+
+An abstract UNIX socket has no path, so the root cannot hide it. Each network
+namespace has its own, and every mode but `network.mode: open` gives the sandbox
+a network namespace of its own. Measured 2026-10-07 on Linux 6.18, a contained
+process in `open` mode connected to an abstract socket a host process listened
+on, and to the one Xvfb listens on. In `proxy` mode both gave `ECONNREFUSED`.
+From Landlock ABI v6, Linux 6.12, the ruleset scopes abstract sockets to the
+sandbox, and in `open` mode both connections now get `EPERM`. Below ABI v6
+`open` mode still reaches them.
+`TestContainedProcessCannotReachAHostAbstractSocket` asserts the refusal.
 
 `/tmp` in that root is the guest home's `tmp` directory, the one `$TMPDIR`
 names, so a tool that hard-codes `/tmp` writes there and not to the host's. The
@@ -1160,6 +1171,41 @@ On macOS nothing has measured a contained server. The Seatbelt profile grants no
 `network-bind` in `proxy` or `offline` mode, on purpose
 (`TestSeatbeltGrantsLoopbackOnlyWhereTheModeMeansIt`), so a contained server may
 not be able to listen at all. `--expose` does nothing there.
+
+¹⁷ **On Linux 6.12 and later a contained process cannot signal anything outside
+the sandbox.** A process group reaches across the sandbox's PID namespace, and
+the contained process shares nvx's group so that Ctrl-C reaches what it starts.
+Measured 2026-10-07 on WSL2 kernel 6.18 in a privileged container, before the
+change, an npm preinstall that ran `kill(0, SIGKILL)` killed nvx, the shell that
+started it and a `sleep` that shell had started. From Landlock ABI v6 the
+ruleset scopes signals to the sandbox. The same preinstall now ends only its own
+install, and the `sleep` and the shell run on. The scope binds a sender inside
+the sandbox only. The terminal's Ctrl-C and Ctrl-Z come from the kernel, and nvx
+and the supervisor's forwarding send from outside it. The supervisor, PID 1 in
+the sandbox, can still be signalled from inside. It passes a signal it handles
+back to the contained process, and in 3 runs of 3 the kernel dropped a SIGKILL
+sent to it from inside. Measured the same day with the scope in place, over two
+runs each, `nvx npx -y http-server` and `nvx --strict npm run` stopped 0.07 to
+0.32 seconds after Ctrl-C, and Ctrl-Z followed by `fg` stopped and resumed a
+contained process. npm still stops its scripts.
+`TestContainedProcessCannotSignalOutsideItsSandbox` asserts in the privileged CI
+step that a contained `kill(0, SIGKILL)` leaves nvx and a process beside it
+running, and `TestContainedProcessNpmPassesSignalsToItsScript` that npm can
+still pass a signal to its script.
+
+Below ABI v6 nothing can scope signals, so the contained process gets a process
+group of its own and the supervisor passes the signals it gets to that whole
+group. Measured on the same kernel with nvx built to take this path,
+`nvx npx -y http-server` and `nvx --strict npm run` stopped 0.16 and 0.06
+seconds after Ctrl-C. Two things are lost there. A contained process that reads
+the terminal is stopped, and a contained `node` REPL did not answer within 8
+seconds. Ctrl-Z stopped nvx while the contained process kept running.
+`TestContainedProcessStopsOnCtrlCUnderNpm` and
+`TestContainedProcessGetsTheTerminalsInterruptOnce` run both paths.
+
+On macOS the Seatbelt profile allows the `signal` operation only with
+`(target self)`. Nothing has measured a contained process signalling another
+process there. On Windows nothing has measured it either.
 
 ## Measured costs and platform floors
 

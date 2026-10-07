@@ -36,18 +36,27 @@ import (
 // membership in it is what makes this unprivileged CLONE_NEWNS possible at all.
 // A second, nested namespace only handed the target a fresh one of its own to be
 // root in.
-func applyLinuxNamespaces(cmd *exec.Cmd, guestHome string) {
+func applyLinuxNamespaces(cmd *exec.Cmd, guestHome string, ownGroup bool) {
 	// The target keeps the process group it starts in, which is the terminal's
-	// foreground group. It had a group of its own until 2026-10-07, and that broke
-	// job control twice. Ctrl-C reached nvx and the supervisor but not the
-	// processes the target started, so `npx http-server` ran on after it. npm and
-	// sh do not pass SIGINT to their children, because at a terminal the kernel
-	// does that. And a background group that reads the terminal is stopped by
-	// SIGTTIN, so a contained `node` REPL, or any script that reads stdin from a
-	// terminal, hung. See runChildForwardingSignals for why nvx avoids a group of
-	// its own elsewhere.
+	// foreground group, unless ownGroup is set. It had a group of its own until
+	// 2026-10-07, and that broke job control twice. Ctrl-C reached nvx and the
+	// supervisor but not the processes the target started, so `npx http-server`
+	// ran on after it. sh does not pass SIGINT to its child, because at a terminal
+	// the kernel does that. And a background group that reads the terminal is
+	// stopped by SIGTTIN, so a contained `node` REPL, or any script that reads
+	// stdin from a terminal, hung. See runChildForwardingSignals for why nvx avoids
+	// a group of its own elsewhere.
+	//
+	// A process group is not inside the PID namespace, so a target in nvx's group
+	// can signal the whole of it, nvx and the shell included. The kernel stops
+	// that from Landlock ABI v6 (see landlockScopesForABI). Below v6 nothing can,
+	// so the target gets a group of its own again and the supervisor sends each
+	// signal to that whole group. Containment comes first. On those kernels a
+	// contained process that reads the terminal is stopped, and Ctrl-Z stops nvx
+	// while the contained process runs on.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWNS,
+		Setpgid:    ownGroup,
 	}
 
 	LogInfo("Linux namespace isolation active (NEWNS; user and PID namespaces owned by the supervisor)")

@@ -45,6 +45,11 @@ const (
 	// outside the Landlock domain. ABI v9.
 	landlockAccessFSResolveUnix = 1 << 16
 
+	// Scopes, ABI v6 (Linux 6.12). A scoped process cannot connect to an abstract
+	// UNIX socket, or send a signal to a process, outside its Landlock domain.
+	landlockScopeAbstractUnixSocket = 1 << 0
+	landlockScopeSignal             = 1 << 1
+
 	landlockRulePathBeneath = 1
 
 	// LANDLOCK_CREATE_RULESET_VERSION: with a null attr and zero size, the
@@ -141,8 +146,39 @@ func landlockHandledAccess() uint64 {
 	return landlockHandledAccessForABI(landlockABIVersion())
 }
 
+// landlockScopesForABI is the set of scopes the sandbox asks for. There are none
+// below ABI v6.
+//
+// The signal scope keeps a contained process from signalling anything outside
+// the sandbox. A process group spans PID namespaces, and the target shares nvx's
+// group (see applyLinuxNamespaces). Measured 2026-10-07 on Linux 6.18, a
+// contained kill(0, SIGKILL) from an npm preinstall killed nvx, the shell that
+// started it and a process that shell had started beside it. A process inside
+// the sandbox can still signal another inside it, as npm does its scripts. A
+// signal sent into the sandbox, by nvx, by the supervisor's forwarding or by the
+// terminal's Ctrl-C, is not restricted.
+//
+// The abstract socket scope matters in network.mode open, the one mode that
+// shares the host's network namespace. An abstract socket has no path for the
+// sandbox's filesystem view to hide, and every other mode has a network
+// namespace of its own, which keeps them apart. Measured the same day, a
+// contained process in open mode connected to an abstract socket a host process
+// listened on, and in proxy mode got ECONNREFUSED. Xvfb listens on one.
+func landlockScopesForABI(abi int) uint64 {
+	if abi < 6 {
+		return 0
+	}
+	return landlockScopeSignal | landlockScopeAbstractUnixSocket
+}
+
+// landlockRulesetAttr is struct landlock_ruleset_attr. The kernel copies as much
+// of it as its own ABI knows and accepts the rest when it is zero, so the one
+// layout works from Linux 5.13 on. handledAccessNet stays zero, because the
+// network namespace and seccomp decide the network.
 type landlockRulesetAttr struct {
-	handledAccessFs uint64
+	handledAccessFs  uint64
+	handledAccessNet uint64 // ABI v4
+	scoped           uint64 // ABI v6
 }
 
 type landlockPathBeneathAttr struct {
@@ -156,8 +192,16 @@ func landlockCall(trap uintptr, a1, a2, a3, a4, a5, a6 uintptr) (uintptr, syscal
 	return r, errno
 }
 
+// landlockCreateRuleset creates a ruleset that handles handledAccess and scopes
+// nothing.
 func landlockCreateRuleset(handledAccess uint64) (int, error) {
-	attr := landlockRulesetAttr{handledAccessFs: handledAccess}
+	return landlockCreateScopedRuleset(handledAccess, 0)
+}
+
+// landlockCreateScopedRuleset creates a ruleset that handles handledAccess and
+// scopes what scoped names. A kernel below ABI v6 refuses any scope.
+func landlockCreateScopedRuleset(handledAccess, scoped uint64) (int, error) {
+	attr := landlockRulesetAttr{handledAccessFs: handledAccess, scoped: scoped}
 	fd, errno := landlockCall(
 		landlockSyscallCreateRuleset(),
 		uintptr(unsafe.Pointer(&attr)),
@@ -307,9 +351,10 @@ func applyLandlockSandboxForABI(abi int, guestHome, workDir, nvxHome string, rea
 	if handled == 0 {
 		return fmt.Errorf("landlock not available: the kernel reports no Landlock ABI (Linux 5.13+ with CONFIG_SECURITY_LANDLOCK, and \"landlock\" in the lsm= list, required)")
 	}
-	fd, err := landlockCreateRuleset(handled)
+	scoped := landlockScopesForABI(abi)
+	fd, err := landlockCreateScopedRuleset(handled, scoped)
 	if err != nil {
-		return fmt.Errorf("landlock_create_ruleset (kernel ABI v%d, handled %#x): %w", abi, handled, err)
+		return fmt.Errorf("landlock_create_ruleset (kernel ABI v%d, handled %#x, scoped %#x): %w", abi, handled, scoped, err)
 	}
 	defer syscall.Close(fd)
 
@@ -525,7 +570,8 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 			warnDotenvWatch(err)
 		}
 	}
-	if err := applyLandlockSandbox(guestHome, workDir, nvxHome, a.ReadExecRoots, privateProc); err != nil {
+	abi := supervisorLandlockABI()
+	if err := applyLandlockSandboxForABI(abi, guestHome, workDir, nvxHome, a.ReadExecRoots, privateProc); err != nil {
 		LogError("Landlock isolation failed: %v", err)
 		return 1
 	}
@@ -542,7 +588,10 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	if workDir != "" {
 		cmd.Dir = workDir
 	}
-	applyLinuxNamespaces(cmd, guestHome)
+	// Where the kernel cannot scope signals, the target gets a process group of
+	// its own. See applyLinuxNamespaces.
+	ownGroup := landlockScopesForABI(abi)&landlockScopeSignal == 0
+	applyLinuxNamespaces(cmd, guestHome, ownGroup)
 
 	LogInfo("Linux Landlock + namespace isolation active")
 	// Pass nvx's termination on to the target. This process is PID 1 of its
@@ -558,10 +607,16 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	if watchMask != "" {
 		startDotenvWatcher(targetPid, workDir, watchMask, []os.FileInfo{launchMask, watchMaskInfo}, plan)
 	}
+	// In a group of its own the target gets nothing from the terminal, so each
+	// signal goes to the whole group, as the terminal would send it.
+	signalled := targetPid
+	if ownGroup {
+		signalled = -targetPid
+	}
 	go func() {
 		for sig := range sigs {
-			if out, ok := signalForTarget(sig); ok {
-				_ = syscall.Kill(targetPid, out)
+			if out, ok := signalForTarget(sig, ownGroup); ok {
+				_ = syscall.Kill(signalled, out)
 			}
 		}
 	}()
@@ -571,18 +626,27 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	return reapUntilChildExits(cmd.Process.Pid)
 }
 
+// supervisorLandlockABI is the Landlock ABI the supervisor builds the sandbox
+// for. A test replaces it to run an older kernel's sandbox on a newer one.
+var supervisorLandlockABI = landlockABIVersion
+
 // signalForTarget is what the supervisor passes to the target for a signal it
-// received, and whether it passes anything.
+// received, and whether it passes anything. ownGroup says the target runs in a
+// process group of its own (see applyLinuxNamespaces).
 //
-// A SIGINT here is the terminal's own copy of Ctrl-C. The target shares this
-// process's foreground group (see applyLinuxNamespaces), so it has the interrupt
-// already, and passing this one on delivers a second. Measured 2026-10-07, a
-// contained node counted two SIGINTs for one Ctrl-C when the supervisor passed it
-// on. nvx asks for an interrupt it forwards with supervisorInterruptSignal.
-func signalForTarget(sig os.Signal) (syscall.Signal, bool) {
+// A SIGINT here is the terminal's own copy of Ctrl-C. A target that shares this
+// process's foreground group has the interrupt already, and passing this one on
+// delivers a second. Measured 2026-10-07, a contained node counted two SIGINTs
+// for one Ctrl-C when the supervisor passed it on. A target in a group of its
+// own has nothing from the terminal, so it gets this one. nvx asks for an
+// interrupt it forwards with supervisorInterruptSignal.
+func signalForTarget(sig os.Signal, ownGroup bool) (syscall.Signal, bool) {
 	switch sig {
 	case syscall.SIGINT:
-		return 0, false
+		if !ownGroup {
+			return 0, false
+		}
+		return syscall.SIGINT, true
 	case supervisorInterruptSignal:
 		return syscall.SIGINT, true
 	}

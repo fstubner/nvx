@@ -263,6 +263,17 @@ These are deliberate trade-offs, and this section documents each one:
   A macOS runner confirms that egress is denied with an empty allowlist. That
   does not by itself prove the per-mode loopback scoping. Nothing stands up a
   loopback listener on macOS and checks which modes reach it.
+- **On Linux before 6.12, a contained process loses part of the terminal, and in
+  `network.mode: open` it can reach your abstract UNIX sockets.** From Landlock
+  ABI v6, Linux 6.12, the kernel keeps a contained process's signals and
+  abstract sockets inside the sandbox. Below that, the process runs in a process
+  group of its own, so that it cannot signal nvx and the processes beside it.
+  Ctrl-C still stops it. It is stopped if it reads the terminal, and Ctrl-Z
+  stops nvx while the process runs on. In `network.mode: open` it can connect to
+  an abstract UNIX socket that a program on your machine listens on, such as the
+  one Xvfb listens on. The other modes give it a network namespace of its own,
+  which keeps those sockets apart. The measurements are in
+  `docs/enforcement-matrix.md` (¹⁷ and ⁸).
 - **On Windows, two sandboxes in the SAME project can reach each other's
   loopback listeners.** Windows permits loopback within an AppContainer package,
   and nvx gives each project one package. Two concurrent runs of the same project
