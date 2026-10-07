@@ -680,9 +680,9 @@ how you notice they changed.
 asserts the same five outcomes as the Linux probe (writes and reads denied
 outside, both allowed inside, egress denied with an empty allowlist). It also runs
 on a real Windows machine before a release (see CONTRIBUTING.md). It runs in
-CI as well, where it now gets as far as its assertions. It still detects the two
-refusals a host is known to give and skips. So a runner image that refuses again
-shows up as a skip in the step's log.
+CI as well, where it now gets as far as its assertions. It detects the two
+refusals a host is known to give. It skips on a developer machine and fails on
+GitHub Actions, so a runner image that refuses again turns the step red.
 
 Two things it deliberately does not cover. First, egress denial there is
 direct-connection only. The AppContainer holds no network capability, so the

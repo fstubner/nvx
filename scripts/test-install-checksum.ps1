@@ -56,10 +56,20 @@ function Sha([string]$text) {
 
 $wrong = '0' * 64
 
+# The payloads here are plain text, which has no Authenticode signature, so the
+# signature gate is stood in for. It is covered against real files by
+# test-install-signature.ps1. Every call is logged in $signatureChecks.
+$signatureChecks = @()
+function Assert-NvxSignedByPublisher {
+    param([string]$Path)
+    $script:signatureChecks += $Path
+}
+
 # A stand-in gh, so the provenance check never reaches the network or a real
-# gh. It answers like gh 2.49 or newer unless $ghMode says otherwise:
-# fail (attestation verify fails), old (no attestation command), noauth (not
-# signed in). Every call is logged in $ghCalls.
+# gh. It answers like gh 2.51 or newer unless $ghMode says otherwise:
+# fail (attestation verify fails), old (no attestation command), nosigner (an
+# attestation command without --signer-workflow, as in gh 2.49 and 2.50), noauth
+# (not signed in). Every call is logged in $ghCalls.
 $ghMode = 'pass'
 $ghCalls = @()
 function gh {
@@ -70,7 +80,11 @@ function gh {
         return
     }
     if ($script:ghMode -eq 'old') { $global:LASTEXITCODE = 1; return }
-    if ($args -contains '--help') { return }
+    if ($args -contains '--help') {
+        'Usage: gh attestation verify [<file-path> | oci://<image-uri>] [--owner | --repo]'
+        if ($script:ghMode -ne 'nosigner') { '      --signer-workflow string   Filter to workflows that match a path' }
+        return
+    }
     if ($script:ghMode -eq 'fail') {
         'stub gh: no attestation found'
         $global:LASTEXITCODE = 1
@@ -80,6 +94,7 @@ function gh {
 # Like Run, but keeps what was written to the host in $ghOut, and sets $ghOk.
 function RunOut {
     $script:ghCalls = @()
+    $script:signatureChecks = @()
     try {
         $script:ghOut = (Install-NvxDownloadedBinary -DownloadPath $download -ChecksumPath $sums `
             -Destination $dest 6>&1 | Out-String)
@@ -126,7 +141,8 @@ try {
     Reset 'GOOD' (Sha 'GOOD')
     RunOut
     Check "accepted" $ghOk
-    Check "gh checked the download against fstubner/nvx" (@($ghCalls | Where-Object { $_ -eq "attestation verify $download --repo fstubner/nvx" }).Count -eq 1)
+    Check "gh checked the download against release.yml in fstubner/nvx" (@($ghCalls | Where-Object { $_ -eq "attestation verify $download --repo fstubner/nvx --signer-workflow fstubner/nvx/.github/workflows/release.yml" }).Count -eq 1)
+    Check "the signature gate was asked about the download" (@($signatureChecks | Where-Object { $_ -eq $download }).Count -eq 1)
     Check "says it was verified" ($ghOut -match 'Build provenance verified')
     Check "destination is the new binary" ((Get-Content $dest -Raw) -eq 'GOOD')
 
@@ -140,7 +156,7 @@ try {
     Check "previous binary untouched" ((Get-Content $dest -Raw) -eq 'PREVIOUS')
     Check "download removed" (-not (Test-Path $download))
 
-    Write-Host "Without gh the check is skipped, with one line saying how to run it:"
+    Write-Host "Without gh the check is skipped, and says how to run it by hand:"
     $ghMode = 'pass'
     Reset 'GOOD' (Sha 'GOOD')
     # The real PATH cannot be used for this, because a machine running the
@@ -154,7 +170,8 @@ try {
     try { RunOut } finally { $env:PATH = $realPath; Set-Item function:gh $stub }
     Check "accepted" $ghOk
     Check "one skip line" (@($ghOut -split "`n" | Where-Object { $_ -match 'Provenance check skipped' }).Count -eq 1)
-    Check "gives the command" (($ghOut -replace '\s+', ' ') -match 'gh attestation verify .* --repo fstubner/nvx')
+    Check "says nothing was shown about where the download came from" (($ghOut -replace '\s+', ' ') -match 'nothing has shown this download came from the release workflow')
+    Check "gives the command, with the signer workflow" (($ghOut -replace '\s+', ' ') -match 'gh attestation verify .* --repo fstubner/nvx --signer-workflow fstubner/nvx/.github/workflows/release.yml')
     Check "destination is the new binary" ((Get-Content $dest -Raw) -eq 'GOOD')
 
     Write-Host "A gh that is too old, or not signed in, skips rather than fails the install:"
@@ -163,6 +180,15 @@ try {
     RunOut
     Check "old gh accepted" $ghOk
     Check "old gh says it skipped" ($ghOut -match 'Provenance check skipped')
+    # gh 2.49 and 2.50 have the attestation command and not --signer-workflow.
+    # Asking them for it would fail the install for a reason that is not a bad
+    # download.
+    $ghMode = 'nosigner'
+    Reset 'GOOD' (Sha 'GOOD')
+    RunOut
+    Check "gh without --signer-workflow accepted" $ghOk
+    Check "gh without --signer-workflow says it skipped" ($ghOut -match 'Provenance check skipped')
+    Check "gh without --signer-workflow was not asked to verify" (@($ghCalls | Where-Object { $_ -like 'attestation verify*' -and $_ -notlike '*--help' }).Count -eq 0)
     $ghMode = 'noauth'
     Reset 'GOOD' (Sha 'GOOD')
     RunOut
@@ -170,12 +196,13 @@ try {
     Check "signed-out gh says it skipped" ($ghOut -match 'Provenance check skipped')
     Check "signed-out gh was not asked to verify" (@($ghCalls | Where-Object { $_ -like 'attestation verify*' -and $_ -notlike '*--help' }).Count -eq 0)
 
-    Write-Host "A checksum mismatch still fails before gh is asked:"
+    Write-Host "A checksum mismatch still fails before the signature or gh is asked:"
     $ghMode = 'pass'
     Reset 'TAMPERED' $wrong
     RunOut
     Check "refused" (-not $ghOk)
     Check "gh was not asked at all" ($ghCalls.Count -eq 0)
+    Check "the signature gate was not asked" ($signatureChecks.Count -eq 0)
 } finally {
     Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
 }

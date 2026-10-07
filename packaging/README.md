@@ -10,9 +10,10 @@ manifests, so they should stay accurate enough to review.
 The publish jobs download each release asset, re-hash the bytes, and check
 the result against the uploaded `.sha256` sidecar before pushing anything
 downstream. A sidecar that disagrees with its asset fails the publish instead
-of propagating. The Homebrew, Scoop and npm jobs then check the asset's
+of propagating. The npm, Homebrew, Scoop and Winget jobs then check the asset's
 build provenance from `release.yml` too (`verified_sha` in
-`scripts/release/lib.sh`).
+`scripts/release/lib.sh`). The Winget job then checks that the manifest Komac
+writes carries the digest it verified.
 
 That ordering is the point, and it is easy to get backwards. Reading the
 hash out of the sidecar and writing it into a manifest verifies nothing. The
@@ -47,7 +48,7 @@ The provenance attestation lets anyone check that a binary came from this
 repo's release workflow without trusting GitHub's asset storage:
 
 ```bash
-gh attestation verify nvx-linux-amd64 --repo fstubner/nvx
+gh attestation verify nvx-linux-amd64 --repo fstubner/nvx --signer-workflow fstubner/nvx/.github/workflows/release.yml
 ```
 
 ## Submission targets
@@ -85,8 +86,9 @@ Gatekeeper on an unsigned binary. That is separate release-trust work.
 
 ## Release-day checklist
 
-1. Run the `Publish preflight` workflow. It checks the four publishing
-   credentials and publishes nothing.
+1. Run the `Publish preflight` workflow. It checks the three publishing
+   credentials (Homebrew, Scoop and Winget) and publishes nothing. npm needs
+   none, because it publishes through trusted publishing.
 2. Publish the GitHub release draft for `vX.Y.Z`.
 3. Confirm publish.yml's summary job reports all four registries as
    `success`, and re-run any single job that did not.

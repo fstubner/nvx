@@ -68,14 +68,21 @@ func TestAStalledDownloadIsAbandonedAfterTheStallPeriod(t *testing.T) {
 // The complementary half: bytes that keep arriving keep the download alive
 // past the stall period, so a slow steady connection is never cut off. Total
 // duration well past the stall period, gaps well inside it.
+//
+// The gaps are a twentieth of the stall period. They were half of it, so one
+// late write failed a healthy download. Measured 2026-10-07 by holding one chunk
+// back: an extra 150ms failed the old numbers, and these pass with 1500ms extra
+// and fail at 2100ms. The download still outlasts the stall period by half
+// again, so a timeout on the whole request, set to the stall period, would still
+// cut it off every time.
 func TestASlowButSteadyDownloadIsNotCutOff(t *testing.T) {
 	orig := downloadStallTimeout
-	downloadStallTimeout = 200 * time.Millisecond
+	downloadStallTimeout = 2 * time.Second
 	t.Cleanup(func() { downloadStallTimeout = orig })
 
-	const chunks = 12 // 12 x 100ms = 1.2s, six stall periods
+	const chunks = 30 // 30 x 100ms = 3s, one and a half stall periods
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Length", "12288")
+		w.Header().Set("Content-Length", "30720")
 		w.WriteHeader(200)
 		f, _ := w.(http.Flusher)
 		for i := 0; i < chunks; i++ {

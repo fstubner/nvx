@@ -45,6 +45,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **`install.ps1` refuses an `nvx.exe` that is not signed by the nvx
+  publisher.** The `.sha256` file comes from the same release page as the
+  binary, and the build attestation is only checked when `gh` is installed and
+  signed in, so a replaced release could pass both. After the checksum, the
+  installer now reads the Authenticode signature of the download. The
+  signature must be valid, and the signer must be the certificate issued to
+  "Open Source Developer Felix Stubner". Both its common name and its
+  organization are checked, and its thumbprint is not, so a renewed
+  certificate under the same name keeps working. An unsigned file is refused,
+  and so is a file signed by anyone else. Every release from 0.7.0 on is
+  signed, and the installer only fetches the latest release, so no release it
+  can reach is refused for being old. `-InsecureSkipChecksum` does not skip
+  this check. The local-binary install is not checked.
+
+* **Both installers accept only a build attestation made by the release
+  workflow.** They ran `gh attestation verify` with `--repo fstubner/nvx`
+  alone, which also accepts an attestation from any other workflow in the
+  repository. They now add `--signer-workflow
+  fstubner/nvx/.github/workflows/release.yml`, as the publish scripts already
+  did. That flag arrived in gh 2.51, so the check needs gh 2.51 or newer where
+  it needed 2.49. An older gh skips the check and says so. A signed-in gh that
+  runs the check and reports a failure stops the install, as before. The line
+  printed when the check is skipped now says that nothing has shown where the
+  download came from, and gives the full command to run by hand.
+
 * **`nvx setup` on Windows now only removes what older versions left.** It no
   longer grants the sandbox access to drive roots and Users folders. Measured
   2026-10-06 with every such grant removed, contained `npx`, `pnpm` and `bun`
@@ -69,6 +94,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   why and changes nothing. `nvx doctor` points at `nvx setup` for this.
 
 ### Fixed
+
+* **After `install.sh`, a login `sh` no longer stops at `~/.profile`.** The
+  profile ran `eval "$(nvx env)"`, which prints bash syntax. On Debian and
+  Ubuntu the login `sh` is dash, which stopped at `${PATH//...}` with `eval:
+  Bad substitution`, so anything that started `sh -l` broke for as long as nvx
+  was installed. Measured 2026-10-07 on Debian 12 with dash 0.5.12, reading the
+  old profile exited 2 and reading the new one exits 0 with `nvx` found. The
+  eval line now runs only in bash and zsh. The `PATH` line above it is plain
+  `sh`, so a login `sh` still finds the shims. Running the installer again
+  replaces the old line in an existing profile and keeps the previous contents
+  in a `.nvx-backup` file beside it. Only the exact line `eval "$(nvx env)"` is
+  replaced, so a line you wrote yourself is left alone.
+
+* **Both installers write the shims.** The shims put nvx in front of `node`,
+  `npm`, `npx`, `corepack`, `pnpm`, `yarn`, `bun` and `bunx`. Neither installer
+  wrote them. They appeared only when a shell profile first ran `nvx env`, so a
+  Windows user whose first terminal was Git Bash or cmd, a user who declined
+  the execution policy change, and an agent started from a GUI app all had nvx
+  on `PATH` and no shims. `npm` then ran with no protection and nothing said
+  so. Both installers now run `nvx init-shims` before they change `PATH` or
+  the profile, and stop with an error if it fails. It runs from `/` or the
+  Windows directory, so it does not write shims for the project the installer
+  was started in.
+
+* **zsh login shells get nvx on `PATH`.** For zsh, `install.sh` wrote only
+  `~/.zshrc`. Measured 2026-10-07 with zsh 5.9, `zsh -lc` reads `~/.zprofile`
+  and not `~/.zshrc`, so a tool that started a shell that way found no `nvx`.
+  The installer now also writes the `PATH` line, and nothing else, to
+  `~/.zprofile`. The integration stays in `~/.zshrc`, which interactive shells
+  read.
 
 * **Abbreviated npm commands are contained and checked.** npm accepts any
   unambiguous prefix of a command, and camelCase, so `npm exe` is `npm exec`,

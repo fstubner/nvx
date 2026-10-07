@@ -21,7 +21,9 @@ nvx is one static binary and needs nothing installed alongside it.
 irm https://nvx.run/install.ps1 | iex
 ```
 
-Releases from 0.7.0 are Authenticode-signed. SmartScreen also judges a download
+Releases from 0.7.0 are Authenticode-signed, and `install.ps1` checks that
+signature before it installs the file. It stops if the file is unsigned or is
+signed by anyone other than the nvx publisher. SmartScreen also judges a download
 by its reputation. A certificate builds that up as people download what it
 signed, so early signed releases can still show "Windows protected your PC".
 Defender has also flagged unsigned builds as malware by machine learning,
@@ -55,16 +57,24 @@ repairs what it safely can.
 
 ## What the installer changes
 
-- Creates `~/.nvx` and puts a single binary in `~/.nvx/bin`.
+- Creates `~/.nvx` and puts the binary in `~/.nvx/bin`. It then runs `nvx
+  init-shims`, which writes the `node`, `npm`, `npx`, `corepack`, `pnpm`, `yarn`,
+  `bun` and `bunx` shims beside it. The shims are what put nvx in front of those
+  commands, and the installer stops with an error if it cannot write them.
 - Puts `~/.nvx/bin` at the front of your user `PATH`.
 - Adds the shell integration to your profile. That is what makes `nvx use`
   affect your shell and what switches `PATH` on `cd`. Without it the shims still
   run the version each project pins, and `nvx use` does nothing.
   - `install.sh` adds a three-line block. It holds a comment, a line putting
-    `~/.nvx/bin` on `PATH`, and `eval "$(nvx env)"`. For bash it writes the
-    block to `~/.bashrc` and to your login profile, for zsh to `~/.zshrc`, and
-    otherwise to `~/.profile`. For fish it writes its own file,
+    `~/.nvx/bin` on `PATH`, and a line that runs `eval "$(nvx env)"` in bash and
+    zsh only. A login `sh` such as dash gets the `PATH` line and skips the eval,
+    because `nvx env` prints bash syntax. For bash it writes the block to
+    `~/.bashrc` and to your login profile, for zsh to `~/.zshrc`, and otherwise
+    to `~/.profile`. For zsh it also writes the `PATH` line alone to
+    `~/.zprofile`, which `zsh -lc` reads. For fish it writes its own file,
     `~/.config/fish/conf.d/nvx.fish`, in fish syntax, and touches nothing else.
+    Running it again replaces the line `eval "$(nvx env)"` that earlier versions
+    wrote by itself, and keeps a copy of the file as `<profile>.nvx-backup`.
   - `install.ps1` adds one integration line, with a comment above it, to your
     PowerShell `$PROFILE`.
 - On Windows, **asks before changing your PowerShell execution policy.**
@@ -88,6 +98,11 @@ platform and runs no install script:
 npm install -g @fstubner/nvx
 ```
 
+The package is `@fstubner/nvx`. The unscoped `nvx` on npm is a different project.
+
+This route writes no shims and edits no profile. Next step: run `nvx doctor`,
+which reports what is missing, and `nvx doctor --fix` to repair it.
+
 It is not yet published to winget, Scoop or Homebrew. The other route is a
 binary. Every release attaches one per platform, each with a SHA-256 sidecar.
 The platforms are Windows x64, macOS on Apple silicon and Intel, and Linux on
@@ -96,14 +111,26 @@ x86_64 and arm64.
 ## Verify a download
 
 Each of those five binaries carries a signed build attestation, made by the
-release workflow in this repository. With the GitHub CLI (2.49 or newer, signed
+release workflow in this repository. With the GitHub CLI (2.51 or newer, signed
 in with `gh auth login`), check the file you downloaded:
 
 ```sh
-gh attestation verify nvx-linux-amd64 --repo fstubner/nvx
+gh attestation verify nvx-linux-amd64 --repo fstubner/nvx --signer-workflow fstubner/nvx/.github/workflows/release.yml
 ```
 
 Use your own file name. If the command reports a failure, do not run the file.
+The `--signer-workflow` flag limits the check to attestations made by
+`release.yml`, and without it one from any workflow in the repository passes.
+
+On Windows, `nvx.exe` also carries an Authenticode signature, and no other tool
+is needed to read it:
+
+```powershell
+Get-AuthenticodeSignature nvx.exe | Format-List Status, @{n='Signer'; e={$_.SignerCertificate.Subject}}
+```
+
+`Status` should be `Valid` and the signer should be "Open Source Developer Felix
+Stubner".
 
 The `.sha256` file beside each binary holds the file's SHA-256. It comes from the
 same release page as the binary, so it catches a damaged download and does not
@@ -128,9 +155,10 @@ On Windows:
 ```
 
 That prints `True` when they match. When the GitHub CLI is installed, signed in
-and 2.49 or newer, `install.sh` and `install.ps1` run the attestation check
+and 2.51 or newer, `install.sh` and `install.ps1` run the attestation check
 before they install the download. They stop if it fails. Without it they say
-the check was skipped and print the command to run.
+the check was skipped and print the command to run. `install.ps1` always checks
+the Authenticode signature too, with or without the GitHub CLI.
 
 ## From source
 

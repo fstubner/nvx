@@ -121,9 +121,10 @@ try {
     # while still failing normally everywhere the sandbox does work.
     #
     # Hosted runners launch them now and this script asserts in CI (run
-    # 37244525606 printed all five outcomes and passed). Keep the skip for a runner
-    # image that refuses again, and still run this script on a real Windows machine
-    # before cutting a release.
+    # 37244525606 printed all five outcomes and passed). So on GitHub Actions a
+    # refusal fails, and a runner image that refuses again turns the step red. The
+    # skip stays for a developer machine, and this script is still run on a real
+    # Windows machine before cutting a release.
     $launch = (Invoke-NativeCapture $nvx @('shim', 'node', '-e', 'process.exit(0)')).Output
     if ($launch -match 'AppContainer launch failed') {
         # Only the two shapes a HOST refusal takes, not any launch failure.
@@ -140,6 +141,12 @@ try {
         # AppContainer independently of nvx to settle that, so it is narrowed
         # rather than closed, and said so here rather than left to be assumed.
         if ($launch -match 'Access is denied' -or $launch -match 'The system cannot find the file specified') {
+            if ($env:GITHUB_ACTIONS -eq 'true') {
+                Write-Host "FAIL: this runner cannot create AppContainer children, so no containment was asserted." -ForegroundColor Red
+                Write-Host "      On GitHub Actions that is a failure, because a pass would verify nothing:"
+                Write-Host ("  " + $launch.Trim())
+                exit 1
+            }
             Write-Host "This host cannot create AppContainer children; skipping the containment assertions."
             Write-Host ("  " + $launch.Trim())
             exit 0

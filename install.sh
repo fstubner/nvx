@@ -105,19 +105,30 @@ else
         exit 1
     fi
 
-    # Second, optional check. The .sha256 file comes from the same release as
-    # the binary, so it cannot tell a replaced release from a real one. The
-    # build attestation is signed by release.yml and checked against GitHub.
-    # It needs gh 2.49 or newer (the attestation command) and a signed-in gh,
-    # so a gh that cannot run it skips the check instead of failing the install.
-    VERIFY_HINT="gh attestation verify $BIN_DIR/nvx --repo fstubner/nvx"
+    # Second check, when gh can make it. The .sha256 file comes from the same
+    # release as the binary, so it cannot tell a replaced release from a real
+    # one. The build attestation is signed by release.yml and checked against
+    # GitHub. Only an attestation made by release.yml counts, as in
+    # scripts/release/lib.sh: without --signer-workflow, one from any workflow
+    # in this repository would pass.
+    #
+    # gh has to be signed in and new enough. The attestation command arrived in
+    # gh 2.49 and --signer-workflow in 2.51, so the help text is asked for the
+    # flag. A gh that cannot make the check skips it. A gh that makes it and
+    # reports a failure, or cannot reach GitHub, stops the install.
+    SIGNER_WORKFLOW="fstubner/nvx/.github/workflows/release.yml"
+    VERIFY_HINT="gh attestation verify $BIN_DIR/nvx --repo fstubner/nvx --signer-workflow $SIGNER_WORKFLOW"
     if ! command -v gh >/dev/null 2>&1; then
-        echo "Provenance check skipped: gh is not installed. To run it later: $VERIFY_HINT"
-    elif ! gh attestation verify --help >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
-        echo "Provenance check skipped: gh is too old or not signed in. To run it later: $VERIFY_HINT"
+        echo "Provenance check skipped: gh is not installed, so nothing has shown this download came from the release workflow."
+        echo "  The checksum only shows it matches its release page. To check by hand, install gh 2.51 or newer,"
+        echo "  sign in with 'gh auth login', then run: $VERIFY_HINT"
+    elif ! gh attestation verify --help 2>&1 | grep -q -- '--signer-workflow' || ! gh auth status >/dev/null 2>&1; then
+        echo "Provenance check skipped: gh is older than 2.51 or not signed in, so nothing has shown this download came from the release workflow."
+        echo "  The checksum only shows it matches its release page. To check by hand, update gh,"
+        echo "  sign in with 'gh auth login', then run: $VERIFY_HINT"
     else
         echo "Verifying build provenance..."
-        if PROVENANCE_OUT=$(gh attestation verify "$DOWNLOAD_PATH" --repo fstubner/nvx 2>&1); then
+        if PROVENANCE_OUT=$(gh attestation verify "$DOWNLOAD_PATH" --repo fstubner/nvx --signer-workflow "$SIGNER_WORKFLOW" 2>&1); then
             echo "Build provenance verified."
         else
             rm -f "$DOWNLOAD_PATH"
@@ -131,6 +142,19 @@ fi
 
 chmod +x "$BIN_DIR/nvx"
 
+# The shims are what put nvx in front of npm, node and the rest. Nothing else
+# wrote them until a shell profile first ran `nvx env`, so a shell that never
+# loads the profile (an agent started from a GUI app, cron, CI) had nvx on PATH
+# and nothing to intercept with. They are written here, before the profile is
+# touched, so they exist whenever PATH takes effect and a failure leaves the
+# profile as it was. Run from /, because `init-shims` also writes shims for the
+# project it is run in.
+if ! ( cd / && "$BIN_DIR/nvx" init-shims ); then
+    echo "Error: creating the nvx shims failed, so your shell profile was not changed. nvx is in $BIN_DIR." >&2
+    echo "  Run '$BIN_DIR/nvx init-shims' to see why." >&2
+    exit 1
+fi
+
 # 3. Add to shell profiles
 SHELL_NAME="$(basename "$SHELL")"
 MARKER_LINE='# nvx (Node Version X-platform) shell integration'
@@ -140,7 +164,14 @@ MARKER_LINE='# nvx (Node Version X-platform) shell integration'
 # interactive one -- an unguarded export would then add the directory to PATH twice
 # per shell, compounding in nested shells.
 PATH_LINE='case ":$PATH:" in *":$HOME/.nvx/bin:"*) ;; *) export PATH="$HOME/.nvx/bin:$PATH" ;; esac'
-INTEGRATION_LINE='eval "$(nvx env)"'
+# Only bash and zsh get the integration. `nvx env` prints bash syntax for anything
+# that is not zsh or fish, and ~/.profile is read by every login sh, which on
+# Debian and Ubuntu is dash. dash stops at ${PATH//...} with "Bad substitution",
+# so `sh -l` aborted for as long as nvx was installed. The PATH line above is plain
+# POSIX and stays unguarded, so a login sh still finds the shims.
+INTEGRATION_LINE='if [ -n "${BASH_VERSION:-}${ZSH_VERSION:-}" ]; then eval "$(nvx env)"; fi'
+# What earlier versions of this installer wrote. See guard_old_integration_line.
+OLD_INTEGRATION_LINE='eval "$(nvx env)"'
 
 # profile_has_path_line matches any nvx bin PATH entry, not one exact string, so a
 # profile written by an earlier installer (or edited by hand) is recognised instead
@@ -177,7 +208,7 @@ bash_login_profile() {
 # Appending the export after the eval does not fix that: the eval still runs first
 # and still fails. So an existing profile is repaired by inserting the line above
 # the eval rather than appending to the end.
-setup_profile() {
+setup_profile_block() {
     PROFILE_FILE="$1"
     CREATE_IF_MISSING="$2"
 
@@ -227,6 +258,52 @@ setup_profile() {
     printf '\n%s\n%s\n%s\n' "$MARKER_LINE" "$PATH_LINE" "$INTEGRATION_LINE" >> "$PROFILE_FILE"
 }
 
+# A profile written by an earlier installer holds the eval on a line of its own,
+# with no guard, and a login sh that reads it aborts (see INTEGRATION_LINE).
+# Running the installer again replaces that exact line with the guarded one. Any
+# other line, such as one the user wrote or wrapped in their own condition, is left
+# alone.
+guard_old_integration_line() {
+    PROFILE_FILE="$1"
+    if [ ! -f "$PROFILE_FILE" ] || ! grep -Fxq "$OLD_INTEGRATION_LINE" "$PROFILE_FILE"; then
+        return 0
+    fi
+    echo "Updating the nvx line in $PROFILE_FILE so a login sh can read it..."
+    # A copy of the file as it was before this installer touched it. The repair
+    # above may have made one already, and that one is the older.
+    [ -e "$PROFILE_FILE.nvx-backup" ] || cp "$PROFILE_FILE" "$PROFILE_FILE.nvx-backup"
+    TMP_PROFILE="$PROFILE_FILE.nvx-tmp.$$"
+    awk -v old="$OLD_INTEGRATION_LINE" -v new="$INTEGRATION_LINE" '
+        $0 == old { print new; next }
+        { print }
+    ' "$PROFILE_FILE" > "$TMP_PROFILE"
+    if [ -s "$TMP_PROFILE" ] && grep -Fxq "$INTEGRATION_LINE" "$TMP_PROFILE"; then
+        cat "$TMP_PROFILE" > "$PROFILE_FILE"
+        rm -f "$TMP_PROFILE"
+        echo "  (previous contents saved to $PROFILE_FILE.nvx-backup)"
+    else
+        rm -f "$TMP_PROFILE"
+        echo "Warning: could not update $PROFILE_FILE automatically." >&2
+        echo "Replace the line $OLD_INTEGRATION_LINE with:" >&2
+        echo "  $INTEGRATION_LINE" >&2
+    fi
+}
+
+setup_profile() {
+    setup_profile_block "$1" "$2"
+    guard_old_integration_line "$1"
+}
+
+# Puts nvx on PATH in a file and does nothing else.
+setup_path_only() {
+    PROFILE_FILE="$1"
+    if [ -f "$PROFILE_FILE" ] && profile_has_path_line "$PROFILE_FILE"; then
+        return 0
+    fi
+    echo "Adding nvx to PATH in $PROFILE_FILE..."
+    printf '\n%s\n%s\n' "$MARKER_LINE" "$PATH_LINE" >> "$PROFILE_FILE"
+}
+
 # fish never reads ~/.profile and cannot run the POSIX lines above, so it gets
 # its own file in conf.d, which fish reads at every start and nothing else
 # writes to. PATH is set for every fish, scripts included, and the integration
@@ -264,8 +341,15 @@ case "$SHELL_NAME" in
         ;;
     zsh)
         # zsh reads .zshrc for every interactive shell, login or not, so one file
-        # covers both cases.
+        # covers both of those cases.
         setup_profile "$HOME/.zshrc" "true"
+        # It does not read .zshrc for a login shell that runs one command. `zsh -lc`
+        # is how many tools start a shell, and it reads .zprofile and not .zshrc, so
+        # a tool started from a GUI app, cron or CI got no PATH. Only the PATH line
+        # goes here. The integration needs an interactive shell, which .zshrc
+        # already serves. Not .zshenv, because every zsh reads that one, scripts
+        # included.
+        setup_path_only "$HOME/.zprofile"
         ;;
     fish)
         # This branch used to write the POSIX lines to ~/.profile anyway and
