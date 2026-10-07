@@ -116,7 +116,14 @@ jobs:
     - name: Build nvx
       run: go build -v ./...
 
+    # Not on Windows, where the probe step below runs `go test -v -race ./...` on
+    # the same packages with NVX_PROBE=1 added. NVX_PROBE only ever switches
+    # tests on, and a second pass over the same packages added nothing. Run
+    # 37621722930 logged both. Every one of the 1855 test and subtest results
+    # that passed in this step also passed in the probe step, which passed 1940
+    # in all. This step took 2 min 55 s of that job.
     - name: Run unit tests
+      if: matrix.os != 'windows-latest'
       run: go test -v -race ./...
 
     # These drive a real AppContainer launch end to end (piped stdio through a real
