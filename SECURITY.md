@@ -197,12 +197,14 @@ These are deliberate trade-offs, and this section documents each one:
   terminal. The pre-install checks still ask at a terminal, so an agent with a
   pseudo-terminal can approve one of those. `--agent-mode`, or
   `NVX_AGENT_MODE=1` in the agent's environment, makes nvx refuse instead of
-  asking. An agent with a shell of its own outside the sandbox can still do
-  what a person can. It can run `nvx trust`, `nvx allow-host`, `nvx -y`,
-  `nvx --no-sandbox` or `nvx --connect`, put `NVX_YES=1` or `NVX_TRUST_YES=1`
-  in front of a command, or edit `~/.nvx/policy.json`. Every refusal tells it
-  not to, and nothing in nvx enforces that. Block those in the harness's own
-  permission settings if the agent should not have them.
+  asking. While it is on, `-y`, `--yes` and `NVX_YES` approve no check either,
+  because agents pass `-y` by habit, and the refusal says it ignored them. An
+  agent with a shell of its own outside the sandbox can still do what a person
+  can. It can run `nvx trust`, `nvx allow-host`, `nvx --no-sandbox` or
+  `nvx --connect`, clear `NVX_AGENT_MODE` and run `nvx -y`, put `NVX_YES=1` or
+  `NVX_TRUST_YES=1` in front of a command, or edit `~/.nvx/policy.json`. Every
+  refusal tells it not to, and nothing in nvx enforces that. Block those in the
+  harness's own permission settings if the agent should not have them.
   `NVX_TRUST_YES=true` approves every request to widen the sandbox without
   asking, so setting it hands those decisions to whatever sets the environment.
 - **Same-origin checksums.** Runtime archives and their `SHASUMS256.txt` are
@@ -783,7 +785,8 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   does not. That setting widens the window for every package you install. The
   third is the broadest. `NVX_YES` also approves the
   typosquat, install-script and known-advisory checks for that server, so it is
-  the last resort. It never approves a package OSV lists as malicious. Each check it approves is printed on stderr and written to
+  the last resort. It never approves a package OSV lists as malicious, and
+  approves nothing where `NVX_AGENT_MODE` is set too. Each check it approves is printed on stderr and written to
   `~/.nvx/audit.log` as a `check_approved` record.
 
   Until 0.6.0 the only exemption list was `typosquatting.trusted_packages`, which

@@ -13,11 +13,14 @@ package nvx
 // is about whether nvx intercepts and contains commands, which these do not
 // change.
 func reportApprovalEnvironment() {
-	if nvxYesSet() {
+	switch {
+	case nvxYesSet() && agentModeEnvSet():
+		LogWarn("NVX_YES is set in this environment, and so is NVX_AGENT_MODE. Agent mode ignores NVX_YES, so the pre-install checks still refuse whatever they would ask about.")
+	case nvxYesSet():
 		LogWarn("NVX_YES is set in this environment. It turns off the pre-install checks for every command started from it. A likely typosquat, a release inside the cooling-off window, install scripts, a known vulnerability and a lookup that failed are each approved without asking. A package OSV lists as malicious is still refused.")
 	}
 	if agentModeEnvSet() {
-		LogWarn("NVX_AGENT_MODE is set in this environment. It turns off nvx's questions. Anything that would ask is refused with exit 77, including at a terminal, so a check cannot be approved there by typing y.")
+		LogWarn("NVX_AGENT_MODE is set in this environment. It turns off nvx's questions. Anything that would ask is refused with exit 77, including at a terminal, so a check cannot be approved there by typing y, or by -y or NVX_YES.")
 	}
 	if trustYesSet() {
 		LogWarn("NVX_TRUST_YES is set in this environment. It turns off the refusal to widen the sandbox. A project policy that loosens settings, a host the allowlist does not name and a persistent tool profile are all approved without asking. Whatever sets this environment makes those decisions.")

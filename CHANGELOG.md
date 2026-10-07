@@ -124,7 +124,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   install-script and advisory checks into log lines. In agent mode nvx now
   asks nothing, even at a terminal. It refuses, says why and what a person can
   do, and exits 77, and the audit log records `check_refused` with
-  `by=agent_mode`. `-y`, `--yes` and `NVX_YES` still approve the checks, and
+  `by=agent_mode`. `-y`, `--yes` and `NVX_YES` do not approve a check in agent
+  mode either, because agents pass `-y` by habit, and the refusal names the
+  ones it ignored. Without agent mode they approve the checks as before, and
   `-y -q` is what agent mode used to do. The policy line each refusal prints is
   the narrower way to let one package through.
 
