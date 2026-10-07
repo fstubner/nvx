@@ -67,7 +67,8 @@ func TestARegistryNameIsStillVerified(t *testing.T) {
 	origResolve := resolveNpmPackageDetailsForVerify
 	resolveNpmPackageDetailsForVerify = func(pkgName, versionQuery string) (string, time.Time, bool, error) {
 		asked = pkgName
-		return "1.0.0", time.Time{}, false, nil
+		// Published long ago. A version with no publish time is asked about.
+		return "1.0.0", time.Now().Add(-1000 * time.Hour), false, nil
 	}
 	t.Cleanup(func() { resolveNpmPackageDetailsForVerify = origResolve })
 	origScan := scanVulnerabilitiesBatchForVerify
@@ -118,7 +119,8 @@ func TestAnUppercaseCommandNameIsStillVerified(t *testing.T) {
 func TestAnNpmAliasIsCheckedUnderItsTarget(t *testing.T) {
 	origResolve := resolveNpmPackageDetailsForVerify
 	resolveNpmPackageDetailsForVerify = func(pkgName, versionQuery string) (string, time.Time, bool, error) {
-		return "1.0.0", time.Time{}, false, nil
+		// Published long ago, so only the blocklist can refuse it.
+		return "1.0.0", time.Now().Add(-1000 * time.Hour), false, nil
 	}
 	t.Cleanup(func() { resolveNpmPackageDetailsForVerify = origResolve })
 	origScan := scanVulnerabilitiesBatchForVerify

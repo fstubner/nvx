@@ -70,6 +70,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Abbreviated npm commands are contained and checked.** npm accepts any
+  unambiguous prefix of a command, and camelCase, so `npm exe` is `npm exec`,
+  `npm cre` is `npm create` and `npm installTest` is `npm install-test`. nvx
+  knew a fixed list of spellings, and every other one ran as your own code,
+  with no sandbox and no pre-install checks. Measured 2026-10-07 with npm
+  11.19.0 in a Linux container, with a canary file in the home directory,
+  `nvx npm exe --yes --package=cowsay -c "cat ~/canary.txt"` printed it. With
+  this change it runs contained and cannot. nvx now reads the command with npm's own rule, as the npm
+  releases bundled with Node.js 18 to 26 and npm 12 apply it, and contains an
+  npm command it does not recognise. pnpm's `uni`, `dislink`, `edit`,
+  `recursive <command>`, `with <version> <command>` and `runtime set`, Yarn 1's
+  `upgradeInteractive`, yarn's `workspace <name> <command>` and
+  `workspaces foreach <command>`, and bun's `r`, `uninstall` and `ci` ran as
+  your own code too, and are contained now.
+
+* **A project `.npmrc` with `ignore-scripts=true` no longer skips the
+  install-script check for yarn.** yarn does not read that setting. Measured
+  2026-10-07 in a container, Yarn 1.22.22, 2.4.3 and 3.8.7 ran a dependency's
+  postinstall under it, while nvx recorded the check as skipped. For yarn, nvx
+  now counts `--ignore-scripts`, and for Yarn 2 and later `--mode=skip-build`
+  and `enableScripts: false` in `.yarnrc.yml`, when `packageManager` names
+  Yarn 2 or later or `.yarnrc.yml` sets `yarnPath`.
+
+* **A version with no publish time is asked about by the release-age check.**
+  It passed unasked, so a registry that leaves a version out of its `time`
+  field let every release through the cooling-off window. nvx now asks, and
+  refuses when nobody can answer, as it does for a version inside the window.
+  `nvx policy check --online` reports it too. For a registry that sends no
+  publish times, list its packages in `release_age.trusted_packages`, or set
+  `release_age.enabled` to `false`.
+
+* **A package OSV lists as malicious is refused whatever approves prompts.**
+  `-y`, `--agent-mode` and `NVX_YES` approved a `MAL-` advisory like any other.
+  Measured 2026-10-07 in a container, `NVX_AGENT_MODE=1 nvx npm install
+  discord.dll` installed it despite `MAL-2025-18479` and exited 0. It is now
+  refused without a prompt, and only a `vulnerabilities.allowed_advisories`
+  entry naming that advisory lets it through. A pattern such as `"MAL-*"` and
+  `vulnerabilities.min_severity` do not.
+
+* **Short package names are no longer flagged as typosquats two edits from a
+  popular name.** `nvx npm install upm` was refused non-interactively as a
+  typosquat of `pnpm`, though upm had 8,842 weekly downloads. For a name of
+  four characters or fewer, the check now counts one edit, two swapped
+  letters, or characters added around the popular name. Measured 2026-10-07
+  against the 2,000-name popular list with that day's download counts. A
+  random sample of 4,000 npm names of four characters or fewer near a popular
+  name held 195 with at least 1,000 weekly downloads, and 140 of those were
+  flagged, now 39. Of 874 npm-high-impact names ranked below the top 2,000
+  and near one of them, 40 were flagged, now 19. Of 301 names from OSV's
+  malicious-package records that are one edit, one swap, or a one- or
+  two-character affix from a popular name, 298 were flagged before and after.
+
 * **pnpm runs inside the Windows sandbox on a machine that never ran
   `nvx setup`.** pnpm loads a module that resolves the temp directory with
   Node's synchronous `realpath` as soon as it starts. Without a drive-root

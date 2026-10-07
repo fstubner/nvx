@@ -12,6 +12,10 @@ const (
 	classYourCode invocationClass = iota
 	classInstall
 	classAdHocTool
+	// classUnknownCommand is an npm command nvx does not know to be safe. It is
+	// contained, because the npm commands nvx did not know ran uncontained
+	// with no checks. See npmCommandLine.
+	classUnknownCommand
 )
 
 // String names the class for humans. Used in run traces, where "why was this not
@@ -22,6 +26,8 @@ func (c invocationClass) String() string {
 		return "install"
 	case classAdHocTool:
 		return "ad-hoc tool"
+	case classUnknownCommand:
+		return "unrecognised npm command"
 	default:
 		return "your code"
 	}
@@ -87,11 +93,17 @@ var refreshVerbs = []string{"update", "up", "upgrade", "udpate", "rebuild", "rb"
 // `npm edit` runs `npm rebuild` on the package once the editor exits. The
 // rest come from each tool's help without a measurement, and are contained to
 // be safe. `pnpm approve-builds` runs the builds it approves.
+//
+// The aliases added 2026-10-07 were read from each tool's source or help. They
+// are pnpm's uni (remove) and dislink (unlink), in pnpm 8.15 to 12.9, yarn 1's
+// upgradeInteractive, its command table's own key, and bun 1.4's r, uninstall
+// and ci, the last an install. `pnpm edit` hands the command to npm, which
+// rebuilds the package, and npm 12's `patch` reinstalls after commit and rm.
 var installCommandVerbs = map[string][]string{
-	"npm":  {"uninstall", "unlink", "remove", "rm", "r", "un", "prune", "edit"},
-	"pnpm": {"remove", "rm", "uninstall", "un", "unlink", "prune", "fetch", "deploy", "approve-builds", "patch-commit", "patch-remove", "self-update"},
-	"yarn": {"remove", "unlink", "unplug", "upgrade-interactive", "patch", "patch-commit"},
-	"bun":  {"remove", "rm", "patch", "patch-commit"},
+	"npm":  {"uninstall", "unlink", "remove", "rm", "r", "un", "prune", "edit", "patch"},
+	"pnpm": {"remove", "rm", "uninstall", "un", "uni", "unlink", "dislink", "prune", "fetch", "deploy", "approve-builds", "patch-commit", "patch-remove", "self-update", "edit"},
+	"yarn": {"remove", "unlink", "unplug", "upgrade-interactive", "upgradeInteractive", "patch", "patch-commit"},
+	"bun":  {"remove", "rm", "r", "uninstall", "ci", "patch", "patch-commit"},
 	// `corepack use` and `corepack up` switch the project's package manager and
 	// then run its install.
 	"corepack": {"use", "up"},
@@ -99,9 +111,10 @@ var installCommandVerbs = map[string][]string{
 
 // installCommandPairs are install verbs spelled as two words. `bun pm trust` is
 // how bun runs the lifecycle scripts it blocked during install, so it is the
-// one command whose whole purpose is running dependency code.
+// one command whose whole purpose is running dependency code. pnpm 11's
+// `runtime set` (or `rt set`) installs a runtime and then the project.
 var installCommandPairs = map[string][][2]string{
-	"pnpm": {{"env", "use"}, {"env", "add"}},
+	"pnpm": {{"env", "use"}, {"env", "add"}, {"runtime", "set"}, {"rt", "set"}},
 	"yarn": {{"workspaces", "focus"}, {"set", "version"}, {"policies", "set-version"}, {"plugin", "import"}},
 	"bun":  {{"pm", "trust"}},
 }
@@ -395,9 +408,10 @@ func hasAuditFix(args []string) bool {
 // uncontained.
 func classifyInvocation(cmd string, args []string) invocationClass {
 	// `corepack pnpm add x` and `node .../npm-cli.js install x` are classified
-	// as the package-manager command they run.
+	// as the package-manager command they run, and `npm exe` as `npm exec`.
 	cmd, args = packageManagerBehind(cmd, args)
 	lower := strings.ToLower(cmd)
+	args, knownSafe := readCommand(lower, args)
 
 	if executorCommands[lower] {
 		return classAdHocTool
@@ -417,6 +431,9 @@ func classifyInvocation(cmd string, args []string) invocationClass {
 		if hasInstallVerb(args, append(append([]string{}, ciVerbs...), refreshVerbs...)...) ||
 			hasAuditFix(args) || isBareYarnInstall(lower, args) || hasInstallCommandVerb(lower, args) {
 			return classInstall
+		}
+		if !knownSafe {
+			return classUnknownCommand
 		}
 		return classYourCode
 	case "bun":

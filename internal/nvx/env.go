@@ -494,6 +494,7 @@ func isGlobalInstall(cmdName string, args []string) bool {
 	default:
 		return false
 	}
+	args, _ = readCommand(cmdName, args)
 	// yarn spells it as a subcommand, not a flag: `yarn global add <pkg>`.
 	//
 	// Only the flags were matched, so this fell straight through to the sandbox
@@ -538,6 +539,7 @@ func isGlobalInstall(cmdName string, args []string) bool {
 // did not see. Refusing them up front tells the user to reach for
 // --no-sandbox, where a contained run would fail partway through.
 func globalOnlyCommand(cmdName string, args []string) string {
+	args, _ = readCommand(cmdName, args)
 	switch strings.ToLower(cmdName) {
 	case "npm":
 		if i := commandVerbIndex(args, "link", "ln"); i >= 0 {
@@ -580,6 +582,7 @@ func hasLeadingSubcommand(args []string, name string) bool {
 // checks run on for a command, reading the project where the command names
 // none. npm's own resolution, which verifyBeforeRun adds, is not part of it.
 func detectShimPackagesForVerification(cmdName string, args []string) []string {
+	args, _ = readCommand(cmdName, args)
 	targets, _ := detectTargets(cmdName, args, hostNodePlatform())
 	return targetSpecs(targets)
 }
@@ -623,7 +626,9 @@ func detectExecutorPackages(args []string) []string {
 // (see hasInstallVerb) so an unrecognized flag here cannot bypass a sandbox.
 func flagTakesValue(arg string) bool {
 	switch arg {
-	case "-p", "--package", "--prefix", "--registry", "--cache", "-c", "--call", "--shell",
+	// -C is npm's --prefix and pnpm's --dir. Unlisted, `npm -C t update` read
+	// the folder "t" as npm's test command once abbreviations were read.
+	case "-p", "--package", "--prefix", "-C", "--registry", "--cache", "-c", "--call", "--shell",
 		"--loglevel", "--tag", "--scope", "--userconfig", "--otp",
 		"-w", "--workspace", "--cwd", "--filter":
 		return true

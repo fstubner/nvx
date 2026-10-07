@@ -2253,7 +2253,24 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 		// against that would quietly start prompting again -- and in the case this
 		// feature exists for, a non-interactive MCP launch, a prompt is a denial. So
 		// that file gets told what to change instead of discovering it.
-		if policy.ReleaseAgeEnabled() && !policy.IsReleaseAgeTrusted(pkgName) && publishAgeShouldWarn(pubTime, policy.ReleaseAgeMinHours(), time.Now()) {
+		//
+		// A version the registry gives no publish time for passed this check
+		// until 2026-10-07, so a registry that leaves `time` out let every
+		// version through the window unasked. An age nvx cannot establish is
+		// now asked about as one inside the window is, the way an advisory with
+		// no rating counts above every floor.
+		if policy.ReleaseAgeEnabled() && !policy.IsReleaseAgeTrusted(pkgName) && pubTime.IsZero() {
+			windowHours := policy.ReleaseAgeMinHours()
+			msg := fmt.Sprintf("The registry gives no publish time for %s@%s, so nvx cannot tell whether it was published inside the %d-hour release-age window. Proceed?",
+				pkgName, resolvedVer, windowHours)
+			if !askCheck(nvxHome, checkInfo{check: checkReleaseAge, pkg: pkgName, version: resolvedVer,
+				detail: "publish time unknown",
+				what:   fmt.Sprintf("%s@%s has no publish time, so its release age is unknown", pkgName, resolvedVer)},
+				msg, releaseAgeUnknownRemedy(pkgName)) {
+				LogError("Installation aborted: the release age of a package version is unknown and proceeding was not approved.")
+				return 1, "the release age of a package version could not be established"
+			}
+		} else if policy.ReleaseAgeEnabled() && !policy.IsReleaseAgeTrusted(pkgName) && publishAgeShouldWarn(pubTime, policy.ReleaseAgeMinHours(), time.Now()) {
 			age := time.Since(pubTime)
 			windowHours := policy.ReleaseAgeMinHours()
 			msg := fmt.Sprintf("Package %s@%s was published only %.1f hours ago (on %s). Supply chain compromises are often caught within %d hours. Proceed?",
@@ -2302,6 +2319,17 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 				}
 			}
 			fmt.Fprintln(os.Stderr)
+			// A package known to be malicious is refused, never asked about.
+			// -y, --agent-mode and NVX_YES approved it until 2026-10-07. Measured
+			// that day, NVX_AGENT_MODE=1 installed discord.dll despite
+			// MAL-2025-18479. Only an allowed_advisories entry naming the
+			// advisory lets one through (see BlocksInstall).
+			if malicious, pkgs := maliciousAdvisories(remaining); len(malicious) > 0 {
+				LogError("Blocked: OSV lists %s as malicious (%s).", strings.Join(pkgs, ", "), strings.Join(malicious, ", "))
+				LogRefusalDetail("%s", maliciousRemedy(malicious))
+				recordCheckRefused(nvxHome, checkInfo{check: checkMaliciousPackage, pkg: strings.Join(pkgs, ","), detail: strings.Join(malicious, ",")})
+				return 1, "a package is known to be malicious"
+			}
 			ids := advisoryIDs(remaining)
 			if !askCheck(nvxHome, checkInfo{check: checkVulnerability, detail: strings.Join(ids, ","),
 				what: "the install goes ahead despite " + strings.Join(ids, ", ")},

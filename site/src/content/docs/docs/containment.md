@@ -5,7 +5,7 @@ description: What a contained command can and cannot reach on each platform, and
 
 ## Zero-config sandbox
 
-After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `corepack`, `bun` and `bunx` are all intercepted**. The ones that execute code you did not write (package installs and `npx`-style tool runners) are sandboxed. **On Windows, `npm`, `npx`, `yarn` and `pnpm` run inside the sandbox. `bun` installs there only in projects on the drive Windows is installed on, see [Known limitations](/docs/limitations/).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level. `isolation.level: strict` extends containment to it. There is no separate sandbox subcommand. Run commands normally:
+After `nvx env` / `init-shims`, **`node`, `npm`, `npx`, `yarn`, `pnpm`, `corepack`, `bun` and `bunx` are all intercepted**. The ones that execute code you did not write (package installs and `npx`-style tool runners) are sandboxed. **On Windows, `npm`, `npx`, `yarn` and `pnpm` run inside the sandbox. `bun` installs there only in projects on the drive Windows is installed on, see [Known limitations](/docs/limitations/).** Running your own code (`node server.js`, `npm run dev`) is *not* contained at the default `standard` level. `isolation.level: strict` extends containment to it. nvx reads a command the way the package manager does. npm accepts any unambiguous prefix of a command, and camelCase, so `npm exe` is `npm exec` and `npm installTest` is `npm install-test`. An npm command nvx does not recognise is contained. There is no separate sandbox subcommand. Run commands normally:
 
 ```bash
 npm install
@@ -48,7 +48,7 @@ that uses the proxy, or `network.mode: loopback`, which
 
 ## Non-interactive use (CI)
 
-Security prompts (vulnerability warnings, install script confirmations, typosquatting alerts) **fail closed** when no interactive terminal is available. The operation is denied. In CI pipelines, set `NVX_YES=true` to approve these prompts explicitly. It does not approve a new egress host or a widening project policy. For direct `nvx` commands, leading `-y` / `--yes` is also supported. Package-manager flags after a shim command are forwarded to the package manager.
+Security prompts (vulnerability warnings, install script confirmations, typosquatting alerts) **fail closed** when no interactive terminal is available. The operation is denied. In CI pipelines, set `NVX_YES=true` to approve these prompts explicitly. It does not approve a new egress host, a widening project policy or a package OSV lists as malicious. For direct `nvx` commands, leading `-y` / `--yes` is also supported. Package-manager flags after a shim command are forwarded to the package manager.
 
 ## Verification matrix
 
