@@ -120,14 +120,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the entries that let sandboxed processes in. You read and edit it as before.
   While the contained process runs, nvx watches the project and changes each
   `.env` file that is created, moved in, or replaced by an editor or
-  `git checkout` as it appears. So a dev server, MCP server or strict-mode
-  shell that runs for hours cannot read a `.env` that appeared after it
-  started. A contained process that creates a `.env` itself can finish
-  writing it, and cannot open it again afterwards. macOS refuses the create
-  itself. A launch that finds every file already changed writes nothing.
-  nvx records each file's earlier permissions, and `nvx grants reset` puts
-  them back. A file nvx may not change stays readable in the sandbox, and the
-  run says so and carries on. A link named `.env` is left alone.
+  `git checkout` as it appears. That takes milliseconds, and a process
+  that polls for a new `.env` reads it in that time. Measured 2026-10-07 on
+  Windows 11 26300, a contained node process did in ten of ten trials. Apart
+  from that gap, a dev server, MCP server or strict-mode shell that runs for
+  hours cannot read a `.env` that appeared after it started. A contained
+  process that creates a `.env` itself can finish writing it, and cannot open
+  it again afterwards. macOS refuses the create itself. A launch that finds
+  every file already changed writes nothing. nvx records each file's earlier
+  permissions, and `nvx grants reset` puts them back. A file nvx may not
+  change stays readable in the sandbox, and the run says so and carries on. A
+  link named `.env` is left alone, and a hard link is changed under every
+  name, because it is one file. nvx hides at most 200 `.env` files per project.
+  Past that it warns once and leaves the rest readable in the sandbox, so a
+  contained process that creates thousands cannot make nvx rewrite its record
+  without end.
 
 * **On Windows, `yarn` classic installs in a project under your user profile
   even when you have a `~/.yarnrc` or `~/.npmrc`.** yarn reads those files from

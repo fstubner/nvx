@@ -31,7 +31,7 @@ import (
 // refuses the create itself.
 //
 // The watch reacts to a file that already exists, so a new .env is open to the
-// sandbox for a few milliseconds. Measured 2026-10-07 on Windows 11 26300, a
+// sandbox for milliseconds. Measured 2026-10-07 on Windows 11 26300, a
 // contained node process polling for the file read it in ten of ten trials. The
 // launch scan has no such gap, as it runs before the contained process does.
 // docs/enforcement-matrix.md note 15 has the numbers.
