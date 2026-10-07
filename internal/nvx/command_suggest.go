@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"fmt"
 	"runtime"
 	"sort"
 	"strings"
@@ -39,6 +40,30 @@ func nearestCommand(unknown string) string {
 		}
 	}
 	return best
+}
+
+// projectBinCommandHint explains `nvx tsc`, where tsc is a program in this
+// project's node_modules/.bin and not an nvx command, and returns "" for any
+// other unknown command. A person who typed `nvx --strict tsc` wants tsc run
+// contained, and "Unknown command: tsc" does not say that `shim` is how.
+//
+// It names the working form and does not run the program. Running whatever
+// node_modules/.bin holds for an unknown command would let a cloned project
+// answer a mistyped nvx command (`nvx instal`) with its own code, uncontained.
+func projectBinCommandHint(command string) string {
+	if command == "" || strings.ContainsAny(command, `/\`) || resolveProjectBinCommand(command) == "" {
+		return ""
+	}
+	form := "nvx "
+	switch {
+	case strictFlag:
+		form += "--strict "
+	case standardFlag:
+		form += "--standard "
+	case noSandboxFlag:
+		form += "--no-sandbox "
+	}
+	return fmt.Sprintf("%s is a program in this project's node_modules/.bin, not an nvx command. To run it with nvx, put shim before it: %sshim %s ...", command, form, command)
 }
 
 // commandNamesFromHelp reads the command names out of the help text, which is

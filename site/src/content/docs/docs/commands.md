@@ -86,7 +86,7 @@ FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i
 | `nvx audit` | What nvx recorded: the hosts a contained run was allowed to reach and the ones it was refused, pre-install checks that were approved or refused and how they were answered, and runs when `NVX_TRACE=1`. Approvals by `-y` and `NVX_YES` are recorded too, and so are refusals under `--agent-mode`. |
 | `nvx audit export` | Export that record as json, jsonl or csv, filtered with `--since` and `--event`, to a file with `--out`. |
 | `nvx trust` | Trust this project's policy file that loosens nvx's settings, wherever it applies. nvx never asks about that. It refuses the command and prints this line for you to run, with `--hash` so it trusts only the content you were shown. `nvx trust <file>` trusts one file, and `nvx trust --tool <name>` lets a tool keep a persistent profile in the project. |
-| `nvx allow-host <host[:port]>` | Let contained commands reach a host. nvx adds it to `allow_hosts` in this project's `.nvx-policy.json` and trusts that file, or with `--global` adds it to `~/.nvx/policy.json`. The port defaults to 443. nvx prints this command when it refuses a host. |
+| `nvx allow-host <host[:port]>` | Let contained commands reach a host. nvx adds it to `allow_hosts` in this project's `.nvx-policy.json` and trusts that file, or with `--global` adds it to `~/.nvx/policy.json`. The port defaults to 443. nvx prints this command when it refuses a host. `nvx allow-host --remove <host[:port]>` undoes it, in the same file. |
 | `nvx grants list` | This project's recorded grants: trusted tools, trusted project policy files, directories granted read and execute access for `allow_read_exec`, and egress hosts recorded by older versions. |
 | `nvx grants reset` | Forget this project's grants, or every project's with `--all`. Read and execute permissions nvx granted are withdrawn. |
 | `nvx env` | Print the shell integration snippet. `--shell=<name>` picks the syntax: powershell, bash, zsh, fish or cmd. |
@@ -173,7 +173,7 @@ Commands:
   trust --tool <name>      Let a tool keep a persistent profile in this project
   allow-host <host[:port]> Let contained commands reach a host. Adds it to this
                            project's policy file and trusts that file, or to
-                           ~/.nvx/policy.json with --global
+                           ~/.nvx/policy.json with --global. --remove undoes it
   grants list              Show this project's egress hosts (from older nvx), trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all);
                            on Windows, put back the permissions of hidden .env files

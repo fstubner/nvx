@@ -162,12 +162,14 @@ func trustTool(nvxHome, name string) int {
 	return 0
 }
 
+const allowHostUsage = "Usage: nvx allow-host [--remove] <host[:port]> [--project | --global]"
+
 func runAllowHost(args []string, nvxHome string) int {
 	if wantsHelp(args) {
 		fmt.Print(commandHelpText("allow-host"))
 		return 0
 	}
-	global, project := false, false
+	global, project, remove := false, false, false
 	host := ""
 	for _, a := range args {
 		switch {
@@ -175,15 +177,17 @@ func runAllowHost(args []string, nvxHome string) int {
 			global = true
 		case a == "--project":
 			project = true
+		case a == "--remove":
+			remove = true
 		case strings.HasPrefix(a, "-") || host != "":
-			LogError("Usage: nvx allow-host <host[:port]> [--project | --global]")
+			LogError(allowHostUsage)
 			return 1
 		default:
 			host = a
 		}
 	}
 	if host == "" || (global && project) {
-		LogError("Usage: nvx allow-host <host[:port]> [--project | --global]")
+		LogError(allowHostUsage)
 		return 1
 	}
 	entry, err := allowHostEntry(host)
@@ -191,7 +195,12 @@ func runAllowHost(args []string, nvxHome string) int {
 		LogError("%v", err)
 		return 1
 	}
-	if global {
+	switch {
+	case remove && global:
+		return removeHostGlobally(nvxHome, entry)
+	case remove:
+		return removeHostInProject(nvxHome, entry)
+	case global:
 		return allowHostGlobally(nvxHome, entry)
 	}
 	return allowHostInProject(nvxHome, entry)
@@ -360,6 +369,103 @@ func allowHostInProject(nvxHome, entry string) int {
 	return 0
 }
 
+// removeHostGlobally takes entry out of ~/.nvx/policy.json, which is the undo
+// for `nvx allow-host --global`.
+func removeHostGlobally(nvxHome, entry string) int {
+	path := filepath.Join(nvxHome, "policy.json")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return hostNotListed(entry, path, false)
+	}
+	if err != nil {
+		LogError("Could not read %s: %v", path, err)
+		return 1
+	}
+	out, removed, err := withoutAllowedHost(data, entry)
+	if err != nil {
+		LogError("Could not update %s: %v", path, err)
+		return 1
+	}
+	if !removed {
+		return hostNotListed(entry, path, false)
+	}
+	policy := DefaultPolicy()
+	if err := json.Unmarshal(out, &policy); err != nil {
+		LogError("Could not update %s: %v", path, err)
+		return 1
+	}
+	if err := writeFileReplacing(path, out); err != nil {
+		LogError("Could not write %s: %v", path, err)
+		return 1
+	}
+	auditLog(nvxHome, "allow_host_removed", map[string]string{"host": entry, "path": path})
+	LogSuccess("Removed %s from isolation.network.allow_hosts in %s.", entry, path)
+	return 0
+}
+
+// removeHostInProject takes entry out of this project's policy file, which is
+// the undo for `nvx allow-host`.
+//
+// Taking a host out only narrows the file, so a file that was trusted as it
+// stood stays trusted: the pin moves to the new content. A file nobody had
+// trusted is not pinned here, because that would trust whatever else it says.
+func removeHostInProject(nvxHome, entry string) int {
+	cwd, err := os.Getwd()
+	if err != nil {
+		LogError("Could not determine the current folder: %v", err)
+		return 1
+	}
+	scope := projectScopeDir()
+	target := projectPolicyFileFor(cwd, scope, nvxHome)
+	data, err := os.ReadFile(target)
+	if os.IsNotExist(err) {
+		return hostNotListed(entry, target, true)
+	}
+	if err != nil {
+		LogError("Could not read %s: %v", target, err)
+		return 1
+	}
+	out, removed, err := withoutAllowedHost(data, entry)
+	if err != nil {
+		LogError("Could not update %s: %v", target, err)
+		return 1
+	}
+	if !removed {
+		return hostNotListed(entry, target, true)
+	}
+	trusted := policyPinned(nvxHome, loadProjectGrants(nvxHome, scope), target, hashPolicyBytes(data))
+	if _, _, err := parseProjectPolicyBytes(target, out); err != nil {
+		LogError("Could not update %s: %v", target, err)
+		return 1
+	}
+	if err := writeFileReplacing(target, out); err != nil {
+		LogError("Could not write %s: %v", target, err)
+		return 1
+	}
+	auditLog(nvxHome, "allow_host_removed", map[string]string{"host": entry, "path": target})
+	LogSuccess("Removed %s from isolation.network.allow_hosts in %s.", entry, target)
+	if !trusted {
+		return 0
+	}
+	if err := recordPolicyPins(nvxHome, map[string]string{target: hashPolicyBytes(out)}); err != nil {
+		LogWarn("Could not record that the narrower file is still trusted: %v", err)
+		LogInfo("If nvx refuses it, run nvx trust %s.", policyFileArg(cwd, target))
+		return 1
+	}
+	auditLog(nvxHome, "policy_pin_accepted", map[string]string{"path": filepath.Clean(target), "by": "nvx_allow_host"})
+	return 0
+}
+
+// hostNotListed answers a removal of a host the file does not list. Nothing is
+// wrong, so it exits 0, as allowing a host twice does.
+func hostNotListed(entry, path string, project bool) int {
+	LogInfo("%s is not in isolation.network.allow_hosts in %s, so there is nothing to remove.", entry, path)
+	if project {
+		LogInfo("A host allowed for every project is in ~/.nvx/policy.json. Add --global to remove it from there.")
+	}
+	return 0
+}
+
 // projectPolicyFileFor is the file `nvx allow-host` writes: the nearest project
 // policy file between cwd and the project root, or a new .nvx-policy.json at the
 // root. A file above the project root is shared with other projects, and is not
@@ -453,6 +559,60 @@ func withAllowedHost(data []byte, entry string) ([]byte, bool, error) {
 		return nil, false, err
 	}
 	network.set("allow_hosts", hostsJSON)
+	isolation.set("network", network.encode())
+	root.set("isolation", isolation.encode())
+
+	var out bytes.Buffer
+	if err := json.Indent(&out, root.encode(), "", "  "); err != nil {
+		return nil, false, err
+	}
+	out.WriteByte('\n')
+	return out.Bytes(), true, nil
+}
+
+// withoutAllowedHost returns a policy file's bytes with entry taken out of
+// isolation.network.allow_hosts, and whether it was there. It is withAllowedHost
+// the other way round, and keeps the file as it was in the same ways. A list
+// left empty stays in the file as [].
+func withoutAllowedHost(data []byte, entry string) ([]byte, bool, error) {
+	data = withoutUTF8BOM(data)
+	if len(bytes.TrimSpace(data)) == 0 {
+		return data, false, nil
+	}
+	root, err := parseOrderedObject(data)
+	if err != nil {
+		return nil, false, err
+	}
+	isolation, err := root.object("isolation")
+	if err != nil {
+		return nil, false, err
+	}
+	network, err := isolation.object("network")
+	if err != nil {
+		return nil, false, err
+	}
+	raw, ok := network.vals["allow_hosts"]
+	if !ok || string(bytes.TrimSpace(raw)) == "null" {
+		return data, false, nil
+	}
+	var hosts []string
+	if err := json.Unmarshal(raw, &hosts); err != nil {
+		return nil, false, fmt.Errorf("isolation.network.allow_hosts is not a list of strings: %v", err)
+	}
+	kept := []string{}
+	for _, h := range hosts {
+		if !strings.EqualFold(strings.TrimSpace(h), entry) {
+			kept = append(kept, h)
+		}
+	}
+	if len(kept) == len(hosts) {
+		return data, false, nil
+	}
+	keptJSON, err := json.Marshal(kept)
+	if err != nil {
+		return nil, false, err
+	}
+	network.set("allow_hosts", keptJSON)
 	isolation.set("network", network.encode())
 	root.set("isolation", isolation.encode())
 
