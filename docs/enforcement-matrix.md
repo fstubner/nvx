@@ -49,11 +49,7 @@ and do not verify whether the kernel honours it.
 | Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |
 | Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: the home directory denied outside what a run needs, other paths readable⁵ |
 | Project `.git` read-only, rest of project writable | Yes¹⁴ | Yes¹⁴ | Yes¹⁴ |
-<<<<<<< HEAD
-| Project `.env` files unreadable | Yes¹⁵ (files present at launch) | Yes¹⁵ | Yes¹⁵ |
-=======
-| Project `.env` files unreadable | Yes¹⁵ | Yes¹⁵ (files present at launch) | Yes¹⁵ |
->>>>>>> origin/main
+| Project `.env` files unreadable | Yes¹⁵ | Yes¹⁵ | Yes¹⁵ |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
 | Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |

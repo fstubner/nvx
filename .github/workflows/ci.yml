@@ -100,6 +100,19 @@ jobs:
         GOOS=darwin go vet ./...
         GOOS=windows go vet ./...
 
+    # A merge resolved in a hurry committed conflict markers into
+    # docs/enforcement-matrix.md on 2026-10-07, and nothing here reads Markdown.
+    # Only the <<<<<<< and >>>>>>> lines are matched: ======= on its own line is
+    # a Markdown heading underline.
+    - name: No committed merge-conflict markers
+      if: matrix.os == 'ubuntu-latest'
+      shell: bash
+      run: |
+        if git grep -nE '^(<<<<<<<|>>>>>>>)( |$)' -- .; then
+          echo "::error::merge-conflict markers are committed in the lines above"
+          exit 1
+        fi
+
     - name: Build nvx
       run: go build -v ./...
 
