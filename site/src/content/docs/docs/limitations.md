@@ -21,6 +21,13 @@ and the evidence and measurements for each platform are in the
 - **A `.env` inside the project is readable by a contained install.** The project
   directory has to be readable for the install to work, and `.env` lives in it.
   Scrubbing covers environment *variables* only.
+- **A browser that a contained install downloads is deleted with the
+  sandbox.** puppeteer and Playwright keep their browsers in a cache under the
+  home directory, and a contained command gets a home of its own, which nvx
+  deletes when the command ends. nvx warns when this happens. Install the
+  browser outside the sandbox with
+  `nvx --no-sandbox npx puppeteer browsers install chrome` or
+  `nvx --no-sandbox npx playwright install`.
 - **Only an `http://` upstream proxy is used.** An `https://` or `socks5://`
   value in `HTTPS_PROXY` is ignored with a warning, and contained connections
   are then made directly. Behind a proxy, a host nvx's own resolver cannot look
@@ -149,6 +156,12 @@ and the evidence and measurements for each platform are in the
   only the directories it is granted, so host sockets such as Docker's are
   absent. A socket placed in the project directory, or in a directory added with
   `allow_read_exec`, can still be connected to.
+- **Run as root, nvx cannot install every prebuilt binary contained.** A
+  contained process runs as the user who started nvx, so for root it is root,
+  in a user namespace that holds no other user. A tool that unpacks an archive
+  as root gives each file the owner the archive records, and any other owner
+  fails with `EINVAL`. sqlite3's prebuilt binary is one such archive. Run nvx as
+  an ordinary user.
 - **On Ubuntu 23.10 and later, the sandbox may refuse to start.** Ubuntu
   restricts the user namespaces it is built on, through
   `kernel.apparmor_restrict_unprivileged_userns`. Contained commands then fail

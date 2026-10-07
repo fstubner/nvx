@@ -726,6 +726,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   junction is compared by where the junction leads, and a path nvx cannot
   resolve counts as outside the home.
 
+* **On Linux a contained install can unpack a prebuilt binary that another
+  user owns in its archive.** The contained process ran as root in a user
+  namespace that holds only your own user id. A tool that unpacks an archive
+  as root gives each file the owner the archive records, and an owner the
+  namespace does not hold failed with `EINVAL`. Measured 2026-10-07 in a
+  Debian 13 container, a contained `npm install sqlite3@6.0.1` stopped at
+  `prebuild-install warn install EINVAL: invalid argument, lchown`, because the
+  archive of its prebuilt binary is owned by uid 1001, and its fallback build
+  from source failed too. The contained process now runs as you, with your own
+  user and group ids, and starts with no capabilities. The same install exits
+  0, and a contained `node` loads the module. A contained server can still
+  listen on a port below 1024 in its own network namespace. If you run nvx as
+  root, a contained process still runs as root, so the archive still fails to
+  unpack.
+
+* **nvx says when a browser that a contained install downloaded is deleted
+  with the sandbox.** puppeteer's postinstall and `playwright install` keep
+  their browsers under the home directory, and a contained command's home is
+  the sandbox's own, which nvx deletes when the command ends. The install
+  exited 0 and nothing said the browser was gone. Measured 2026-10-07 in a
+  Debian 13 container with `storage.googleapis.com` allowed, the puppeteer
+  cache in the sandbox's home reached 856 MB during a contained `npm install
+  puppeteer`, and no browser was left afterwards. nvx now warns when this
+  happens and prints the command that installs the browser where the tool
+  looks for it, such as `nvx --no-sandbox npx puppeteer browsers install
+  chrome`. It also names `PUPPETEER_CACHE_DIR` and `PLAYWRIGHT_BROWSERS_PATH`
+  when it removes them from a contained command's environment.
+
 ### Security
 
 * **A contained process can no longer type into your terminal.** nvx gives the

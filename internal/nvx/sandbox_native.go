@@ -100,6 +100,8 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 				LogInfo("The sandbox's debug logs were copied out before its home was removed: %s", dest)
 			}
 		}()
+		// A browser an installer put in the home goes with it, on success too.
+		defer warnLostBrowserDownloads(guestHome)
 	}
 
 	// Platforms that cut the sandboxed process off from the parent's loopback

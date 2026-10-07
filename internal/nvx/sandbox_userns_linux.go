@@ -5,7 +5,87 @@ package nvx
 import (
 	"fmt"
 	"os"
+	"syscall"
+	"unsafe"
 )
+
+// prCapBSetRead is PR_CAPBSET_READ from linux/prctl.h.
+const prCapBSetRead = 23
+
+// supervisorCapabilities lists every capability the running kernel knows. The
+// supervisor carries them across its own exec as ambient capabilities, because
+// it is not root in its user namespace and exec would otherwise clear them (see
+// supervisorSysProcAttr). Root held all of them, and the setup uses several:
+// CAP_SYS_ADMIN for the mounts, CAP_SYS_CHROOT with it for the .env watcher's
+// setns, CAP_SYS_RESOURCE for the user-namespace limit, CAP_SETPCAP for the
+// bounding-set drops and CAP_NET_ADMIN for `ip` and `iptables`, which get them
+// as ambient capabilities too.
+//
+// PR_CAPBSET_READ fails with EINVAL past the kernel's last capability. Raising
+// one the kernel does not know would fail the launch.
+func supervisorCapabilities() []uintptr {
+	var caps []uintptr
+	for c := uintptr(0); c < 64; c++ {
+		if _, _, errno := syscall.RawSyscall6(prctlSyscall(), prCapBSetRead, c, 0, 0, 0, 0); errno == syscall.EINVAL {
+			break
+		}
+		caps = append(caps, c)
+	}
+	return caps
+}
+
+// linuxCapabilityVersion3 is _LINUX_CAPABILITY_VERSION_3, which takes two data
+// structs, one per 32 capabilities.
+const linuxCapabilityVersion3 = 0x20080522
+
+// capUserHeader and capUserData are struct __user_cap_header_struct and struct
+// __user_cap_data_struct from linux/capability.h.
+type capUserHeader struct {
+	version uint32
+	pid     int32
+}
+
+type capUserData struct {
+	effective   uint32
+	permitted   uint32
+	inheritable uint32
+}
+
+// dropTargetCapabilities leaves the target no capability to gain at exec. Call
+// it on the thread that forks the target, after the last step that needs a
+// capability to pass to a child.
+//
+// The target runs as the user, so exec grants it nothing by itself. Two ways
+// remain, and this closes both. The ambient set crosses exec to a process that
+// is not root, so the inheritable set is cleared, and the kernel lowers the
+// ambient set with it. The bounding set limits what exec grants to root and to
+// a file with capabilities, so it is emptied. That covers a user who runs nvx
+// as root, who is root in the namespace too, and a target that is itself a file
+// with capabilities, which no_new_privs would let keep what this thread holds.
+// Measured 2026-10-07 without this, the target held all 41 capabilities, the
+// four the bounding set had dropped included.
+//
+// Per thread, like Landlock. The .env watcher's thread keeps what it needs for
+// its setns and mounts.
+func dropTargetCapabilities() error {
+	hdr := capUserHeader{version: linuxCapabilityVersion3}
+	var data [2]capUserData
+	if _, _, errno := syscall.RawSyscall(syscall.SYS_CAPGET,
+		uintptr(unsafe.Pointer(&hdr)), uintptr(unsafe.Pointer(&data[0])), 0); errno != 0 {
+		return fmt.Errorf("capget: %w", errno)
+	}
+	data[0].inheritable, data[1].inheritable = 0, 0
+	if _, _, errno := syscall.RawSyscall(syscall.SYS_CAPSET,
+		uintptr(unsafe.Pointer(&hdr)), uintptr(unsafe.Pointer(&data[0])), 0); errno != 0 {
+		return fmt.Errorf("capset: %w", errno)
+	}
+	for _, c := range supervisorCapabilities() {
+		if err := dropFromBoundingSet(c); err != nil {
+			return fmt.Errorf("drop capability %d from the bounding set: %w", c, err)
+		}
+	}
+	return nil
+}
 
 // maxUserNamespacesPath is the per-user-namespace ceiling on how many user
 // namespaces may be created beneath this one (the UCOUNT_USER_NAMESPACES limit,

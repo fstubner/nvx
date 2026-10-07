@@ -40,7 +40,16 @@ func supervisorCloneFlags(networkMode string) uintptr {
 
 // supervisorSysProcAttr is how the supervisor is actually launched: the clone
 // flags above plus the user namespace that makes them possible for an ordinary
-// user, with this user mapped to root inside it.
+// user, with this user mapped to itself inside it.
+//
+// Not to root. The target runs as the supervisor's user, and tar libraries
+// restore an archive's owners only when getuid() is 0. With one id mapped, every
+// other owner is EINVAL. Measured 2026-10-07 on Linux 6.18 with root mapped, a
+// contained `npm install sqlite3` failed on `lchown ... EINVAL`, because its
+// prebuilt binary's archive is owned by 1001. A process that is not root in
+// the namespace keeps no capability across exec, so the supervisor carries
+// its own across as ambient capabilities (supervisorCapabilities) and takes
+// them away again before the target starts (dropTargetCapabilities).
 //
 // Pdeathsig SIGKILL is what ties the supervisor's life to nvx's. SIGKILL reaches
 // PID 1 of a namespace from outside it, and PID 1 dying takes the namespace's
@@ -56,15 +65,17 @@ func supervisorCloneFlags(networkMode string) uintptr {
 // namespace unaided, got EPERM, and skipped. The behaviour it guards was running
 // fine by then; nothing said so.
 func supervisorSysProcAttr(networkMode string) *syscall.SysProcAttr {
+	uid, gid := syscall.Getuid(), syscall.Getgid()
 	return &syscall.SysProcAttr{
 		Pdeathsig:  syscall.SIGKILL,
 		Cloneflags: syscall.CLONE_NEWUSER | supervisorCloneFlags(networkMode),
 		UidMappings: []syscall.SysProcIDMap{
-			{ContainerID: 0, HostID: syscall.Getuid(), Size: 1},
+			{ContainerID: uid, HostID: uid, Size: 1},
 		},
 		GidMappings: []syscall.SysProcIDMap{
-			{ContainerID: 0, HostID: syscall.Getgid(), Size: 1},
+			{ContainerID: gid, HostID: gid, Size: 1},
 		},
+		AmbientCaps: supervisorCapabilities(),
 	}
 }
 

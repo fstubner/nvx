@@ -84,8 +84,8 @@ func TestContainedProcessReadsItsOwnProcAndNotTheHosts(t *testing.T) {
 	// Creating the namespaces and being allowed to USE them are different
 	// questions, and requireNamespaceSupport above only answers the first.
 	//
-	// supervisorSysProcAttr maps this user to root inside a new user namespace, so
-	// the child should hold CAP_SYS_ADMIN there and unshare(CLONE_NEWNS) should
+	// supervisorSysProcAttr gives the child every capability in a new user
+	// namespace, so it should hold CAP_SYS_ADMIN and unshare(CLONE_NEWNS) should
 	// succeed. Ubuntu 24.04 hardens unprivileged user namespaces through AppArmor
 	// and strips it: the clone succeeds, the unshare comes back EPERM, and every
 	// assertion below then reads as a product failure caused by a distribution
