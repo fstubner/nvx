@@ -104,10 +104,12 @@ func testTerminalInterrupts(t *testing.T, branch terminalBranch) {
 		terminal   bool
 		background bool
 		// sharedGroup marks a case that holds only when the target shares nvx's
-		// process group.
-		sharedGroup bool
+		// process group, and ownGroup one about a target in a group of its own.
+		sharedGroup, ownGroup bool
+		// stopped waits for the target to be stopped before acting.
+		stopped bool
 		// act is what the test does once the target is running, and what it must
-		// leave behind in the work directory.
+		// leave behind in the work directory. With no file, the run must end.
 		act      func(r *terminalRun)
 		wantFile string
 		want     string
@@ -144,10 +146,16 @@ func testTerminalInterrupts(t *testing.T, branch terminalBranch) {
 			wantFile: "count", want: "1",
 			why: "the terminal did not deliver it, so the supervisor cannot take it for the terminal's own",
 		},
+		{
+			name: "Ctrl-C ends a target the terminal stopped", mode: "shread", terminal: true, ownGroup: true, stopped: true,
+			act: func(r *terminalRun) { r.typeBytes("\x03") },
+			why: "a target in a group of its own is stopped by SIGTTIN when it reads the terminal, " +
+				"and a stopped process acts on no signal but SIGKILL and SIGCONT",
+		},
 	} {
 		// The cost of a group of its own, which applyLinuxNamespaces accepts on
 		// kernels that cannot scope signals.
-		if tc.sharedGroup && branch.ownGroup() {
+		if tc.sharedGroup && branch.ownGroup() || tc.ownGroup && !branch.ownGroup() {
 			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,16 +163,21 @@ func testTerminalInterrupts(t *testing.T, branch terminalBranch) {
 			if _, ok := r.waitFile("ready", 30*time.Second); !ok {
 				r.failOrSkip("the contained target never started")
 			}
-			tc.act(r)
-			got, ok := r.waitFile(tc.wantFile, 10*time.Second)
-			if !ok {
-				t.Fatalf("%s was never written 10 seconds on. %s\noutput:\n%s", tc.wantFile, tc.why, r.out.String())
+			if tc.stopped && !r.waitStopped(10*time.Second) {
+				t.Fatalf("the target was never stopped, so this case shows nothing\noutput:\n%s", r.out.String())
 			}
-			if got != tc.want {
-				t.Errorf("%s = %q, want %q. %s\noutput:\n%s", tc.wantFile, got, tc.want, tc.why, r.out.String())
+			tc.act(r)
+			if tc.wantFile != "" {
+				got, ok := r.waitFile(tc.wantFile, 10*time.Second)
+				if !ok {
+					t.Fatalf("%s was never written 10 seconds on. %s\noutput:\n%s", tc.wantFile, tc.why, r.out.String())
+				}
+				if got != tc.want {
+					t.Errorf("%s = %q, want %q. %s\noutput:\n%s", tc.wantFile, got, tc.want, tc.why, r.out.String())
+				}
 			}
 			if !r.waitExit(10 * time.Second) {
-				t.Errorf("the run was still going 10 seconds after the target finished\noutput:\n%s", r.out.String())
+				t.Errorf("the run was still going 10 seconds on. %s\noutput:\n%s", tc.why, r.out.String())
 			}
 		})
 	}
@@ -348,6 +361,31 @@ func (r *terminalRun) waitFile(name string, limit time.Duration) (string, bool) 
 	return "", false
 }
 
+// waitStopped waits for a process in this run's session to be stopped, as the
+// terminal stops a reader in a background group. /proc here shows the
+// sandbox's processes too, and the stand-in for nvx leads the session.
+func (r *terminalRun) waitStopped(limit time.Duration) bool {
+	session := strconv.Itoa(r.cmd.Process.Pid)
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		stats, _ := filepath.Glob("/proc/[0-9]*/stat")
+		for _, p := range stats {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			// pid (comm) state ppid pgrp session ...
+			s := string(b)
+			fields := strings.Fields(s[strings.LastIndexByte(s, ')')+1:])
+			if len(fields) > 3 && fields[0] == "T" && fields[3] == session {
+				return true
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return false
+}
+
 func (r *terminalRun) waitExit(limit time.Duration) bool {
 	select {
 	case <-r.done:
@@ -475,6 +513,13 @@ func terminalTarget() int {
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		_ = terminalWrite(filepath.Join(dir, "line"), []byte(line), 0o600)
 		return 0
+	case "shread":
+		// A reader that leaves SIGINT at its default, as most programs do. A Go
+		// program catches every signal, and the read it restarts after one can
+		// stop it again before it has finished exiting.
+		_ = terminalWrite(filepath.Join(dir, "ready"), nil, 0o600)
+		_ = syscall.Exec("/bin/sh", []string{"sh", "-c", "read line"}, os.Environ())
+		return 1
 	case "killgroup":
 		// kill(0) signals every process in the caller's group, this one included.
 		_ = terminalWrite(filepath.Join(dir, "ready"), nil, 0o600)

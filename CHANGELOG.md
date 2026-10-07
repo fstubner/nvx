@@ -633,7 +633,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that whole group. Measured on Linux 6.18 with nvx built to take that path, the
   same two commands stopped 0.06 to 0.16 seconds after Ctrl-C. On those kernels
   a contained process is stopped when it reads the terminal, so a contained REPL
-  does not answer, and Ctrl-Z stops nvx while the contained process runs on.
+  does not answer. Ctrl-C still ends it, though a process that catches Ctrl-C,
+  as Node and Go programs do, may need it more than once. Ctrl-Z stops nvx while
+  the contained process runs on.
 
 * **In `network.mode: open` on Linux 6.12 and later, a contained process can no
   longer reach your machine's abstract UNIX sockets.** An abstract socket has no

@@ -1195,11 +1195,19 @@ still pass a signal to its script.
 
 Below ABI v6 nothing can scope signals, so the contained process gets a process
 group of its own and the supervisor passes the signals it gets to that whole
-group. Measured on the same kernel with nvx built to take this path,
-`nvx npx -y http-server` and `nvx --strict npm run` stopped 0.16 and 0.06
-seconds after Ctrl-C. Two things are lost there. A contained process that reads
-the terminal is stopped, and a contained `node` REPL did not answer within 8
-seconds. Ctrl-Z stopped nvx while the contained process kept running.
+group. Measured on the same kernel with nvx built to take this path, over three
+runs each, `nvx npx -y http-server` stopped 0.13 to 0.16 seconds after Ctrl-C
+and `nvx --strict npm run` 0.06 seconds. Two things are lost there. A contained
+process that reads the terminal is stopped, and a contained `node` REPL did not
+answer within 8 seconds. Ctrl-Z stopped nvx while the contained process kept
+running.
+
+The supervisor sends SIGCONT after each signal it passes on, because a stopped
+process acts on nothing else. Without it, Ctrl-C left a stopped
+`sh -c 'read x'` running in 3 runs of 3. With it one Ctrl-C ended that, a Node
+script that had read a line needed two, and a Go program reading stdin,
+signalled the same way outside nvx, needed one to four in 40 runs. The last two
+catch Ctrl-C, and can read again and be stopped before they have exited.
 `TestContainedProcessStopsOnCtrlCUnderNpm` and
 `TestContainedProcessGetsTheTerminalsInterruptOnce` run both paths.
 

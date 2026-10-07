@@ -608,7 +608,12 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 		startDotenvWatcher(targetPid, workDir, watchMask, []os.FileInfo{launchMask, watchMaskInfo}, plan)
 	}
 	// In a group of its own the target gets nothing from the terminal, so each
-	// signal goes to the whole group, as the terminal would send it.
+	// signal goes to the whole group, as the terminal would send it. SIGCONT
+	// follows, because a process there that read the terminal was stopped by
+	// SIGTTIN, and a stopped process acts on nothing else. Without it Ctrl-C left
+	// such a process stopped and the run going. A process that catches the signal,
+	// as Node and every Go program do, can read again and be stopped before it has
+	// exited, so it may need Ctrl-C more than once.
 	signalled := targetPid
 	if ownGroup {
 		signalled = -targetPid
@@ -617,6 +622,9 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 		for sig := range sigs {
 			if out, ok := signalForTarget(sig, ownGroup); ok {
 				_ = syscall.Kill(signalled, out)
+				if ownGroup {
+					_ = syscall.Kill(signalled, syscall.SIGCONT)
+				}
 			}
 		}
 	}()

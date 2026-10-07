@@ -78,8 +78,9 @@ func TestContainedProcessCannotSignalOutsideItsSandbox(t *testing.T) {
 // process listened on and read its reply. Xvfb listens on one. The Landlock
 // scope refuses the connection.
 func TestContainedProcessCannotReachAHostAbstractSocket(t *testing.T) {
-	if landlockScopesForABI(landlockABIVersion())&landlockScopeAbstractUnixSocket == 0 {
-		t.Skip("this kernel cannot scope abstract sockets, which needs Landlock ABI v6 (Linux 6.12)")
+	// Asked of the kernel, not of landlockScopesForABI, which is under test.
+	if abi := landlockABIVersion(); abi < 6 {
+		t.Skipf("this kernel speaks Landlock ABI v%d, and scoping abstract sockets needs v6 (Linux 6.12)", abi)
 	}
 	name := fmt.Sprintf("@nvx-test-abstract-%d", os.Getpid())
 	ln, err := net.Listen("unix", name)
@@ -147,8 +148,9 @@ func TestContainedProcessStopsOnCtrlCUnderNpm(t *testing.T) {
 }
 
 // npm passes a signal on to the script it runs, and the signal scope must leave
-// that alone. The script is exec'd, so npm's child is node, and in nvx's group
-// the supervisor signals npm alone. Only npm can then stop node.
+// that alone. The script is exec'd, so npm's child is node. Where the kernel
+// scopes signals the target stays in nvx's group and the supervisor signals npm
+// alone, so only npm can stop node.
 func TestContainedProcessNpmPassesSignalsToItsScript(t *testing.T) {
 	npm, _, roots := realNpm(t)
 	r := startTerminalRun(t, terminalOpts{
