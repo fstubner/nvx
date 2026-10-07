@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -39,14 +38,7 @@ type batchProbeFixture struct {
 	env                []string
 }
 
-var (
-	batchProbeNvxOnce sync.Once
-	batchProbeNvxPath string
-	batchProbeNvxErr  error
-	batchProbeNvxOut  []byte
-)
-
-// newBatchProbeFixture builds nvx once per run and lays out a scratch NVX_HOME
+// newBatchProbeFixture builds nvx and lays out a scratch NVX_HOME
 // holding one Node version with pnpm in its npm_global, and a project with a
 // tsc bin. env is the environment to run the built nvx with. It has the
 // version's npm_global and its own folder on PATH, which is what `nvx use` puts
@@ -64,18 +56,9 @@ func newBatchProbeFixture(t *testing.T) batchProbeFixture {
 	}
 	hostNode := strings.TrimSpace(string(execPath))
 
-	batchProbeNvxOnce.Do(func() {
-		dir, derr := os.MkdirTemp("", "nvxb")
-		if derr != nil {
-			batchProbeNvxErr = derr
-			return
-		}
-		batchProbeNvxPath = filepath.Join(dir, "nvx.exe")
-		batchProbeNvxOut, batchProbeNvxErr = exec.Command("go", "build", "-o", batchProbeNvxPath,
-			"github.com/fstubner/nvx/cmd/nvx").CombinedOutput()
-	})
-	if batchProbeNvxErr != nil {
-		t.Fatalf("build nvx: %v\n%s", batchProbeNvxErr, batchProbeNvxOut)
+	nvxExe := filepath.Join(tempDir(t), "nvx.exe")
+	if out, err := exec.Command("go", "build", "-o", nvxExe, "github.com/fstubner/nvx/cmd/nvx").CombinedOutput(); err != nil {
+		t.Fatalf("build nvx: %v\n%s", err, out)
 	}
 
 	home := tempDir(t)
@@ -119,7 +102,7 @@ func newBatchProbeFixture(t *testing.T) batchProbeFixture {
 			env = append(env, e)
 		}
 	}
-	return batchProbeFixture{nvx: batchProbeNvxPath, home: home, project: project, env: env}
+	return batchProbeFixture{nvx: nvxExe, home: home, project: project, env: env}
 }
 
 func (f batchProbeFixture) run(t *testing.T, args ...string) (string, error) {
