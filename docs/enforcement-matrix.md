@@ -58,7 +58,7 @@ and do not verify whether the kernel honours it.
 | Any loopback service reachable | No, unless the policy lists it¹¹, or `network.mode: loopback`¹³ | No, unless the policy lists it, or `network.mode: loopback`¹³ | No⁶ (proxy port only), or `network.mode: loopback`¹³ |
 | One named host service reachable | Via `allow_hosts`, or `--connect` for one run⁹ ¹¹ | Via `allow_hosts` for proxy-aware clients, or `--connect` for one run, except in `offline`¹¹ ¹² | Via `allow_hosts` for proxy-aware clients, or `--connect` for one run¹¹ ¹² |
 | Another project's sandbox reachable over loopback | No¹⁰ (per-project package) | No (each has its own netns) | Untested |
-| A contained server reachable from the host | Only via `--expose`⁹ | Yes (shared stack, no inbound block) | Yes |
+| A contained server reachable from the host | Only via `--expose`⁹ | Only via `--expose`¹⁶, except in `network.mode: open` | Not measured¹⁶ |
 | Fails closed if a primitive is missing | Yes | Yes (Landlock 5.13+, iproute2 for netns) | Yes⁵ (refuses to run without `/usr/bin/sandbox-exec`) |
 
 ² On macOS the Seatbelt profile allows filesystem reads outside the home
@@ -537,6 +537,24 @@ A socket inside a granted path stays reachable. The granted paths are
 the project, the guest home, and below ABI v9 also the system and runtime
 directories and any `allow_read_exec` root. In `network.mode: open` the host
 resolver sockets in `/run/systemd/resolve` and `/run/nscd` stay visible too.
+
+`/tmp` in that root is the guest home's `tmp` directory, the one `$TMPDIR`
+names, so a tool that hard-codes `/tmp` writes there and not to the host's. The
+root had no `/tmp` until 2026-10-07. pnpm 12 makes its store lock directory
+there. Traced with strace on Linux 6.18, its `mkdir("/tmp")` came back `EACCES`
+and the install stopped with `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK`. pnpm
+12.9.1 installs contained now. pnpm 9.15.9, 10.34.6 and 11.28.5 installed
+contained before the change and after it.
+`TestContainedProcessHasAPrivateTmpThatTMPDIRNames` asserts that a write under
+`/tmp` works, that a file written under `$TMPDIR` shows under `/tmp`, and that
+the host's own `/tmp` is not visible.
+
+A link at `tmp` is refused. A trusted tool's guest home outlives the run and the
+contained process can write all of it, so an earlier run can leave `tmp` as a link
+to a directory the sandbox may read and not write, such as a runtime. nvx opens
+the path with its own rights, and following the link showed that directory at
+`/tmp` and granted it in full. `TestContainedProcessDoesNotGetASymlinkedTmpTarget`
+wrote into such a directory before the check and cannot now.
 
 ⁹ **Two things about Windows containment that surprise people, both measured.**
 
@@ -1059,6 +1077,35 @@ provider mounts the project as it is.
 
 A tool that needs to read or write `.env` during a contained run, such as a
 scaffolder that writes one on macOS, runs with `--no-sandbox`.
+
+¹⁶ **A contained server on Linux needs `--expose`, as on Windows, except in
+`network.mode: open`.** This row said a contained server on Linux was reachable
+with no flag until 2026-10-07, and it is not. Outside `open` mode the sandbox
+runs in a network namespace of its own, and the 127.0.0.1 in there is not the
+host's. Measured 2026-10-07 on WSL2 kernel 6.18 in a privileged container,
+`npx -y http-server -p 8099 -a 127.0.0.1` printed that it was serving, and
+`curl` from outside got exit 7 on port 8099. With `--expose 8099:18099`, `curl`
+got 200 on port 18099, and so did 20 parallel requests. In `open` mode `curl`
+got 200 on port 8099 with no flag, and `--expose` publishes nothing.
+
+The tunnel is the Windows one (⁹), with a UNIX socket in the guest home. The
+supervisor inside the namespace dials it and parks the connections. The parent
+listens on the host's loopback for that run and splices each arriving
+connection onto a parked one. The parent never dials a path the contained
+process could have replaced, and no network capability is added.
+`TestContainedProcessServerIsReachableFromTheHostOnlyWhenPublished` asserts in
+the privileged CI step that the host cannot reach the port until it is
+published, that it can once it is, over one connection with several exchanges
+and over 24 at once, and that the sandbox still cannot reach an address outside
+the host's loopback. Measured the same day, `loopback` mode publishes the same
+way. In `offline` mode the seccomp filter denies the sandbox every IP socket, so
+a server cannot listen. `listen` fails with `EPERM`, and `--expose` is refused
+with a warning.
+
+On macOS nothing has measured a contained server. The Seatbelt profile grants no
+`network-bind` in `proxy` or `offline` mode, on purpose
+(`TestSeatbeltGrantsLoopbackOnlyWhereTheModeMeansIt`), so a contained server may
+not be able to listen at all. `--expose` does nothing there.
 
 ## Measured costs and platform floors
 

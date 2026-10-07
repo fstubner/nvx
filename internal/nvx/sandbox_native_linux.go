@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 )
 
 // egressSocketName is the UNIX socket, inside the guest home, that the parent's
@@ -59,6 +61,11 @@ func linuxSessionSockets(guestHome string, netCtx *NetworkLaunchContext) []strin
 	for _, m := range netCtx.ConnectPorts {
 		socks = append(socks, linuxConnectSocketPath(guestHome, m.Host))
 	}
+	if networkModeRequiresNamespace(netCtx.Mode) {
+		for _, m := range netCtx.ExposePorts {
+			socks = append(socks, linuxExposeSocketPath(guestHome, m.Container))
+		}
+	}
 	if loopbackRedirectMode(netCtx.Mode) {
 		socks = append(socks, loopbackSocketPath(guestHome))
 	}
@@ -98,6 +105,16 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	defer stopConnect()
 	cleanEnv = append(cleanEnv, connectEnv...)
 
+	// Ports the developer asked to publish. Opened here too, outside the
+	// namespace, so the host listener and the tunnel socket exist before the
+	// target starts.
+	stopExpose, err := publishExposedPorts(guestHome, config.NvxHome, &netCtx)
+	if err != nil {
+		LogError("Could not publish a port from the sandbox: %v", err)
+		return 1, refusedToStart("a port could not be published from the sandbox")
+	}
+	defer stopExpose()
+
 	// network.mode loopback reaches host services at their own addresses, over a
 	// relay the supervisor installs inside the namespace. This is the parent's
 	// half: the socket it carries them to, and the check that only loopback
@@ -122,6 +139,11 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	}
 	for _, m := range netCtx.ConnectPorts {
 		args = append(args, fmt.Sprintf("--connect=%d:%d", m.Host, m.Inside))
+	}
+	// Only the port inside crosses. The supervisor dials the parent's socket for
+	// it, and the host port means nothing in there.
+	for _, m := range netCtx.ExposePorts {
+		args = append(args, "--expose="+strconv.Itoa(m.Container))
 	}
 	for _, root := range config.ReadExecRoots {
 		args = append(args, "--read-exec="+root)
@@ -203,5 +225,16 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 func runSupervisor(cmd *exec.Cmd, guestHome string) error {
 	return startChildForwardingSignals(cmd, func(pid int) {
 		recordSupervisorPID(guestHome, pid)
-	})
+	}, supervisorInterruptSignal)
 }
+
+// supervisorInterruptSignal is what nvx sends the supervisor to have it interrupt
+// the target.
+//
+// The target is in the terminal's foreground group with nvx and the supervisor, so
+// Ctrl-C at a terminal reaches all three from the kernel. The supervisor cannot
+// tell that SIGINT from one nvx forwards because the terminal did not deliver it,
+// such as `kill -INT` sent to a backgrounded nvx. Passing on both would interrupt
+// the target twice. So the supervisor ignores a SIGINT of its own, and nvx asks for
+// an interrupt under this number when it has one to forward.
+const supervisorInterruptSignal = syscall.SIGUSR1
