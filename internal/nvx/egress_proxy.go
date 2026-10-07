@@ -950,17 +950,55 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 	_, _ = io.Copy(conn, remote)
 }
 
+// nodeUseEnvProxy is the variable that makes Node's own HTTP clients read the
+// proxy variables. Without it fetch(), http and https ignore HTTP_PROXY and
+// HTTPS_PROXY, so a contained program using them connected directly, and the
+// sandbox refused that. Measured 2026-10-07, a contained fetch() to an allowlisted
+// name failed with ENOTFOUND on Windows and EAI_AGAIN on Linux, and the proxy was
+// never asked.
+//
+// Which Node reads it, from the Node changelogs and the CLI docs at each release:
+//
+//   - 24.0.0 and later read it for fetch() (nodejs/node#57165).
+//   - 24.5.0 and later read it for http and https requests too (#58980).
+//   - 22.21.0 and later read it for fetch, http and https together.
+//   - Every other release ignores it. That is 18, 19, 20, 21, 22.0.0 to 22.20.x
+//     and 23. Setting it there changes nothing, and those programs behave as they
+//     did.
+//
+// Measured with a test proxy, 22.23.2, 24.14.1 and 24.21.0 sent their fetch,
+// https.get and http.get to it. 18.5.0, 18.20.4, 19.9.0, 20.11.0 and 21.7.3 sent
+// nothing and tried to resolve the names themselves.
+//
+// Node reads it at startup, so it has to be in the environment the process is
+// launched with, and a child that Node starts inherits it. A request given its own
+// agent ignores it, and so does a raw socket. Every other request goes to the
+// proxy, including one to 127.0.0.1. Measured on Windows and on Linux with
+// 22.23.2, a server and a client in the same sandbox could no longer reach each
+// other with fetch (rejected) or http.get (405). The ports nvx opens inside the
+// sandbox are the exception. See inSandboxNoProxy.
+//
+// 22.23.2 prints "[UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental" to
+// stderr when a process that has it set exits, whether or not the process made a
+// request. 24.14.1 and 24.21.0 print nothing.
+//
+// Bun's fetch reads the proxy variables on its own and needs no such switch.
+const nodeUseEnvProxy = "NODE_USE_ENV_PROXY"
+
+// applyProxyEnv adds the proxy variables to the contained process's environment,
+// after the scrub, so the scrub's short list of names cannot take them away. Any
+// inherited value of a name set here is replaced rather than duplicated.
 func applyProxyEnv(cleanEnv []string, proxy *EgressProxy) []string {
 	if proxy == nil {
 		return cleanEnv
 	}
 	httpURL := proxy.HTTProxyURL()
 	socksURL := proxy.SOCKSProxyURL()
-	filtered := make([]string, 0, len(cleanEnv)+4)
+	filtered := make([]string, 0, len(cleanEnv)+5)
 	for _, e := range cleanEnv {
 		key := strings.ToUpper(strings.SplitN(e, "=", 2)[0])
 		switch key {
-		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY":
+		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", nodeUseEnvProxy:
 			continue
 		}
 		filtered = append(filtered, e)
@@ -970,6 +1008,7 @@ func applyProxyEnv(cleanEnv []string, proxy *EgressProxy) []string {
 		"HTTPS_PROXY="+httpURL,
 		"ALL_PROXY="+socksURL,
 		"NO_PROXY=127.0.0.1,localhost,::1",
+		nodeUseEnvProxy+"=1",
 	)
 	return filtered
 }

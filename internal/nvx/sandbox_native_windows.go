@@ -626,7 +626,7 @@ func stripProxyEnv(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, e := range env {
 		switch strings.ToUpper(strings.SplitN(e, "=", 2)[0]) {
-		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY":
+		case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", nodeUseEnvProxy:
 			continue
 		}
 		out = append(out, e)

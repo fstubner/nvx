@@ -281,7 +281,7 @@ func runAppContainerExecChild(a supervisorExecArgs) int {
 	// The parent set HTTP_PROXY to its own TCP listener, which is unreachable from
 	// in here. Point it at the relay instead; applyRelayProxyEnv strips the
 	// inherited values first, so nothing can fall back to the unreachable address.
-	cmd.Env = applyRelayProxyEnv(os.Environ(), proxyEnvAddr)
+	cmd.Env = applyRelayProxyEnv(os.Environ(), proxyEnvAddr, inSandboxNoProxy(a))
 	if workDir != "" {
 		cmd.Dir = workDir
 	}
