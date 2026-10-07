@@ -59,8 +59,11 @@ and the evidence and measurements for each platform are in the
   `network.mode: loopback`, changes that. nvx leaves the names off `NO_PROXY`,
   and a request that follows the proxy variables goes to the proxy, which dials
   the service on your machine. A server and a client in one sandbox then reach
-  each other only on a port nvx opened, with `--connect` or `--expose`. nvx lists
-  those ports in `NO_PROXY` by number, which Node reads and npm does not. Any
+  each other only on a port nvx opened, with `--connect` or `--expose`. Measured
+  on Windows and on Linux with Node 22.23.2 under `network.mode: loopback`,
+  `fetch` to a server in the same sandbox was rejected and `http.get` received
+  405. nvx lists the ports it opened in `NO_PROXY` by number, which Node reads
+  and npm does not. Any
   other loopback port goes to the proxy, which refuses it unless the policy names
   it or the mode is `loopback`. A request with its own agent, and a raw socket,
   connect directly in every case. macOS shares your machine's loopback, so nvx
