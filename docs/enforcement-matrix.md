@@ -140,7 +140,7 @@ domain (run 37513452515), so data encoded in a name could leave through the
 host's resolver while every connection was refused.
 
 nvx's egress proxy looks a name up only once it is allowed, on every
-platform. The allowlist, an earlier grant in this run or a yes at the prompt
+platform. The allowlist, an earlier grant in this run or `NVX_TRUST_YES`
 decides on the name first, and a refused name never reaches the host's
 resolver. Until 2026-10-06 the proxy looked the name up before the allowlist
 refused it. A unit-level run with the resolver stubbed showed a `CONNECT` to a
@@ -755,12 +755,12 @@ Postgres or a local registry needs it, and the alternative they reach for is
 `--no-sandbox`, which is worse. `PRODUCT.md` scopes the guarantee to "a host
 outside the policy allowlist", and a host inside `allow_hosts` is inside it.
 
-**nvx offers no loopback by prompt.** Whatever the sandbox is running raises the
-unknown-host prompt, and that is the untrusted code. So a postinstall
+**nvx grants no loopback on request.** Whatever the sandbox is running raises the
+request for an unknown host, and that is the untrusted code. So a postinstall
 could ask on its own behalf for the developer's local database. Localhost is
-exactly where the services that take no credentials live. nvx now refuses a
-loopback destination that is not already allowlisted, without asking, and points at
-`allow_hosts` and `--connect`.
+exactly where the services that take no credentials live. nvx refuses a
+loopback destination that is not already allowlisted, `NVX_TRUST_YES` does not
+approve one, and the refusal points at `allow_hosts` and `--connect`.
 
 A literal link-local address gets the same refusal, for the same reason.
 169.254.169.254 is the cloud metadata endpoint, and one unauthenticated request
@@ -769,12 +769,14 @@ A name that resolves to a link-local address was already refused, after the
 lookup. `TestALiteralLinkLocalAddressIsNeverOfferedAtThePrompt` covers IPv4, the
 IPv4-mapped form and IPv6.
 
-Approving any other host at the prompt lasts for
-that run only. nvx used to write it into the grants store for ever.
+nvx no longer asks about any other host either, because an agent driving a
+terminal could answer. It refuses, and prints the `nvx allow-host` command a
+person runs. `NVX_TRUST_YES` approves one for that run only. nvx used to write
+an approved host into the grants store for ever.
 
 So `--connect` is no longer "the only route to a host service". It is the only
 *ephemeral, peer-verified* one. `allow_hosts` is the durable form, and being
-durable is why you have to write it down instead of agreeing to it at a prompt.
+durable is why someone has to write it down, with `nvx allow-host` or by hand.
 
 
 ¹² **`--connect` on macOS.**

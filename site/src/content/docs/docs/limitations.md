@@ -23,8 +23,8 @@ and the evidence and measurements for each platform are in the
 - **Only an `http://` upstream proxy is used.** An `https://` or `socks5://`
   value in `HTTPS_PROXY` is ignored with a warning, and contained connections
   are then made directly. Behind a proxy, a host nvx's own resolver cannot look
-  up is still reachable when the allowlist names it, and cannot be approved at
-  the prompt.
+  up is still reachable when the allowlist names it, and `NVX_TRUST_YES` cannot
+  approve it.
 - **The Docker provider cannot do `proxy` mode.** A policy that selects
   `isolation.filesystem.provider: docker` with the default `network.mode: proxy`
   is refused. Docker runs `offline` and `loopback` with no network at all, and
