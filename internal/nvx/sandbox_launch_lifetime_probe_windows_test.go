@@ -93,7 +93,7 @@ func TestALaunchSurvivesACollectionJustBeforeCreateProcess(t *testing.T) {
 // its token is an AppContainer token and 3 when it is not.
 func TestTokenCheckChild(t *testing.T) {
 	if os.Getenv("NVX_TOKEN_CHECK_CHILD") != "1" {
-		t.Skip("runs only as the contained child of TestALaunchSurvivesACollectionJustBeforeCreateProcess")
+		t.Skip("child-side helper for TestALaunchSurvivesACollectionJustBeforeCreateProcess")
 	}
 	const tokenIsAppContainer = 29
 	var token syscall.Token

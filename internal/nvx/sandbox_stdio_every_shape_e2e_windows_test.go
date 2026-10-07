@@ -123,6 +123,9 @@ viaSpawn(0, () => { viaSpawnSync(); say('DONE'); process.exit(0); });
 			}
 		}
 	}
+	if t.Failed() {
+		t.Logf("report:\n%s\nnvx said:\n%s", got, out)
+	}
 }
 
 // checkStdioShape asserts one shape's result: the child exited 0, and each of
