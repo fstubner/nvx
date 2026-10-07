@@ -800,10 +800,10 @@ Options:
   --strict               Contain your own code too (not just installs/ad-hoc
                          tools). Must come BEFORE the command, like the two
                          above; after it, the flag belongs to the command
-  --expose <in>[:<host>] (Windows) Publish a port a server inside the sandbox
-                         listens on, so the host can reach it. The two numbers
-                         must differ. Omit the host port to have one picked and
-                         printed. Must come BEFORE the command
+  --expose <in>[:<host>] (Windows, Linux) Publish a port a server inside the
+                         sandbox listens on, so the host can reach it. The two
+                         numbers must differ. Omit the host port to have one
+                         picked and printed. Must come BEFORE the command
   --connect <host>[:<in>]  Let the sandbox reach ONE service already
                          running on your machine, over a tunnel nvx dials. The
                          two numbers must differ; the in-sandbox one is printed

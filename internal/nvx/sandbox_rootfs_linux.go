@@ -110,8 +110,40 @@ func sandboxBindPlan(paths []string) []sandboxBind {
 // every bind source is opened before it covers anything.
 const sandboxRootScratch = "/tmp"
 
+// sandboxTmpDir is the directory the sandbox shows as /tmp. It is the guest home's
+// own tmp directory, the one $TMPDIR names. A tool that hard-codes /tmp, such as pnpm
+// 12 for its store locks, used to fail on mkdir("/tmp"), because the sandbox root
+// had no such directory. Showing the directory $TMPDIR already names keeps the two
+// paths the same place, and the host's /tmp is never shown. It goes with the guest
+// home. Returns "" when the guest home has no tmp directory.
+//
+// A link is not a directory here. The contained process can write the whole guest
+// home, and a trusted tool's guest home outlives the run, so an earlier run can
+// leave tmp as a link to a directory the sandbox may read and not write, such as
+// nvx's runtimes. nvx opens the path with its own rights, and following the link
+// would show that directory at /tmp and grant it in full.
+func sandboxTmpDir(guestHome string) string {
+	if guestHome == "" {
+		return ""
+	}
+	dir := filepath.Join(guestHome, "tmp")
+	if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
+		return ""
+	}
+	return dir
+}
+
+// openDirNoFollow opens a directory for a bind or a rule without following a link
+// at its last component. The check in sandboxTmpDir is one moment and this is
+// another, and a run that shares the guest home can swap the directory between
+// them. A link fails here.
+func openDirNoFollow(path string) (int, error) {
+	return syscall.Open(path, openPathFlag|syscall.O_NOFOLLOW|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+}
+
 // enterSandboxRoot makes the calling thread's root a tmpfs holding only the
-// binds in plan, and detaches the host's root from its mount namespace.
+// binds in plan and the directory tmp at /tmp, and detaches the host's root from
+// its mount namespace. An empty tmp leaves the root without a /tmp.
 //
 // It runs in the supervisor on its locked thread, before Landlock, so the
 // target inherits the view through its own CLONE_NEWNS copy. The target cannot
@@ -119,7 +151,7 @@ const sandboxRootScratch = "/tmp"
 // pivot_root.
 // The supervisor's other threads keep the host view, which is where the egress
 // and --connect relays dial from.
-func enterSandboxRoot(plan []sandboxBind) error {
+func enterSandboxRoot(plan []sandboxBind, tmp string) error {
 	if err := syscall.Unshare(syscall.CLONE_NEWNS); err != nil {
 		return fmt.Errorf("unshare mount namespace: %w", err)
 	}
@@ -143,10 +175,31 @@ func enterSandboxRoot(plan []sandboxBind) error {
 		}
 		fds = append(fds, fd)
 	}
+	tmpFD := -1
+	if tmp != "" {
+		fd, err := openDirNoFollow(tmp)
+		if err != nil {
+			return fmt.Errorf("open %s: %w", tmp, err)
+		}
+		fds = append(fds, fd)
+		tmpFD = fd
+	}
 
 	flags := uintptr(syscall.MS_NOSUID | syscall.MS_NODEV)
 	if err := syscall.Mount("tmpfs", sandboxRootScratch, "tmpfs", flags, "mode=0755"); err != nil {
 		return fmt.Errorf("mount the sandbox root: %w", err)
+	}
+	// Before the binds below, so a project that lives under /tmp is mounted over
+	// it and not hidden by it.
+	if tmpFD >= 0 {
+		target := filepath.Join(sandboxRootScratch, "/tmp")
+		if err := makeMountPoint(target, true); err != nil {
+			return fmt.Errorf("mount point for /tmp: %w", err)
+		}
+		src := "/proc/self/fd/" + strconv.Itoa(tmpFD)
+		if err := syscall.Mount(src, target, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
+			return fmt.Errorf("bind %s at /tmp: %w", tmp, err)
+		}
 	}
 	for i, b := range plan {
 		target := filepath.Join(sandboxRootScratch, b.dst)

@@ -37,10 +37,17 @@ import (
 // A second, nested namespace only handed the target a fresh one of its own to be
 // root in.
 func applyLinuxNamespaces(cmd *exec.Cmd, guestHome string) {
+	// The target keeps the process group it starts in, which is the terminal's
+	// foreground group. It had a group of its own until 2026-10-07, and that broke
+	// job control twice. Ctrl-C reached nvx and the supervisor but not the
+	// processes the target started, so `npx http-server` ran on after it. npm and
+	// sh do not pass SIGINT to their children, because at a terminal the kernel
+	// does that. And a background group that reads the terminal is stopped by
+	// SIGTTIN, so a contained `node` REPL, or any script that reads stdin from a
+	// terminal, hung. See runChildForwardingSignals for why nvx avoids a group of
+	// its own elsewhere.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWNS,
-		// Don't propagate signals automatically
-		Setpgid: true,
 	}
 
 	LogInfo("Linux namespace isolation active (NEWNS; user and PID namespaces owned by the supervisor)")

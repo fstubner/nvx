@@ -78,3 +78,27 @@ func TestExposePortsInAProjectPolicyCountAsLoosening(t *testing.T) {
 		t.Error("an unchanged expose_ports list must not read as loosening")
 	}
 }
+
+// TestExposeIsCarriedOnlyByTheNativeProviderOnWindowsAndLinux pins where the
+// "ports are not published" warning stays quiet. It said --expose was a Windows
+// feature until Linux got it, and it has to keep saying so for the providers
+// that publish nothing, because a developer who asked for a port and got none
+// debugs their own server first.
+func TestExposeIsCarriedOnlyByTheNativeProviderOnWindowsAndLinux(t *testing.T) {
+	for _, tc := range []struct {
+		provider, goos string
+		want           bool
+	}{
+		{"native", "windows", true},
+		{"native", "linux", true},
+		{" Native ", "linux", true},
+		{"native", "darwin", false},
+		{"sandbox-exec", "darwin", false},
+		{"docker", "linux", false},
+		{"docker", "windows", false},
+	} {
+		if got := exposeCarriedBy(tc.provider, tc.goos); got != tc.want {
+			t.Errorf("exposeCarriedBy(%q, %q) = %v, want %v", tc.provider, tc.goos, got, tc.want)
+		}
+	}
+}

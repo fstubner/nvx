@@ -70,7 +70,7 @@ FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i
 | `nvx --standard <command>` | Drop back to the default level for one run. Never uncontains an install. |
 | `nvx --no-sandbox <command>` | Run uncontained, for the cases nvx refuses by design, such as a global install. |
 | `nvx --connect <port>` | Let one contained run reach one service already running on your machine. |
-| `nvx --expose <port>` | Windows only. Publish a port a contained server listens on, so your browser can reach it. |
+| `nvx --expose <port>` | Windows and Linux. Publish a port a contained server listens on, so your browser can reach it. |
 | `nvx init-shims` | Write the shims in `~/.nvx/bin`, and the project bin shims when run inside a project. |
 
 ## Checking and policy
@@ -83,7 +83,7 @@ FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i
 | `nvx policy init` | Write a project `.nvx-policy.json` that sets nothing yet, with empty `blocked_packages` and `allow_hosts` to add to. `--global` writes `~/.nvx/policy.json` with the defaults instead. |
 | `nvx policy check` | Check this project against the policy in force, for CI. It never prompts, and exits with a distinct code per kind of failure. It makes no network request unless you pass `--online`. `--format=json` prints the verdict as data. |
 | `nvx policy explain` | Show each setting's effective value and which file it came from. |
-| `nvx audit` | What nvx recorded: the hosts a contained run was allowed to reach and the ones it was refused, pre-install checks that were approved or refused and how they were answered, and runs when `NVX_TRACE=1`. Approvals by `-y`, `--agent-mode` and `NVX_YES` are recorded too. |
+| `nvx audit` | What nvx recorded: blocked hosts, pre-install checks that were approved or refused and how they were answered, and runs when `NVX_TRACE=1`. Approvals by `-y`, `--agent-mode` and `NVX_YES` are recorded too. |
 | `nvx audit export` | Export that record as json, jsonl or csv, filtered with `--since` and `--event`, to a file with `--out`. |
 | `nvx grants list` | This project's recorded grants: trusted tools, trusted project policy files, directories granted read and execute access for `allow_read_exec`, and egress hosts recorded by older versions. |
 | `nvx grants reset` | Forget this project's grants, or every project's with `--all`. Read and execute permissions nvx granted are withdrawn. |
@@ -183,10 +183,10 @@ Options:
   --strict               Contain your own code too (not just installs/ad-hoc
                          tools). Must come BEFORE the command, like the two
                          above; after it, the flag belongs to the command
-  --expose <in>[:<host>] (Windows) Publish a port a server inside the sandbox
-                         listens on, so the host can reach it. The two numbers
-                         must differ. Omit the host port to have one picked and
-                         printed. Must come BEFORE the command
+  --expose <in>[:<host>] (Windows, Linux) Publish a port a server inside the
+                         sandbox listens on, so the host can reach it. The two
+                         numbers must differ. Omit the host port to have one
+                         picked and printed. Must come BEFORE the command
   --connect <host>[:<in>]  Let the sandbox reach ONE service already
                          running on your machine, over a tunnel nvx dials. The
                          two numbers must differ; the in-sandbox one is printed

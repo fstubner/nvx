@@ -200,8 +200,9 @@ type supervisorExecArgs struct {
 	SocketPrefix string
 	// ExposePorts are ports inside the sandbox that the parent is publishing on
 	// the host's loopback, given as --expose=<port> and repeatable. Windows
-	// refuses connections INTO an AppContainer, so reaching them is a reverse
-	// tunnel the contained side dials outward; see runExposeTunnels.
+	// refuses connections INTO an AppContainer, and a Linux sandbox's network
+	// namespace has a loopback of its own, so reaching them is a reverse tunnel
+	// the contained side dials outward; see startExposeTunnels.
 	ExposePorts []int
 	// ReadExecRoots are extra directories the contained process may read and
 	// execute from, given as --read-exec=<abs path> and repeatable.
@@ -272,12 +273,13 @@ func validExposePort(p int) bool { return p > 0 && p < 65536 }
 // exposeMapping is one published port: the port a server listens on INSIDE the
 // sandbox, and the port the host reaches it on.
 //
-// They cannot be the same number, which is not a stylistic choice. An
+// They cannot be the same number on Windows, which is not a stylistic choice. An
 // AppContainer shares the host's network stack rather than getting its own the
 // way a Linux network namespace does -- so a port bound inside the container
 // occupies it for the host too, and the parent's listener and the contained
 // server collide on it. Measured: with both on 51733 the contained server died
-// with EADDRINUSE, having lost the race to the parent, which binds first.
+// with EADDRINUSE, having lost the race to the parent, which binds first. The rule
+// holds on Linux too, so that a mapping means the same on both.
 //
 // Host 0 means "pick a free one and report it".
 type exposeMapping struct {
@@ -306,9 +308,7 @@ func parseExposeSpec(s string) (exposeMapping, error) {
 			return exposeMapping{}, fmt.Errorf("%q has an unusable host port", s)
 		}
 		if h == c {
-			return exposeMapping{}, fmt.Errorf(
-				"%q maps a port to itself; an AppContainer shares the host's network stack, so the "+
-					"contained server and the published port cannot both hold %d", s, c)
+			return exposeMapping{}, fmt.Errorf("%q maps a port to itself, and the two numbers must differ", s)
 		}
 		m.Host = h
 	}
@@ -392,6 +392,16 @@ func connectRefusalFor(provider, goos, mode string) (warn, hint string) {
 			`Use network.mode "proxy" (the default) or "open" for this run.`
 	}
 	return "", ""
+}
+
+// exposeCarriedBy reports whether --expose publishes anything for this provider
+// on this OS. The native provider does on Windows, where an AppContainer refuses
+// connections in, and on Linux, where the sandbox's network namespace has a
+// loopback of its own. macOS shares the host's network stack, so there is no
+// boundary to tunnel across, and Docker has no in-sandbox half to carry a tunnel,
+// as connectRefusalFor says of --connect.
+func exposeCarriedBy(provider, goos string) bool {
+	return strings.EqualFold(strings.TrimSpace(provider), "native") && (goos == "windows" || goos == "linux")
 }
 
 // connectUnsupportedForMode reports the Linux network modes whose seccomp filter

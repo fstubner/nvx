@@ -296,8 +296,9 @@ type NetworkPolicy struct {
 	PromptUnknown bool     `json:"prompt_unknown"`
 	// ExposePorts publishes a port a server inside the sandbox listens on, so the
 	// host can reach it: ["5173"] or ["5173:8080"] as container[:host]. Windows
-	// refuses connections into an AppContainer, so without this a contained dev
-	// server binds, reports itself listening, and serves nobody.
+	// refuses connections into an AppContainer, and a Linux sandbox's network
+	// namespace has a loopback of its own, so without this a contained dev server
+	// binds, reports itself listening, and serves nobody.
 	//
 	// Strings rather than numbers because the host half is optional; with it
 	// omitted nvx picks a free port and prints the URL. The two cannot be the same
