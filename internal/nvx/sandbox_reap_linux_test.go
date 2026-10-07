@@ -104,7 +104,7 @@ func TestSupervisorCloneFlagsCarryPidAndNetNamespaces(t *testing.T) {
 // its own, and the supervisor's teardown guarantee would not reach it.
 func TestTargetNamespacesNoLongerCreatePidNamespace(t *testing.T) {
 	cmd := exec.Command("/bin/true")
-	applyLinuxNamespaces(cmd, tempDir(t))
+	applyLinuxNamespaces(cmd, tempDir(t), false)
 	if cmd.SysProcAttr == nil {
 		t.Fatal("applyLinuxNamespaces set no SysProcAttr")
 	}
@@ -128,7 +128,7 @@ func TestTargetNamespacesNoLongerCreatePidNamespace(t *testing.T) {
 // the Landlock rules. The user namespace comes from the supervisor's own clone.
 func TestTargetNamespacesRequestNoUserMapping(t *testing.T) {
 	cmd := exec.Command("/bin/true")
-	applyLinuxNamespaces(cmd, tempDir(t))
+	applyLinuxNamespaces(cmd, tempDir(t), false)
 	if cmd.SysProcAttr == nil {
 		t.Fatal("applyLinuxNamespaces set no SysProcAttr")
 	}

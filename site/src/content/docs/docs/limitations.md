@@ -158,6 +158,18 @@ and the evidence and measurements for each platform are in the
   the restriction off for every program on the machine. Or set
   `isolation.network.mode` to `open`, which gives up the network namespace, so
   contained code shares your network and the egress allowlist is not enforced.
+- **Before Linux 6.12, a contained process loses part of the terminal.** From
+  Linux 6.12 the kernel keeps a contained process's signals inside the sandbox.
+  Before that, nvx runs the process in a process group of its own, so that it
+  cannot signal nvx or the processes beside it. It is stopped if it reads the
+  terminal, so a contained `node` REPL does not answer. Ctrl-C still ends it,
+  though a process that catches Ctrl-C, as Node and Go programs do, may need it
+  more than once. Ctrl-Z stops nvx while the process runs on.
+- **Before Linux 6.12, `network.mode: open` leaves your abstract UNIX sockets
+  reachable.** An abstract socket has no path for the sandbox to hide, and
+  `open` mode shares your network namespace. A contained process can connect to
+  one that a program on your machine listens on, such as Xvfb. From Linux 6.12
+  the kernel refuses the connection. The other modes never reach these sockets.
 
 ## Checks and registries
 

@@ -44,6 +44,8 @@ func TestLandlockAccessConstantsMatchTheKernelHeader(t *testing.T) {
 		{"LANDLOCK_ACCESS_FS_TRUNCATE", landlockAccessFSTruncate, 1 << 14},
 		{"LANDLOCK_ACCESS_FS_IOCTL_DEV", landlockAccessFSIoctlDev, 1 << 15},
 		{"LANDLOCK_ACCESS_FS_RESOLVE_UNIX", landlockAccessFSResolveUnix, 1 << 16},
+		{"LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET", landlockScopeAbstractUnixSocket, 1 << 0},
+		{"LANDLOCK_SCOPE_SIGNAL", landlockScopeSignal, 1 << 1},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s = %#x, want %#x (include/uapi/linux/landlock.h)", tc.name, tc.got, tc.want)

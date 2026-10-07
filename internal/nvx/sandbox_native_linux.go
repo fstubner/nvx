@@ -236,5 +236,8 @@ func runSupervisor(cmd *exec.Cmd, guestHome string) error {
 // tell that SIGINT from one nvx forwards because the terminal did not deliver it,
 // such as `kill -INT` sent to a backgrounded nvx. Passing on both would interrupt
 // the target twice. So the supervisor ignores a SIGINT of its own, and nvx asks for
-// an interrupt under this number when it has one to forward.
+// an interrupt under this number when it has one to forward. On a kernel that
+// cannot scope signals the target has a group of its own, the terminal's Ctrl-C
+// reaches only nvx and the supervisor, and the supervisor passes it on (see
+// signalForTarget).
 const supervisorInterruptSignal = syscall.SIGUSR1

@@ -4,7 +4,9 @@ package nvx
 
 import (
 	"bufio"
+	"encoding/json"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -24,22 +26,29 @@ import (
 // of the terminal's foreground group, which broke two things measured on Linux
 // 6.18. Ctrl-C reached nvx and the supervisor and not the processes the target
 // had started, so `nvx npx -y http-server` was still running 15 seconds later,
-// because npm and sh pass nothing on. And reading the terminal from a background
-// group stops the reader with SIGTTIN, so a contained `node` REPL hung.
+// because the shell that npm runs a script with passes nothing on. And reading
+// the terminal from a background group stops the reader with SIGTTIN, so a
+// contained `node` REPL hung. On a kernel that cannot scope signals the target
+// has a group of its own again, and the supervisor signals that whole group (see
+// applyLinuxNamespaces).
 //
 // These run the real chain on a real pseudo-terminal. A stand-in for nvx runs
 // the supervisor through runSupervisor, the supervisor is runLandlockExecChild,
-// and the target is this test binary. The terminal is a pty, with Ctrl-C written
-// to it as the byte the line discipline turns into SIGINT for the foreground
-// group.
+// and the target is this test binary or a real program. The terminal is a pty,
+// with Ctrl-C written to it as the byte the line discipline turns into SIGINT
+// for the foreground group.
 //
 // Roles share the one test function, as in the other supervisor tests.
 //
 //	shell       owns the terminal and starts the nvx stand-in in the background
 //	parent      stands in for nvx
 //	supervisor  runs runLandlockExecChild
-//	target      the contained command, in one of three modes
+//	target      the contained command, a stand-in in one of several modes
 //	leaf        what the tree-mode target starts
+//
+// The cases run on the kernel's own Landlock ABI and again on ABI v5, which has
+// no signal scope. A case that needs the shared group is left out where the
+// target has a group of its own.
 //
 // Unprivileged on Ubuntu 24.04 the mount namespace is refused and these skip.
 // CI runs them again under sudo in the privileged step, where a skip fails the
@@ -51,19 +60,56 @@ const (
 	terminalDirEnv   = "NVX_TEST_TERMINAL_DIR"
 	terminalGuestEnv = "NVX_TEST_TERMINAL_GUEST"
 	terminalHomeEnv  = "NVX_TEST_TERMINAL_NVXHOME"
+	terminalABIEnv   = "NVX_TEST_TERMINAL_ABI"
+	terminalCmdEnv   = "NVX_TEST_TERMINAL_COMMAND"
+	terminalRootsEnv = "NVX_TEST_TERMINAL_ROOTS"
 	terminalTestName = "^TestContainedProcessGetsTheTerminalsInterruptOnce$"
 )
+
+// terminalBranch is one of the two ways the supervisor can start the target.
+type terminalBranch struct {
+	name string
+	abi  int // 0 is the running kernel's
+}
+
+// terminalBranches are the kernel's own ABI and the newest one with no signal
+// scope. On a kernel below v6 both run the target in a group of its own.
+var terminalBranches = []terminalBranch{
+	{"on this kernel", 0},
+	{"on Landlock ABI v5", 5},
+}
+
+// ownGroup reports whether the target gets a process group of its own on this
+// branch.
+func (b terminalBranch) ownGroup() bool {
+	abi := b.abi
+	if abi == 0 {
+		abi = landlockABIVersion()
+	}
+	return landlockScopesForABI(abi)&landlockScopeSignal == 0
+}
 
 func TestContainedProcessGetsTheTerminalsInterruptOnce(t *testing.T) {
 	runTerminalRole()
 
+	for _, branch := range terminalBranches {
+		t.Run(branch.name, func(t *testing.T) { testTerminalInterrupts(t, branch) })
+	}
+}
+
+func testTerminalInterrupts(t *testing.T, branch terminalBranch) {
 	for _, tc := range []struct {
 		name       string
 		mode       string
 		terminal   bool
 		background bool
+		// sharedGroup marks a case that holds only when the target shares nvx's
+		// process group, and ownGroup one about a target in a group of its own.
+		sharedGroup, ownGroup bool
+		// stopped waits for the target to be stopped before acting.
+		stopped bool
 		// act is what the test does once the target is running, and what it must
-		// leave behind in the work directory.
+		// leave behind in the work directory. With no file, the run must end.
 		act      func(r *terminalRun)
 		wantFile string
 		want     string
@@ -83,7 +129,7 @@ func TestContainedProcessGetsTheTerminalsInterruptOnce(t *testing.T) {
 			why: "the kernel already sent it to the target, so the supervisor must not send a second",
 		},
 		{
-			name: "the target can read the terminal", mode: "read", terminal: true,
+			name: "the target can read the terminal", mode: "read", terminal: true, sharedGroup: true,
 			act:      func(r *terminalRun) { r.typeBytes("hello\n") },
 			wantFile: "line", want: "hello\n",
 			why: "a process in a background group is stopped by SIGTTIN when it reads the terminal",
@@ -100,22 +146,38 @@ func TestContainedProcessGetsTheTerminalsInterruptOnce(t *testing.T) {
 			wantFile: "count", want: "1",
 			why: "the terminal did not deliver it, so the supervisor cannot take it for the terminal's own",
 		},
+		{
+			name: "Ctrl-C ends a target the terminal stopped", mode: "shread", terminal: true, ownGroup: true, stopped: true,
+			act: func(r *terminalRun) { r.typeBytes("\x03") },
+			why: "a target in a group of its own is stopped by SIGTTIN when it reads the terminal, " +
+				"and a stopped process acts on no signal but SIGKILL and SIGCONT",
+		},
 	} {
+		// The cost of a group of its own, which applyLinuxNamespaces accepts on
+		// kernels that cannot scope signals.
+		if tc.sharedGroup && branch.ownGroup() || tc.ownGroup && !branch.ownGroup() {
+			continue
+		}
 		t.Run(tc.name, func(t *testing.T) {
-			r := startTerminalRun(t, tc.mode, tc.terminal, tc.background)
+			r := startTerminalRun(t, terminalOpts{mode: tc.mode, terminal: tc.terminal, background: tc.background, abi: branch.abi})
 			if _, ok := r.waitFile("ready", 30*time.Second); !ok {
 				r.failOrSkip("the contained target never started")
 			}
-			tc.act(r)
-			got, ok := r.waitFile(tc.wantFile, 10*time.Second)
-			if !ok {
-				t.Fatalf("%s was never written 10 seconds on. %s\noutput:\n%s", tc.wantFile, tc.why, r.out.String())
+			if tc.stopped && !r.waitStopped(10*time.Second) {
+				t.Fatalf("the target was never stopped, so this case shows nothing\noutput:\n%s", r.out.String())
 			}
-			if got != tc.want {
-				t.Errorf("%s = %q, want %q. %s\noutput:\n%s", tc.wantFile, got, tc.want, tc.why, r.out.String())
+			tc.act(r)
+			if tc.wantFile != "" {
+				got, ok := r.waitFile(tc.wantFile, 10*time.Second)
+				if !ok {
+					t.Fatalf("%s was never written 10 seconds on. %s\noutput:\n%s", tc.wantFile, tc.why, r.out.String())
+				}
+				if got != tc.want {
+					t.Errorf("%s = %q, want %q. %s\noutput:\n%s", tc.wantFile, got, tc.want, tc.why, r.out.String())
+				}
 			}
 			if !r.waitExit(10 * time.Second) {
-				t.Errorf("the run was still going 10 seconds after the target finished\noutput:\n%s", r.out.String())
+				t.Errorf("the run was still going 10 seconds on. %s\noutput:\n%s", tc.why, r.out.String())
 			}
 		})
 	}
@@ -128,10 +190,30 @@ type terminalRun struct {
 	master *os.File
 	out    *syncBuffer
 	work   string
+	guest  string
 	done   chan struct{}
 }
 
-func startTerminalRun(t *testing.T, mode string, terminal, background bool) *terminalRun {
+// terminalOpts is how one launch of the chain is set up.
+type terminalOpts struct {
+	mode       string // what the stand-in target does
+	terminal   bool   // nvx runs on a pseudo-terminal
+	background bool   // nvx runs as a background job of a shell that owns the terminal
+	abi        int    // the Landlock ABI the supervisor builds for, 0 for the kernel's
+	// command is a real program to contain in place of the stand-in target,
+	// started in the work directory. execRoots are the directories it needs to
+	// read and execute from.
+	command   []string
+	execRoots []string
+	env       []string // more environment for every process in the chain
+	// prepare, when set, writes what the command needs into the work directory
+	// and the guest home before anything starts.
+	prepare func(work, guest string)
+	// joinGroup puts nvx into this existing process group, without a terminal.
+	joinGroup int
+}
+
+func startTerminalRun(t *testing.T, o terminalOpts) *terminalRun {
 	t.Helper()
 	if fd, err := landlockCreateRuleset(landlockHandledAccess()); err != nil {
 		t.Skipf("landlock unavailable on this kernel: %v", err)
@@ -140,20 +222,37 @@ func startTerminalRun(t *testing.T, mode string, terminal, background bool) *ter
 	}
 	requireNamespaceSupport(t, supervisorSysProcAttr("open"))
 
-	r := &terminalRun{t: t, out: &syncBuffer{}, work: tempDir(t), done: make(chan struct{})}
+	r := &terminalRun{t: t, out: &syncBuffer{}, work: tempDir(t), guest: tempDir(t), done: make(chan struct{})}
+	if o.prepare != nil {
+		o.prepare(r.work, r.guest)
+	}
 	role := "parent"
-	if background {
+	if o.background {
 		role = "shell"
 	}
 	r.cmd = exec.Command(os.Args[0], "-test.run="+terminalTestName)
 	r.cmd.Env = append(os.Environ(),
 		terminalRoleEnv+"="+role,
-		terminalModeEnv+"="+mode,
+		terminalModeEnv+"="+o.mode,
 		terminalDirEnv+"="+r.work,
-		terminalGuestEnv+"="+tempDir(t),
+		terminalGuestEnv+"="+r.guest,
 		terminalHomeEnv+"="+tempDir(t),
+		terminalABIEnv+"="+strconv.Itoa(o.abi),
 	)
-	if terminal {
+	if len(o.command) > 0 {
+		cmdJSON, _ := json.Marshal(o.command)
+		rootsJSON, _ := json.Marshal(o.execRoots)
+		r.cmd.Env = append(r.cmd.Env, terminalCmdEnv+"="+string(cmdJSON), terminalRootsEnv+"="+string(rootsJSON))
+	}
+	r.cmd.Env = append(r.cmd.Env, o.env...)
+	switch {
+	case o.joinGroup != 0:
+		r.cmd.Stdout, r.cmd.Stderr = r.out, r.out
+		r.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: o.joinGroup}
+		if err := r.cmd.Start(); err != nil {
+			t.Fatalf("start: %v", err)
+		}
+	case o.terminal:
 		master, slave := openPty(t)
 		r.master = master
 		r.cmd.Stdin, r.cmd.Stdout, r.cmd.Stderr = slave, slave, slave
@@ -165,7 +264,7 @@ func startTerminalRun(t *testing.T, mode string, terminal, background bool) *ter
 		}
 		_ = slave.Close()
 		go func() { _, _ = io.Copy(r.out, master) }()
-	} else {
+	default:
 		r.cmd.Stdout, r.cmd.Stderr = r.out, r.out
 		r.cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if err := r.cmd.Start(); err != nil {
@@ -179,8 +278,13 @@ func startTerminalRun(t *testing.T, mode string, terminal, background bool) *ter
 	t.Cleanup(func() {
 		// The session leader's group, and the stand-in's when the shell started it
 		// in one of its own. The supervisor's namespace goes with the stand-in,
-		// since its parent is gone.
-		_ = syscall.Kill(-r.cmd.Process.Pid, syscall.SIGKILL)
+		// since its parent is gone. A stand-in that joined a group is killed alone,
+		// and the group is the caller's to end.
+		if o.joinGroup != 0 {
+			_ = r.cmd.Process.Kill()
+		} else {
+			_ = syscall.Kill(-r.cmd.Process.Pid, syscall.SIGKILL)
+		}
 		if b, err := os.ReadFile(filepath.Join(r.work, "parent.pid")); err == nil {
 			if pid, perr := strconv.Atoi(strings.TrimSpace(string(b))); perr == nil {
 				_ = syscall.Kill(-pid, syscall.SIGKILL)
@@ -257,6 +361,31 @@ func (r *terminalRun) waitFile(name string, limit time.Duration) (string, bool) 
 	return "", false
 }
 
+// waitStopped waits for a process in this run's session to be stopped, as the
+// terminal stops a reader in a background group. /proc here shows the
+// sandbox's processes too, and the stand-in for nvx leads the session.
+func (r *terminalRun) waitStopped(limit time.Duration) bool {
+	session := strconv.Itoa(r.cmd.Process.Pid)
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		stats, _ := filepath.Glob("/proc/[0-9]*/stat")
+		for _, p := range stats {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			// pid (comm) state ppid pgrp session ...
+			s := string(b)
+			fields := strings.Fields(s[strings.LastIndexByte(s, ')')+1:])
+			if len(fields) > 3 && fields[0] == "T" && fields[3] == session {
+				return true
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return false
+}
+
 func (r *terminalRun) waitExit(limit time.Duration) bool {
 	select {
 	case <-r.done:
@@ -329,14 +458,30 @@ func terminalParent() int {
 func terminalSupervisor() int {
 	// The target starts with this process's environment, so the role changes here.
 	_ = os.Setenv(terminalRoleEnv, "target")
+	if abi, err := strconv.Atoi(os.Getenv(terminalABIEnv)); err == nil && abi > 0 {
+		supervisorLandlockABI = func() int { return abi }
+	}
+	command := []string{os.Args[0], "-test.run=" + terminalTestName}
+	roots := []string{filepath.Dir(os.Args[0])}
+	if c := os.Getenv(terminalCmdEnv); c != "" {
+		var extra []string
+		if json.Unmarshal([]byte(c), &command) != nil || json.Unmarshal([]byte(os.Getenv(terminalRootsEnv)), &extra) != nil {
+			return 1
+		}
+		roots = append(roots, extra...)
+		// The home and temp directory nvx gives a real command.
+		guest := os.Getenv(terminalGuestEnv)
+		_ = os.Setenv("HOME", guest)
+		_ = os.Setenv("TMPDIR", filepath.Join(guest, "tmp"))
+	}
 	return runLandlockExecChild(supervisorExecArgs{
 		GuestHome:     os.Getenv(terminalGuestEnv),
 		WorkDir:       os.Getenv(terminalDirEnv),
 		NvxHome:       os.Getenv(terminalHomeEnv),
 		NetworkMode:   "open",
-		ReadExecRoots: []string{filepath.Dir(os.Args[0])},
-		CmdPath:       os.Args[0],
-		CmdArgs:       []string{"-test.run=" + terminalTestName},
+		ReadExecRoots: roots,
+		CmdPath:       command[0],
+		CmdArgs:       command[1:],
 	})
 }
 
@@ -367,6 +512,30 @@ func terminalTarget() int {
 		_ = terminalWrite(filepath.Join(dir, "ready"), nil, 0o600)
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		_ = terminalWrite(filepath.Join(dir, "line"), []byte(line), 0o600)
+		return 0
+	case "shread":
+		// A reader that leaves SIGINT at its default, as most programs do. A Go
+		// program catches every signal, and the read it restarts after one can
+		// stop it again before it has finished exiting.
+		_ = terminalWrite(filepath.Join(dir, "ready"), nil, 0o600)
+		_ = syscall.Exec("/bin/sh", []string{"sh", "-c", "read line"}, os.Environ())
+		return 1
+	case "killgroup":
+		// kill(0) signals every process in the caller's group, this one included.
+		_ = terminalWrite(filepath.Join(dir, "ready"), nil, 0o600)
+		_ = syscall.Kill(0, syscall.SIGKILL)
+		return 0
+	case "abstract":
+		// The result of connecting to the abstract socket the test listens on.
+		_ = terminalWrite(filepath.Join(dir, "ready"), nil, 0o600)
+		result := "connected"
+		c, err := net.Dial("unix", os.Getenv(abstractSocketEnv))
+		if err != nil {
+			result = err.Error()
+		} else {
+			_ = c.Close()
+		}
+		_ = terminalWrite(filepath.Join(dir, "abstract"), []byte(result), 0o600)
 		return 0
 	}
 	return terminalCountInterrupts(dir)
@@ -406,28 +575,33 @@ func terminalCountInterrupts(dir string) int {
 	}
 }
 
-// The supervisor drops the SIGINT it gets from the terminal, because the target
-// has Ctrl-C already, and turns the interrupt nvx forwards into one for the
-// target. Terminate and hangup go on as they are.
+// The supervisor drops the SIGINT it gets from the terminal when the target
+// shares its group, because the target has Ctrl-C already, and passes it on when
+// the target has a group of its own. It turns the interrupt nvx forwards into one
+// for the target. Terminate and hangup go on as they are.
 //
 // The pty test above asserts the same thing end to end and can miss it. Two
 // SIGINTs that reach a process before it has handled the first are delivered as
 // one. This cannot miss.
 func TestSupervisorPassesOnAnInterruptOnlyWhenNvxAsksForOne(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		in   os.Signal
-		want syscall.Signal
-		ok   bool
+		name     string
+		in       os.Signal
+		ownGroup bool
+		want     syscall.Signal
+		ok       bool
 	}{
-		{"the terminal's own Ctrl-C", syscall.SIGINT, 0, false},
-		{"the interrupt nvx forwards", supervisorInterruptSignal, syscall.SIGINT, true},
-		{"terminate", syscall.SIGTERM, syscall.SIGTERM, true},
-		{"hangup", syscall.SIGHUP, syscall.SIGHUP, true},
+		{"the terminal's own Ctrl-C", syscall.SIGINT, false, 0, false},
+		{"the interrupt nvx forwards", supervisorInterruptSignal, false, syscall.SIGINT, true},
+		{"terminate", syscall.SIGTERM, false, syscall.SIGTERM, true},
+		{"hangup", syscall.SIGHUP, false, syscall.SIGHUP, true},
+		{"the terminal's own Ctrl-C, to a group of its own", syscall.SIGINT, true, syscall.SIGINT, true},
+		{"the interrupt nvx forwards, to a group of its own", supervisorInterruptSignal, true, syscall.SIGINT, true},
+		{"terminate, to a group of its own", syscall.SIGTERM, true, syscall.SIGTERM, true},
 	} {
-		got, ok := signalForTarget(tc.in)
+		got, ok := signalForTarget(tc.in, tc.ownGroup)
 		if got != tc.want || ok != tc.ok {
-			t.Errorf("%s: signalForTarget(%v) = %v, %v, want %v, %v", tc.name, tc.in, got, ok, tc.want, tc.ok)
+			t.Errorf("%s: signalForTarget(%v, %v) = %v, %v, want %v, %v", tc.name, tc.in, tc.ownGroup, got, ok, tc.want, tc.ok)
 		}
 	}
 }

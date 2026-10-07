@@ -160,8 +160,12 @@ install and run scripts. Its defenses are layered:
    containment to those too. This entry said "shimmed commands" without the
    distinction until 0.5.6, which was less careful than README on the same point.
 4. **Egress control.** A loopback allowlist proxy mediates outbound network
-   access. A host the allowlist does not name is refused. nvx never asks about
-   one, and prints the `nvx allow-host` command a person runs to allow it.
+   access. The shipped allowlist names the npm registry under both of its
+   names, `registry.npmjs.org` and `registry.yarnpkg.com`. It also names
+   `repo.yarnpkg.com`, where corepack gets Yarn 2 and later, and `api.osv.dev`.
+   For Bun it also names GitHub's download hosts. A host the allowlist
+   does not name is refused. nvx never asks about one, and prints the
+   `nvx allow-host` command a person runs to allow it.
    When nvx's own environment sets `HTTPS_PROXY` or
    `HTTP_PROXY`, an allowed connection is forwarded through that proxy. The
    egress proxy dials `NO_PROXY` and loopback destinations directly. The allowlist decides
@@ -265,6 +269,18 @@ These are deliberate trade-offs, and this section documents each one:
   A macOS runner confirms that egress is denied with an empty allowlist. That
   does not by itself prove the per-mode loopback scoping. Nothing stands up a
   loopback listener on macOS and checks which modes reach it.
+- **On Linux before 6.12, a contained process loses part of the terminal, and in
+  `network.mode: open` it can reach your abstract UNIX sockets.** From Landlock
+  ABI v6, Linux 6.12, the kernel keeps a contained process's signals and
+  abstract sockets inside the sandbox. Below that, the process runs in a process
+  group of its own, so that it cannot signal nvx and the processes beside it. It
+  is stopped if it reads the terminal. Ctrl-C still ends it, though a process
+  that catches Ctrl-C, as Node and Go programs do, may need it more than once.
+  Ctrl-Z stops nvx while the process runs on. In `network.mode: open` it can
+  connect to an abstract UNIX socket that a program on your machine listens on,
+  such as the one Xvfb listens on. The other modes give it a network namespace
+  of its own, which keeps those sockets apart. The measurements are in
+  `docs/enforcement-matrix.md` (¹⁷ and ⁸).
 - **On Windows, two sandboxes in the SAME project can reach each other's
   loopback listeners.** Windows permits loopback within an AppContainer package,
   and nvx gives each project one package. Two concurrent runs of the same project

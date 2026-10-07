@@ -223,6 +223,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2026-10-07, a contained `pnpm install` through corepack's `pnpm.cmd` stopped at
   launch with `Access is denied.`, and it now installs and exits 0.
 
+* **A contained `corepack yarn@4 install` no longer fails on its first fetch.**
+  corepack downloads Yarn 2 and later from `repo.yarnpkg.com`, and looks up
+  Yarn's versions there for a range such as `yarn@4` or `yarn@1`. The default
+  allowlist did not name that host. Measured 2026-10-07 in a Linux container
+  with corepack 0.36.0, nvx refused both `corepack yarn@4 install` and
+  `corepack yarn@1 install` a connection to it. `default_allow` now names
+  `repo.yarnpkg.com:443`, and both commands install. corepack downloads pnpm
+  and Yarn 1 from `registry.npmjs.org` and `registry.yarnpkg.com`, which the
+  list already named, so `corepack pnpm@10 install` worked before.
+
 * **`nvx doctor` reports what is wrong with the shim directory.** It now reads
   the directory. It fails and names the fix, `nvx init-shims`, for a link or
   launcher that is not nvx's, for shims that run an older nvx, and on Linux and
@@ -602,18 +612,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **Ctrl-C stops a contained `npx` tool or `--strict` script on Linux, and a
   contained process can read the terminal.** The contained process was started
   in a process group of its own, outside the terminal's foreground group. Ctrl-C
-  reached nvx and not the processes the tool had started, and npm and sh pass an
-  interrupt to none of them. Measured 2026-10-07 in a pseudo-terminal in a Linux
-  container, `nvx npx -y http-server` and `nvx --strict npm run` were both still
-  running 15 seconds after Ctrl-C. A contained `node` REPL did not answer
-  `1+1`, because a process in a background group is stopped when it reads the
-  terminal. The process now stays in the foreground group, so the terminal
-  reaches all of it, as it does outside nvx. The same two commands stopped
-  0.10 to 0.27 seconds after Ctrl-C, the REPL answers, and Ctrl-Z followed by `fg`
-  stops and resumes the run. One Ctrl-C reaches the process once. An interrupt
-  sent to nvx with `kill`, from a backgrounded job or with no terminal, still
-  reaches the process once. The macOS launcher does not start the process in a
-  group of its own, so this did not affect it.
+  reached nvx and not the processes the tool had started. npm passes an interrupt
+  to the shell that runs the script, and the shell passes it no further.
+  Measured 2026-10-07 in a pseudo-terminal in a Linux container,
+  `nvx npx -y http-server` and `nvx --strict npm run` were both still running 15
+  seconds after Ctrl-C. A contained `node` REPL did not answer `1+1`, because a
+  process in a background group is stopped when it reads the terminal. The
+  process now stays in the foreground group, so the terminal reaches all of it,
+  as it does outside nvx. The same two commands stopped 0.10 to 0.27 seconds
+  after Ctrl-C, the REPL answers, and Ctrl-Z followed by `fg` stops and resumes
+  the run. One Ctrl-C reaches the process once. An interrupt sent to nvx with
+  `kill`, from a backgrounded job or with no terminal, still reaches the process
+  once. The macOS launcher does not start the process in a group of its own, so
+  this did not affect it.
+
+  A process group reaches across the sandbox's process namespace, so in nvx's
+  group a contained process could signal nvx and everything beside it. Measured
+  2026-10-07 on Linux 6.18, an npm preinstall that ran `kill(0, SIGKILL)` killed
+  nvx, the shell that started it and another process that shell had started. On
+  Linux 6.12 and later the kernel now keeps a contained process's signals inside
+  the sandbox, so the same preinstall ends only its own install. The terminal's
+  Ctrl-C and Ctrl-Z still reach it, and npm can still stop its scripts. Measured
+  on Linux 6.18 with this in place, the two commands above stopped 0.07 to 0.32
+  seconds after Ctrl-C. Older kernels cannot do this, so there the contained
+  process gets a group of its own again and nvx passes the signals it gets to
+  that whole group. Measured on Linux 6.18 with nvx built to take that path, the
+  same two commands stopped 0.06 to 0.16 seconds after Ctrl-C. On those kernels
+  a contained process is stopped when it reads the terminal, so a contained REPL
+  does not answer. Ctrl-C still ends it, though a process that catches Ctrl-C,
+  as Node and Go programs do, may need it more than once. Ctrl-Z stops nvx while
+  the contained process runs on.
+
+* **In `network.mode: open` on Linux 6.12 and later, a contained process can no
+  longer reach your machine's abstract UNIX sockets.** An abstract socket has no
+  path, so the sandbox's view of the filesystem cannot hide it, and `open` mode
+  shares your network namespace, where those sockets live. Measured 2026-10-07
+  on Linux 6.18, a contained process in `open` mode connected to an abstract
+  socket a host process listened on, and to the one Xvfb listens on for its
+  display. The kernel now refuses both connections. Older kernels cannot. The
+  other network modes give the sandbox a network namespace of its own, so they
+  never reached these sockets.
 
 * **A contained pnpm 12 install no longer fails on Linux.** The sandbox's root
   had no `/tmp`, and pnpm 12 makes its store lock directory there, so the
