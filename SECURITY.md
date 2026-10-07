@@ -144,6 +144,10 @@ install and run scripts. Its defenses are layered:
    That is installs (`install`, `ci`, `add`, `update`, `rebuild`, `dedupe`,
    `audit fix`) and ad-hoc tool runners (`npx`, `bunx`, `npm exec`, `pnpm dlx`,
    `bun x`, `npm create`, `npm init <initializer>`). It is **not** your own code.
+   A runner that only starts a tool already in the project's `node_modules/.bin`
+   fetches nothing and counts as your own code, as `npm run` does. `npx vitest@1`,
+   `--package`, a name the project's own `package.json` lists under `bin` and a
+   link leading out of the project do not.
    nvx reads the command as the package manager does. npm accepts any
    unambiguous prefix of a command, and camelCase, so `npm exe` is `npm exec`
    and `npm installTest` is `npm install-test`. nvx applies npm's rule as the

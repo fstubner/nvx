@@ -10,9 +10,10 @@ and the evidence and measurements for each platform are in the
 
 ## Every platform
 
-- **Your own code is not contained by default.** `npm run build`, `npm test` and
-  `node` run uncontained at the `standard` level, and so does a compromised
-  dependency they import. A contained install can write the project files those
+- **Your own code is not contained by default.** `npm run build`, `npm test`,
+  `node` and a tool already in `node_modules/.bin` that `npx` or `bunx` starts run
+  uncontained at the `standard` level, and so does a compromised dependency they
+  import. A contained install can write the project files those
   commands run, such as `package.json` scripts, `node_modules`, lockfiles, build
   config and hook folders like `.husky`. `isolation.level: strict` contains them,
   at the cost of breaking anything that needs unrestricted filesystem or network
