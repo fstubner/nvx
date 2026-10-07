@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -36,17 +37,24 @@ import (
 // launch scan has no such gap, as it runs before the contained process does.
 // docs/enforcement-matrix.md note 15 has the numbers.
 //
+// The watch records the files it hides until the project's record holds
+// maxRecordedDotenv, so a contained process that creates files by the thousand
+// cannot make it rewrite the record without end. After that a new file stays
+// readable until the next launch, which hides it, and the watch says so once.
+// A file that has a record, or that the launch found (see presentAtLaunch), is
+// still hidden again when an editor or git replaces it.
+//
 // Best effort, like the launch. If the watch cannot start, the run goes ahead
-// with one line saying so. stop ends the watch and returns once nothing of it
-// is left running.
-func watchDotenvFiles(nvxHome, scope string) (stop func()) {
+// with one line saying so, and the watch returned is nil. stop ends the watch
+// and returns once nothing of it is left running.
+func watchDotenvFiles(nvxHome, scope string) *dotenvWatch {
 	w, err := startDotenvWatch(nvxHome, scope)
 	if err != nil {
 		LogWarn("Could not watch %s for new .env files, so one created during this run stays readable in the sandbox until the next launch: %v", scope, err)
-		return func() {}
+		return nil
 	}
 	go w.run()
-	return w.stop
+	return w
 }
 
 // dotenvWatchMask asks for files and directories being created, deleted or
@@ -70,10 +78,16 @@ type dotenvWatch struct {
 	buf            []byte
 	done           chan struct{}
 
-	// recorded is set once the project's record is full (see
-	// maxProtectedDotenv): the files that have a record, by dotenvKey. Only
-	// those are looked at from then on.
+	// recorded is set once the watch has left a file readable because the
+	// project's record is full (see maxRecordedDotenv): the files that have a
+	// record, by dotenvKey. Only those and the files in atLaunch are looked at
+	// from then on.
 	recorded map[string]bool
+
+	// atLaunch is the dotenv files the launch found, by dotenvKey. The launch
+	// scan runs after the watch starts, so it is set by presentAtLaunch, from
+	// the launch's goroutine.
+	atLaunch atomic.Pointer[map[string]bool]
 
 	// mu orders issuing a read against stop's cancel. Without it a read issued
 	// just after the cancel would wait for good, and stop with it.
@@ -161,10 +175,33 @@ func (w *dotenvWatch) run() {
 	}
 }
 
+// presentAtLaunch tells the watch which dotenv files the launch found, all of
+// which the launch hid. Past the cap the watch still hides one of these when
+// it is replaced, record or not.
+func (w *dotenvWatch) presentAtLaunch(found []string) {
+	if w == nil {
+		return
+	}
+	keys := make(map[string]bool, len(found))
+	for _, p := range found {
+		keys[dotenvKey(p)] = true
+	}
+	w.atLaunch.Store(&keys)
+}
+
+// wasPresentAtLaunch reports whether the launch found path.
+func (w *dotenvWatch) wasPresentAtLaunch(path string) bool {
+	keys := w.atLaunch.Load()
+	return keys != nil && (*keys)[dotenvKey(path)]
+}
+
 // stop cancels the pending read, waits for run to return, and closes the
 // handles. The read has finished by then, so Windows no longer writes into
-// w.ov or w.buf.
+// w.ov or w.buf. A nil watch, one that never started, has nothing to stop.
 func (w *dotenvWatch) stop() {
+	if w == nil {
+		return
+	}
 	w.mu.Lock()
 	w.stopped = true
 	syscall.CancelIoEx(w.dir, &w.ov)
@@ -174,28 +211,26 @@ func (w *dotenvWatch) stop() {
 	syscall.CloseHandle(w.dir)
 }
 
-// protect hides found from the sandbox. Once the project's record is full it
-// warns, once, and from then on looks only at files that already have a record,
-// which an editor or git may still replace. A contained process creating files
-// by the thousand then costs nothing further, and nothing more is written.
+// protect hides found from the sandbox. A file the launch found is hidden even
+// when the record is full. The first time a new file is left readable because
+// the record is full, it warns, once, and from then on looks only at files that
+// have a record or that the launch found, which an editor or git may still
+// replace. A contained process creating files by the thousand then costs
+// nothing further, and nothing is written for them.
 func (w *dotenvWatch) protect(found []string) {
 	if w.recorded != nil {
-		found = slices.DeleteFunc(found, func(p string) bool { return !w.recorded[dotenvKey(p)] })
+		found = slices.DeleteFunc(found, func(p string) bool {
+			return !w.recorded[dotenvKey(p)] && !w.wasPresentAtLaunch(p)
+		})
 	}
-	if !protectDotenvFiles(w.nvxHome, w.scope, found) || w.recorded != nil {
+	if !protectDotenvFiles(w.nvxHome, w.scope, found, w.wasPresentAtLaunch) || w.recorded != nil {
 		return
 	}
-	warnDotenvCap(w.scope)
+	LogWarn("The record of .env files nvx hid in %s is full, at %d files. A .env created from now on stays readable in the sandbox until the next launch, which hides it. Delete the .env files you do not need.", w.scope, maxRecordedDotenv)
 	w.recorded = map[string]bool{}
 	for _, r := range loadProjectGrants(w.nvxHome, w.scope).ProtectedDotenv {
 		w.recorded[dotenvKey(r.Path)] = true
 	}
-}
-
-// dotenvKey is how a path is compared with a recorded one: the way
-// sameGrantPath does, with the case folded so it can be a map key.
-func dotenvKey(path string) string {
-	return strings.ToLower(filepath.Clean(path))
 }
 
 // dotenvFilesIn returns the dotenv files a batch of change records names: the

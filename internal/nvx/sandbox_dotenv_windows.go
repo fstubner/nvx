@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -40,6 +42,8 @@ import (
 //
 // Each file is recorded in the project's grant ledger with its permissions
 // from before, before it is changed, so `nvx grants reset` can put them back.
+// The record holds at most maxRecordedDotenv files. The launch hides every
+// file it finds all the same, and says so when there are more.
 //
 // A link or junction named like a dotenv file, and a file reached through one
 // that lies outside the project, is left alone: the file it lands on is not
@@ -48,23 +52,31 @@ import (
 //
 // Best effort: a file nvx cannot change, because the user does not own it or
 // the record cannot be saved, stays readable to the sandbox and the run goes
-// ahead with one line saying so. So does every file past maxProtectedDotenv.
-func hideDotenvFromSandbox(nvxHome, scope string) {
+// ahead with one line saying so.
+//
+// It returns the files it found, which the watch keeps hiding for the rest of
+// the run (see dotenvWatch.presentAtLaunch).
+func hideDotenvFromSandbox(nvxHome, scope string) []string {
 	found, complete := findDotenvFiles(scope, dotenvScanLimit)
 	if !complete {
 		LogWarn("Stopped looking for .env files after %d entries under %s; any further down stay readable in the sandbox.", dotenvScanLimit, scope)
 	}
-	if protectDotenvFiles(nvxHome, scope, found) {
-		warnDotenvCap(scope)
+	protectDotenvFiles(nvxHome, scope, found, func(string) bool { return true })
+	if len(found) > maxRecordedDotenv {
+		LogWarn("%s holds %d .env files, and nvx records the earlier permissions of at most %d per project. The rest are hidden from the sandbox all the same, and `nvx grants reset` cannot put their permissions back, so their sandbox entries stay removed. Delete the .env files you do not need.", scope, len(found), maxRecordedDotenv)
 	}
+	return found
 }
 
-// maxProtectedDotenv is the most dotenv files nvx hides from the sandbox and
-// records for one project. A launch or a batch from the watch looks at no more
-// than that many, and the record never holds more. A file past it is left
-// readable and nvx says so. A file that already has a record is not counted
-// again, so one an editor replaces is hidden again. It is a variable so a test
-// can lower it.
+// maxRecordedDotenv is the most dotenv files nvx records for one project. The
+// launch hides every dotenv file it finds and records them, canonical names
+// first (see isCanonicalDotenvName), until the record holds this many. A file
+// past it is hidden without a record. The watch records the files that appear
+// during a run until the record holds this many. After that it hides only
+// files that have a record or were there at launch, and a new file stays
+// readable until the next launch. A file that already has a record is not
+// counted again, so one an editor replaces is hidden again. It is a variable so
+// a test can lower it.
 //
 // A project holds a handful. The most under any project in H:\projects on
 // 2026-10-07 was 2. A contained process can create dotenv files too, and every
@@ -74,32 +86,44 @@ func hideDotenvFromSandbox(nvxHome, scope string) {
 // 3000 files created in a loop left a 3,550,994 byte record. With the cap, 3000
 // files leave 237,396 bytes. 200 leaves room for a monorepo of a hundred
 // packages that each hold a .env and a .env.local.
-var maxProtectedDotenv = 200
+//
+// The cap also limited what the launch hid, to the first 200 files in name
+// order, so files named to sort first, shipped with a project or left by an
+// earlier contained run, kept the rest readable. Measured 2026-10-07 on Windows
+// 11 26300, with 220 files named like .env.aaa000 beside .env.local, a
+// contained process read .env.local. TestLaunchHidesDotenvPastTheRecordCap
+// repeats it.
+var maxRecordedDotenv = 200
 
-// warnDotenvCap is the one line said when files stay readable because of
-// maxProtectedDotenv.
-func warnDotenvCap(scope string) {
-	LogWarn("nvx hides at most %d .env files per project from the sandbox, and %s has reached that. The rest stay readable there. Delete the ones you do not need.", maxProtectedDotenv, scope)
+// isCanonicalDotenvName reports whether name is one dotenv tools load by
+// default: .env, .env.local, .env.<mode>.local, .env.production,
+// .env.development and .env.test. These are recorded before any other.
+func isCanonicalDotenvName(name string) bool {
+	switch lower := strings.ToLower(name); lower {
+	case ".env", ".env.production", ".env.development", ".env.test":
+		return true
+	default:
+		return strings.HasPrefix(lower, ".env.") && strings.HasSuffix(lower, ".local")
+	}
 }
 
 // protectDotenvFiles hides each of found, dotenv files under the project scope,
 // from the sandbox, as hideDotenvFromSandbox describes. The launch hands it every
 // dotenv file in the project, and watchDotenvFiles the ones that appear while a
-// contained process runs. It reports whether it left a file alone because the
-// project already holds maxProtectedDotenv, and the caller says so.
-func protectDotenvFiles(nvxHome, scope string, found []string) (capped bool) {
+// contained process runs.
+//
+// Each file it changes is recorded, canonical names first, until the project's
+// record holds maxRecordedDotenv. A file that does not fit is changed without a
+// record when unrecorded says so, and left readable otherwise. It reports
+// whether it left a file readable that way, and the caller says so.
+func protectDotenvFiles(nvxHome, scope string, found []string, unrecorded func(path string) bool) (leftReadable bool) {
 	if len(found) == 0 {
 		return false
-	}
-	// More files than the record can hold would be read and then dropped, and a
-	// project that holds tens of thousands would pay for that at every launch.
-	if len(found) > maxProtectedDotenv {
-		found, capped = found[:maxProtectedDotenv], true
 	}
 	root, err := finalPathOf(scope)
 	if err != nil {
 		LogWarn("Could not resolve %s, so its .env files stay readable in the sandbox: %v", scope, err)
-		return capped
+		return false
 	}
 
 	type pendingDotenv struct {
@@ -114,6 +138,9 @@ func protectDotenvFiles(nvxHome, scope string, found []string) (capped bool) {
 		}
 	}()
 	for _, f := range found {
+		if dotenvProtectedNow(f) {
+			continue
+		}
 		h, writable, err := openDotenvWithin(root, f)
 		if errors.Is(err, errDotenvLink) {
 			LogInfo("Left the permissions of %s alone: it is a link or lies outside the project, so it is not hidden from the sandbox.", f)
@@ -142,44 +169,73 @@ func protectDotenvFiles(nvxHome, scope string, found []string) (capped bool) {
 		todo = append(todo, pendingDotenv{path: f, h: h, acl: acl})
 	}
 	if len(todo) == 0 {
-		return capped
+		return false
 	}
+	// Canonical names first, so they are the ones with a record when the record
+	// fills up.
+	slices.SortStableFunc(todo, func(a, b pendingDotenv) int {
+		ca, cb := isCanonicalDotenvName(filepath.Base(a.path)), isCanonicalDotenvName(filepath.Base(b.path))
+		switch {
+		case ca && !cb:
+			return -1
+		case cb && !ca:
+			return 1
+		}
+		return 0
+	})
 
 	// Recorded before anything is changed, as with the read/execute grants: a
 	// change with no record is one `nvx grants reset` could never put back.
 	// Records of files that no longer exist go in the same write, which keeps
 	// the record small without a write of its own.
-	var recorded []pendingDotenv
+	var recorded, extra []pendingDotenv
 	if err := updateProjectGrants(nvxHome, scope, func(g *projectGrants) error {
 		kept := g.ProtectedDotenv[:0]
+		has := map[string]bool{}
 		for _, r := range g.ProtectedDotenv {
 			if _, err := os.Lstat(r.Path); !os.IsNotExist(err) {
 				kept = append(kept, r)
+				has[dotenvKey(r.Path)] = true
 			}
 		}
 		g.ProtectedDotenv = kept
 		for _, p := range todo {
-			if len(g.ProtectedDotenv) >= maxProtectedDotenv && !hasProtectedDotenv(g.ProtectedDotenv, p.path) {
-				capped = true
+			if len(g.ProtectedDotenv) >= maxRecordedDotenv && !has[dotenvKey(p.path)] {
+				extra = append(extra, p)
 				continue
 			}
 			g.ProtectedDotenv = recordProtectedDotenv(g.ProtectedDotenv, p.path, p.acl.sddl, !p.acl.protected)
+			has[dotenvKey(p.path)] = true
 			recorded = append(recorded, p)
 		}
 		return nil
 	}); err != nil {
 		LogWarn("Could not record the permissions of this project's .env files, so they stay readable in the sandbox: %v", err)
-		return capped
+		return false
 	}
 
-	for _, p := range recorded {
+	change := recorded
+	for _, p := range extra {
+		if !unrecorded(p.path) {
+			leftReadable = true
+			continue
+		}
+		change = append(change, p)
+	}
+	for _, p := range change {
 		if err := writeProtectedDotenvACL(p.h, p.acl); err != nil {
 			LogWarn("Could not hide %s from the sandbox, so it stays readable there: %v", p.path, err)
 			continue
 		}
 		LogDetail("Hid %s from the sandbox.", p.path)
 	}
-	return capped
+	return leftReadable
+}
+
+// dotenvKey is how a path is compared with a recorded one: the way
+// sameGrantPath does, with the case folded so it can be a map key.
+func dotenvKey(path string) string {
+	return strings.ToLower(filepath.Clean(path))
 }
 
 // errDotenvLink says a dotenv path is a link, or reaches a file outside the
@@ -299,6 +355,12 @@ var (
 )
 
 func readDotenvACL(h syscall.Handle) (dotenvACL, error) {
+	return readDotenvACLFrom(h, true)
+}
+
+// readDotenvACLFrom reads the open file's permission list, and when describe
+// is set also its text form, which only a record needs.
+func readDotenvACLFrom(h syscall.Handle, describe bool) (dotenvACL, error) {
 	var dacl *win32ACL
 	var sd *byte
 	if rc, _, _ := procGetSecurityInfo.Call(uintptr(h), seFileObject, daclSecurityInformation,
@@ -306,7 +368,39 @@ func readDotenvACL(h syscall.Handle) (dotenvACL, error) {
 		return dotenvACL{}, syscall.Errno(rc)
 	}
 	defer syscall.LocalFree(syscall.Handle(unsafe.Pointer(sd)))
+	if !describe {
+		return dotenvACLEntries(dotenvACL{}, sd, dacl)
+	}
 	return dotenvACLFrom(sd, dacl)
+}
+
+// dotenvProtectedNow reports whether path's permissions already keep the
+// sandbox out. It opens the file only to read them. A file it cannot read, and
+// one with no permission list, count as not protected, and the full check in
+// protectDotenvFiles decides.
+//
+// At every launch after the first, nearly every dotenv file is protected
+// already. Opening each the full way, with the right to change its
+// permissions and its real path resolved, then describing its permissions as
+// text, was most of a launch's cost once the launch hid every file. Measured
+// 2026-10-07 on Windows 11 26300 over 3000 protected files in five runs,
+// reading each the full way took between 357 and 648 ms, and this check took
+// between 160 and 317 ms. What is left is mostly opening each file.
+func dotenvProtectedNow(path string) bool {
+	const readControl = 0x00020000
+	p, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return false
+	}
+	h, err := syscall.CreateFile(p, readControl,
+		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+		nil, syscall.OPEN_EXISTING, syscall.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return false
+	}
+	defer syscall.CloseHandle(h)
+	acl, err := readDotenvACLFrom(h, false)
+	return err == nil && !acl.null && !dotenvNeedsProtection(acl.protected, acl.aces)
 }
 
 // dotenvACLFrom reads a security descriptor and its DACL into a dotenvACL.
@@ -319,6 +413,12 @@ func dotenvACLFrom(sd *byte, dacl *win32ACL) (dotenvACL, error) {
 	}
 	out.sddl = syscall.UTF16ToString(unsafe.Slice(str, 1<<16))
 	syscall.LocalFree(syscall.Handle(unsafe.Pointer(str)))
+	return dotenvACLEntries(out, sd, dacl)
+}
+
+// dotenvACLEntries fills in out's control bits and entries from sd and its
+// DACL.
+func dotenvACLEntries(out dotenvACL, sd *byte, dacl *win32ACL) (dotenvACL, error) {
 	out.control = daclControl(sd)
 	out.protected = out.control&seDaclProtected != 0
 	if dacl == nil {

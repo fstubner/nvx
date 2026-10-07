@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -352,18 +353,18 @@ func TestHideDotenvFromSandboxCarriesOnPastAFileItCannotChange(t *testing.T) {
 	}
 }
 
-// lowerDotenvCap sets maxProtectedDotenv for one test.
+// lowerDotenvCap sets maxRecordedDotenv for one test.
 func lowerDotenvCap(t *testing.T, n int) {
 	t.Helper()
-	prev := maxProtectedDotenv
-	maxProtectedDotenv = n
-	t.Cleanup(func() { maxProtectedDotenv = prev })
+	prev := maxRecordedDotenv
+	maxRecordedDotenv = n
+	t.Cleanup(func() { maxRecordedDotenv = prev })
 }
 
-// Past the cap, files are left as they are and the caller is told. A file that
-// already has a record still gets its protection back after an editor replaces
-// it, and one without a record does not.
-func TestProtectDotenvFilesStopsAtTheCap(t *testing.T) {
+// The record holds at most the cap. A file past it is hidden without a record
+// when the caller asks for that, and left readable and reported otherwise. A
+// file that already has a record is hidden again after an editor replaces it.
+func TestProtectDotenvFilesRecordsUpToTheCap(t *testing.T) {
 	lowerDotenvCap(t, 5)
 	nvxHome := tempDir(t)
 	project := tempDir(t)
@@ -372,7 +373,7 @@ func TestProtectDotenvFilesStopsAtTheCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	var files []string
-	for i := 0; i < maxProtectedDotenv+3; i++ {
+	for i := 0; i < maxRecordedDotenv+3; i++ {
 		p := filepath.Join(project, fmt.Sprintf(".env.%02d", i))
 		if err := os.WriteFile(p, []byte("API_KEY=1"), 0o600); err != nil {
 			t.Fatal(err)
@@ -394,19 +395,21 @@ func TestProtectDotenvFilesStopsAtTheCap(t *testing.T) {
 		}
 		return n
 	}
+	records := func() int { return len(loadProjectGrants(nvxHome, project).ProtectedDotenv) }
+	never := func(string) bool { return false }
 
-	if !protectDotenvFiles(nvxHome, project, files) {
-		t.Errorf("protecting %d files with a cap of %d did not say it stopped", len(files), maxProtectedDotenv)
+	if !protectDotenvFiles(nvxHome, project, files, never) {
+		t.Errorf("leaving files past a cap of %d readable was not reported", maxRecordedDotenv)
 	}
-	if n := protected(); n != maxProtectedDotenv {
-		t.Errorf("%d files are protected, want the cap, %d", n, maxProtectedDotenv)
+	if n := protected(); n != maxRecordedDotenv {
+		t.Errorf("%d files are protected, want the cap, %d", n, maxRecordedDotenv)
 	}
-	if n := len(loadProjectGrants(nvxHome, project).ProtectedDotenv); n != maxProtectedDotenv {
-		t.Errorf("the record holds %d files, want the cap, %d", n, maxProtectedDotenv)
+	if n := records(); n != maxRecordedDotenv {
+		t.Errorf("the record holds %d files, want the cap, %d", n, maxRecordedDotenv)
 	}
 
-	// files[0] has a record. files[maxProtectedDotenv] was left out.
-	replaced, left := files[0], files[maxProtectedDotenv]
+	// files[0] has a record. files[maxRecordedDotenv] has none.
+	replaced, left := files[0], files[maxRecordedDotenv]
 	if err := os.WriteFile(replaced+".tmp", []byte("API_KEY=2"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -416,17 +419,75 @@ func TestProtectDotenvFilesStopsAtTheCap(t *testing.T) {
 	if dotenvIsProtected(t, root, replaced) {
 		t.Fatalf("the replaced file is still protected, so this checks nothing")
 	}
-	if !protectDotenvFiles(nvxHome, project, []string{replaced, left}) {
-		t.Errorf("a file past the cap was not reported")
+	if !protectDotenvFiles(nvxHome, project, []string{replaced, left}, never) {
+		t.Errorf("a file left readable past the cap was not reported")
 	}
 	if !dotenvIsProtected(t, root, replaced) {
 		t.Errorf("a file with a record was not protected again after it was replaced")
 	}
 	if dotenvIsProtected(t, root, left) {
-		t.Errorf("a file past the cap was protected")
+		t.Errorf("a file past the cap was protected when the caller said not to")
 	}
-	if n := len(loadProjectGrants(nvxHome, project).ProtectedDotenv); n != maxProtectedDotenv {
-		t.Errorf("the record holds %d files after the replace, want the cap, %d", n, maxProtectedDotenv)
+
+	// Asked to, it hides the rest without recording them.
+	if protectDotenvFiles(nvxHome, project, files, func(string) bool { return true }) {
+		t.Errorf("a file was reported left readable when the caller asked for every one to be hidden")
+	}
+	if n := protected(); n != len(files) {
+		t.Errorf("%d of %d files are protected", n, len(files))
+	}
+	if n := records(); n != maxRecordedDotenv {
+		t.Errorf("the record holds %d files, want the cap, %d", n, maxRecordedDotenv)
+	}
+}
+
+// Every dotenv file present at launch is hidden, however many there are. The
+// launch hid the first files up to the cap in name order, so files named to
+// sort first, such as .env.aaa000, shipped with a project or left by an earlier
+// contained run, kept .env.local readable. The record still stops at the cap,
+// with .env.local in it, and the launch says the rest have no record.
+func TestHideDotenvFromSandboxHidesEveryFilePastTheCap(t *testing.T) {
+	lowerDotenvCap(t, 5)
+	nvxHome := tempDir(t)
+	project := tempDir(t)
+	capSID, err := scopeCapabilitySID(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(project, ".env.local")
+	files := []string{secret}
+	for i := 0; i < maxRecordedDotenv+3; i++ {
+		files = append(files, filepath.Join(project, fmt.Sprintf(".env.aaa%03d", i)))
+	}
+	for _, p := range files {
+		if err := os.WriteFile(p, []byte("DB_PASSWORD=supersecret123"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := grantSandboxModify(capSID, project); err != nil {
+		t.Fatal(err)
+	}
+	root, err := finalPathOf(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureStderr(t, func() { hideDotenvFromSandbox(nvxHome, project) })
+
+	for _, p := range files {
+		if !dotenvIsProtected(t, root, p) {
+			t.Errorf("%s is still readable in the sandbox", filepath.Base(p))
+		}
+	}
+	records := loadProjectGrants(nvxHome, project).ProtectedDotenv
+	if len(records) != maxRecordedDotenv {
+		t.Errorf("the record holds %d files, want the cap, %d", len(records), maxRecordedDotenv)
+	}
+	if !slices.ContainsFunc(records, func(r protectedDotenv) bool { return sameGrantPath(r.Path, secret) }) {
+		t.Errorf(".env.local has no record, and canonical names are recorded first: %+v", records)
+	}
+	if !strings.Contains(warnings, "nvx grants reset") {
+		t.Errorf("the launch did not say the files past the cap have no record:\n%s", warnings)
 	}
 }
 

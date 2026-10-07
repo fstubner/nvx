@@ -1076,21 +1076,39 @@ provider mounts the project as it is.
   refused with `EPERM` for the node runtime's `LICENSE`, `.git\config` and
   System32's `hosts`, which it can only read.
 
-  **nvx hides at most 200 `.env` files per project.** A project holds a
-  handful, and the most under any project in `H:\projects` on 2026-10-07 was 2.
-  A contained process can create dotenv files too, and every batch the watch
-  handles reads and rewrites the project's whole record. Before there was a
-  limit, 800 files handled one per batch took 90.53 s, against 0.64 s handled
-  as one batch, and 3000 files created in a loop left a 3,550,994 byte record.
-  With the limit, 3000 files leave 237,396 bytes. A launch looks at the first
-  200 files it finds. The watch protects new files until the record holds 200,
-  warns once, and from then on looks only at files that already have a record,
-  so one an editor replaces is hidden again and a flood of new names costs
-  almost nothing. The rest stay readable, with a warning at each launch. A
-  contained process that creates 200 files uses up the allowance, and a `.env`
-  created after that stays readable until the extra files are deleted and the
-  next run starts. `TestProtectDotenvFilesStopsAtTheCap` and
-  `TestWatchDotenvFilesStopsAtTheCap` cover it, with the limit lowered to 5.
+  **nvx records at most 200 `.env` files per project, and hides every one
+  present at launch.** A project holds a handful, and the most under any
+  project in `H:\projects` on 2026-10-07 was 2. A contained process can create
+  dotenv files too, and every batch the watch handles reads and rewrites the
+  project's whole record. Before there was a limit, 800 files handled one per
+  batch took 90.53 s, against 0.64 s handled as one batch, and 3000 files
+  created in a loop left a 3,550,994 byte record. With the limit, 3000 files
+  leave 237,396 bytes. The launch hides every `.env` file it finds, however
+  many, and records them until the record holds 200, with `.env`,
+  `.env.local`, `.env.*.local`, `.env.production`, `.env.development` and
+  `.env.test` first. A file past that is hidden without a record, so
+  `nvx grants reset` cannot put its permissions back and its sandbox entries
+  stay removed. The launch warns when a project holds more than 200. The limit
+  used to apply to what the launch hid as well, the first 200 files in name
+  order. Files named to sort first, shipped with a project or left by an
+  earlier contained run, then kept the rest readable. Measured 2026-10-07 on
+  Windows 11 26300, with 220 files named like `.env.aaa000` beside a
+  `.env.local`, a contained process read `.env.local`. The watch records new
+  files until the record holds 200. Then it warns once, and from then on looks
+  only at files with a record or found at launch, so a flood of new names
+  costs almost nothing. A `.env` created after that stays readable until the
+  next launch, which hides it. A file with a record, or one the launch found,
+  is still hidden again when an editor or git replaces it. A launch
+  first opens each file with a handle that may only read its permissions, and
+  goes no further for a file that is already hidden. Measured the same day over
+  3000 `.env` files in four runs, a first launch took between 881 ms and
+  1.02 s, and each of the two launches after it between 157 and 190 ms.
+  `TestHideDotenvFromSandboxHidesEveryFilePastTheCap`,
+  `TestProtectDotenvFilesRecordsUpToTheCap`,
+  `TestWatchDotenvFilesStopsAtTheCap` and
+  `TestWatchHidesAReplacedLaunchFileWithoutARecord` cover it with the limit
+  lowered to 5. `TestLaunchHidesDotenvPastTheRecordCap` (NVX_PROBE=1) has a
+  contained process try to read `.env.local` behind 220 such files.
 
   Deny entries and integrity labels do not work here. On 2026-08-18 a deny
   entry on `.env` for the container's SID and for ALL APPLICATION PACKAGES left

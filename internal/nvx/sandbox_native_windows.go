@@ -85,7 +85,10 @@ func resolveSandboxNodeExe(nvxHome string) string {
 // the hang hint all have to stay alive until the contained process exits, and
 // moving one behind a function call would release it the moment that call
 // returned.
-func applyProjectGrants(config SandboxConfig, sid uintptr, scope, guestHome, workDir string) (scopeCaps []string, launchDir string, err error) {
+//
+// envWatch is the run's watch for new .env files, told which ones the launch
+// found. It is nil when nothing watches.
+func applyProjectGrants(config SandboxConfig, sid uintptr, scope, guestHome, workDir string, envWatch *dotenvWatch) (scopeCaps []string, launchDir string, err error) {
 	ledger := loadProjectGrants(config.NvxHome, scope)
 	beforeCount := len(ledger.ReadExecGrants)
 	var revokedNow []readExecGrant
@@ -102,7 +105,7 @@ func applyProjectGrants(config SandboxConfig, sid uintptr, scope, guestHome, wor
 	// run from a subdirectory carries a capability that an earlier run from the
 	// root left holding modify there. Same reach as restrictGitMetadataToReadOnly.
 	if hidesDotenvIn(config.NvxHome, scope, workDir) {
-		hideDotenvFromSandbox(config.NvxHome, scope)
+		envWatch.presentAtLaunch(hideDotenvFromSandbox(config.NvxHome, scope))
 	}
 
 	// Extra read/execute roots from isolation.filesystem.allow_read_exec, granted
@@ -397,9 +400,10 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// Started before the launch scan in applyProjectGrants, so a .env created
 	// between the scan and the launch is caught too. Stopped when this function
 	// returns, which is when the contained process has exited.
+	var envWatch *dotenvWatch
 	if hidesDotenvIn(config.NvxHome, scope, workDir) {
-		stopDotenvWatch := watchDotenvFiles(config.NvxHome, scope)
-		defer stopDotenvWatch()
+		envWatch = watchDotenvFiles(config.NvxHome, scope)
+		defer envWatch.stop()
 	}
 
 	// Withdraw stale read/execute grants BEFORE the writable roots are set up, not
@@ -412,7 +416,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// Access is denied". Doing it first means prepareAppContainerFilesystem
 	// re-establishes whatever this run actually needs, after anything the policy no
 	// longer asks for is gone.
-	scopeCaps, launchDir, err := applyProjectGrants(config, sid, scope, guestHome, workDir)
+	scopeCaps, launchDir, err := applyProjectGrants(config, sid, scope, guestHome, workDir, envWatch)
 	if err != nil {
 		LogError("%v", err)
 		return 1, refusedToStart("the sandbox writable roots could not be granted")

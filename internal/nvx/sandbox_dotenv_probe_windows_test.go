@@ -67,26 +67,7 @@ func TestLaunchHidesDotenvFromContainedProcess(t *testing.T) {
 
 	launch := func() string {
 		t.Helper()
-		caps, launchDir, err := applyProjectGrants(config, sid, scope, guestHome, workDir)
-		if err != nil {
-			t.Fatalf("applyProjectGrants: %v", err)
-		}
-		read, write := makeTestPipe(t)
-		defer syscall.CloseHandle(read)
-		prevOut, _ := syscall.GetStdHandle(syscall.STD_OUTPUT_HANDLE)
-		const stdOutputHandle = uintptr(0xFFFFFFF5)
-		procSetStdHandleTest.Call(stdOutputHandle, uintptr(write))
-		env := append(scrubEnvironment(guestHome),
-			"NVX_PROBE=1", "NVX_DOTENV_PROBE_CHILD=1",
-			"NVX_PROBE_TARGETS="+strings.Join(targets, "|"))
-		_, launchErr := launchAppContainerProcess(childExe,
-			[]string{"-test.run=TestLaunchHidesDotenvFromContainedProcess"},
-			env, launchDir, sid, 0, caps)
-		procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
-		syscall.CloseHandle(write)
-		got := readWithTimeout(t, read)
-		requireAppContainerLaunch(t, launchErr)
-		return got
+		return launchDotenvProbe(t, sid, config, scope, guestHome, childExe, targets)
 	}
 	expect := func(when, out string) {
 		t.Helper()
@@ -127,6 +108,77 @@ func TestLaunchHidesDotenvFromContainedProcess(t *testing.T) {
 		t.Fatalf("the replaced .env does not inherit, so this checks nothing")
 	}
 	expect("launch after replace-on-save", launch())
+}
+
+// launchDotenvProbe runs the launch's grant step, applyProjectGrants, and then
+// childExe contained, in TestLaunchHidesDotenvFromContainedProcess's child
+// mode. It returns what the child printed: KEY=READ or KEY=DENIED for each
+// KEY=path in targets.
+func launchDotenvProbe(t *testing.T, sid uintptr, config SandboxConfig, scope, guestHome, childExe string, targets []string) string {
+	t.Helper()
+	caps, launchDir, err := applyProjectGrants(config, sid, scope, guestHome, config.WorkDir, nil)
+	if err != nil {
+		t.Fatalf("applyProjectGrants: %v", err)
+	}
+	read, write := makeTestPipe(t)
+	defer syscall.CloseHandle(read)
+	prevOut, _ := syscall.GetStdHandle(syscall.STD_OUTPUT_HANDLE)
+	const stdOutputHandle = uintptr(0xFFFFFFF5)
+	procSetStdHandleTest.Call(stdOutputHandle, uintptr(write))
+	env := append(scrubEnvironment(guestHome),
+		"NVX_PROBE=1", "NVX_DOTENV_PROBE_CHILD=1",
+		"NVX_PROBE_TARGETS="+strings.Join(targets, "|"))
+	_, launchErr := launchAppContainerProcess(childExe,
+		[]string{"-test.run=TestLaunchHidesDotenvFromContainedProcess"},
+		env, launchDir, sid, 0, caps)
+	procSetStdHandleTest.Call(stdOutputHandle, uintptr(prevOut))
+	syscall.CloseHandle(write)
+	got := readWithTimeout(t, read)
+	requireAppContainerLaunch(t, launchErr)
+	return got
+}
+
+// TestLaunchHidesDotenvPastTheRecordCap (NVX_PROBE=1) puts more files named
+// like .env.aaa000 than the record holds ahead of a real .env.local, launches,
+// and has a contained child read .env.local and the last decoy. The launch hid
+// only the first files up to the cap in name order, so the child read
+// .env.local. Every file present at launch must be closed to it.
+func TestLaunchHidesDotenvPastTheRecordCap(t *testing.T) {
+	if os.Getenv("NVX_PROBE") != "1" {
+		t.Skip("set NVX_PROBE=1 to run (creates a throwaway AppContainer profile)")
+	}
+	const probeProfile = "nvx.sandbox.dotenvcap"
+	sid, err := ensureAppContainerSID(probeProfile)
+	if err != nil {
+		t.Fatalf("profile: %v", err)
+	}
+	defer syscall.LocalFree(syscall.Handle(sid))
+	defer deleteAppContainerProfile(probeProfile)
+
+	nvxHome := tempDir(t)
+	guestHome := tempDir(t)
+	workDir := tempDir(t)
+	secret := filepath.Join(workDir, ".env.local")
+	if err := os.WriteFile(secret, []byte("DB_PASSWORD=supersecret123"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lastDecoy := ""
+	for i := 0; i < maxRecordedDotenv+20; i++ {
+		lastDecoy = filepath.Join(workDir, fmt.Sprintf(".env.aaa%03d", i))
+		if err := os.WriteFile(lastDecoy, []byte("X=1"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	childExe := stageProbeChild(t, guestHome, "dotenvcap.exe")
+	config := SandboxConfig{NvxHome: nvxHome, WorkDir: workDir}
+	out := launchDotenvProbe(t, sid, config, sandboxScopeForWorkDir(workDir), guestHome, childExe,
+		[]string{"ENVLOCAL=" + secret, "LASTDECOY=" + lastDecoy})
+	t.Logf("%d decoys and .env.local: %q", maxRecordedDotenv+20, out)
+	for _, key := range []string{"ENVLOCAL", "LASTDECOY"} {
+		if !strings.Contains(out, key+"=DENIED\n") {
+			t.Errorf("want %s=DENIED", key)
+		}
+	}
 }
 
 // TestContainedProcessCannotLinkDotenvToAFileItCannotWrite (NVX_PROBE=1) has a
