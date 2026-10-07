@@ -219,21 +219,22 @@ jobs:
 
         # Linux fails outright when a privileged containment test skips, because
         # there the environment can be fixed (a sysctl) and a skip means a real
-        # hole. Windows differs for one reason: a runner that refuses to create
-        # AppContainer children is a skip, not a regression. Hosted runners
-        # refused until 2026-09-21 and launch them now (run 37244525606). The
-        # tolerance stays, so a runner image that refuses again shows up as a
-        # skip with a stated reason, not a red step. Every OTHER skip reason is
-        # a regression -- a probe that
-        # stopped running because a premise check fired, a runtime went missing,
-        # or someone added a gate nobody reads. Those used to be invisible: the
-        # step exited on go test's code, and a skip is exit 0.
+        # hole. Windows is the same for a runner that refuses to create
+        # AppContainer children. Hosted runners refused until 2026-09-21 and
+        # launch them now (run 37244525606), so that refusal is no longer a fact
+        # about the environment. It means the runner cannot host the probes and
+        # this step has checked nothing. Its skip reason, "cannot create
+        # AppContainer children", is not on the list below, so it fails. The
+        # probes still skip that way on a developer machine, which is where the
+        # refusal is allowed. Every OTHER skip reason is a regression too -- a
+        # probe that stopped running because a premise check fired, a runtime
+        # went missing, or someone added a gate nobody reads. Those used to be
+        # invisible: the step exited on go test's code, and a skip is exit 0.
         #
         # So: an allowlist of reasons known to be environmental, and a failure
         # for anything else. Adding a line here is a deliberate act with a
         # reviewer attached, which is the property the old `-run` filter lacked.
         $allowed = @(
-          'cannot create AppContainer children',
           'creating symlinks on Windows needs privilege or Developer Mode',
           'child-side helper for',
           'internal child for the launch timing probe',
@@ -300,6 +301,18 @@ jobs:
         }
         exit $code
 
+    # The three Windows gates below skip on a host that cannot create AppContainer
+    # children and fail instead when GITHUB_ACTIONS is set. This runs each of them
+    # against a stand-in nvx.exe that refuses the launch, once as a developer
+    # machine and once as this runner, and needs no AppContainer to do it.
+    - name: Windows gate refusal test
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/test-windows-gates.ps1
+
+    # Both smoke scripts skip on a host that cannot create AppContainer children,
+    # and fail instead when GITHUB_ACTIONS is set, so a runner image that refuses
+    # again turns this step red.
     - name: Windows sandbox smoke
       if: matrix.os == 'windows-latest'
       shell: pwsh
@@ -312,9 +325,10 @@ jobs:
     # Windows runners refused to create AppContainer children, CreateProcess
     # returning "Access is denied" for every executable including cmd.exe, and
     # this step skipped. Since the breakaway fix of 2026-09-21 (see the probe
-    # step above) they can, and the script asserts here. It still skips on the
-    # two refusals a host is known to give, so a runner image that refuses
-    # again shows up as a skip in this step's log.
+    # step above) they can, and the script asserts here. On the two refusals a
+    # host is known to give, the script skips on a developer machine and fails
+    # when GITHUB_ACTIONS is set, so a runner image that refuses again turns this
+    # step red.
     #
     # CONTRIBUTING.md still gates Windows enforcement by hand on a real machine
     # before a release.
@@ -346,6 +360,28 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: ./scripts/test-install-checksum.ps1
+    # The checksum sits on the same page as the file, and the attestation check is
+    # skipped on a machine without a signed-in gh, so a replaced release could pass
+    # both. The Authenticode signature is the check that needs nothing installed.
+    # Real files: an unsigned one, a changed one and one signed by someone else
+    # must be refused.
+    - name: Installer signature test
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/test-install-signature.ps1
+    # And its shim step: what it runs, where from, and what it does when that fails.
+    # The installer used to leave the shims to the first profile that ran `nvx env`.
+    - name: Installer shim test
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/test-install-shims.ps1
+    # The Winget publish job's own check, which runs only during a release: the
+    # manifest Komac writes must carry the digest verified for nvx.exe. It is a
+    # PowerShell script because that job runs on Windows, so it is tested here.
+    - name: Winget manifest check test
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/release/check-winget-sha_test.ps1
     # The whole installer, the documented way: through Invoke-Expression. The
     # tests above reach its functions from a file, where $PSScriptRoot is set;
     # under iex it is not, and every one-line install failed on it.
