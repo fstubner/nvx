@@ -313,13 +313,22 @@ jobs:
     # Both smoke scripts skip on a host that cannot create AppContainer children,
     # and fail instead when GITHUB_ACTIONS is set, so a runner image that refuses
     # again turns this step red.
+    #
+    # One script per step. A pwsh step takes its result from the last exit code,
+    # so with both scripts in one step an `exit 1` from the first was lost
+    # whenever the second passed. Measured with stand-in scripts that exit 1 and
+    # 0. The old shape ended the step with 0.
     - name: Windows sandbox smoke
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: |
         go build -o nvx.exe ./cmd/nvx
         ./scripts/sandbox-smoke.ps1
-        ./scripts/sandbox-smoke-egress.ps1
+
+    - name: Windows egress smoke
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: ./scripts/sandbox-smoke-egress.ps1
 
     # The Windows counterpart of the Linux and macOS enforcement steps. Hosted
     # Windows runners refused to create AppContainer children, CreateProcess
