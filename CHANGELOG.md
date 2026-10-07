@@ -253,7 +253,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `1+1`, because a process in a background group is stopped when it reads the
   terminal. The process now stays in the foreground group, so the terminal
   reaches all of it, as it does outside nvx. The same two commands stopped
-  0.10 to 0.28 seconds after Ctrl-C, the REPL answers, and Ctrl-Z followed by `fg`
+  0.10 to 0.27 seconds after Ctrl-C, the REPL answers, and Ctrl-Z followed by `fg`
   stops and resumes the run. One Ctrl-C reaches the process once. An interrupt
   sent to nvx with `kill`, from a backgrounded job or with no terminal, still
   reaches the process once. The macOS launcher does not start the process in a
