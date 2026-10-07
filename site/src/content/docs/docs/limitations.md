@@ -35,23 +35,46 @@ and the evidence and measurements for each platform are in the
   Earlier releases ignore it, so a request from one connects directly and the
   sandbox refuses it. Bun's `fetch` follows the proxy variables with no help. A
   request that carries its own agent, such as `agent: false`, ignores them on
-  every version, and so does a raw socket. Measured with Node 22.23.2, each
-  contained Node process prints `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is
-  experimental` to stderr when it exits. Node 24.14.1 and 24.21.0 print nothing.
-- **A request to `127.0.0.1` from a contained Node program goes to the proxy.**
-  A request that follows the proxy variables no longer reaches a server that
-  your own code started in the same sandbox. The proxy refuses a local address
-  the policy does not allow. Measured on Windows and on Linux with Node 22.23.2,
-  a server and a client in one sandbox could no longer reach each other.
-  `fetch` was rejected and `http.get` received 405. A port that nvx opened, with
-  `--connect` or `--expose`, is listed in `NO_PROXY` and still connects directly.
-  Give any other request its own agent, or use a raw socket, to dial inside the
-  sandbox.
+  every version, and so does a raw socket. Yarn 2 and later ignores them too. It
+  reads `YARN_HTTP_PROXY` and `YARN_HTTPS_PROXY`, which nvx sets to the same
+  address. Node 22.23.2 prints `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is
+  experimental` to stderr when a process with the variable set exits. nvx adds
+  `--disable-warning=UNDICI-EHPA` to `NODE_OPTIONS` for a Node it resolved that
+  reads the variable. A Node found elsewhere on your `PATH` still prints it.
+- **A request to `localhost`, `127.0.0.1` or `::1` goes to the proxy only when
+  the policy lets the proxy reach this machine.** By default nvx lists those
+  names in `NO_PROXY`, so a request to one connects directly. On Windows and on
+  Linux the sandbox has a loopback of its own, so that reaches what runs in the
+  sandbox and nothing on your machine. A server and a client in one sandbox
+  reach each other. Measured on both with Node 22.23.2, `fetch` and `http.get`
+  each returned 200 from a server in the same sandbox, by `127.0.0.1` and by
+  `localhost`. A request to a service on your machine that no policy entry names
+  fails. Measured with `fetch`, it failed with `ECONNREFUSED` on Linux and
+  `ETIMEDOUT` on Windows, and nvx printed nothing, because the proxy never saw
+  it.
+
+  An `allow_hosts` or `default_allow` entry for one of those names, or
+  `network.mode: loopback`, changes that. nvx leaves the names off `NO_PROXY`,
+  and a request that follows the proxy variables goes to the proxy, which dials
+  the service on your machine. A server and a client in one sandbox then reach
+  each other only on a port nvx opened, with `--connect` or `--expose`. nvx lists
+  those ports in `NO_PROXY` by number, which Node reads and npm does not. Any
+  other loopback port goes to the proxy, which refuses it unless the policy names
+  it or the mode is `loopback`. A request with its own agent, and a raw socket,
+  connect directly in every case. macOS shares your machine's loopback, so nvx
+  always lists the names there.
 - **The proxy refuses a plain `http://` request in proxy form.** It tunnels with
   CONNECT and speaks SOCKS5. A client that sends it a plain `http://` request
   gets `405 Method Not Allowed`. `https://` requests work. So does Node's `fetch`
   for both schemes, because it tunnels. Measured with Node 22.23.2, `http.get`
-  to an `http://` address received 405.
+  to an `http://` address received 405. So did the npm that ships with it, on
+  Windows, for an `http://` registry on this machine that `allow_hosts` named.
+  Reach such a registry with `--connect`, and leave loopback entries out of the
+  policy. npm matches `NO_PROXY` by host name and ignores the port, so with a
+  loopback entry it sends a request to a `--connect` port to the proxy as well.
+  Measured on Windows and on Linux, a contained `npm view` of a package on an
+  `http://` registry opened with `--connect` returned the version under the
+  default policy and failed with `E405` under a policy with a loopback entry.
 
 ## Windows
 

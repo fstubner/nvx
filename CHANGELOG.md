@@ -189,14 +189,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   off the allowlist is refused by the proxy. At an interactive terminal, a host
   the policy does not name now reaches the unknown-host prompt. Node reads the
   variable from 24.0.0 for `fetch`, from 24.5.0 for `http` and `https`, and from
-  22.21.0 for all three. Older releases ignore it and behave as before. Two
-  things change where it is read. A request to `127.0.0.1` from a contained Node
-  program now goes to nvx's proxy, so it no longer reaches a server your own
-  code started in the same sandbox. A port that `--connect` or `--expose`
-  opened is left out of the proxy variables, so it still connects directly.
-  Node 22.23.2 also prints an experimental-feature warning to stderr when a
-  contained process exits, and Node 24.14.1 and 24.21.0 print none. The known
-  limitations page has both.
+  22.21.0 for all three. Older releases ignore it and behave as before. Node
+  22.23.2 prints `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental` to
+  stderr when a process with the variable set exits, and a contained
+  `npm install` printed it twice. nvx adds `--disable-warning=UNDICI-EHPA` to
+  `NODE_OPTIONS` for a Node it resolved that reads the variable, and for no
+  other, because the Node 18 and 19 releases measured refuse to start with it.
+  The same install now prints nothing on Windows and on Linux.
+
+* **A contained npm reaches a service opened with `--connect`.** npm sent the
+  request to nvx's proxy, which does not forward a plain `http://` request and
+  answered 405. Measured on Windows and on Linux with the npm that ships with
+  Node 22, a contained `npm view` of a package on an `http://` registry opened
+  with `--connect` failed with `E405`. nvx now lists `localhost`,
+  `127.0.0.1` and `::1` in `NO_PROXY`, so a request to them connects directly,
+  and the same command prints the version. A server and a client in one sandbox
+  reach each other the same way, with Node's `fetch` and `http` as well. A
+  policy with an `allow_hosts` or `default_allow` entry for one of those names,
+  or `network.mode: loopback`, keeps the names off the list, so a request to a
+  service on your machine goes to the proxy, which dials it. A port opened with
+  `--connect` or `--expose` is then listed by number, which Node reads and npm
+  does not. macOS is unchanged. The policy and known limitations pages describe
+  the rule.
+
+* **A contained `yarn install` works with Yarn 2 and later.** Yarn 2 and later
+  ignores `HTTP_PROXY` and `HTTPS_PROXY`. It reads its own `httpProxy` and
+  `httpsProxy` settings, which `YARN_HTTP_PROXY` and `YARN_HTTPS_PROXY` also
+  set. A contained install never asked the proxy for anything and failed on its
+  first fetch with a DNS error for `registry.yarnpkg.com`, a host the allowlist
+  names. Measured with Yarn 4.18.1 and Node 22.23.2, a contained install of
+  `ms` failed with `EAI_AGAIN` on Linux and `ENOTFOUND` on Windows. nvx now sets
+  both variables to the proxy's address, and the install completes on both.
+
+* **git over HTTPS works through the proxy.** git sends its first `CONNECT`
+  with no credential and waits for a 407 to choose how to authenticate. The
+  proxy's 407 had no `Content-Length` and the proxy then closed the connection,
+  so libcurl gave up with `Proxy CONNECT aborted` for every host, the
+  allowlisted ones included. Measured on Linux with git 2.39.5, run by a
+  contained Node process, `git ls-remote https://registry.npmjs.org/ms` failed
+  that way. The 407 now carries `Content-Length: 0` and `Connection: close`, and
+  the same command reaches the host. A host off the allowlist fails with
+  `CONNECT tunnel failed, response 403`.
 
 * **A `*.example.com` entry in `allow_hosts` now says it matches nothing.** nvx
   matches host names exactly, so an entry with a `*` in its host allowed no host,
