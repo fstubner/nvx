@@ -718,8 +718,16 @@ func (p *EgressProxy) handleHTTPConn(client net.Conn) {
 		// The destination is judged after that as well, as on the SOCKS path. An
 		// invalid host used to be refused first, with a terminal warning and an
 		// audit record, for anyone who could reach the listener.
+		//
+		// The 407 is a complete response that says the connection ends. git sends
+		// its first CONNECT with no credential and waits for a 407 to choose an
+		// authentication method, and libcurl gave up with "Proxy CONNECT aborted"
+		// on a 407 that had no Content-Length and then closed, for every host. Measured
+		// with git 2.39.5 (libcurl 7.88.1) in a contained run on Linux, Content-Length: 0
+		// alone did not help and adding Connection: close did, because libcurl then
+		// reconnects with the credential instead of reusing a connection about to end.
 		if !p.authorized(auth) {
-			_, _ = fmt.Fprintf(client, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"nvx\"\r\n\r\n")
+			_, _ = fmt.Fprintf(client, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"nvx\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 			return
 		}
 		// A port that does not parse is refused. The parse error used to be
