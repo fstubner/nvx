@@ -437,6 +437,20 @@ func (p *EgressProxy) admit(hp hostPort, resolve func(string) ([]net.IP, error))
 		p.refuseLoopbackGrant(key)
 		return nil, false
 	}
+	// A literal link-local address is refused the same way, and for the same
+	// reason. 169.254.169.254 is the cloud metadata endpoint, where one
+	// unauthenticated GET returns credentials, so a question the contained process
+	// chose to ask is not a reviewed decision about it. resolveEgressAddresses
+	// refuses a NAME that resolves there but returns a literal address as itself,
+	// so without this the literal went through on a yes.
+	//
+	// A policy entry naming the address still works, as it does for loopback,
+	// because the allowlist was consulted above. A name that resolves to one is
+	// refused after it is approved, by resolveEgressAddresses.
+	if isLinkLocalLiteral(hp.host) {
+		p.refuseLinkLocalGrant(key)
+		return nil, false
+	}
 
 	if !p.sessionAllows(keys) && !p.askUnknownHost(key) {
 		return nil, false
@@ -495,6 +509,16 @@ func (p *EgressProxy) refuseLoopbackGrant(key string) {
 	LogInfo("nvx does not offer local services through a prompt, because the contained process is what triggers it. "+
 		"If this is meant, add %q to isolation.network.allow_hosts in the project policy, or use --connect for one run.", key)
 	auditLog(p.nvxHome, "egress_deny_loopback_prompt", map[string]string{"host": key})
+}
+
+// refuseLinkLocalGrant reports a link-local address refused on the prompt path.
+// See the link-local refusal in admit. The remedy names allow_hosts alone,
+// because --connect reaches a service on this machine's loopback and nothing else.
+func (p *EgressProxy) refuseLinkLocalGrant(key string) {
+	LogWarn("Blocked egress to a link-local address: %s", key)
+	LogInfo("nvx does not offer link-local addresses, such as the cloud metadata endpoint, through a prompt, because the contained process is what triggers it. "+
+		"If this is meant, add %q to isolation.network.allow_hosts in the project policy.", key)
+	auditLog(p.nvxHome, "egress_deny_link_local_prompt", map[string]string{"host": key})
 }
 
 // askUnknownHost asks once per run whether key may be reached, and reports the

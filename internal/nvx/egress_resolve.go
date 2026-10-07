@@ -28,7 +28,7 @@ import (
 //     real use and the test that guards it.
 //   - A policy naming a LITERAL link-local address is honoured. Someone who typed
 //     169.254.169.254 into allow_hosts has decided; what this stops is reaching it
-//     without having said so, through a name.
+//     without having said so, through a name or through the prompt (see admit).
 //
 // So this closes "the address was never checked" without pretending to be a
 // general SSRF filter, which nvx is not positioned to be: the allowlist is
@@ -37,6 +37,15 @@ import (
 // isLinkLocal reports whether ip is in a link-local range.
 func isLinkLocal(ip net.IP) bool {
 	return ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+}
+
+// isLinkLocalLiteral reports whether host is a link-local ADDRESS spelled out,
+// rather than a name that might resolve to one. The IPv4-mapped form counts,
+// because net.IP sees through the mapping.
+func isLinkLocalLiteral(host string) bool {
+	host = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(host), "["), "]")
+	ip := net.ParseIP(host)
+	return ip != nil && isLinkLocal(ip)
 }
 
 // resolveEgressAddresses resolves host ONCE and returns the addresses nvx will
