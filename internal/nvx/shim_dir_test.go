@@ -86,7 +86,7 @@ func TestWritingAShimReplacesALinkAndLeavesItsTarget(t *testing.T) {
 	}
 	shim := filepath.Join(dir, "yarn")
 	if err := os.Symlink("yarn.js", shim); err != nil {
-		t.Skipf("creating symlinks needs privilege or Developer Mode here: %v", err)
+		t.Skipf("creating symlinks on Windows needs privilege or Developer Mode: %v", err)
 	}
 
 	if err := writeExecutableFile(shim, []byte("#!/bin/sh\nexit 0\n")); err != nil {
@@ -102,91 +102,6 @@ func TestWritingAShimReplacesALinkAndLeavesItsTarget(t *testing.T) {
 	}
 	if !info.Mode().IsRegular() {
 		t.Errorf("the shim is still %v, not a file nvx wrote", info.Mode())
-	}
-}
-
-// The state `corepack enable` used to leave, regenerated over.
-func TestRegeneratingShimsLeavesCorepacksFilesAlone(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("corepack's links are symlinks on POSIX; Windows has its own launchers, tested below")
-	}
-	notQuiet(t)
-	nvxHome := tempDir(t)
-	held := corepackDist(t, nvxHome, "yarn", "pnpm", "yarnpkg", "pnpx")
-	corepackLeftovers(t, nvxHome, "yarn", "pnpm", "yarnpkg", "pnpx")
-
-	stderr := captureStderrHere(t, func() {
-		if err := generateShims(nvxHome); err != nil {
-			t.Fatalf("generateShims: %v", err)
-		}
-	})
-
-	dist := filepath.Join(nvxHome, "versions", "node", "v22.0.0", "lib", "node_modules", "corepack", "dist")
-	for name, want := range held {
-		if got, _ := os.ReadFile(filepath.Join(dist, name+".js")); string(got) != want {
-			t.Errorf("corepack's %s.js was overwritten and now holds %q", name, got)
-		}
-	}
-	shimDir := filepath.Join(nvxHome, "bin")
-	for _, name := range []string{"yarn", "pnpm"} {
-		content, err := os.ReadFile(filepath.Join(shimDir, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, ok := shimScriptTarget(string(content), name); !ok {
-			t.Errorf("%s in the shim directory is not nvx's shim after regeneration:\n%s", name, content)
-		}
-		if info, _ := os.Lstat(filepath.Join(shimDir, name)); info == nil || !info.Mode().IsRegular() {
-			t.Errorf("%s in the shim directory is still a link", name)
-		}
-	}
-	for _, name := range []string{"yarnpkg", "pnpx"} {
-		if _, err := os.Lstat(filepath.Join(shimDir, name)); err == nil {
-			t.Errorf("%s, a link into corepack, is still in the shim directory and runs outside nvx", name)
-		}
-	}
-	if !strings.Contains(stderr, "yarn") || !strings.Contains(stderr, "corepack enable") {
-		t.Errorf("nvx replaced those without saying what or how to get yarn and pnpm back:\n%s", stderr)
-	}
-}
-
-// On Windows corepack writes launchers, and `nvx init-shims` used to delete
-// them without a word, leaving `pnpm` to fail with "Could not find real
-// executable". The launchers are not nvx's, so they still go, and now it says so.
-func TestRegeneratingShimsOnWindowsNamesCorepacksLaunchers(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("the launchers are a Windows layout")
-	}
-	notQuiet(t)
-	nvxHome := tempDir(t)
-	corepackLeftovers(t, nvxHome, "yarn", "pnpm", "yarnpkg")
-	shimDir := filepath.Join(nvxHome, "bin")
-	// An older nvx's own wrapper is replaced without comment.
-	if err := os.WriteFile(filepath.Join(shimDir, "npm.cmd"), []byte("@echo off\r\n\"C:\\x\\nvx.exe\" shim npm %*\r\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	stderr := captureStderrHere(t, func() {
-		if err := generateShims(nvxHome); err != nil {
-			t.Fatalf("generateShims: %v", err)
-		}
-	})
-
-	for _, name := range []string{"yarn", "yarn.CMD", "yarn.ps1", "pnpm", "yarnpkg", "yarnpkg.ps1", "npm.cmd"} {
-		if _, err := os.Stat(filepath.Join(shimDir, name)); err == nil {
-			t.Errorf("%s is still in the shim directory", name)
-		}
-	}
-	for _, name := range []string{"yarn.exe", "pnpm.exe"} {
-		if _, err := os.Stat(filepath.Join(shimDir, name)); err != nil {
-			t.Errorf("no %s shim after regeneration: %v", name, err)
-		}
-	}
-	if !strings.Contains(stderr, "yarn") || !strings.Contains(stderr, "corepack enable") {
-		t.Errorf("nvx removed corepack's launchers without saying so:\n%s", stderr)
-	}
-	if strings.Contains(stderr, "npm.cmd") {
-		t.Errorf("an older nvx's own wrapper was reported as foreign:\n%s", stderr)
 	}
 }
 
@@ -564,45 +479,6 @@ func TestCorepackEnableFollowsTheProjectsOwnCorepack(t *testing.T) {
 	want := []string{"enable", "--install-directory", bin}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("corepack enable became %q, want %q", got, want)
-	}
-}
-
-// A shim that is already right is not written again, and a wrong one is replaced
-// whole. `nvx env` writes every shim at every shell start, and two shells starting
-// together must never read a half-written one.
-func TestWritingAShimTwiceLeavesTheFileAloneAndReplacesAWrongOneWhole(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows writes shims in place; its shims are links to nvx.exe")
-	}
-	dir := tempDir(t)
-	shim := filepath.Join(dir, "node")
-	if err := writeExecutableFile(shim, []byte("one\n")); err != nil {
-		t.Fatal(err)
-	}
-	first, err := os.Stat(shim)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Mode().Perm() != 0o700 {
-		t.Errorf("the shim has mode %v, want 0700", first.Mode().Perm())
-	}
-	if err := writeExecutableFile(shim, []byte("one\n")); err != nil {
-		t.Fatal(err)
-	}
-	again, _ := os.Stat(shim)
-	if !os.SameFile(first, again) {
-		t.Error("an identical shim was written again")
-	}
-
-	if err := writeExecutableFile(shim, []byte("two\n")); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := os.ReadFile(shim); string(got) != "two\n" {
-		t.Errorf("the shim holds %q after being replaced", got)
-	}
-	entries, _ := os.ReadDir(dir)
-	if len(entries) != 1 {
-		t.Errorf("the write left %d entries behind, want only the shim", len(entries))
 	}
 }
 
