@@ -154,6 +154,17 @@ func runNativeSandbox(config SandboxConfig, policy Policy, egress *EgressProxy, 
 }
 
 func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
+	p := findSandboxCommand(config, policy)
+	if p == "" {
+		reportNoRealExecutable(config.Command, config.NvxHome)
+	}
+	return p
+}
+
+// findSandboxCommand is resolveSandboxCommand without the error, for a caller
+// asking whether a command is there at all, as `nvx doctor` does of pnpm and
+// yarn.
+func findSandboxCommand(config SandboxConfig, policy Policy) string {
 	rt := runtimeForShim(config.Command)
 	pinned := policy.PinnedRuntimeVersion(rt.Name())
 	if pinned != "" {
@@ -176,7 +187,6 @@ func resolveSandboxCommand(config SandboxConfig, policy Policy) string {
 
 	cmdPath, err := lookPathSkippingNvxShims(config.Command, config.NvxHome)
 	if err != nil {
-		reportNoRealExecutable(config.Command, config.NvxHome)
 		return ""
 	}
 	return preferWindowsRuntimeExe(cmdPath)

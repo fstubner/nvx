@@ -572,8 +572,7 @@ func (n NodeProvider) Uninstall(version string, nvxHome string) error {
 	destDir := filepath.Join(nvxHome, "versions", "node", resolvedVer)
 	LogInfo("Uninstalling Node.js %s...", resolvedVer)
 
-	err = os.RemoveAll(destDir)
-	if err != nil {
+	if err := removeInstalledVersion("Node.js", resolvedVer, destDir); err != nil {
 		return err
 	}
 

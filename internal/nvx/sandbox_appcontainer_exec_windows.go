@@ -275,6 +275,17 @@ func runAppContainerExecChild(a supervisorExecArgs) int {
 	}
 
 	cmd := exec.Command(cmdPath, args...)
+	if isWindowsBatchFile(cmdPath) {
+		// Started the way Windows starts a batch file, this fails with "Access is
+		// denied". See windowsBatchLaunch.
+		exe, line, err := windowsBatchLaunch(cmdPath, args)
+		if err != nil {
+			LogError("Sandbox execution failed: %v", err)
+			return 1
+		}
+		cmd = exec.Command(exe)
+		cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: line}
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

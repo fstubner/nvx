@@ -619,6 +619,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pnpm 12.9.1 now installs contained. pnpm 9.15.9, 10.34.6 and 11.28.5 installed
   contained before the change and after it.
 
+* **On Windows, pnpm and yarn installed with `npm install -g` run inside the
+  sandbox.** npm installs them as batch files. Windows starts a batch file
+  through `cmd.exe`, and inside the sandbox `cmd.exe` answers a batch file named
+  by its full path with a bare `Access is denied.`, so every contained pnpm and
+  yarn command failed. nvx now starts `cmd.exe` itself with the path in quotes,
+  which it accepts. Measured 2026-10-07, pnpm 10.34.6 and 11.28.5 and yarn
+  1.22.22 each install a package contained. pnpm 12 still cannot run contained,
+  see Known limitations.
+
+* **Project commands run under strict isolation on Windows.** With
+  `isolation.level: strict`, `tsc`, `eslint` and every other command in
+  `node_modules\.bin` stopped with "is not in a Node or Bun install". nvx tried
+  to copy the command's folder for the sandbox, and it copies only Node and Bun
+  installs. A command in a folder the sandbox may already read, the project or
+  an `isolation.filesystem.allow_read_exec` folder, now runs where it is. The
+  refusal that remains, for a tool kept anywhere else, says how to run it.
+
+* **Uninstalling a running Node or Bun version no longer leaves it half
+  deleted.** On Windows the uninstall deleted every file it could, stopped at
+  the running `node.exe` with the raw OS error, and left the version listed,
+  with `nvx install` saying it was already installed. Measured 2026-10-07, 1962
+  files before the uninstall and 1 after. nvx now refuses before it deletes
+  anything, and names the process to stop. A file that cannot be deleted for
+  another reason leaves the version uninstalled, and `nvx cleanup` removes what
+  is left once nothing holds it.
+
+* **`nvx doctor` on Windows checks that the sandbox can run pnpm and yarn.** It
+  reported a healthy sandbox while every contained pnpm and yarn failed. It now
+  runs a batch file in the sandbox, the way they start, and runs `pnpm` and
+  `yarn` there when they are installed under a Node that nvx manages. For a
+  `pnpm` or `yarn` kept anywhere else it says what a contained run will do with
+  it, without starting it.
+
+* **Contained commands on Windows no longer keep failing when `node.exe` has
+  lost the sandbox's access.** When the version folder held the sandbox's
+  read and execute permission and `node.exe` did not, every contained command
+  failed with `fork/exec ...\node.exe: Access is denied.`. nvx checked only the
+  folder, so nothing cleared it. It now checks the file it is about to start and
+  gives it the permission the folder already holds.
+
 ## [0.7.0] - 2026-10-06
 
 ### Added

@@ -516,7 +516,7 @@ func (b BunProvider) Uninstall(version string, nvxHome string) error {
 	}
 	destDir := filepath.Join(nvxHome, "versions", "bun", resolvedVer)
 	LogInfo("Uninstalling Bun %s...", resolvedVer)
-	if err := os.RemoveAll(destDir); err != nil {
+	if err := removeInstalledVersion("Bun", resolvedVer, destDir); err != nil {
 		return err
 	}
 	LogSuccess("Bun %s uninstalled successfully.", resolvedVer)

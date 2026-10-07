@@ -208,13 +208,20 @@ func launchAppContainerProcessOnce(
 		LogWarn("Standard handles are not inheritable here; a sandboxed process that communicates over pipes (e.g. an MCP server) may not receive stdio.")
 	}
 
-	cmdLine := buildWindowsCommandLine(cmdPath, args)
+	appPath, cmdLine := cmdPath, buildWindowsCommandLine(cmdPath, args)
+	if isWindowsBatchFile(cmdPath) {
+		// Started the way Windows starts a batch file, this fails with "Access is
+		// denied". See windowsBatchLaunch.
+		if appPath, cmdLine, err = windowsBatchLaunch(cmdPath, args); err != nil {
+			return 1, err
+		}
+	}
 	cmdLineUTF16, err := syscall.UTF16FromString(cmdLine)
 	if err != nil {
 		return 1, fmt.Errorf("command line: %w", err)
 	}
 
-	appName, err := syscall.UTF16PtrFromString(cmdPath)
+	appName, err := syscall.UTF16PtrFromString(appPath)
 	if err != nil {
 		return 1, fmt.Errorf("application name: %w", err)
 	}

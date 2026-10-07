@@ -21,10 +21,11 @@ import (
 var nodeSandboxPreserveFlags = []string{"--preserve-symlinks-main", "--preserve-symlinks"}
 
 // rewriteWindowsNodeCommand adapts a resolved command for AppContainer launch:
-//   - npm.cmd / npx.cmd become a direct "node.exe <cli>.js" call, because batch
-//     files can't be CreateProcess'd and the cmd.exe fallback is denied inside
-//     the container. So do corepack.cmd and the yarn.cmd and pnpm.cmd launchers
-//     corepack writes.
+//   - npm.cmd / npx.cmd become a direct "node.exe <cli>.js" call, so no cmd.exe
+//     sits between nvx and npm. So do corepack.cmd and the yarn.cmd and pnpm.cmd
+//     launchers corepack writes. Any other batch file goes through cmd.exe with
+//     its path quoted, which is what lets it run here at all (see
+//     windowsBatchLaunch).
 //   - any node.exe invocation gains the preserve-symlinks flags (see above).
 //
 // nodeExeFallback is used when no node.exe sits beside the .cmd, which is the
@@ -252,8 +253,8 @@ func containedEnv(env []string, guestHome, cmdPath, nvxHome string) []string {
 
 // containedCommand stages the command where the sandbox can execute it and
 // rewrites it for an AppContainer launch, returning the executable and its
-// arguments.
-func containedCommand(config SandboxConfig, cmdPath string) (string, []string, error) {
+// arguments. scopeCaps are the project identities the launch carries.
+func containedCommand(config SandboxConfig, cmdPath string, scopeCaps []string) (string, []string, error) {
 	// Make the command reachable from inside the container BEFORE rewriting it.
 	//
 	// A runtime outside ~/.nvx/versions is copied into nvxHome, because its own
@@ -263,14 +264,29 @@ func containedCommand(config SandboxConfig, cmdPath string) (string, []string, e
 	// whose script argument still pointed into the original directory -- which the
 	// container has no grant on, so node failed with "Cannot find module
 	// C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js".
-	cmdPath, err := ensureAppContainerCommand(config.NvxHome, cmdPath)
-	if err != nil {
-		return "", nil, fmt.Errorf("AppContainer executable access failed: %w", err)
+	//
+	// A command the project's identity can already run is left where it is. See
+	// commandRunsInPlace.
+	var err error
+	inPlace := commandRunsInPlace(config.NvxHome, cmdPath, scopeCaps)
+	if !inPlace {
+		cmdPath, err = ensureAppContainerCommand(config.NvxHome, cmdPath)
+		if err != nil {
+			return "", nil, fmt.Errorf("AppContainer executable access failed: %w", err)
+		}
 	}
 	grantedDir := filepath.Dir(cmdPath)
 
 	// Adapt node/npm/npx for AppContainer launch (direct node.exe, realpath-safe).
+	resolved := cmdPath
 	cmdPath, launchArgs := rewriteWindowsNodeCommand(cmdPath, config.Args, resolveSandboxNodeExe(config.NvxHome))
+
+	// npx.cmd becomes the node.exe beside it, a file nothing above checked.
+	if !inPlace && cmdPath != resolved && strings.EqualFold(filepath.Dir(cmdPath), grantedDir) {
+		if err := grantRuntimeReadExecFile(cmdPath); err != nil {
+			return "", nil, fmt.Errorf("AppContainer executable access failed: %w", err)
+		}
+	}
 
 	// When the resolved npm.cmd has no sibling node.exe -- the normal layout for a
 	// self-updated npm in a version's npm_global prefix -- the rewrite falls back to
@@ -283,7 +299,40 @@ func containedCommand(config SandboxConfig, cmdPath string) (string, []string, e
 		}
 	}
 
+	// The same holds for the shims npm writes for pnpm, yarn and a project's own
+	// bins. With no node.exe beside them they run `node` from PATH, and the
+	// contained PATH leads with the active runtime's directory.
+	if isWindowsBatchFile(cmdPath) {
+		if nodeExe := resolveSandboxNodeExe(config.NvxHome); nodeExe != "" {
+			if _, err := ensureAppContainerCommand(config.NvxHome, nodeExe); err != nil {
+				return "", nil, fmt.Errorf("AppContainer executable access failed: %w", err)
+			}
+		}
+	}
+
 	return cmdPath, launchArgs, nil
+}
+
+// commandRunsInPlace reports whether cmdPath can run from where it is, because
+// the project identity the launch carries may already read and execute it.
+// That is a project bin shim inside the working directory, or a file under an
+// allow_read_exec root.
+//
+// Staging would refuse these. It copies only runtime installs, because a copy
+// is readable by every sandbox on the machine (see stageAppContainerExecutable),
+// and node_modules\.bin is not one. So `nvx --strict shim tsc` stopped with "is
+// not in a Node or Bun install" while the file sat in a folder the sandbox could
+// already read. Running it in place grants nothing new.
+func commandRunsInPlace(nvxHome, cmdPath string, scopeCaps []string) bool {
+	if isNvxManagedRuntimePath(nvxHome, cmdPath) {
+		return false
+	}
+	for _, sid := range scopeCaps {
+		if appContainerHasGrantFor(sid, cmdPath, grantReadExec) {
+			return true
+		}
+	}
+	return false
 }
 
 // platformLaunchNative applies AppContainer isolation on Windows.
@@ -369,7 +418,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		return 1, refusedToStart("the sandbox writable roots could not be granted")
 	}
 
-	cmdPath, launchArgs, err := containedCommand(config, cmdPath)
+	cmdPath, launchArgs, err := containedCommand(config, cmdPath, scopeCaps)
 	if err != nil {
 		LogError("%v", err)
 		return 1, refusedToStart("the command could not be staged where the sandbox can run it")
