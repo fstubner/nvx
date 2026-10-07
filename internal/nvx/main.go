@@ -43,18 +43,23 @@ func init() {
 	// If both are passed, fail toward more containment, not less.
 	strictFlag = strict
 	standardFlag = standard && !strict
+	applyEnvironmentFlags()
+}
+
+// applyEnvironmentFlags turns on the flags nvx also reads from the environment.
+func applyEnvironmentFlags() {
 	if os.Getenv("NVX_QUIET") == "1" || strings.EqualFold(os.Getenv("NVX_QUIET"), "true") {
 		quietFlag = true
 	}
 	if os.Getenv("NVX_VERBOSE") == "1" || strings.EqualFold(os.Getenv("NVX_VERBOSE"), "true") {
 		verboseFlag = true
 	}
-	if os.Getenv("NVX_AGENT_MODE") == "1" || strings.EqualFold(os.Getenv("NVX_AGENT_MODE"), "true") {
+	if agentModeEnvSet() {
 		agentModeFlag = true
-		yesFlag = true
-		// Documented as "-y -q"; it only ever did the -y half. quietFlag gates
-		// success and info lines only -- warnings and errors still print, so this
-		// hides progress chatter and not security output.
+		// quietFlag gates success and info lines only. Warnings, errors and
+		// refusals still print, so this hides progress chatter and not security
+		// output. It does not set yesFlag. Agent mode refuses whatever would ask,
+		// where it used to approve every check. See autoApprovalSource.
 		quietFlag = true
 	}
 }
@@ -100,9 +105,10 @@ func parseStartupFlags(args []string) ([]string, bool, bool, bool, bool) {
 		case "--verbose":
 			verboseFlag = true
 		case "--agent-mode":
+			// Refuse whatever would ask, and say less. It does not set -y. See
+			// autoApprovalSource.
 			agentModeFlag = true
-			yes = true
-			quietFlag = true // documented as "-y -q"
+			quietFlag = true
 		case "--no-sandbox":
 			noSandbox = true
 		case "--strict":
@@ -338,6 +344,12 @@ func Main() {
 			os.Exit(1)
 		}
 		os.Exit(runGrants(os.Args[2:], nvxHome))
+
+	case "trust":
+		os.Exit(runTrust(os.Args[2:], nvxHome))
+
+	case "allow-host":
+		os.Exit(runAllowHost(os.Args[2:], nvxHome))
 
 	case "audit":
 		os.Exit(runAuditCommand(os.Args[2:], nvxHome))
@@ -582,6 +594,50 @@ exported and counted everything that could be read.
 `
 	case "grants":
 		return "nvx grants list\nnvx grants reset [--all]\n\nInspect or forget the approve-once grants recorded for the current project\n(or every project, with --all): egress hosts recorded by older nvx versions,\ntrusted tools, and trusted project policy files. Grants live under ~/.nvx/grants, never in the project.\n\nOn Windows, reset also puts back the permissions of the .env files nvx hid\nfrom the sandbox.\n"
+	case "trust":
+		return `nvx trust [<policy-file> [--hash <hash>]]
+nvx trust --tool <name>
+
+Record a decision nvx does not take at a prompt. A project policy file that
+loosens nvx's settings, or a tool asking for a persistent profile, makes nvx
+refuse the command, exit 77 and print the nvx trust line that allows it. Run
+that line yourself, in your own terminal, in the folder it names.
+
+With a file, trust that file at its current content, wherever it applies,
+including the workspace packages below it. With no file, trust every project
+policy file here that loosens settings and is not trusted yet. Each one's
+loosened settings are printed. A file that changes is refused again until it
+is trusted again.
+
+--hash <hash>  Trust the file only if it still has the content the refusal
+               showed. The line nvx prints carries it.
+--tool <name>  Let that tool keep a persistent profile in this project, so its
+               logins and settings last between runs. It is still contained.
+
+nvx grants list shows what is trusted, and nvx grants reset, in the folder
+that holds the file, forgets it. NVX_TRUST_YES=true approves the same things
+without this command, for every run started from that environment.
+
+An automated agent must not run this itself. It should ask the person it works
+for.
+`
+	case "allow-host":
+		return `nvx allow-host <host[:port]> [--project | --global]
+
+Let contained commands reach a host, by adding it to
+isolation.network.allow_hosts. The port defaults to 443, and host:* allows
+every port. nvx refuses a host the allowlist does not name, and prints this
+command for it. It does not ask.
+
+--project  The default. The nearest .nvx-policy.json in this project, created
+           when there is none. Adding a host loosens that file, so nvx trusts
+           the result for this project. It refuses when the file loosens other
+           settings that are not trusted yet.
+--global   ~/.nvx/policy.json, for every project.
+
+An automated agent must not run this itself. It should ask the person it works
+for.
+`
 	}
 	return ""
 }
@@ -783,6 +839,12 @@ Commands:
                            longer adds any of these. With nothing to fix it
                            says so.
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
+  trust [<policy-file>]    Trust this project's policy file that loosens settings.
+                           nvx refuses to run under it until you do, and never asks
+  trust --tool <name>      Let a tool keep a persistent profile in this project
+  allow-host <host[:port]> Let contained commands reach a host. Adds it to this
+                           project's policy file and trusts that file, or to
+                           ~/.nvx/policy.json with --global
   grants list              Show this project's egress hosts (from older nvx), trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all);
                            on Windows, put back the permissions of hidden .env files
@@ -816,11 +878,15 @@ Options:
   --filesystem-provider=<name>  Override isolation.filesystem.provider
                          (native | docker | sandbox-exec). Passed TO the command:
                          nvx npm --filesystem-provider=...
-  -y, --yes              Auto-approve all prompts
+  -y, --yes              Approve the pre-install checks without asking. Must come
+                         BEFORE the command. After it, it is the command's own
+                         flag. Never widens the sandbox
   -q, --quiet            Suppress success/info messages (errors and warnings still print)
   --verbose              Show what nvx is doing on the way: checks, session ids, permission work
-  --agent-mode           Auto-approve all prompts and suppress success/info messages
-                         (equivalent to -y -q; also settable via NVX_AGENT_MODE=1)
+  --agent-mode           Never ask. Refuse whatever would need an answer, say why
+                         and what a person can do, and exit 77. Also hides
+                         success/info messages, like -q. Approves nothing. Must
+                         come BEFORE the command, or set NVX_AGENT_MODE=1
 
 Environment:
   NVX_VERBOSE=1          Same as --verbose, for every run in this shell
@@ -829,12 +895,16 @@ Environment:
   NVX_DEBUG=1            Record everything nvx prints in ~/.nvx/debug.log, for
                          'nvx report'. Off by default. These lines are rendered,
                          so they can contain paths and package names
-  NVX_YES=true           Auto-approve prompts (same as -y)
+  NVX_YES=true           Same as -y, for everything started from this
+                         environment, through the shims too
+  NVX_AGENT_MODE=1       Same as --agent-mode
   NVX_NONINTERACTIVE=1   Deny every prompt instead of asking, so a run that
                          needs approval fails rather than waits
-  NVX_TRUST_YES=true     Approve trust prompts specifically -- adding an egress
-                         host, trusting a tool or a project policy. -y and
-                         --agent-mode deliberately do not
+  NVX_TRUST_YES=true     Approve every request to widen the sandbox: a project
+                         policy that loosens settings, a host the allowlist does
+                         not name, a persistent tool profile. nvx never asks
+                         about these, so this hands the decision to whatever
+                         sets the environment. -y and --agent-mode do not
   NVX_HOME=<dir>         Use a different nvx home instead of ~/.nvx
   NVX_NODE_MIRROR=<url>  Fetch Node.js from this mirror instead of
                          https://nodejs.org/dist. NVM_NODEJS_ORG_MIRROR and
@@ -1222,6 +1292,10 @@ func runUse(query string, nvxHome string, shell string, viaIntegration bool) int
 			}
 		} else {
 			LogError("Could not find installed version matching '%s': %v", version, err)
+			if agentModeFlag {
+				// --agent-mode refused to ask, and a refusal exits 77.
+				return exitRefused
+			}
 			return 1
 		}
 	}
@@ -1804,75 +1878,29 @@ func emitSessionEnv(shell, nvxHome, targetDir string) {
 	}
 }
 
-// PromptTrustBoundary asks a question that WIDENS what nvx allows, and refuses to
-// take -y, --agent-mode or NVX_YES for an answer.
-//
-// Two prompts decide the security model rather than a step inside it: trusting a
-// project's own `.nvx-policy.json` when it loosens settings, and adding a host to
-// the egress allowlist. Both persist. Both were covered by the blanket yes, and
-// --agent-mode sets that yes -- so the mode built for AI agents, which clone
-// repositories they have not read, auto-approved a repository's request to turn
-// containment off. Measured: a `.nvx-policy.json` carrying
-// `{"isolation":{"enabled":false}}` was refused without the flag and silently
-// trusted with it, after which the sandbox was gone for every later command in
-// that project. The same yes approved arbitrary egress hosts, including an IP on
-// a C2-style port, and wrote them to the grants store.
-//
-// This is the reasoning already applied to `nvx doctor --fix`, where a prompt was
-// rejected because "NVX_YES is set as a matter of course by agents and CI, so a
-// prompt would auto-approve a persistent system change for exactly the callers
-// least able to notice it". That argument was made about a PATH edit and not
-// carried to the prompts that gate containment itself.
-//
-// NVX_TRUST_YES exists for the case where someone genuinely means it -- a CI job
-// pinning its own policy. It is deliberately not NVX_YES: nothing sets it by
-// habit, so setting it is a decision rather than an inheritance.
-func PromptTrustBoundary(message string) bool {
-	return promptTrustBoundaryWithRemedy(message, "")
-}
+// Requests that widen the sandbox are never asked about. See trust_boundary.go.
 
-// promptTrustBoundaryWithRemedy is PromptTrustBoundary for a caller that knows
-// the narrow, reviewable way to grant what it is asking for. A non-interactive
-// denial prints that first, as a refusal detail so -q does not hide it. The
-// only other way through is NVX_TRUST_YES, which the denial still names, last.
-func promptTrustBoundaryWithRemedy(message, remedy string) bool {
-	if os.Getenv("NVX_TRUST_YES") == "true" || os.Getenv("NVX_TRUST_YES") == "1" {
-		LogWarn("NVX_TRUST_YES is set: approving a request that widens nvx's trust boundary. %s", message)
-		return true
-	}
-	if !stdinIsInteractive() {
-		LogWarn("Denying a request that widens nvx's trust boundary, because nobody is here to approve it: %s", message)
-		if remedy != "" {
-			LogRefusalDetail("%s", remedy)
-		}
-		LogRefusalDetail("-y, --agent-mode and NVX_YES deliberately do not approve this. Set NVX_TRUST_YES=true to approve every trust prompt in this run, only if you have read what you are trusting.")
-		return false
-	}
-	return promptConsoleYesNo(message, trustBoundaryDenialHint)
-}
-
-// trustBoundaryDenialHint is what a console that cannot be opened says for a
-// trust prompt. The generic hint named -y, which does not approve these.
-const trustBoundaryDenialHint = "-y, --agent-mode and NVX_YES deliberately do not approve this. Set NVX_TRUST_YES=true only if you have read what you are trusting."
+// stdinInteractive and consoleYesNo are stdinIsInteractive and
+// promptConsoleYesNo, held in variables so a test can put someone at the
+// console: a person, or an agent typing into a pseudo-terminal.
+var (
+	stdinInteractive = stdinIsInteractive
+	consoleYesNo     = promptConsoleYesNo
+)
 
 // PromptYesNo prints a message to the console TTY and reads a Y/N keypress, bypassing standard redirections.
+//
+// It asks the questions that are not about security, such as whether to
+// download a runtime that is missing. The pre-install checks go through
+// askCheck, which records the answer.
 func PromptYesNo(message string) bool {
-	return promptYesNoWithHint(message, genericDenialHint)
-}
-
-// genericDenialHint is the advice for a prompt that has no narrower answer: the
-// blanket switches are the only way through it. The pre-install checks pass
-// their own hint, which names the policy line that fixes that one check.
-const genericDenialHint = "Use -y / --yes or set NVX_YES=true to approve automatically."
-
-// promptYesNoWithHint is PromptYesNo with the advice printed on a
-// non-interactive denial supplied by the caller.
-func promptYesNoWithHint(message, hint string) bool {
-	if yesFlag {
+	hint := genericDenialHint
+	if yesFlag || nvxYesSet() {
 		return true
 	}
-	if os.Getenv("NVX_YES") == "true" || os.Getenv("NVX_YES") == "1" {
-		return true
+	if agentModeFlag {
+		LogWarn("--agent-mode is set, so nvx refuses instead of asking: %s", message)
+		return false
 	}
 	if os.Getenv("NVX_NONINTERACTIVE") == "true" || os.Getenv("NVX_NONINTERACTIVE") == "1" {
 		LogWarn("Non-interactive environment: denying prompt. %s Prompt was: %s", hint, message)
@@ -1893,16 +1921,21 @@ func promptYesNoWithHint(message, hint string) bool {
 	// answer, whatever the console says. Redirected stdout is still fine: stdin
 	// stays a character device, so an interactive user piping output is unaffected
 	// -- which is the case the CONIN$ path was written for in the first place.
-	if !stdinIsInteractive() {
+	if !stdinInteractive() {
 		LogWarn("Non-interactive environment: denying prompt. %s Prompt was: %s", hint, message)
 		return false
 	}
 
-	return promptConsoleYesNo(message, hint)
+	return consoleYesNo(message, hint)
 }
 
+// genericDenialHint is the advice for a question that has no narrower answer:
+// the blanket switches are the only way through it. NVX_YES comes first because
+// it works through the shims, and -y only before the command.
+const genericDenialHint = "Set NVX_YES=true, or put -y before the command (nvx -y ...), to approve automatically."
+
 // promptConsoleYesNo does the console interaction itself, shared by PromptYesNo
-// and PromptTrustBoundary so the two cannot drift in how they read an answer.
+// and askCheck so the two cannot drift in how they read an answer.
 func promptConsoleYesNo(message, hint string) bool {
 	var ttyIn, ttyOut *os.File
 	var err error
@@ -2083,6 +2116,7 @@ func refuseBlocked(policy Policy, nvxHome, name string) bool {
 	}
 	LogError("Blocked by security policy: Package %q is blacklisted.", name)
 	recordCheckRefused(nvxHome, checkInfo{check: checkBlockedPackage, pkg: name})
+	explainCheckRefusal(checkRemedy{})
 	return true
 }
 
@@ -2198,7 +2232,8 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 				suspect := verdict.suspect
 				pkgDownloads, suspectDownloads := verdict.pkgDownloads, verdict.suspectDownloads
 				info := checkInfo{check: checkTyposquat, pkg: pkgName, detail: "close to " + suspect,
-					what: fmt.Sprintf("%s looks like a typosquat of %s", pkgName, suspect)}
+					what:    fmt.Sprintf("%s looks like a typosquat of %s", pkgName, suspect),
+					aborted: "Installation aborted: the typosquatting warning was not approved."}
 
 				var msg string
 				if verdict.lookupErr != nil {
@@ -2221,7 +2256,6 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 				}
 
 				if !askCheck(nvxHome, info, msg, typosquatRemedy(pkgName)) {
-					LogError("Installation aborted: the typosquatting warning was not approved.")
 					return 1, "a package looked like a typosquat and the warning was not approved"
 				}
 			}
@@ -2252,9 +2286,9 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 			msg := fmt.Sprintf("Could not verify registry metadata for %s: %v. "+
 				"Proceed without metadata checks AND without the vulnerability scan for it?", pkgName, err)
 			if !askCheck(nvxHome, checkInfo{check: checkRegistryLookup, pkg: pkgName,
-				what: pkgName + " installs without its registry metadata checks or a vulnerability scan"},
+				what:    pkgName + " installs without its registry metadata checks or a vulnerability scan",
+				aborted: "Installation aborted because registry metadata could not be verified."},
 				msg, unreachableRemedy("registry")) {
-				LogError("Installation aborted because registry metadata could not be verified.")
 				return 1, "the registry metadata for a package could not be verified"
 			}
 			// One literal, not two joined with "+": TestEveryLogWarnUsesALiteralFormat
@@ -2270,8 +2304,8 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 		if t.carriesSource() {
 			if problem := lockEntryMismatch(t, d.dist); problem != "" {
 				LogError("The lockfile entry for %s@%s does not match the registry: %s.", pkgName, resolvedVer, problem)
-				LogRefusalDetail("The package manager would install what the entry points at, which may be another package. If the lockfile is your own, delete this entry and run the install again to write it from the registry.")
 				recordCheckRefused(nvxHome, checkInfo{check: checkLockfileSource, pkg: pkgName, version: resolvedVer, detail: problem})
+				explainCheckRefusal(checkRemedy{text: "The package manager would install what the entry points at, which may be another package. If the lockfile is your own, delete this entry and run the install again to write it from the registry."})
 				return 1, "a lockfile entry does not match the registry's record of that package"
 			}
 		}
@@ -2298,10 +2332,13 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 			LogWarn("Malicious packages often execute rogue code during the install phase.")
 			if policy.EnforceIgnoreScripts {
 				LogError("Blocked by security policy: %s has install scripts, and enforce_ignore_scripts is on.", pkgName)
-				LogRefusalDetail("To install without running its scripts, pass --ignore-scripts. To let this package's install scripts run, add it to install_scripts.trusted_packages in ~/.nvx/policy.json: "+
-					`{"install_scripts":{"trusted_packages":[%q]}}`+
-					". To drop the rule for every package, set enforce_ignore_scripts to false.", pkgName)
 				recordCheckRefused(nvxHome, checkInfo{check: checkEnforceNoScripts, pkg: pkgName, version: resolvedVer})
+				line := policyEntryLine("install_scripts", "trusted_packages", []string{pkgName})
+				explainCheckRefusal(checkRemedy{
+					text: "To install without running its scripts, pass --ignore-scripts. To let this package's install scripts run, add it to install_scripts.trusted_packages in ~/.nvx/policy.json: " +
+						line + ". To drop the rule for every package, set enforce_ignore_scripts to false.",
+					line: line,
+				})
 				return 1, "the security policy disallows package install scripts"
 			} else {
 				// Not "on your host": these run contained, and saying otherwise
@@ -2309,9 +2346,9 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 				// sandbox is doing for you.
 				msg := fmt.Sprintf("Package %s@%s contains install scripts. Run them (contained)?", pkgName, resolvedVer)
 				if !askCheck(nvxHome, checkInfo{check: checkInstallScripts, pkg: pkgName, version: resolvedVer,
-					what: fmt.Sprintf("%s@%s runs its install scripts", pkgName, resolvedVer)},
+					what:    fmt.Sprintf("%s@%s runs its install scripts", pkgName, resolvedVer),
+					aborted: "Installation aborted: the install-script warning was not approved."},
 					msg, installScriptsRemedy(pkgName)) {
-					LogError("Installation aborted: the install-script warning was not approved.")
 					return 1, "a package runs install scripts and the warning was not approved"
 				}
 			}
@@ -2334,10 +2371,10 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 			msg := fmt.Sprintf("The registry gives no publish time for %s@%s, so nvx cannot tell whether it was published inside the %d-hour release-age window. Proceed?",
 				pkgName, resolvedVer, windowHours)
 			if !askCheck(nvxHome, checkInfo{check: checkReleaseAge, pkg: pkgName, version: resolvedVer,
-				detail: "publish time unknown",
-				what:   fmt.Sprintf("%s@%s has no publish time, so its release age is unknown", pkgName, resolvedVer)},
+				detail:  "publish time unknown",
+				what:    fmt.Sprintf("%s@%s has no publish time, so its release age is unknown", pkgName, resolvedVer),
+				aborted: "Installation aborted: the release age of a package version is unknown and proceeding was not approved."},
 				msg, releaseAgeUnknownRemedy(pkgName)) {
-				LogError("Installation aborted: the release age of a package version is unknown and proceeding was not approved.")
 				return 1, "the release age of a package version could not be established"
 			}
 		} else if policy.ReleaseAgeEnabled() && !policy.IsReleaseAgeTrusted(pkgName) && publishAgeShouldWarn(pubTime, policy.ReleaseAgeMinHours(), time.Now()) {
@@ -2350,10 +2387,10 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 				LogInfo("Add it to release_age.trusted_packages to skip the cooling-off window for it.")
 			}
 			if !askCheck(nvxHome, checkInfo{check: checkReleaseAge, pkg: pkgName, version: resolvedVer,
-				detail: fmt.Sprintf("published %.1f hours ago", age.Hours()),
-				what:   fmt.Sprintf("%s@%s was published %.1f hours ago, inside the %d-hour release-age window", pkgName, resolvedVer, age.Hours(), windowHours)},
+				detail:  fmt.Sprintf("published %.1f hours ago", age.Hours()),
+				what:    fmt.Sprintf("%s@%s was published %.1f hours ago, inside the %d-hour release-age window", pkgName, resolvedVer, age.Hours(), windowHours),
+				aborted: "Installation aborted: the release-age warning was not approved."},
 				msg, releaseAgeRemedy(pkgName)) {
-				LogError("Installation aborted: the release-age warning was not approved.")
 				return 1, "a package version was published inside the release-age cooling-off window"
 			}
 		}
@@ -2373,9 +2410,9 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 		if err != nil {
 			msg := fmt.Sprintf("Vulnerability database scan failed: %v. Proceed without CVE checks?", err)
 			if !askCheck(nvxHome, checkInfo{check: checkOSVLookup,
-				what: "the install goes ahead without the vulnerability database scan"},
+				what:    "the install goes ahead without the vulnerability database scan",
+				aborted: "Installation aborted because vulnerability checks could not be completed."},
 				msg, unreachableRemedy("vulnerability database")) {
-				LogError("Installation aborted because vulnerability checks could not be completed.")
 				return 1, "its vulnerability checks could not be completed"
 			}
 			LogWarn("Proceeding without vulnerability database results.")
@@ -2396,15 +2433,15 @@ func runVerifyTargetsWith(targets []verifyTarget, nvxHome string, regs npmRegist
 			// advisory lets one through (see BlocksInstall).
 			if malicious, pkgs := maliciousAdvisories(remaining); len(malicious) > 0 {
 				LogError("Blocked: OSV lists %s as malicious (%s).", strings.Join(pkgs, ", "), strings.Join(malicious, ", "))
-				LogRefusalDetail("%s", maliciousRemedy(malicious))
 				recordCheckRefused(nvxHome, checkInfo{check: checkMaliciousPackage, pkg: strings.Join(pkgs, ","), detail: strings.Join(malicious, ",")})
+				explainCheckRefusal(maliciousRemedy(malicious))
 				return 1, "a package is known to be malicious"
 			}
 			ids := advisoryIDs(remaining)
 			if !askCheck(nvxHome, checkInfo{check: checkVulnerability, detail: strings.Join(ids, ","),
-				what: "the install goes ahead despite " + strings.Join(ids, ", ")},
+				what:    "the install goes ahead despite " + strings.Join(ids, ", "),
+				aborted: "Installation aborted: the vulnerability warning was not approved."},
 				"Proceed with installation despite active vulnerabilities?", advisoryRemedy(ids)) {
-				LogError("Installation aborted: the vulnerability warning was not approved.")
 				return 1, "a package has a known active vulnerability and the warning was not approved"
 			}
 		} else if len(accepted) > 0 {

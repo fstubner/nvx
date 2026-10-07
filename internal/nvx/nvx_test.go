@@ -968,8 +968,9 @@ func TestParseStartupFlagsQuietAndAgentMode(t *testing.T) {
 	if !agentModeFlag {
 		t.Error("expected agentModeFlag to be true when --agent-mode is passed")
 	}
-	if !yes {
-		t.Error("expected yes to be true when --agent-mode is passed")
+	// --agent-mode refuses what would ask. It used to set -y and approve it.
+	if yes {
+		t.Error("--agent-mode set -y; it must approve nothing")
 	}
 	if len(filtered) != 3 || filtered[1] != "install" || filtered[2] != "20" {
 		t.Errorf("unexpected filtered args: %v", filtered)

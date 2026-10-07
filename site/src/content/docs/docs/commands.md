@@ -83,8 +83,10 @@ FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i
 | `nvx policy init` | Write a project `.nvx-policy.json` that sets nothing yet, with empty `blocked_packages` and `allow_hosts` to add to. `--global` writes `~/.nvx/policy.json` with the defaults instead. |
 | `nvx policy check` | Check this project against the policy in force, for CI. It never prompts, and exits with a distinct code per kind of failure. It makes no network request unless you pass `--online`. `--format=json` prints the verdict as data. |
 | `nvx policy explain` | Show each setting's effective value and which file it came from. |
-| `nvx audit` | What nvx recorded: blocked hosts, pre-install checks that were approved or refused and how they were answered, and runs when `NVX_TRACE=1`. Approvals by `-y`, `--agent-mode` and `NVX_YES` are recorded too. |
+| `nvx audit` | What nvx recorded: the hosts a contained run was allowed to reach and the ones it was refused, pre-install checks that were approved or refused and how they were answered, and runs when `NVX_TRACE=1`. Approvals by `-y` and `NVX_YES` are recorded too, and so are refusals under `--agent-mode`. |
 | `nvx audit export` | Export that record as json, jsonl or csv, filtered with `--since` and `--event`, to a file with `--out`. |
+| `nvx trust` | Trust this project's policy file that loosens nvx's settings, wherever it applies. nvx never asks about that. It refuses the command and prints this line for you to run, with `--hash` so it trusts only the content you were shown. `nvx trust <file>` trusts one file, and `nvx trust --tool <name>` lets a tool keep a persistent profile in the project. |
+| `nvx allow-host <host[:port]>` | Let contained commands reach a host. nvx adds it to `allow_hosts` in this project's `.nvx-policy.json` and trusts that file, or with `--global` adds it to `~/.nvx/policy.json`. The port defaults to 443. nvx prints this command when it refuses a host. |
 | `nvx grants list` | This project's recorded grants: trusted tools, trusted project policy files, directories granted read and execute access for `allow_read_exec`, and egress hosts recorded by older versions. |
 | `nvx grants reset` | Forget this project's grants, or every project's with `--all`. Read and execute permissions nvx granted are withdrawn. |
 | `nvx env` | Print the shell integration snippet. `--shell=<name>` picks the syntax: powershell, bash, zsh, fish or cmd. |
@@ -112,18 +114,23 @@ Use `allow_hosts` to add a host. A project's `default_allow` replaces the
 global list instead of adding to it, which drops the registry and OSV hosts
 unless you list them again.
 
-:::caution[A policy that widens the sandbox needs your approval]
+:::caution[A policy that widens the sandbox needs you to trust it]
 A project file lives in a repository. One line in a pull request could
-otherwise hand a contained install a new destination. nvx refuses to honour a
-widening policy until it is trusted for that project. `-y`, `--agent-mode`
-and `NVX_YES` deliberately do not count, because an agent will answer yes to
-anything. Set `NVX_TRUST_YES=true` only when you have read what you are
-trusting.
+otherwise hand a contained install a new destination. nvx does not run a
+command under a widening policy until it is trusted for that project, and it
+never asks about it at a prompt. A coding agent that drives a terminal could
+answer a prompt itself. Instead nvx refuses with exit 77, lists what the file
+loosens, and prints `nvx trust <file> --hash <hash>` for you to run in your own
+terminal. The hash makes it trust only the content you were shown.
+`-y`, `--agent-mode` and `NVX_YES` do not trust anything.
+`NVX_TRUST_YES=true` approves it without the command, for every run started
+from that environment. Setting it hands the decision to whatever sets the
+environment, so set it only in a place you control, such as one CI job.
 :::
 
 ## Full reference
 
-This is what `nvx help` prints in 0.7.0, including every flag and environment
+This is what `nvx help` prints, including every flag and environment
 variable.
 
 ```text
@@ -154,17 +161,22 @@ Commands:
   shim <cmd> [args]        Internal shim router for package managers
   cleanup                  Reclaim disk from interrupted runs now (rarely needed;
                            every run reclaims some automatically)
-  setup                    (Windows, Administrator) Grant the sandbox read and
-                           list access to the root of every fixed volume and its
-                           Users folder. Optional: installs and npx do not need
-                           it; only a tool that resolves a path all the way up
-                           to a drive root does, and nvx names this command
-                           after such a failure. Also removes a loopback
-                           exemption an older nvx left.
-                           'setup --undo' reverses it
+  setup                    (Windows, Administrator) Remove what older nvx versions
+                           left: drive-root and Users-folder access for the
+                           sandbox, the loopback exemption, and lost permission
+                           protection on C:\Users and your profile. nvx no
+                           longer adds any of these. With nothing to fix it
+                           says so.
   doctor [--fix]           Check that nvx intercepts node/npm/npx on PATH (--fix repairs)
+  trust [<policy-file>]    Trust this project's policy file that loosens settings.
+                           nvx refuses to run under it until you do, and never asks
+  trust --tool <name>      Let a tool keep a persistent profile in this project
+  allow-host <host[:port]> Let contained commands reach a host. Adds it to this
+                           project's policy file and trusts that file, or to
+                           ~/.nvx/policy.json with --global
   grants list              Show this project's egress hosts (from older nvx), trusted tools, and policy pins
-  grants reset [--all]     Forget this project's grants (or every project's, with --all)
+  grants reset [--all]     Forget this project's grants (or every project's, with --all);
+                           on Windows, put back the permissions of hidden .env files
   audit [--summary]        Review the local record of past runs and security decisions
   audit export             Export that record as json, jsonl or csv, filtered by
                            time and event, for a compliance pipeline
@@ -195,11 +207,15 @@ Options:
   --filesystem-provider=<name>  Override isolation.filesystem.provider
                          (native | docker | sandbox-exec). Passed TO the command:
                          nvx npm --filesystem-provider=...
-  -y, --yes              Auto-approve all prompts
+  -y, --yes              Approve the pre-install checks without asking. Must come
+                         BEFORE the command. After it, it is the command's own
+                         flag. Never widens the sandbox
   -q, --quiet            Suppress success/info messages (errors and warnings still print)
   --verbose              Show what nvx is doing on the way: checks, session ids, permission work
-  --agent-mode           Auto-approve all prompts and suppress success/info messages
-                         (equivalent to -y -q; also settable via NVX_AGENT_MODE=1)
+  --agent-mode           Never ask. Refuse whatever would need an answer, say why
+                         and what a person can do, and exit 77. Also hides
+                         success/info messages, like -q. Approves nothing. Must
+                         come BEFORE the command, or set NVX_AGENT_MODE=1
 
 Environment:
   NVX_VERBOSE=1          Same as --verbose, for every run in this shell
@@ -208,12 +224,16 @@ Environment:
   NVX_DEBUG=1            Record everything nvx prints in ~/.nvx/debug.log, for
                          'nvx report'. Off by default. These lines are rendered,
                          so they can contain paths and package names
-  NVX_YES=true           Auto-approve prompts (same as -y)
+  NVX_YES=true           Same as -y, for everything started from this
+                         environment, through the shims too
+  NVX_AGENT_MODE=1       Same as --agent-mode
   NVX_NONINTERACTIVE=1   Deny every prompt instead of asking, so a run that
                          needs approval fails rather than waits
-  NVX_TRUST_YES=true     Approve trust prompts specifically -- adding an egress
-                         host, trusting a tool or a project policy. -y and
-                         --agent-mode deliberately do not
+  NVX_TRUST_YES=true     Approve every request to widen the sandbox: a project
+                         policy that loosens settings, a host the allowlist does
+                         not name, a persistent tool profile. nvx never asks
+                         about these, so this hands the decision to whatever
+                         sets the environment. -y and --agent-mode do not
   NVX_HOME=<dir>         Use a different nvx home instead of ~/.nvx
   NVX_NODE_MIRROR=<url>  Fetch Node.js from this mirror instead of
                          https://nodejs.org/dist. NVM_NODEJS_ORG_MIRROR and
@@ -243,7 +263,9 @@ refuses only when that path is too long as well.
 `0` means the command worked. A non-zero code from `nvx doctor` means something
 needs attention. It does not mean doctor itself failed. A contained command
 propagates whatever the wrapped program exited with. `77` means nvx refused to
-run the command, for example a package that failed its pre-install checks.
+run the command, for example a package that failed its pre-install checks, or a
+project policy nobody has trusted. A contained command that fails after nvx
+refused a host the allowlist does not name exits `77` too.
 `nvx policy check` has a code of its own for each kind of failure, and
 [docs/exit-codes.md](https://github.com/fstubner/nvx/blob/main/docs/exit-codes.md)
 lists them all.

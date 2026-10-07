@@ -28,9 +28,9 @@ func TestMaliciousPackagesAreRefusedWhateverApprovesPrompts(t *testing.T) {
 			t.Cleanup(func() { yesFlag = old })
 		}},
 		{name: "--agent-mode", policy: `{` + noTypo + `}`, vulns: mal, set: func(t *testing.T) {
-			oldY, oldA := yesFlag, agentModeFlag
-			yesFlag, agentModeFlag = true, true
-			t.Cleanup(func() { yesFlag, agentModeFlag = oldY, oldA })
+			old := agentModeFlag
+			agentModeFlag = true
+			t.Cleanup(func() { agentModeFlag = old })
 		}},
 		{name: "NVX_YES", policy: `{` + noTypo + `}`, vulns: mal, set: func(t *testing.T) { t.Setenv("NVX_YES", "true") }},
 		{name: "NVX_TRUST_YES", policy: `{` + noTypo + `}`, vulns: mal, set: func(t *testing.T) { t.Setenv("NVX_TRUST_YES", "true") }},

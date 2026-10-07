@@ -103,6 +103,13 @@ func verifyBeforeRun(req verifyRequest) (int, string, string) {
 	// The command as the package manager reads it, `npm exe` as `npm exec`. npm's
 	// own resolution step is still given the arguments as typed.
 	args, _ := readCommand(req.pmCmd, req.pmArgs)
+	// A tool already in node_modules/.bin is run and not fetched, so there is no
+	// package to check. The checks asked about its install scripts, and denied
+	// the run when nobody could answer.
+	if runsProjectBin(req.pmCmd, args) {
+		LogDetail("%s runs a tool that is already in node_modules/.bin, so nothing is fetched and no package is checked.", req.pmCmd)
+		return 0, "", ""
+	}
 	var targets []verifyTarget
 	if strings.EqualFold(req.pmCmd, "npm") {
 		resolved, code, reason := npmResolvedTargets(req, args, platform)
@@ -126,8 +133,9 @@ func verifyBeforeRun(req verifyRequest) (int, string, string) {
 				msg = fmt.Sprintf("%v, so nvx cannot tell which versions this command installs. It can check what package.json declares, and not the packages those bring in. Proceed with only those checked?", err)
 				what = "the install goes ahead with only what package.json declares checked"
 			}
-			if !askCheck(req.nvxHome, checkInfo{check: checkLockfileUnreadable, detail: err.Error(), what: what}, msg, lockfileUnreadableRemedy) {
-				LogError("Installation aborted: the lockfile could not be read and proceeding was not approved.")
+			if !askCheck(req.nvxHome, checkInfo{check: checkLockfileUnreadable, detail: err.Error(), what: what,
+				aborted: "Installation aborted: the lockfile could not be read and proceeding was not approved."},
+				msg, checkRemedy{text: lockfileUnreadableRemedy}) {
 				return 1, "its lockfile could not be read", ""
 			}
 			if len(targets) == 0 {
@@ -148,7 +156,7 @@ func verifyBeforeRun(req verifyRequest) (int, string, string) {
 }
 
 const lockfileUnreadableRemedy = "No policy setting waives an unreadable lockfile. Check that the package manager wrote it, or update nvx if the lockfile is in a newer format than it reads." +
-	" To proceed without the checks, pass -y or set NVX_YES=true, which approves every check in the run."
+	" To proceed without the checks, set NVX_YES=true or put -y before the command, which approves every check in the run."
 
 // detectTargets lists what the checks run on without asking the package
 // manager: the packages a command names, or the project's lockfile, or its

@@ -500,6 +500,7 @@ func runDoctor(nvxHome string, fix bool) int {
 	// Runs whichever way the interception verdict goes: a machine whose PATH is
 	// broken needs the integration too, and --fix should mend both in one pass.
 	reportShellIntegration(fix)
+	reportApprovalEnvironment()
 
 	if healthyNow() {
 		LogSuccess("nvx is intercepting commands correctly.")

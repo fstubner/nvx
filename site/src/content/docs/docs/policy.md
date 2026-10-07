@@ -52,11 +52,16 @@ An example global policy:
 }
 ```
 
-**Prompt behaviour is fixed.** At an interactive terminal nvx asks. With nobody
-to answer, it refuses. Some prompts widen nvx's trust boundary, such as one for an
-unknown egress host or a project policy that loosens the global one. These
-ignore `-y`, `--agent-mode` and `NVX_YES`. Only `NVX_TRUST_YES=true` approves those
-without asking (see [Commands](/docs/commands/#policy-files)).
+**Prompt behaviour is fixed.** The pre-install checks ask at an interactive
+terminal. They refuse when nobody can answer, or when `--agent-mode` is set. A
+request that widens the sandbox is never asked about, because a coding agent
+that drives a terminal could answer it. Such a request is a host the allowlist
+does not name, a project policy that loosens the global one, or a tool asking to
+keep a persistent profile. nvx refuses it with exit 77 and prints `nvx allow-host`
+or `nvx trust` for you to run in your own terminal. `-y`, `--agent-mode` and
+`NVX_YES` never approve one. `NVX_TRUST_YES=true` does, without asking, and so
+hands the decision to whatever sets the environment (see
+[Commands](/docs/commands/#policy-files)).
 
 The keys
 `prompts.interactive`, `prompts.non_interactive` and `prompts.network_unknown`
@@ -69,7 +74,7 @@ gets an unknown-key warning.
 * **Per-check exemptions.** Every install-time check applies to every package
   until a policy names an exception, and each list waives only its own check.
   Naming a package in one never affects another. Adding an entry to any of them is
-  a loosening, so a project file doing it needs approval.
+  a loosening, so a project file doing it has to be trusted with `nvx trust`.
   - **`typosquatting.trusted_packages`**: this name is not a misspelling of a
     popular one. Names and globs.
   - **`release_age.trusted_packages`**: skip the cooling-off window for this
@@ -101,12 +106,16 @@ gets an unknown-key warning.
     time. The floor never applies to a `MAL-` advisory.
 * **What the audit log holds for these checks.** Every check above that would
   have prompted is written to `~/.nvx/audit.log`. That holds whether a person answered it,
-  `-y`, `--agent-mode` or `NVX_YES` approved it without asking, or nobody was there
-  and it was refused. `nvx audit` shows these as `check_approved` and
+  `-y` or `NVX_YES` approved it without asking, or it was refused because nobody
+  was there or `--agent-mode` is set. `nvx audit` shows these as `check_approved` and
   `check_refused`, with the check, the package and who answered. They are written
   whatever `NVX_TRACE` says, and an approval nobody was asked about also prints one
   line to stderr. A refusal prints the policy line that settles that one check,
-  and names `-y` and `NVX_YES` last, because they approve every check in the run.
+  and names `NVX_YES` and `-y` last, because they approve every check in the run.
+  It ends with a paragraph telling an automated agent not to approve the check or
+  edit the policy itself, followed by the line the person can add. A refusal for
+  a release inside the cooling-off window first offers a version published before
+  it, which an agent may pin itself.
 * **`isolation.filesystem.provider`**: Where the process runs (filesystem + process boundary). See the [enforcement matrix](https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md) for exact guarantees.
   - `native` (default) uses AppContainer (Windows), Landlock + namespaces (Linux) or Seatbelt (macOS). Zero-config, fail-closed.
   - `docker`: runs in a Docker container, hardened, with `offline` and `loopback` enforced via `--network none`. Requires Docker running. Does not carry `--connect`, and says so when asked. The relay needs a process of nvx's inside the sandbox, and this provider launches the target command as the container's only process.
@@ -122,10 +131,14 @@ gets an unknown-key warning.
     Allowlisted remote hosts stay reachable through the proxy. On Windows the
     loopback reach covers proxy-aware tools' HTTP and HTTPS traffic only, since
     it comes from nvx's proxy. Selecting it in a project policy is a loosening and
-    needs approval.
-* **`isolation.network.default_allow`** and **`isolation.network.allow_hosts`**: The hosts a contained process may reach, each written as `host:port`. A host with no port allows every port on it, which is the same as `host:*`. `default_allow` ships with the hosts an install needs, and a project's list replaces it. `allow_hosts` adds to it. A name is matched exactly. `*` stands for a port and for nothing else, so an entry such as `*.example.com` matches no host, not even `example.com`. nvx warns when it loads one. List each host in full, for example `registry.example.com:443`. `~/.nvx/audit.log` records each host a run reaches through these lists, once for each host and port in a run, with the list that allowed it. The prompt never offers a local service or a literal link-local address, such as the cloud metadata address `169.254.169.254`, so only an entry in one of these lists allows one. An entry for `localhost`, `127.0.0.1` or `::1`, like `network.mode: loopback`, makes a client that follows the proxy variables send requests to those addresses to the proxy, which dials the service on your machine. With neither, nvx lists those names in `NO_PROXY`, so a request to one connects directly and reaches only what runs in the sandbox. [Known limitations](/docs/limitations/) has the details.
+    has to be trusted.
+* **`isolation.network.default_allow`** and **`isolation.network.allow_hosts`**: The hosts a contained process may reach, each written as `host:port`. A host with no port allows every port on it, which is the same as `host:*`. `default_allow` ships with the hosts an install needs, and a project's list replaces it. `allow_hosts` adds to it. A name is matched exactly. `*` stands for a port and for nothing else, so an entry such as `*.example.com` matches no host, not even `example.com`. nvx warns when it loads one. List each host in full, for example `registry.example.com:443`. `~/.nvx/audit.log` records each host a run reaches through these lists, once for each host and port in a run, with the list that allowed it. `NVX_TRUST_YES` never approves a local service or a literal link-local address, such as the cloud metadata address `169.254.169.254`, so only an entry in one of these lists allows one. An entry for `localhost`, `127.0.0.1` or `::1`, like `network.mode: loopback`, makes a client that follows the proxy variables send requests to those addresses to the proxy, which dials the service on your machine. With neither, nvx lists those names in `NO_PROXY`, so a request to one connects directly and reaches only what runs in the sandbox. [Known limitations](/docs/limitations/) has the details.
+* **`isolation.network.prompt_unknown`**: Whether `NVX_TRUST_YES` may approve a
+  host the allowlist does not name, for one run. `true` by default. nvx never
+  asks about a host either way. It refuses it and prints the `nvx allow-host`
+  command that allows it. `false` refuses unknown hosts whatever is set.
 * **`runtime.versions`**: Pin runtime versions used inside the sandbox (e.g. `"node": "20"`). Inside the sandbox this pin comes before the project's `.nvmrc` or other version file, which comes before the global default. See [which version a command runs](/docs/commands/#which-version-a-command-runs).
-* **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project, in `<project>/.nvx/npm_global`. They are not shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch. That directory goes on your PATH, so a project file that turns this on counts as a loosening. It needs the same approval as an egress host.
+* **`environment.isolated_tools`**: When `true`, globally installed npm packages (`npm install -g`) are scoped to the project, in `<project>/.nvx/npm_global`. They are not shared through the active Node version. This lets different projects pin different versions of CLI tools (e.g. `vercel`, `eslint`) without conflicts. Takes effect on the next `nvx use` or directory auto-switch. That directory goes on your PATH, so a project file that turns this on counts as a loosening. It has to be trusted, as an egress host does.
 
 To override the filesystem provider per shim, run `npm --filesystem-provider=docker install`.
 
@@ -138,7 +151,7 @@ contained npm reads nothing else. For a run outside the sandbox,
 `npm_config_registry` and `npm_config_@scope:registry` come first, then the
 project's `.npmrc`, then `~/.npmrc` (or the file `npm_config_userconfig` names).
 The contained npm also needs the registry's host in
-`isolation.network.allow_hosts`.
+`isolation.network.allow_hosts`. `nvx allow-host <host>` adds it.
 
 If the registry needs a token to read package metadata, nvx sends the
 `//host/:_authToken=` value from your `.npmrc` with its own request. That request

@@ -144,6 +144,10 @@ install and run scripts. Its defenses are layered:
    That is installs (`install`, `ci`, `add`, `update`, `rebuild`, `dedupe`,
    `audit fix`) and ad-hoc tool runners (`npx`, `bunx`, `npm exec`, `pnpm dlx`,
    `bun x`, `npm create`, `npm init <initializer>`). It is **not** your own code.
+   A runner that only starts a tool already in the project's `node_modules/.bin`
+   fetches nothing and counts as your own code, as `npm run` does. `npx vitest@1`,
+   `--package`, a name the project's own `package.json` lists under `bin` and a
+   link leading out of the project do not.
    nvx reads the command as the package manager does. npm accepts any
    unambiguous prefix of a command, and camelCase, so `npm exe` is `npm exec`
    and `npm installTest` is `npm install-test`. nvx applies npm's rule as the
@@ -156,8 +160,9 @@ install and run scripts. Its defenses are layered:
    containment to those too. This entry said "shimmed commands" without the
    distinction until 0.5.6, which was less careful than README on the same point.
 4. **Egress control.** A loopback allowlist proxy mediates outbound network
-   access. Unknown hosts are denied or prompted (fail-closed when
-   non-interactive). When nvx's own environment sets `HTTPS_PROXY` or
+   access. A host the allowlist does not name is refused. nvx never asks about
+   one, and prints the `nvx allow-host` command a person runs to allow it.
+   When nvx's own environment sets `HTTPS_PROXY` or
    `HTTP_PROXY`, an allowed connection is forwarded through that proxy. The
    egress proxy dials `NO_PROXY` and loopback destinations directly. The allowlist decides
    before anything is forwarded. The proxy may be `http://`, `https://`,
@@ -182,6 +187,24 @@ command. It never runs it unprotected.
 
 These are deliberate trade-offs, and this section documents each one:
 
+- **A prompt is a person's decision only when nothing else can type into the
+  terminal.** nvx takes a terminal on stdin to mean someone is there. An agent
+  harness that runs commands in a pseudo-terminal presents one, and the model
+  can answer. So nvx never asks about widening the sandbox, which is trusting a
+  project policy that loosens settings, reaching a host the allowlist does not
+  name, or keeping a tool's persistent profile. It refuses with exit 77 and
+  prints `nvx trust` or `nvx allow-host` for a person to run in their own
+  terminal. The pre-install checks still ask at a terminal, so an agent with a
+  pseudo-terminal can approve one of those. `--agent-mode`, or
+  `NVX_AGENT_MODE=1` in the agent's environment, makes nvx refuse instead of
+  asking. An agent with a shell of its own outside the sandbox can still do
+  what a person can. It can run `nvx trust`, `nvx allow-host`, `nvx -y`,
+  `nvx --no-sandbox` or `nvx --connect`, put `NVX_YES=1` or `NVX_TRUST_YES=1`
+  in front of a command, or edit `~/.nvx/policy.json`. Every refusal tells it
+  not to, and nothing in nvx enforces that. Block those in the harness's own
+  permission settings if the agent should not have them.
+  `NVX_TRUST_YES=true` approves every request to widen the sandbox without
+  asking, so setting it hands those decisions to whatever sets the environment.
 - **Same-origin checksums.** Runtime archives and their `SHASUMS256.txt` are
   fetched from the same publisher over HTTPS. This detects corruption and
   tampering in transit but is not an independent second-channel signature
@@ -218,7 +241,7 @@ These are deliberate trade-offs, and this section documents each one:
   looked up. Until the same date nvx's egress proxy looked up the name a
   contained client asked for before the allowlist refused it, on every
   platform. It now looks a name up only after the allowlist, an earlier grant
-  or a yes at the prompt has allowed it, so a refused name never reaches the
+  or `NVX_TRUST_YES` has allowed it, so a refused name never reaches the
   host's resolver.
 
   This entry has been wrong in both directions. Until 2026-08-20 it said macOS
@@ -270,20 +293,20 @@ These are deliberate trade-offs, and this section documents each one:
   proxy route) makes egress arbitrary. Allowlist a local port with the same care
   as a remote one.
 
-  nvx will not grant loopback through the unknown-host prompt, only through the
-  policy file or `--connect`. The prompt is raised by whatever the sandbox is
-  running, which is the untrusted code. Localhost is where the services that take
-  no credentials listen. So a postinstall must not be able to ask for the
+  `NVX_TRUST_YES` does not grant a loopback destination. Only the policy file or
+  `--connect` does. The request is raised by whatever the sandbox is running,
+  which is the untrusted code. Localhost is where the services that take no
+  credentials listen. So a postinstall must not be able to ask for the
   developer's database.
 
   A literal link-local address gets the same refusal. 169.254.169.254 is the
   cloud metadata endpoint, where one unauthenticated request returns
   credentials, and the code asking would be the untrusted code. Only an
   `allow_hosts` entry that names the address allows it. A name that resolves to
-  a link-local address is refused after you approve it.
+  a link-local address is refused after `NVX_TRUST_YES` approves it.
 
-  Approving any other host at that prompt lasts for the current run and
-  is no longer recorded.
+  `NVX_TRUST_YES` approves any other unknown host for the current run only, and
+  that approval is not recorded as a grant.
 
 - **On Windows, a loopback exemption left by a pre-0.5.0 `nvx setup` opens every
   service on 127.0.0.1** to contained code, whatever the allowlist says. Treat
@@ -736,13 +759,13 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   the next day. Three ways out, narrowest first:
 
   ```jsonc
-  // 1. exempt just this package, in ~/.nvx/policy.json
-  { "release_age": { "trusted_packages": ["your-pkg", "@your-scope/*"] } }
+  // 1. pin to a version you have already used
+  { "command": "npx", "args": ["-y", "your-pkg@1.2.3"] }
   ```
 
   ```jsonc
-  // 2. pin to a version you have already used
-  { "command": "npx", "args": ["-y", "your-pkg@1.2.3"] }
+  // 2. exempt just this package, in ~/.nvx/policy.json
+  { "release_age": { "trusted_packages": ["your-pkg", "@your-scope/*"] } }
   ```
 
   ```jsonc
@@ -750,9 +773,10 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   { "command": "npx", "args": ["-y", "your-pkg"], "env": { "NVX_YES": "true" } }
   ```
 
-  The first keeps the cooling-off window for everything else, which
-  `release_age.min_age_hours` does not. That setting widens the window for every
-  package you install. The third is the broadest. `NVX_YES` also approves the
+  The first keeps every check, and an agent may do it itself. The second keeps
+  the cooling-off window for everything else, which `release_age.min_age_hours`
+  does not. That setting widens the window for every package you install. The
+  third is the broadest. `NVX_YES` also approves the
   typosquat, install-script and known-advisory checks for that server, so it is
   the last resort. It never approves a package OSV lists as malicious. Each check it approves is printed on stderr and written to
   `~/.nvx/audit.log` as a `check_approved` record.

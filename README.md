@@ -27,6 +27,13 @@ On macOS files outside your home directory stay readable, and the
 write. Other sandboxes need `theirtool run -- npm install`, and an agent will not
 remember to type it.
 
+**A prompt never widens the sandbox.** An agent that drives a terminal can answer
+one, so nvx does not ask before trusting a project policy that loosens it or
+reaching a host the allowlist does not name. It refuses with exit 77, prints the
+`nvx trust` or `nvx allow-host` command for you to run, and tells the agent to
+ask you. An agent with a shell of its own could still run that command, as
+[SECURITY.md](SECURITY.md#known-limitations) explains.
+
 It is also a Node.js and Bun version manager, because it has to be. The shims that
 intercept the toolchain also run the version each project pins, in a terminal, an
 IDE task, a git hook or CI. If you use nvm, fnm or volta today, nvx replaces them.

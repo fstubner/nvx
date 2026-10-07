@@ -874,14 +874,16 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 	// verification switch below matches exact lowercase names. Without this the
 	// command ran contained with every pre-install check skipped.
 	cmdName = strings.ToLower(cmdName)
+	forgetWideningRefusals()
 	trace := beginRunTrace(nvxHome, cmdName, args)
-	code := runShimTraced(trace, cmdName, args, nvxHome)
+	code := runShimTracedFn(trace, cmdName, args, nvxHome)
 	// A child killed because the client went away did not fail on its own terms;
 	// reporting whatever exit code a terminated process happens to carry would
 	// record it as an ordinary failure.
 	if clientHungUp.Load() {
 		code = exitParentHungUp
 	}
+	code = exitCodeAfterRefusedWidening(code)
 	trace.finish(code)
 	// Housekeeping after the command, never before it: leftovers from processes
 	// that were killed cannot clean up after themselves, and waiting for someone
@@ -925,7 +927,7 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	}
 
 	if err := ensureProjectPolicyTrust(nvxHome); err != nil {
-		return refuseUnreadablePolicy(err)
+		return refusePolicyBeforeRun(trace, err)
 	}
 	policy, err := LoadPolicy(nvxHome)
 	if err != nil {
@@ -953,6 +955,15 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		refuseContainedGlobalInstall(cmdName, pmCmd, pmArgs)
 		reportRefusalOverStdio("a global install cannot be run inside the sandbox", "")
 		return exitRefused
+	}
+	// A tool's persistent profile is decided before the checks too, for the
+	// same reason. Refusing it afterwards wastes whatever the checks asked.
+	toolName := ""
+	if tool, wantsPersistence := trustedToolCandidate(cmdName, args); contain && wantsPersistence {
+		if !ensureTrustedToolGrant(nvxHome, tool) {
+			return refuseUntrustedTool(trace)
+		}
+		toolName = tool
 	}
 
 	switch strings.ToLower(pmCmd) {
@@ -1009,12 +1020,6 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 			// Kept so the rule holds if that early return is ever moved.
 			refuseContainedGlobalInstall(cmdName, pmCmd, pmArgs)
 			return exitRefused
-		}
-		toolName := ""
-		if tool, wantsPersistence := trustedToolCandidate(cmdName, args); wantsPersistence {
-			if ensureTrustedToolGrant(nvxHome, tool) {
-				toolName = tool
-			}
 		}
 		return runSandbox(SandboxConfig{
 			NvxHome:            nvxHome,

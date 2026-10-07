@@ -119,9 +119,8 @@ func TestEnsureTrustedToolGrantEmptyNvxHome(t *testing.T) {
 
 // Note: a save-failure test for ensureTrustedToolGrant (approve, then have
 // saveProjectGrants fail, and confirm the function still returns true) is
-// deliberately omitted. Under `go test` there is no interactive TTY, so
-// PromptTrustBoundary denies before saveProjectGrants is ever reached — there's no
-// way to drive the persist-failure branch without a test-only prompt
-// override, which is more machinery than the assertion is worth. The behavior
+// deliberately omitted. Without NVX_TRUST_YES, approveWidening refuses before
+// saveProjectGrants is ever reached, and with it the save has to be made to
+// fail, which is more machinery than the assertion is worth. The behavior
 // is covered directly by TestEnsureTrustedToolGrantEmptyNvxHome (guard) and
 // the already-granted path in TestEnsureTrustedToolGrantReturnsTrueWhenAlreadyGranted.

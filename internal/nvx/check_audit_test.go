@@ -163,8 +163,9 @@ func findRecord(recs []map[string]string, event, check string) map[string]string
 	return nil
 }
 
-// A check that -y, --agent-mode or NVX_YES waved through leaves a record and one
-// line on stderr, whatever NVX_TRACE says.
+// A check that -y or NVX_YES waved through leaves a record and one line on
+// stderr, whatever NVX_TRACE says. --agent-mode approved checks too until it was
+// made to refuse them. TestAgentModeRefusesInsteadOfApproving covers it now.
 //
 // Measured before the fix: `NVX_AGENT_MODE=1 nvx npm install reakt lodash@4.17.15`
 // installed both, said nothing about the typosquat, and `nvx audit` read "No
@@ -178,11 +179,6 @@ func TestAutoApprovedChecksAreRecordedAndAnnounced(t *testing.T) {
 			old := yesFlag
 			yesFlag = true
 			t.Cleanup(func() { yesFlag = old })
-		}},
-		{"--agent-mode", "agent_mode", "--agent-mode", func(t *testing.T) {
-			oldY, oldA, oldQ := yesFlag, agentModeFlag, quietFlag
-			yesFlag, agentModeFlag, quietFlag = true, true, true
-			t.Cleanup(func() { yesFlag, agentModeFlag, quietFlag = oldY, oldA, oldQ })
 		}},
 		{"NVX_YES", "nvx_yes", "NVX_YES", func(t *testing.T) { t.Setenv("NVX_YES", "true") }},
 	}
@@ -278,15 +274,12 @@ func TestRefusalTextNamesTheNarrowRemedyBeforeTheBlanketSwitch(t *testing.T) {
 			t.Setenv("NVX_NONINTERACTIVE", "1")
 			t.Setenv("NVX_YES", "")
 			_, out, _ := runScenario(t, sc)
-			prompt := ""
-			for _, line := range strings.Split(out, "\n") {
-				if strings.Contains(line, "denying prompt") {
-					prompt = line
-				}
-			}
-			if prompt == "" {
+			i := strings.Index(out, "denying prompt")
+			if i < 0 {
 				t.Fatalf("no denial line in:\n%s", out)
 			}
+			// The denial, then the remedy on the lines after it.
+			prompt := out[i:]
 			last := -1
 			for _, want := range sc.remedy {
 				i := strings.Index(prompt, want)
@@ -464,8 +457,11 @@ func TestMCPRemedyNamesThePolicyKeyFirst(t *testing.T) {
 	}
 }
 
-// A refused egress host names the allow_hosts line, and does so under -q, which
-// hides LogInfo.
+// A refused egress host names the one command that allows it, and does so under
+// -q, which hides LogInfo. It used to print the allow_hosts line and say
+// ~/.nvx/policy.json needed no approval, which told an agent how to allow
+// itself. NVX_TRUST_YES is not offered. It hands every such decision to the
+// environment, and a refusal is not the place to suggest that.
 func TestEgressRefusalNamesAllowHosts(t *testing.T) {
 	t.Setenv("NVX_TRUST_YES", "")
 	old := quietFlag
@@ -479,19 +475,17 @@ func TestEgressRefusalNamesAllowHosts(t *testing.T) {
 			t.Fatal("the host was allowed with nobody to ask")
 		}
 	})
-	want := `{"isolation":{"network":{"allow_hosts":["example.com:443"]}}}`
-	i := strings.Index(out, want)
-	if i < 0 {
-		t.Fatalf("the refusal does not give the allow_hosts line:\n%s", out)
+	if !strings.Contains(out, "nvx allow-host example.com:443") {
+		t.Fatalf("the refusal does not give the command that allows the host:\n%s", out)
 	}
-	if j := strings.Index(out, "NVX_TRUST_YES"); j >= 0 && j < i {
-		t.Errorf("NVX_TRUST_YES is named before the allow_hosts line:\n%s", out)
+	if strings.Contains(out, "NVX_TRUST_YES") {
+		t.Errorf("the refusal offers NVX_TRUST_YES:\n%s", out)
 	}
 
 	p2 := newTestProxy(t, "proxy", nil)
 	out = captureStderrHere(t, func() { p2.allowed(parseHostPortSpec("example.org", 443), public) })
-	if !strings.Contains(out, `["example.org:443"]`) {
-		t.Errorf("the plain denial under -q does not give the allow_hosts line:\n%s", out)
+	if !strings.Contains(out, "nvx allow-host example.org:443") {
+		t.Errorf("the plain denial under -q does not give the command that allows the host:\n%s", out)
 	}
 }
 

@@ -90,9 +90,9 @@ func npmResolvedTargets(req verifyRequest, args []string, platform nodePlatform)
 	}
 	msg := fmt.Sprintf("npm could not work out what this command installs (%v), so nvx can check only the packages named on the command line or in the project's files. Proceed?", err)
 	if !askCheck(req.nvxHome, checkInfo{check: checkResolution, detail: err.Error(),
-		what: "the install goes ahead with only the named packages checked"},
-		msg, resolutionRemedy) {
-		LogError("Installation aborted: npm's dependency resolution failed and proceeding was not approved.")
+		what:    "the install goes ahead with only the named packages checked",
+		aborted: "Installation aborted: npm's dependency resolution failed and proceeding was not approved."},
+		msg, checkRemedy{text: resolutionRemedy}) {
 		// npm exiting non-zero is npm's failure. The resolver is npm running the
 		// command the person typed, so what stopped it stops the real install the
 		// same way. A project whose devEngines asks for another Node.js got
@@ -122,7 +122,7 @@ func (e resolutionFailed) Error() string {
 }
 
 const resolutionRemedy = "npm's own message, above, says why it could not resolve the install. No policy setting waives this." +
-	" To proceed with only the named packages checked, pass -y or set NVX_YES=true, which approves every check in the run."
+	" To proceed with only the named packages checked, set NVX_YES=true or put -y before the command, which approves every check in the run."
 
 // npmResolutionBlocker says why a command cannot be resolved on a copy of
 // package.json and the lockfile, or returns "".
