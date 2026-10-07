@@ -557,6 +557,9 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	if exitCode != 0 {
 		noteBunOffSystemDrive(config.Command, config.Args, workDir, exitCode)
 	}
+	if launchDir != workDir {
+		exitCode = reportRelocatedWrites(config.Command, launchDir, exitCode)
+	}
 	return exitCode, nil
 }
 

@@ -37,9 +37,9 @@ var (
 // grants -- the writable roots are granted to a per-project capability rather
 // than to the shared AppContainer SID, so a session in one project cannot reach
 // another's; see sandbox_scope_identity_windows.go for why -- and the directory
-// the command starts in: workDir, unless the sandbox could not be given access
-// to it in time (see grantNonProjectWorkdir), in which case the guest home
-// stands in.
+// the command starts in: workDir, unless the sandbox may not or could not be
+// given access to it (see workDirReachesControlPlane and grantNonProjectWorkdir),
+// in which case a folder inside the guest home stands in (see relocatedWorkDir).
 func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir string) (caps []string, launchDir string, err error) {
 	packageSIDStr, err := appContainerSidToString(sid)
 	launchDir = workDir
@@ -110,7 +110,7 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 	if workDir != "" && !isProfileRoot(workDir) && workDirReachesControlPlane(nvxHome, workDir) {
 		// Above the profile or inside ~/.nvx: granting it would grant nvx's own
 		// settings or the whole profile. See workDirReachesControlPlane.
-		launchDir = guestHome
+		launchDir = relocatedWorkDir(guestHome)
 		warnWorkDirNotWritable(workDir)
 	} else if workDir != "" && !isProfileRoot(workDir) {
 		if findProjectRoot(workDir) != "" {
@@ -123,10 +123,11 @@ func prepareAppContainerFilesystem(sid uintptr, nvxHome, guestHome, workDir stri
 			removeStaleAppContainerGrant(workDir)
 		} else if !grantNonProjectWorkdir(nvxHome, capSID, packageSIDStr, workDir) {
 			// The command cannot even start in a directory the sandbox may not
-			// enter, so it starts in the sandbox's home. See grantNonProjectWorkdir.
-			launchDir = guestHome
-			LogInfo("Running in the sandbox home instead of %s: it is not a project, and granting the sandbox access to it takes too long. "+
-				"Files the command writes to its working directory land in the sandbox home and are removed with it.", workDir)
+			// enter, so it starts inside the sandbox's home, and what it writes
+			// there is reported when it ends. See grantNonProjectWorkdir and
+			// reportRelocatedWrites.
+			launchDir = relocatedWorkDir(guestHome)
+			LogWarn("nvx could not give the sandbox access to %s, so the command starts in a temporary folder inside the sandbox instead. Anything it writes there is deleted when it ends.", workDir)
 		}
 	}
 	// Tools stat the ancestors of both the working directory and the guest home
@@ -287,6 +288,15 @@ func grantSandboxModify(sidStr, path string) error {
 // %TEMP% -- one leftover entry from an older nvx, rewritten over 748,317
 // entries on every launch and never allowed to finish.
 //
+// A directory whose whole tree cannot be granted in time still gets an entry
+// for itself and for what is created in it from now on, which costs one
+// folder's write whatever the size of the tree (see writeEntryForNewChildren).
+// It used to get nothing, and the command started in the sandbox's home
+// instead. `npm create vite@latest myvite` from a parent folder then printed
+// "Done" and exited 0 while the new project went into a home that is deleted
+// at exit. The command can now create its project where it was run. What is
+// already in the directory may stay out of its reach.
+//
 // Reports whether the directory is usable as the command's working directory.
 // Without any entry the sandbox cannot even enter it (CreateProcess fails with
 // "chdir: Access is denied"), so a false answer means the caller has to start
@@ -309,11 +319,16 @@ func grantNonProjectWorkdir(nvxHome, capSID, packageSIDStr, workDir string) bool
 	switch {
 	case overran:
 		LogDetail("Write access to %s was not granted within %s: it is not a project and its tree is large.", workDir, ancestorGrantPerPath)
-		return false
 	case attempted == 0:
 		LogDetail("Write access to %s skipped: granting it took too long on an earlier run.", workDir)
+	default:
+		return true
+	}
+	if err := writeEntryForNewChildren(workDir, capSID, aclMaskModify); err != nil {
+		LogDetail("Could not give the sandbox access to %s for new files either: %v", workDir, err)
 		return false
 	}
+	LogInfo("%s is not a project and holds too much to share with the sandbox in full. The command can create new files and folders here, and may be refused what is already here.", workDir)
 	return true
 }
 
