@@ -4,6 +4,7 @@ package nvx
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -348,5 +349,137 @@ func TestHideDotenvFromSandboxCarriesOnPastAFileItCannotChange(t *testing.T) {
 	g := loadProjectGrants(nvxHome, project)
 	if len(g.ProtectedDotenv) != 1 || !sameGrantPath(g.ProtectedDotenv[0].Path, open) {
 		t.Errorf("recorded %+v, want only %s", g.ProtectedDotenv, open)
+	}
+}
+
+// lowerDotenvCap sets maxProtectedDotenv for one test.
+func lowerDotenvCap(t *testing.T, n int) {
+	t.Helper()
+	prev := maxProtectedDotenv
+	maxProtectedDotenv = n
+	t.Cleanup(func() { maxProtectedDotenv = prev })
+}
+
+// Past the cap, files are left as they are and the caller is told. A file that
+// already has a record still gets its protection back after an editor replaces
+// it, and one without a record does not.
+func TestProtectDotenvFilesStopsAtTheCap(t *testing.T) {
+	lowerDotenvCap(t, 5)
+	nvxHome := tempDir(t)
+	project := tempDir(t)
+	capSID, err := scopeCapabilitySID(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var files []string
+	for i := 0; i < maxProtectedDotenv+3; i++ {
+		p := filepath.Join(project, fmt.Sprintf(".env.%02d", i))
+		if err := os.WriteFile(p, []byte("API_KEY=1"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, p)
+	}
+	if err := grantSandboxModify(capSID, project); err != nil {
+		t.Fatal(err)
+	}
+	root, err := finalPathOf(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected := func() (n int) {
+		for _, p := range files {
+			if dotenvIsProtected(t, root, p) {
+				n++
+			}
+		}
+		return n
+	}
+
+	if !protectDotenvFiles(nvxHome, project, files) {
+		t.Errorf("protecting %d files with a cap of %d did not say it stopped", len(files), maxProtectedDotenv)
+	}
+	if n := protected(); n != maxProtectedDotenv {
+		t.Errorf("%d files are protected, want the cap, %d", n, maxProtectedDotenv)
+	}
+	if n := len(loadProjectGrants(nvxHome, project).ProtectedDotenv); n != maxProtectedDotenv {
+		t.Errorf("the record holds %d files, want the cap, %d", n, maxProtectedDotenv)
+	}
+
+	// files[0] has a record. files[maxProtectedDotenv] was left out.
+	replaced, left := files[0], files[maxProtectedDotenv]
+	if err := os.WriteFile(replaced+".tmp", []byte("API_KEY=2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replaced+".tmp", replaced); err != nil {
+		t.Fatal(err)
+	}
+	if dotenvIsProtected(t, root, replaced) {
+		t.Fatalf("the replaced file is still protected, so this checks nothing")
+	}
+	if !protectDotenvFiles(nvxHome, project, []string{replaced, left}) {
+		t.Errorf("a file past the cap was not reported")
+	}
+	if !dotenvIsProtected(t, root, replaced) {
+		t.Errorf("a file with a record was not protected again after it was replaced")
+	}
+	if dotenvIsProtected(t, root, left) {
+		t.Errorf("a file past the cap was protected")
+	}
+	if n := len(loadProjectGrants(nvxHome, project).ProtectedDotenv); n != maxProtectedDotenv {
+		t.Errorf("the record holds %d files after the replace, want the cap, %d", n, maxProtectedDotenv)
+	}
+}
+
+// A .env with more than one name is one file, so it is hidden through every
+// name. That is what a .env shared between two git worktrees by a hard link
+// needs. A contained process cannot use this to aim nvx at a file it may not
+// change, see TestContainedProcessCannotLinkDotenvToAFileItCannotWrite.
+func TestHideDotenvFromSandboxHidesAHardLinkedFileThroughEveryName(t *testing.T) {
+	nvxHome := tempDir(t)
+	project := tempDir(t)
+	otherWorktree := tempDir(t)
+	capSID, err := scopeCapabilitySID(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := filepath.Join(project, ".env")
+	shared := filepath.Join(otherWorktree, ".env")
+	if err := os.WriteFile(env, []byte("API_KEY=1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(env, shared); err != nil {
+		t.Fatal(err)
+	}
+	if err := grantSandboxModify(capSID, project); err != nil {
+		t.Fatal(err)
+	}
+	sandboxEntries := func(p string) (n int) {
+		entries, err := readDACL(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if strings.HasPrefix(e.SID, "S-1-15-2-") || strings.HasPrefix(e.SID, "S-1-15-3-") {
+				n++
+			}
+		}
+		return n
+	}
+	if sandboxEntries(shared) == 0 {
+		t.Fatalf("the shared name does not carry the project grant to begin with, so this checks nothing")
+	}
+
+	hideDotenvFromSandbox(nvxHome, project)
+
+	for _, p := range []string{env, shared} {
+		if n := sandboxEntries(p); n != 0 {
+			t.Errorf("%s still has %d entries for sandbox identities", p, n)
+		}
+		if b, err := os.ReadFile(p); err != nil || string(b) != "API_KEY=1" {
+			t.Errorf("the user cannot read %s: %q %v", p, b, err)
+		}
+	}
+	if g := loadProjectGrants(nvxHome, project); len(g.ProtectedDotenv) != 1 || !sameGrantPath(g.ProtectedDotenv[0].Path, env) {
+		t.Errorf("recorded %+v, want only %s", g.ProtectedDotenv, env)
 	}
 }

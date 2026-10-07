@@ -292,16 +292,29 @@ These are deliberate trade-offs, and this section documents each one:
   contained launch nvx gives each `.env` and `.env.*` file a permission list
   that does not inherit from the project folder and has no entry for a
   sandboxed process. Every other entry is kept, so you read and edit the file
-  as before. `nvx grants reset` puts the earlier permissions back. A file an
-  editor or `git checkout` replaces is readable to a contained process that is
-  already running, until the next launch changes it again. A file nvx may not
-  change stays readable, with a warning. On every platform a contained process
-  cannot read the project's `.env` or `.env.*` files, except the templates
-  `.env.example`, `.env.sample`, `.env.template` and `.env.dist`. On Linux and
-  Windows that covers the files present when the run starts. On Linux it also
-  covers a file created or replaced while the run lasts, a contained process
-  cannot reach one by making a user namespace of its own, and nvx keeps covering
-  new files even when the machine runs out of file-watch slots.
+  as before. `nvx grants reset` puts the earlier permissions back. While a
+  contained process runs, nvx watches the project and does the same to each
+  `.env` that appears, such as one an editor or `git checkout` replaces. That
+  takes milliseconds, and a contained process can read the file in that time.
+  Measured 2026-10-07 on Windows 11 26300, a new `.env` stayed readable for
+  between 3.4 and 11.2 ms in five trials and up to 33.1 ms in twelve more, and
+  a replaced one for between 6.3 and 25.5 ms in twelve. A contained node
+  process that polled for a new `.env` read it in ten of ten trials. So a
+  secret written into the project during a long contained run can be read. A
+  `.env` that exists when the run starts is not affected. Linux has the same
+  gap, and macOS does not, because it refuses the read by name. nvx hides at
+  most 200 `.env` files per project. A contained process could otherwise
+  create thousands and keep nvx busy. Past 200, nvx warns and leaves the rest
+  readable. A contained process that creates 200 files uses up that allowance,
+  and a `.env` you create after that stays readable until you delete the extra
+  files and start the next run. A file nvx may not change stays readable, with
+  a warning. On every platform a contained process cannot read the project's
+  `.env` or `.env.*` files, except the templates `.env.example`,
+  `.env.sample`, `.env.template` and `.env.dist`. On Linux and Windows that
+  covers the files present when the run starts, and the files that appear
+  during it apart from the gap above. On Linux a contained process cannot
+  reach one by making a user namespace of its own, and nvx keeps covering new
+  files even when the machine runs out of file-watch slots.
   `docs/enforcement-matrix.md` note 15 has the details. Secrets outside the
   project, such as `~/.ssh`, `~/.aws` and `~/.npmrc`, stay unreachable on Windows
   and Linux. On macOS the Seatbelt profile denies reads under the home

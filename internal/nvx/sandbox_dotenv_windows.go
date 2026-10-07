@@ -48,27 +48,58 @@ import (
 //
 // Best effort: a file nvx cannot change, because the user does not own it or
 // the record cannot be saved, stays readable to the sandbox and the run goes
-// ahead with one line saying so.
+// ahead with one line saying so. So does every file past maxProtectedDotenv.
 func hideDotenvFromSandbox(nvxHome, scope string) {
 	found, complete := findDotenvFiles(scope, dotenvScanLimit)
 	if !complete {
 		LogWarn("Stopped looking for .env files after %d entries under %s; any further down stay readable in the sandbox.", dotenvScanLimit, scope)
 	}
-	protectDotenvFiles(nvxHome, scope, found)
+	if protectDotenvFiles(nvxHome, scope, found) {
+		warnDotenvCap(scope)
+	}
+}
+
+// maxProtectedDotenv is the most dotenv files nvx hides from the sandbox and
+// records for one project. A launch or a batch from the watch looks at no more
+// than that many, and the record never holds more. A file past it is left
+// readable and nvx says so. A file that already has a record is not counted
+// again, so one an editor replaces is hidden again. It is a variable so a test
+// can lower it.
+//
+// A project holds a handful. The most under any project in H:\projects on
+// 2026-10-07 was 2. A contained process can create dotenv files too, and every
+// batch the watch handles reads and rewrites the project's whole record.
+// Measured 2026-10-07 on Windows 11 26300, before there was a cap, 800 files
+// handled one per batch took 90.53 s, against 0.64 s handled as one batch, and
+// 3000 files created in a loop left a 3,550,994 byte record. With the cap, 3000
+// files leave 237,396 bytes. 200 leaves room for a monorepo of a hundred
+// packages that each hold a .env and a .env.local.
+var maxProtectedDotenv = 200
+
+// warnDotenvCap is the one line said when files stay readable because of
+// maxProtectedDotenv.
+func warnDotenvCap(scope string) {
+	LogWarn("nvx hides at most %d .env files per project from the sandbox, and %s has reached that. The rest stay readable there. Delete the ones you do not need.", maxProtectedDotenv, scope)
 }
 
 // protectDotenvFiles hides each of found, dotenv files under the project scope,
 // from the sandbox, as hideDotenvFromSandbox describes. The launch hands it every
 // dotenv file in the project, and watchDotenvFiles the ones that appear while a
-// contained process runs.
-func protectDotenvFiles(nvxHome, scope string, found []string) {
+// contained process runs. It reports whether it left a file alone because the
+// project already holds maxProtectedDotenv, and the caller says so.
+func protectDotenvFiles(nvxHome, scope string, found []string) (capped bool) {
 	if len(found) == 0 {
-		return
+		return false
+	}
+	// More files than the record can hold would be read and then dropped, and a
+	// project that holds tens of thousands would pay for that at every launch.
+	if len(found) > maxProtectedDotenv {
+		found, capped = found[:maxProtectedDotenv], true
 	}
 	root, err := finalPathOf(scope)
 	if err != nil {
 		LogWarn("Could not resolve %s, so its .env files stay readable in the sandbox: %v", scope, err)
-		return
+		return capped
 	}
 
 	type pendingDotenv struct {
@@ -111,13 +142,14 @@ func protectDotenvFiles(nvxHome, scope string, found []string) {
 		todo = append(todo, pendingDotenv{path: f, h: h, acl: acl})
 	}
 	if len(todo) == 0 {
-		return
+		return capped
 	}
 
 	// Recorded before anything is changed, as with the read/execute grants: a
 	// change with no record is one `nvx grants reset` could never put back.
 	// Records of files that no longer exist go in the same write, which keeps
 	// the record small without a write of its own.
+	var recorded []pendingDotenv
 	if err := updateProjectGrants(nvxHome, scope, func(g *projectGrants) error {
 		kept := g.ProtectedDotenv[:0]
 		for _, r := range g.ProtectedDotenv {
@@ -127,21 +159,27 @@ func protectDotenvFiles(nvxHome, scope string, found []string) {
 		}
 		g.ProtectedDotenv = kept
 		for _, p := range todo {
+			if len(g.ProtectedDotenv) >= maxProtectedDotenv && !hasProtectedDotenv(g.ProtectedDotenv, p.path) {
+				capped = true
+				continue
+			}
 			g.ProtectedDotenv = recordProtectedDotenv(g.ProtectedDotenv, p.path, p.acl.sddl, !p.acl.protected)
+			recorded = append(recorded, p)
 		}
 		return nil
 	}); err != nil {
 		LogWarn("Could not record the permissions of this project's .env files, so they stay readable in the sandbox: %v", err)
-		return
+		return capped
 	}
 
-	for _, p := range todo {
+	for _, p := range recorded {
 		if err := writeProtectedDotenvACL(p.h, p.acl); err != nil {
 			LogWarn("Could not hide %s from the sandbox, so it stays readable there: %v", p.path, err)
 			continue
 		}
 		LogDetail("Hid %s from the sandbox.", p.path)
 	}
+	return capped
 }
 
 // errDotenvLink says a dotenv path is a link, or reaches a file outside the
@@ -154,6 +192,15 @@ var errDotenvLink = errors.New("a link, or outside the project")
 // link, a directory, and a file whose real path is not under root (a junction
 // further up the path). The handle is what is read and written afterwards, so
 // the file checked is the file changed.
+//
+// A file with more than one name is not refused. Its permissions belong to the
+// file, so every name gets them, which a .env shared between git worktrees by a
+// hard link needs. A contained process cannot use this to make nvx change a
+// file it may not change. Measured 2026-10-07 on Windows 11 26300
+// (TestContainedProcessCannotLinkDotenvToAFileItCannotWrite), a contained
+// process linked a file it wrote in the project and one in its own home, and
+// was refused with EPERM for the node runtime's LICENSE, .git\config and
+// System32's hosts file, which it can only read.
 func openDotenvWithin(root, path string) (h syscall.Handle, writable bool, err error) {
 	const readControl, writeDAC = 0x00020000, 0x00040000
 	p, err := syscall.UTF16PtrFromString(path)
