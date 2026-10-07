@@ -1026,8 +1026,10 @@ func isProxyEnvName(e string) bool {
 }
 
 // loopbackNoProxy is NO_PROXY when requests to this machine's own names connect
-// directly instead of going to the proxy.
-const loopbackNoProxy = "localhost,127.0.0.1,::1"
+// directly instead of going to the proxy. "[::1]" as well as "::1": measured
+// 2026-10-07, Node 22.23.2, 24.14.1 and 24.21.0 sent http://[::1]:port/ to the proxy
+// with only "::1" listed, and connected directly once "[::1]" was added.
+const loopbackNoProxy = "localhost,127.0.0.1,::1,[::1]"
 
 // admitsLoopback reports whether the proxy lets a contained process reach an
 // address on this machine's loopback. admit does so in two cases. network.mode

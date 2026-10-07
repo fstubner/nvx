@@ -165,7 +165,7 @@ func TestNoProxyListsLoopbackUnlessTheProxyAdmitsIt(t *testing.T) {
 	host := []string{"PATH=/bin", "NO_PROXY=intranet.example.test", "no_proxy=other.example.test"}
 
 	got := noProxyEntries(applyProxyEnv(host, p, false))
-	if strings.Join(got, "|") != "NO_PROXY=localhost,127.0.0.1,::1" {
+	if strings.Join(got, "|") != "NO_PROXY=localhost,127.0.0.1,::1,[::1]" {
 		t.Errorf("NO_PROXY entries = %q, want the loopback names alone", got)
 	}
 	if got := noProxyEntries(applyProxyEnv(host, p, true)); len(got) != 0 {
