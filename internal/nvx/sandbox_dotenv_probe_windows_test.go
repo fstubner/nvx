@@ -128,3 +128,63 @@ func TestLaunchHidesDotenvFromContainedProcess(t *testing.T) {
 	}
 	expect("launch after replace-on-save", launch())
 }
+
+// TestContainedProcessCannotLinkDotenvToAFileItCannotWrite (NVX_PROBE=1) has a
+// contained node process try fs.linkSync onto a new dotenv name in the project,
+// from files it can write and from files it can only read. openDotenvWithin
+// hides a file with several names through all of them. That would let a
+// contained process aim nvx at a file outside the project if it could link one
+// it may not write. Measured 2026-10-07 on Windows 11 26300 it could not. It
+// linked a file it wrote in the project and one in its own home, and was
+// refused with EPERM for the node runtime's LICENSE, .git\config and System32's
+// hosts file, which it can only read.
+func TestContainedProcessCannotLinkDotenvToAFileItCannotWrite(t *testing.T) {
+	run, workDir := walkupProbeIn(t, "nvx.sandbox.dotenvlink.probe", `
+const fs = require('fs'), path = require('path');
+const dir = process.cwd(), home = process.env.USERPROFILE, out = [];
+const link = (label, src, dst) => {
+  try { fs.linkSync(src, dst); out.push(label + ' LINKED'); }
+  catch (e) { out.push(label + ' ' + e.code); }
+};
+fs.writeFileSync(path.join(dir, 'own-file'), 'x');
+fs.writeFileSync(path.join(home, 'own-home-file'), 'x');
+link('PROJECT_FILE', path.join(dir, 'own-file'), path.join(dir, '.env.project'));
+link('HOME_FILE', path.join(home, 'own-home-file'), path.join(dir, '.env.home'));
+link('RUNTIME_FILE', path.join(path.dirname(process.execPath), 'LICENSE'), path.join(dir, '.env'));
+link('GIT_CONFIG', path.join(dir, '.git', 'config'), path.join(dir, '.env.git'));
+link('SYSTEM_FILE', path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'drivers', 'etc', 'hosts'), path.join(dir, '.env.system'));
+fs.writeFileSync(process.argv[2], out.join('\n'));
+`)
+	// The contained process reads .git\config but may not write it, as for any
+	// repository nvx launches in.
+	if err := os.MkdirAll(filepath.Join(workDir, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, ".git", "config"), []byte("[core]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	capSID, err := scopeCapabilitySID(sandboxScopeForWorkDir(workDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restrictGitMetadataToReadOnly(capSID, workDir); err != nil {
+		t.Fatal(err)
+	}
+
+	report := run(true)
+	t.Logf("%q", report)
+	if !strings.Contains(report, "PROJECT_FILE LINKED") {
+		t.Fatalf("the contained process could not link a file it wrote, so a refused link below says nothing about permissions: %q", report)
+	}
+	for _, label := range []string{"RUNTIME_FILE", "GIT_CONFIG", "SYSTEM_FILE"} {
+		switch {
+		case strings.Contains(report, label+" EXDEV"):
+			t.Skipf("%s is on another volume than the project, so its refusal says nothing about permissions: %q", label, report)
+		case !strings.Contains(report, label+" EPERM") && !strings.Contains(report, label+" EACCES"):
+			t.Errorf("the contained process linked a file it can only read (%s): %q", label, report)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(workDir, ".env")); err == nil {
+		t.Errorf("a .env linked to the runtime's file exists in the project")
+	}
+}
