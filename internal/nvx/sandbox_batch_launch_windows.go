@@ -3,8 +3,11 @@
 package nvx
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // A batch file runs inside the sandbox only when cmd.exe is given its path in
@@ -49,21 +52,85 @@ func isWindowsBatchFile(path string) bool {
 }
 
 // windowsBatchLaunch returns the cmd.exe to start and the whole command line
-// that runs batch with args, with the batch file's path in quotes.
+// that runs batch with args, with the batch file's path in quotes. Contained
+// and uncontained launches of a batch file both use it.
 //
 // /s makes cmd.exe remove exactly the outer pair of quotes, so the pair around
 // the path survives whatever the arguments hold. /d skips AutoRun commands from
-// the registry, as npm does for the scripts it runs. The arguments are quoted
-// as before, so a batch file sees them the way it did when Windows started
-// cmd.exe for it.
+// the registry, as npm does for the scripts it runs. /e:ON turns on the
+// extensions appendBatchArg relies on for %, and /v:OFF keeps !VAR! as it is.
+//
+// An argument holding a line break is refused, because cmd.exe ends the command
+// there and drops the rest.
 func windowsBatchLaunch(batch string, args []string) (exe, cmdLine string, err error) {
 	exe, err = systemToolPath("cmd.exe")
 	if err != nil {
 		return "", "", err
 	}
-	inner := `"` + batch + `"`
-	if len(args) > 0 {
-		inner += " " + buildWindowsArgString(args)
+	var b strings.Builder
+	b.WriteString(quoteWindowsArg(exe) + ` /d /e:ON /v:OFF /s /c ""` + batch + `"`)
+	for _, a := range args {
+		if strings.ContainsAny(a, "\r\n") {
+			return "", "", fmt.Errorf("%s cannot be given an argument that holds a line break, because cmd.exe would drop everything after it", filepath.Base(batch))
+		}
+		b.WriteByte(' ')
+		appendBatchArg(&b, a)
 	}
-	return exe, quoteWindowsArg(exe) + ` /d /s /c "` + inner + `"`, nil
+	b.WriteByte('"')
+	return exe, b.String(), nil
+}
+
+// appendBatchArg writes arg to a batch file's command line so that cmd.exe
+// treats none of it as syntax, and a program the batch file passes %* to reads
+// it back unchanged.
+//
+// cmd.exe reads & | < > ^ ( ) as syntax outside double quotes, and expands
+// %VAR% inside them too. Quoting only arguments with a space, and escaping a
+// quote as \", which cmd.exe does not know, let an argument such as
+// x&echo.INJECTED>file run a second command. Go's os/exec has no escaping for
+// batch files. Its documentation says they parse arguments differently and
+// leaves the command line to the caller.
+//
+// This is append_bat_arg from Rust's standard library, which Rust added in
+// 1.77.2 to fix CVE-2024-24576, ported from library/std/src/sys/args/windows.rs
+// at rust-lang/rust tag 1.88.0, where it is unchanged. An argument is quoted
+// unless every character is a letter, a digit or one of #$*+-./:?@\_. A quote
+// inside it is doubled, which keeps cmd.exe's count of quotes even. Each %
+// becomes %%cd:~,%. cmd.exe expands %cd:~,% to nothing, and in that pass the %
+// before it starts no variable name, so %PATH% reaches the batch file as
+// written.
+func appendBatchArg(b *strings.Builder, arg string) {
+	quote := arg == "" || strings.HasSuffix(arg, `\`)
+	for _, r := range arg {
+		ascii := r < utf8.RuneSelf
+		plain := 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || strings.ContainsRune(`#$*+-./:?@\_`, r)
+		if ascii && !plain || unicode.IsControl(r) {
+			quote = true
+		}
+	}
+	if quote {
+		b.WriteByte('"')
+	}
+	backslashes := 0
+	for i := 0; i < len(arg); i++ {
+		c := arg[i]
+		if c == '\\' {
+			backslashes++
+		} else {
+			if c == '"' {
+				// The backslashes before a quote are doubled, so they stay
+				// backslashes, and the quote is doubled.
+				b.WriteString(strings.Repeat(`\`, backslashes))
+				b.WriteByte('"')
+			} else if c == '%' || c == '\r' {
+				b.WriteString(`%%cd:~,`)
+			}
+			backslashes = 0
+		}
+		b.WriteByte(c)
+	}
+	if quote {
+		b.WriteString(strings.Repeat(`\`, backslashes))
+		b.WriteByte('"')
+	}
 }

@@ -16,3 +16,11 @@ func runDirectChild(cmd *exec.Cmd) error {
 	killChildWhenParentDies(cmd)
 	return runChildForwardingSignals(cmd)
 }
+
+// directExecCommand builds the uncontained launch of path. Only Windows has
+// batch files to treat differently, see the Windows version.
+func directExecCommand(path string, args []string) (*exec.Cmd, error) {
+	// #nosec G702 -- running the runtime nvx resolved for this project is what
+	// a shim is for. path comes from nvx's own resolution, not from input.
+	return exec.Command(path, args...), nil
+}

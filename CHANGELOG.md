@@ -632,6 +632,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1.22.22 each install a package contained. pnpm 12 still cannot run contained,
   see Known limitations.
 
+  Arguments reach the batch file as they were given. nvx escapes them for
+  `cmd.exe` the way Rust's standard library does for batch files, so `&`, `|`,
+  `<`, `>`, `^`, `%PATH%` and quotes in an argument stay part of it. An
+  argument that holds a line break is refused, because `cmd.exe` would drop
+  the rest of the line. A batch file run outside the sandbox, such as a
+  project's own bin, gets the same escaping. Before, Go's escaping was used
+  there, which `cmd.exe` does not follow, and an argument such as
+  `x&echo.INJECTED>file` ran a second command as you.
+
 * **Project commands run under strict isolation on Windows.** With
   `isolation.level: strict`, `tsc`, `eslint` and every other command in
   `node_modules\.bin` stopped with "is not in a Node or Bun install". nvx tried
