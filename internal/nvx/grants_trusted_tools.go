@@ -2,6 +2,7 @@ package nvx
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -68,13 +69,14 @@ func trustedToolCandidate(cmd string, args []string) (tool string, wantsPersiste
 }
 
 // ensureTrustedToolGrant decides whether toolName gets a persistent per-project
-// profile for this and future sandboxed runs (so logins/config persist).
-// Returns true if it should (already granted, or the user just approved — even
-// if that approval couldn't be persisted); false if denied or toolName/nvxHome
-// is empty. Prompts at most once per project per tool; the decision persists in
-// the project's grant file under nvxHome, never in the project tree. The
-// profile is always contained under nvxHome and never touches the real home, so
-// this works uniformly on all platforms.
+// profile for this and future sandboxed runs, so logins and config persist.
+// It returns true when the tool is already granted, or when NVX_TRUST_YES
+// approves it, even if that approval could not be recorded. It returns false
+// when nvx refuses, or toolName or nvxHome is empty, and the caller then stops
+// the run. It never asks. The decision is recorded by `nvx trust --tool`, in the
+// project's grant file under nvxHome, never in the project tree. The profile is
+// always contained under nvxHome and never touches the real home, so this works
+// uniformly on all platforms.
 func ensureTrustedToolGrant(nvxHome, toolName string) bool {
 	if toolName == "" || nvxHome == "" {
 		return false
@@ -84,36 +86,57 @@ func ensureTrustedToolGrant(nvxHome, toolName string) bool {
 		return false
 	}
 
-	g := loadProjectGrants(nvxHome, scope)
-	if g.hasTrustedTool(toolName) {
+	if toolTrusted(nvxHome, scope, toolName) {
 		return true
 	}
 
-	msg := fmt.Sprintf("Let %q keep a persistent profile for this project so its logins/config survive across runs? (Still sandboxed; your real home is untouched.)", toolName)
-	// A trust prompt, so -y, --agent-mode and NVX_YES do not approve it. The
-	// grant persists for every later run, which is what nvx help says only
-	// NVX_TRUST_YES can approve.
-	if !PromptTrustBoundary(msg) {
+	// A trust decision, so -y and NVX_YES do not approve it. The grant persists
+	// for every later run.
+	command := "nvx trust --tool <name>"
+	if label := safePackageLabel(toolName); label != "" {
+		command = "nvx trust --tool " + label
+	}
+	if !approveWidening(wideningRequest{
+		what:    fmt.Sprintf("a persistent profile for %s in this project", toolName),
+		refusal: fmt.Sprintf("nvx refused to let %q keep a persistent profile in this project, which would keep its logins and settings between runs. That has not been trusted here.", toolName),
+		command: command,
+	}) {
 		auditLog(nvxHome, "trusted_tool_denied", map[string]string{"tool": toolName, "project": scope})
 		return false
 	}
 
-	// Re-read under the ledger's lock and add just this entry, so a concurrent
-	// nvx's additions survive; the copy loaded before the prompt is stale by
-	// now.
-	err := updateProjectGrants(nvxHome, scope, func(g *projectGrants) error {
-		if !g.hasTrustedTool(toolName) {
-			g.TrustedTools = append(g.TrustedTools, toolName)
+	if err := recordTrustedTool(nvxHome, scope, toolName); err != nil {
+		LogWarn("Failed to persist trusted-tool grant: %v", err)
+		auditLog(nvxHome, "trusted_tool_grant_persist_failed", map[string]string{"tool": toolName, "project": scope})
+		// The approval stands for this run even though it could not be
+		// recorded. A future run decides again.
+		return true
+	}
+	auditLog(nvxHome, "trusted_tool_granted", map[string]string{"tool": toolName, "project": scope, "by": "nvx_trust_yes"})
+	return true
+}
+
+// toolTrusted reports whether tool may keep a persistent profile in the project
+// at scope. A grant is recorded under the project's real path, so one recorded
+// from a terminal that spells the folder differently, in letter case or through
+// a symlink, still counts. One an earlier version recorded under the path as
+// spelled counts too.
+func toolTrusted(nvxHome, scope, tool string) bool {
+	if loadProjectGrants(nvxHome, scope).hasTrustedTool(tool) {
+		return true
+	}
+	real := canonicalPath(scope)
+	return real != filepath.Clean(scope) && loadProjectGrants(nvxHome, real).hasTrustedTool(tool)
+}
+
+// recordTrustedTool grants tool a persistent profile in the project at scope,
+// under the project's real path. The ledger is re-read under its lock and only
+// this entry added, so a concurrent nvx's additions survive.
+func recordTrustedTool(nvxHome, scope, tool string) error {
+	return updateProjectGrants(nvxHome, canonicalPath(scope), func(g *projectGrants) error {
+		if !g.hasTrustedTool(tool) {
+			g.TrustedTools = append(g.TrustedTools, tool)
 		}
 		return nil
 	})
-	if err != nil {
-		LogWarn("Failed to persist trusted-tool grant: %v", err)
-		auditLog(nvxHome, "trusted_tool_grant_persist_failed", map[string]string{"tool": toolName, "project": scope})
-		// The user's explicit approval stands for this run even though it
-		// couldn't be recorded; a future run will simply prompt again.
-		return true
-	}
-	auditLog(nvxHome, "trusted_tool_granted", map[string]string{"tool": toolName, "project": scope})
-	return true
 }

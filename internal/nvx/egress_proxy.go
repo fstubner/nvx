@@ -332,23 +332,27 @@ func allowKeysFor(hp hostPort) []string {
 // The loopback refusal has said what to do since it was written; the ordinary
 // denial -- much the commoner one -- printed the host and stopped, leaving a
 // reader who had never opened a policy file with nothing to act on.
-//
-// Not on the prompt-refused path below: someone who was asked and said no has
-// already decided, and telling them how to undo it is noise.
 func (p *EgressProxy) explainHowToAllowOnce(key string) {
-	p.denyHintOnce.Do(func() {
-		// A refusal detail rather than LogInfo: -q and --agent-mode hide LogInfo,
-		// and the callers that run with them are the ones that cannot ask.
-		LogRefusalDetail("%s", egressAllowHostRemedy(key))
-	})
+	req := egressWidening(key)
+	// Every refused host counts toward the exit code, and only the first is
+	// explained.
+	recordWideningRefusal(req.what)
+	p.denyHintOnce.Do(func() { refuseWidening(req) })
 }
 
-// egressAllowHostRemedy is the narrowest way to let one host through: the
-// policy line itself, for the host that was refused.
-func egressAllowHostRemedy(key string) string {
-	return fmt.Sprintf("If that is meant, add %q to isolation.network.allow_hosts, for example "+
-		`{"isolation":{"network":{"allow_hosts":[%q]}}}`+
-		". Adding one counts as loosening, so a project .nvx-policy.json naming it needs approval, and ~/.nvx/policy.json does not.", key, key)
+// egressWidening is a request to reach a host the allowlist does not name. The
+// remedy is `nvx allow-host`, which writes the allow_hosts line for a person.
+// It used to print the policy line itself and say ~/.nvx/policy.json needed no
+// approval, which told an agent outside the sandbox how to allow itself.
+//
+// key is safe to print as part of a command, because admit refuses a host that
+// is not a valid name or address before anything gets here (see
+// validEgressHost).
+func egressWidening(key string) wideningRequest {
+	return wideningRequest{
+		what:    "a connection to " + key,
+		command: "nvx allow-host " + key,
+	}
 }
 
 // admit decides whether the client may reach hp, and returns the addresses to
@@ -554,27 +558,36 @@ func (p *EgressProxy) allowRule(entry string) string {
 }
 
 // refuseLoopbackGrant reports a local service refused on the prompt path. See
-// the loopback refusal in admit.
+// the loopback refusal in admit. NVX_TRUST_YES does not approve one. The
+// contained process is what raises the request, and a policy entry is the only
+// way in that someone wrote down.
+//
+// No one-line command is offered, unlike for another host. The port is one the
+// contained code chose, and the narrow way to reach a local service is
+// --connect, for one run.
 func (p *EgressProxy) refuseLoopbackGrant(key string) {
 	LogWarn("Blocked egress to a local service: %s", key)
-	LogInfo("nvx does not offer local services through a prompt, because the contained process is what triggers it. "+
-		"If this is meant, add %q to isolation.network.allow_hosts in the project policy, or use --connect for one run.", key)
 	auditLog(p.nvxHome, "egress_deny_loopback_prompt", map[string]string{"host": key})
+	LogRefusalDetail("nvx does not let contained code ask for a service on your machine. If this is meant, use --connect for one run, or add %q to isolation.network.allow_hosts in the project policy.", key)
+	refuseWidening(wideningRequest{what: "a connection to a local service at " + key})
 }
 
 // refuseLinkLocalGrant reports a link-local address refused on the prompt path.
 // See the link-local refusal in admit. The remedy names allow_hosts alone,
 // because --connect reaches a service on this machine's loopback and nothing else.
+// Like a local service, it gets no one-line command and NVX_TRUST_YES does not
+// approve it.
 func (p *EgressProxy) refuseLinkLocalGrant(key string) {
 	LogWarn("Blocked egress to a link-local address: %s", key)
-	LogInfo("nvx does not offer link-local addresses, such as the cloud metadata endpoint, through a prompt, because the contained process is what triggers it. "+
-		"If this is meant, add %q to isolation.network.allow_hosts in the project policy.", key)
 	auditLog(p.nvxHome, "egress_deny_link_local_prompt", map[string]string{"host": key})
+	LogRefusalDetail("nvx does not let contained code ask for a link-local address, such as the cloud metadata endpoint. If this is meant, add %q to isolation.network.allow_hosts in the project policy.", key)
+	refuseWidening(wideningRequest{what: "a connection to a link-local address at " + key})
 }
 
-// askUnknownHost asks once per run whether key may be reached, and reports the
-// answer. The question names the host and port only, and nothing has been
-// looked up when it is asked.
+// askUnknownHost decides once per run whether key may be reached, and reports
+// the answer. It never asks. Only NVX_TRUST_YES approves, for this run.
+// Otherwise the refusal names the `nvx allow-host` command that allows it.
+// Nothing has been looked up when this runs.
 func (p *EgressProxy) askUnknownHost(key string) bool {
 	if !p.policy.Isolation.Network.PromptUnknown {
 		LogWarn("Blocked egress: %s", key)
@@ -590,9 +603,10 @@ func (p *EgressProxy) askUnknownHost(key string) bool {
 	}
 	p.prompted[key] = true
 
-	msg := fmt.Sprintf("Allow outbound connection to %s for the rest of this run?", key)
-	if !promptTrustBoundaryWithRemedy(msg, egressAllowHostRemedy(key)) {
+	req := egressWidening(key)
+	if !trustYesApproves(req) {
 		LogWarn("Blocked egress: %s", key)
+		refuseWidening(req)
 		auditLog(p.nvxHome, "egress_deny", map[string]string{"host": key})
 		return false
 	}
@@ -604,9 +618,9 @@ func (p *EgressProxy) askUnknownHost(key string) bool {
 	//
 	// Persisting is still available and is now only the deliberate form: write the
 	// host into isolation.network.allow_hosts, where it can be reviewed in a diff
-	// like every other policy decision.
+	// like every other policy decision. `nvx allow-host` writes it.
 	p.session[key] = true
-	auditLog(p.nvxHome, "egress_allow_prompted", map[string]string{"host": key})
+	auditLog(p.nvxHome, "egress_allow_prompted", map[string]string{"host": key, "by": "nvx_trust_yes"})
 	return true
 }
 

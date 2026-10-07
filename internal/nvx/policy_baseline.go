@@ -14,8 +14,8 @@ import (
 // policy set: MergePolicies honours a local typosquatting.enabled of false, a
 // lower release_age.min_age_hours, a higher vulnerabilities.min_severity, an
 // isolation.enabled of false, and every addition to a trusted-package or host
-// allowlist. The approve-once trust prompt stands in front of all of that, and
-// answering it is a decision the developer at the keyboard is allowed to make.
+// allowlist. Trusting the file, which `nvx trust` records, stands in front of
+// all of that, and it is a decision the developer is allowed to make.
 // That is the right default for someone running nvx on their own machine and the
 // wrong one for a machine whose baseline was set by somebody else, because the
 // person being asked is the person the baseline exists to constrain.

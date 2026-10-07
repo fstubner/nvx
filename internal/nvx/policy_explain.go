@@ -162,7 +162,7 @@ func explainPolicy(nvxHome, cwd string) (policyExplanation, error) {
 			exp.Effective = policy
 			return exp, nil
 		}
-		if policyLoosens(policy, candidate) && grants.PolicyPins[filepath.Clean(localPath)] != hash {
+		if policyLoosens(policy, candidate) && !policyPinned(nvxHome, grants, localPath, hash) {
 			exp.Issues = append(exp.Issues, projectPolicyIssue{
 				Path:   localPath,
 				Kind:   "ignored",

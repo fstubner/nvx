@@ -130,6 +130,10 @@ func runImport(source string, nvxHome string) int {
 	}
 	if !PromptYesNo(fmt.Sprintf("Download and install %d Node.js version(s) into nvx?", len(toInstall))) {
 		LogInfo("Nothing was installed.")
+		if agentModeFlag {
+			// --agent-mode refused to ask, and a refusal exits 77.
+			return exitRefused
+		}
 		return 0
 	}
 

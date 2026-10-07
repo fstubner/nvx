@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **`nvx trust` and `nvx allow-host` record the decisions nvx no longer asks
+  about.** `nvx trust` trusts the project policy files here that loosen
+  settings, at their current content, or only the file it is given. The
+  refusal prints it with `--hash`, so it trusts only the content that was
+  shown. The trust counts wherever the file applies, so a monorepo's root file
+  is trusted once for every workspace package below it, and the trust does not
+  depend on how the folder's path is spelled. `nvx trust --tool <name>` lets a
+  tool keep a persistent profile in the project. `nvx allow-host <host[:port]>` adds the host to `allow_hosts` in the
+  project's `.nvx-policy.json`, creating the file if needed, and trusts the
+  result. It refuses when that file loosens anything else nobody has trusted.
+  With `--global` it writes `~/.nvx/policy.json` instead. The port defaults to
+  443. nvx prints the right command whenever it refuses to widen the sandbox.
+  `nvx grants list` shows what is trusted, and `nvx grants reset` forgets it.
+
+* **`nvx doctor` warns when `NVX_YES`, `NVX_AGENT_MODE` or `NVX_TRUST_YES` is
+  set**, and says what each one turns off. They are usually set once, in a
+  shell profile or an agent's settings, and nothing in a later run shows they
+  are there. The warning does not change doctor's exit code.
+
 * **Contained installs work behind an `https://`, `socks5://` or `socks5h://`
   proxy.** Only an `http://` value in `HTTPS_PROXY` or `HTTP_PROXY` was used.
   Any other was ignored with a warning, and contained connections were made
@@ -72,6 +91,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+* **nvx never asks before widening the sandbox, and refuses instead.**
+  Running under a project `.nvx-policy.json` that loosens settings, reaching a
+  host the allowlist does not name, and giving a tool a persistent profile
+  were [y/N] questions whenever stdin was a terminal. An agent harness that
+  runs commands in a pseudo-terminal presents one, and the model can type y.
+  Measured 2026-10-07 in a Linux container, with a test that writes y into a
+  pseudo-terminal at every question. On the code before this change, a policy
+  setting `isolation.network.mode` to `open` was trusted, the tool profile was
+  granted and the unknown host was allowed. nvx now refuses all three. It
+  prints the `nvx trust` or `nvx allow-host` command a person runs in their
+  own terminal, and tells an automated agent to ask the person and not run it
+  itself. A command refused this way exits 77. That includes every command in
+  a project whose policy loosens settings and has not been trusted, which used
+  to run with the file ignored when nobody could answer. A contained command
+  that fails after nvx refused a host the allowlist does not name exits 77 as
+  well, and one that succeeds keeps its 0. A refused local service gets no
+  one-line command, since `--connect` is the narrow way to reach one. `NVX_TRUST_YES=true` still approves all three
+  without asking, so setting it hands those decisions to whatever sets the
+  environment.
+
+* **`--agent-mode` and `NVX_AGENT_MODE` refuse whatever would ask, and approve
+  nothing.** This is a breaking change. Both used to set `-y`, so an agent's
+  environment with `NVX_AGENT_MODE=1` turned the typosquat, release-age,
+  install-script and advisory checks into log lines. In agent mode nvx now
+  asks nothing, even at a terminal. It refuses, says why and what a person can
+  do, and exits 77, and the audit log records `check_refused` with
+  `by=agent_mode`. `-y`, `--yes` and `NVX_YES` still approve the checks, and
+  `-y -q` is what agent mode used to do. The policy line each refusal prints is
+  the narrower way to let one package through.
+
+* **Every check refusal ends with a paragraph for an automated agent.** The
+  refusals named `-y`, `NVX_YES` and `~/.nvx/policy.json` as the way past them,
+  and an agent outside the sandbox can use all three. Each refusal now ends by
+  telling an agent not to retry with `-y` or `NVX_YES` or edit the policy
+  itself, and to tell the person, followed by the policy line the person can
+  add. The release-age refusal first offers a version published before the
+  window, which an agent may pin itself. Remedies name `NVX_YES=true` before
+  `-y`, since it works through the shims and `-y` works only before the
+  command.
+
 * **`install.ps1` refuses an `nvx.exe` that is not signed by the nvx
   publisher.** The `.sha256` file comes from the same release page as the
   binary, and the build attestation is only checked when `gh` is installed and
@@ -121,6 +180,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   why and changes nothing. `nvx doctor` points at `nvx setup` for this.
 
 ### Fixed
+
+* **A `-y`, `--yes` or `--agent-mode` typed after a wrapped command is no
+  longer ignored in silence.** nvx reads its own flags only before the
+  command, so `npm install esbuild -y` gave npm the `-y`, and the
+  install-script check refused the install again with nothing to say why.
+  When a check now asks or refuses, nvx says the flag went to the command and
+  how to give it to nvx, as `NVX_YES=true npm ...` or `nvx -y npm ...`. A
+  `-y` that no check needed, such as npx's own, is passed on as before and not
+  mentioned.
 
 * **After `install.sh`, a login `sh` no longer stops at `~/.profile`.** The
   profile ran `eval "$(nvx env)"`, which prints bash syntax. On Debian and

@@ -158,10 +158,9 @@ func reportRefusalOverStdio(reason, pkg string) bool {
 // release that added this reporter.
 //
 // A helper rather than the same three lines twice, because the two must not
-// drift apart again. ensureProjectPolicyTrust returns an error only when a
-// policy file cannot be read -- a trust prompt that is declined skips the file
-// and returns nil -- so this reason is right for every error either path
-// produces, and no caller has to decide.
+// drift apart again. The one other error ensureProjectPolicyTrust returns is
+// errUntrustedProjectPolicy, which refusePolicyBeforeRun answers before this is
+// reached, so this reason is right for every error that gets here.
 func refuseUnreadablePolicy(err error) int {
 	LogError("Failed to load security policy: %v", err)
 	reportRefusalOverStdio("its security policy could not be read", "")
@@ -184,46 +183,58 @@ func remedyFor(reason string) string {
 	// and sent people advice about editing a policy nvx could not even read.
 	case strings.Contains(reason, "could not be read"):
 		return "nvx could not read its own security policy. Check it with `nvx doctor`."
+	// Widening the sandbox, which nvx never approves at a prompt. The command
+	// is on this server's error output, and only a person should run it.
+	case strings.Contains(reason, "has not been trusted"):
+		return "This would widen the sandbox, so nvx refuses rather than asking. A person runs the nvx trust command printed on this server's error output, in their own terminal, in the project folder. " +
+			agentWideningNote
 	case strings.Contains(reason, "cannot be run inside the sandbox"):
 		return "Run this outside the sandbox, or install the package into the project rather than globally."
 	// Before the general policy case. The narrow fix is a policy line, and the
 	// package name is not in the reason (see the note on reportRefusalOverStdio),
 	// so the line carries a placeholder.
 	case strings.Contains(reason, "disallows package install scripts"):
+		line := `{"install_scripts":{"trusted_packages":["<package>"]}}`
 		return "This is a policy decision rather than a warning, so approving prompts does not affect it. " +
 			"To install without running its scripts, pass --ignore-scripts. " +
 			"To let one package's install scripts run, add it to install_scripts.trusted_packages in ~/.nvx/policy.json, " +
-			`for example {"install_scripts":{"trusted_packages":["<package>"]}}. ` +
-			"To drop the rule for every package, set enforce_ignore_scripts to false."
+			"for example " + line + ". " +
+			"To drop the rule for every package, set enforce_ignore_scripts to false. " + agentRefusalNote(line)
 	case strings.Contains(reason, "security policy"):
-		return editPolicy
+		return editPolicy + " " + agentRefusalNote("")
 	// The reasons below come from a prompt, and each has a policy line that
 	// settles just that check. NVX_YES is named last: it approves every check for
-	// the server, not the one that stopped it.
+	// the server, not the one that stopped it. Each ends with the paragraph every
+	// check refusal ends with, since an agent can edit an MCP server's config.
 	case strings.Contains(reason, "typosquat"):
+		line := `{"typosquatting":{"trusted_packages":["<package>"]}}`
 		return "If the package name is right, add it to typosquatting.trusted_packages in ~/.nvx/policy.json, " +
-			`for example {"typosquatting":{"trusted_packages":["<package>"]}}. ` + mcpBlanketNote
+			"for example " + line + ". " + mcpBlanketNote + " " + agentRefusalNote(line)
 	case strings.Contains(reason, "release-age"):
-		return "Add the package to release_age.trusted_packages in ~/.nvx/policy.json, " +
-			`for example {"release_age":{"trusted_packages":["<package>","@scope/*"]}}, ` +
-			"or pin the command to a version you have already used. " + mcpBlanketNote
+		// Pinning comes first. It keeps every check, and an agent may do it itself.
+		line := `{"release_age":{"trusted_packages":["<package>","@scope/*"]}}`
+		return "Pin the command to a version you have already used, such as <package>@1.2.3, which an automated agent may do itself. " +
+			"Or add the package to release_age.trusted_packages in ~/.nvx/policy.json, " +
+			"for example " + line + ". " + mcpBlanketNote + " " + agentRefusalNote(line)
 	case strings.Contains(reason, "install scripts"):
+		line := `{"install_scripts":{"trusted_packages":["<package>"]}}`
 		return "Add the package to install_scripts.trusted_packages in ~/.nvx/policy.json, " +
-			`for example {"install_scripts":{"trusted_packages":["<package>"]}}. ` + mcpBlanketNote
+			"for example " + line + ". " + mcpBlanketNote + " " + agentRefusalNote(line)
 	case strings.Contains(reason, "known active vulnerability"):
+		line := `{"vulnerabilities":{"allowed_advisories":["GHSA-xxxx-xxxx-xxxx"]}}`
 		return "Add the advisory IDs nvx printed on this server's error output to vulnerabilities.allowed_advisories in ~/.nvx/policy.json, " +
-			`for example {"vulnerabilities":{"allowed_advisories":["GHSA-xxxx-xxxx-xxxx"]}}, ` +
-			`or set vulnerabilities.min_severity, for example {"vulnerabilities":{"min_severity":"high"}}. ` + mcpBlanketNote
+			"for example " + line + ", " +
+			`or set vulnerabilities.min_severity, for example {"vulnerabilities":{"min_severity":"high"}}. ` + mcpBlanketNote + " " + agentRefusalNote(line)
 	default:
 		// Registry or vulnerability-database lookups that failed: no policy
 		// setting waives those, so there is no narrow key to name.
 		return "A lookup nvx needs failed, and no policy setting waives that. Retry once the network is reachable. " +
 			"Setting NVX_YES=true in this server's environment proceeds without the lookup, and approves every other nvx check for it too. " +
-			"The full reason is on this server's error output and in nvx's audit log."
+			"The full reason is on this server's error output and in nvx's audit log. " + agentRefusalNote("")
 	}
 }
 
-// mcpBlanketNote ends a prompt-based remedy.
+// mcpBlanketNote follows the policy line in a prompt-based remedy.
 const mcpBlanketNote = "Setting NVX_YES=true in this server's environment would approve every nvx check for it, not only this one. " +
 	"The full reason is on this server's error output and in nvx's audit log."
 
