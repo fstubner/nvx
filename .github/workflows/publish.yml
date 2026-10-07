@@ -148,14 +148,19 @@ jobs:
         run: bash scripts/release/publish-scoop.sh "$TAG"
 
   # --- Winget (microsoft/winget-pkgs) -----------------------------------
-  # Forks microsoft/winget-pkgs under the token owner's account, generates a
-  # manifest folder from the release, opens a PR. Moderator approval lands
-  # it on the public catalog.
+  # Writes a manifest folder from the release with Komac and opens a pull
+  # request on microsoft/winget-pkgs from the token owner's fork. Moderator
+  # approval lands it on the public catalog.
   #
   # nvx.exe is checked first, as in the other three jobs: against its sidecar
   # and against the build provenance release.yml attested (verified_sha). Komac
-  # then downloads it for itself, and what it would submit has to carry the
-  # digest that was verified.
+  # then downloads it once for itself, and the manifests it writes have to
+  # carry the digest that was verified before anything is sent.
+  # scripts/release/submit-winget.ps1 does that and says what else it does.
+  #
+  # The package has to be in winget-pkgs already. The first version is
+  # submitted by hand (packaging/winget/README.md), and until it has merged
+  # this job stops with that message.
   winget:
     name: Winget
     runs-on: windows-latest
@@ -225,20 +230,20 @@ jobs:
       # This was vedantmgoyal9/winget-releaser, pinned by commit. Its own
       # steps then ran cargo-bins/cargo-binstall from that project's main
       # branch and `cargo binstall komac` for whatever Komac was newest, so
-      # the pin covered none of the code that held the token. The submission
-      # and the cleanup below are the two komac commands that action ran, with
-      # the same inputs. The digest is the one GitHub records for the asset,
-      # and it matches the release's own SHA256SUMS.
+      # the pin covered none of the code that held the token. The cleanup
+      # below is one of the two komac commands that action ran, with the same
+      # inputs. The digest is the one GitHub records for the asset, and it
+      # matches the release's own SHA256SUMS.
       #
       # Komac downloads nvx.exe for itself and puts the hash of what it got in
       # the manifest, so the digest verified above does not reach winget-pkgs
-      # unless the manifest carries it. A dry run writes the manifests Komac
-      # would send and sends nothing, and they are checked before the real run.
-      # The real run downloads the file again, so the manifest it sends is
-      # written out too and checked once it is done. A file replaced between the
-      # two runs then fails this step, with the pull request open for someone to
-      # close. That run writes nothing when an open pull request for this
-      # version already exists, and then there is nothing to check.
+      # unless the manifest carries it. submit-winget.ps1 has Komac write the
+      # manifests to a folder with `update --dry-run`, fails unless they carry
+      # the verified digest, and then sends that folder with `komac submit`.
+      # Komac downloads the file once, and a file replaced after the check
+      # cannot reach the pull request. This used to follow the dry run with
+      # `update --submit`, which downloaded the file a second time and opened
+      # the pull request before the manifest it sent could be checked.
       - name: Submit nvx to microsoft/winget-pkgs
         shell: pwsh
         env:
@@ -260,21 +265,13 @@ jobs:
             exit 1
           }
 
-          $installer = "https://github.com/fstubner/nvx/releases/download/$($env:TAG)/nvx.exe"
-
-          $dryRun = Join-Path $env:RUNNER_TEMP 'winget-dry-run'
-          & $komac update 'fstubner.nvx' --version $env:PACKAGE_VERSION --urls $installer --dry-run --output $dryRun
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ./scripts/release/check-winget-sha.ps1 -ManifestDirectory $dryRun -ExpectedSha256 $env:VERIFIED_SHA
-
-          $sent = Join-Path $env:RUNNER_TEMP 'winget-submitted'
-          & $komac update 'fstubner.nvx' --version $env:PACKAGE_VERSION --submit --urls $installer --output $sent
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (Test-Path $sent) {
-            ./scripts/release/check-winget-sha.ps1 -ManifestDirectory $sent -ExpectedSha256 $env:VERIFIED_SHA
-          } else {
-            Write-Host "Komac sent nothing, so there is nothing to check."
-          }
+          ./scripts/release/submit-winget.ps1 `
+            -Komac $komac `
+            -PackageIdentifier 'fstubner.nvx' `
+            -PackageVersion $env:PACKAGE_VERSION `
+            -InstallerUrl "https://github.com/fstubner/nvx/releases/download/$($env:TAG)/nvx.exe" `
+            -ExpectedSha256 $env:VERIFIED_SHA `
+            -WorkDirectory (Join-Path $env:RUNNER_TEMP 'winget-manifests')
           # Deletes the fork's branches whose pull requests have merged.
           & $komac cleanup --only-merged
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -32,8 +32,16 @@ Commands:
 `publish.yml`'s Winget job downloads a pinned release of
 [Komac](https://github.com/russellbanks/Komac), checks it against its SHA-256 and
 runs `komac update`, which adds a version to a package that is already in
-winget-pkgs. So you have to submit the FIRST version by hand with
-`wingetcreate`:
+winget-pkgs. The job looks for the package first
+(`scripts/release/submit-winget.ps1`). While `fstubner.nvx` is not there, it stops
+with a message that points here and sends nothing. Run it again once the first
+pull request has merged.
+
+`komac new` is Komac's command for a first version, and it cannot run in the job.
+In Komac 2.16.0 it asks for the install modes, success codes, upgrade behavior,
+commands and protocols with prompts that have no flag, and a prompt needs a
+terminal (`src/commands/new_version.rs`). So you have to submit the FIRST version by
+hand. `wingetcreate` does it, as below, and so does `komac new` at a terminal:
 
 ```powershell
 winget install Microsoft.WingetCreate
@@ -75,13 +83,23 @@ reach winget-pkgs under its own hash. The job therefore:
    other three jobs do. That checks the sidecar against the bytes and the
    bytes against the build provenance `release.yml` attested, and prints the
    digest.
-2. Runs `komac update --dry-run --output <dir>`, which writes the manifests it
-   would send and sends nothing, and fails unless they carry that digest
-   (`scripts/release/check-winget-sha.ps1`).
-3. Runs the real `komac update --submit --output <dir>`. Komac downloads the
-   file again for that, so the manifest it sends is checked against the same
-   digest once it is done. A file replaced between the two runs fails the job,
-   with the pull request already open for someone to close.
+2. Looks for `fstubner.nvx` in winget-pkgs, and stops if it is not there. Then it
+   looks for a pull request for this version in any state, as `komac update
+   --submit` does in CI, and ends without sending anything if there is one.
+   `komac submit` does not look, and a second run would open a second pull
+   request.
+3. Runs `komac update --dry-run --output <dir>`, which downloads the file once
+   and writes the manifests it would send, and fails unless they carry that
+   digest (`scripts/release/check-winget-sha.ps1`).
+4. Runs `komac submit <dir> --yes` on that same folder. It reads the files and
+   sends them. It downloads nothing, so a file replaced on the release page
+   after step 3 cannot reach the pull request, and nothing is sent unless step 3
+   passed. Komac reads the manifests into its own types and writes them back
+   out. It hoists the fields the installers share and sorts them, and it does
+   not touch `InstallerSha256`.
+5. Requires the output of `komac submit` to name the pull request it opened.
+   Komac exits 0 and sends nothing when the folder has no complete set of
+   manifests it can read.
 
 ## PackageVersion carries no `v`
 

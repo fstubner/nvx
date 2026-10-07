@@ -102,8 +102,11 @@ jobs:
         run: npm run check
       - name: Changelog dates
         run: npm run check:changelog
+      # Runs the script itself. `npm run test:a11y` is `npm run build &&` the
+      # script, and dist/ is already built above. The sweep reads the routes it
+      # scans from that dist/, so it checks the build the other steps checked.
       - name: Accessibility check
-        run: npm run test:a11y
+        run: node ./scripts/a11y.mjs
       - name: Rendered contrast sweep
         run: npm run check:contrast
 

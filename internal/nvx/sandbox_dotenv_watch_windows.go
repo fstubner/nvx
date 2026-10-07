@@ -89,6 +89,11 @@ type dotenvWatch struct {
 	// the launch's goroutine.
 	atLaunch atomic.Pointer[map[string]bool]
 
+	// afterBatch, when set, is called once everything one read returned has been
+	// handled. Only tests set it, to wait for the watch where they would
+	// otherwise poll for its effect. It must not block.
+	afterBatch func()
+
 	// mu orders issuing a read against stop's cancel. Without it a read issued
 	// just after the cancel would wait for good, and stop with it.
 	mu      sync.Mutex
@@ -159,6 +164,9 @@ func (w *dotenvWatch) run() {
 			return
 		default:
 			w.protect(w.dotenvFilesIn(w.buf[:n]))
+		}
+		if w.afterBatch != nil {
+			w.afterBatch()
 		}
 
 		w.mu.Lock()

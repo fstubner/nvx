@@ -186,6 +186,76 @@ for evil in \
   fi
 done
 
+# --- ci_verdict -----------------------------------------------------------
+#
+# release.yml refuses to build from a commit whose CI did not pass. It used to
+# look at every ci.yml run listed for the commit, so an old failed or cancelled
+# run kept blocking after a newer run of the same commit had passed. The
+# newest run decides now, and a newest run that failed or was cancelled still
+# blocks. These are the shapes `gh run list --json` gives.
+
+if ! command -v jq >/dev/null 2>&1; then
+  bad "jq is not installed, so ci_verdict cannot be tested"
+else
+  # One run, as gh prints it: id, creation time, status, conclusion.
+  run_json() {
+    printf '{"databaseId":%s,"createdAt":"%s","status":"%s","conclusion":"%s"}' "$1" "$2" "$3" "$4"
+  }
+  check_verdict() { # description, wanted, runs as a JSON array
+    local got
+    # jq failing on unreadable input is the case under test, so it must not end the run.
+    got="$(printf '%s' "$3" | ci_verdict 2>/dev/null)" || true
+    if [[ "$got" == "$2" ]]; then
+      ok "$1"
+    else
+      bad "$1: wanted '$2', got '$got'"
+    fi
+  }
+
+  T1=2026-10-07T10:00:00Z
+  T2=2026-10-07T11:00:00Z
+
+  check_verdict "no run yet" none "[]"
+  check_verdict "a queued run" running "[$(run_json 1 $T1 queued "")]"
+  check_verdict "a run in progress" running "[$(run_json 1 $T1 in_progress "")]"
+  check_verdict "a run that passed" passed "[$(run_json 1 $T1 completed success)]"
+  check_verdict "a run that failed" failed "[$(run_json 1 $T1 completed failure)]"
+  check_verdict "a run that was cancelled" failed "[$(run_json 1 $T1 completed cancelled)]"
+
+  # The reported case. An older run failed and a newer one passed.
+  check_verdict "an old failure, then a pass" passed \
+    "[$(run_json 2 $T2 completed success),$(run_json 1 $T1 completed failure)]"
+  check_verdict "an old cancellation, then a pass" passed \
+    "[$(run_json 2 $T2 completed success),$(run_json 1 $T1 completed cancelled)]"
+  check_verdict "the same, listed oldest first" passed \
+    "[$(run_json 1 $T1 completed failure),$(run_json 2 $T2 completed success)]"
+
+  # Strict. The newest run decides in the other direction too.
+  check_verdict "an old pass, then a failure" failed \
+    "[$(run_json 2 $T2 completed failure),$(run_json 1 $T1 completed success)]"
+  check_verdict "an old pass, then a cancellation" failed \
+    "[$(run_json 2 $T2 completed cancelled),$(run_json 1 $T1 completed success)]"
+  check_verdict "an old pass, then a run that timed out" failed \
+    "[$(run_json 2 $T2 completed timed_out),$(run_json 1 $T1 completed success)]"
+  check_verdict "a newest run that was skipped" failed "[$(run_json 1 $T1 completed skipped)]"
+
+  # Waiting wins over an old failure, so a newer run gets to finish.
+  check_verdict "an old failure, then a run in progress" running \
+    "[$(run_json 2 $T2 in_progress ""),$(run_json 1 $T1 completed failure)]"
+  check_verdict "an old pass, then a queued run" running \
+    "[$(run_json 2 $T2 queued ""),$(run_json 1 $T1 completed success)]"
+
+  # The same creation time. The larger run id is the newer run.
+  check_verdict "equal times, the larger id passed" passed \
+    "[$(run_json 7 $T1 completed success),$(run_json 6 $T1 completed failure)]"
+  check_verdict "equal times, the larger id failed" failed \
+    "[$(run_json 6 $T1 completed success),$(run_json 7 $T1 completed failure)]"
+
+  # Input jq cannot read gives no verdict, which the wait reads as no result yet.
+  check_verdict "empty input" "" ""
+  check_verdict "input that is not JSON" "" "not json"
+fi
+
 if [[ "$failures" -gt 0 ]]; then
   echo "${failures} failure(s)" >&2
   exit 1

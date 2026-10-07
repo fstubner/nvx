@@ -29,14 +29,19 @@ func dotenvIsProtected(t *testing.T, root, path string) bool {
 	return !dotenvNeedsProtection(acl.protected, acl.aces)
 }
 
-// TestWatchDotenvFilesProtectsFilesThatAppear runs the watch a contained launch
-// starts against a real project, granted the way a launch grants it. Dotenv
-// files created, replaced or moved in while it runs are protected. A package's
-// .env under node_modules and a template are left as they are.
-func TestWatchDotenvFilesProtectsFilesThatAppear(t *testing.T) {
-	nvxHome := tempDir(t)
-	project := tempDir(t)
-	outside := tempDir(t)
+// dotenvWatchBudget is how long the watch tests give Windows and the watch to
+// protect a file before they call it a hang. It is not the time protection
+// takes. Run 37621722930 logged 2 to 4 ms for each change on a hosted runner.
+// The budget is that long so a stalled runner is not mistaken for a watch that
+// never acts.
+const dotenvWatchBudget = 30 * time.Second
+
+// dotenvWatchProject returns an empty nvx home and a project granted the way a
+// launch grants it, with the project's final path.
+func dotenvWatchProject(t *testing.T) (nvxHome, project, root string) {
+	t.Helper()
+	nvxHome = tempDir(t)
+	project = tempDir(t)
 	capSID, err := scopeCapabilitySID(project)
 	if err != nil {
 		t.Fatal(err)
@@ -44,10 +49,24 @@ func TestWatchDotenvFilesProtectsFilesThatAppear(t *testing.T) {
 	if err := grantSandboxModify(capSID, project); err != nil {
 		t.Fatal(err)
 	}
-	root, err := finalPathOf(project)
+	root, err = finalPathOf(project)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return nvxHome, project, root
+}
+
+// TestWatchDotenvFilesProtectsFilesThatAppear runs the watch a contained launch
+// starts against a real project, granted the way a launch grants it. Dotenv
+// files created, replaced or moved in while it runs are protected. A package's
+// .env under node_modules and a template are left as they are.
+//
+// It looks again each time the watch says it has handled a batch of changes,
+// so how long Windows or the runner takes to deliver one cannot fail it.
+// TestWatchDotenvFilesEndToEnd covers the launch's own entry point with a clock.
+func TestWatchDotenvFilesProtectsFilesThatAppear(t *testing.T) {
+	nvxHome, project, root := dotenvWatchProject(t)
+	outside := tempDir(t)
 	write := func(p, s string) {
 		t.Helper()
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
@@ -57,43 +76,60 @@ func TestWatchDotenvFilesProtectsFilesThatAppear(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	waitProtected := func(what, p string, start time.Time) {
-		t.Helper()
-		for deadline := start.Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
-			if dotenvIsProtected(t, root, p) {
-				t.Logf("%s: protected %v after the change", what, time.Since(start).Round(time.Millisecond))
-				return
-			}
-		}
-		t.Fatalf("%s: %s was not protected within 5s", what, p)
-	}
 
-	w := watchDotenvFiles(nvxHome, project)
+	// What watchDotenvFiles does, with the hook set before the watch runs.
+	// startDotenvWatch has issued its first read by the time it returns, so
+	// every change below is reported.
+	w, err := startDotenvWatch(nvxHome, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Holds one signal, so a batch handled while the test is checking a file is
+	// still there for the next wait.
+	handled := make(chan struct{}, 1)
+	w.afterBatch = func() {
+		select {
+		case handled <- struct{}{}:
+		default:
+		}
+	}
+	go w.run()
 	defer w.stop()
 
+	waitProtected := func(what, p string) {
+		t.Helper()
+		start := time.Now()
+		hang := time.After(dotenvWatchBudget)
+		for !dotenvIsProtected(t, root, p) {
+			select {
+			case <-handled:
+			case <-hang:
+				t.Fatalf("%s: %s was not protected within %v", what, p, dotenvWatchBudget)
+			}
+		}
+		t.Logf("%s: protected %v after the change", what, time.Since(start).Round(time.Millisecond))
+	}
+
 	env := filepath.Join(project, ".env")
-	start := time.Now()
 	write(env, "API_KEY=1")
-	waitProtected("create .env", env, start)
+	waitProtected("create .env", env)
 
 	// Replace-on-save, through a temporary name that is a dotenv name and one
 	// that is not. The second reaches .env only by the rename.
 	for _, tmp := range []string{".env.tmp", "env.new"} {
 		write(filepath.Join(project, tmp), "API_KEY=replaced")
-		start = time.Now()
 		if err := os.Rename(filepath.Join(project, tmp), env); err != nil {
 			t.Fatal(err)
 		}
-		waitProtected("rename "+tmp+" over .env", env, start)
+		waitProtected("rename "+tmp+" over .env", env)
 	}
 
 	// A directory moved in from outside the project.
 	write(filepath.Join(outside, "app", ".env.local"), "API_KEY=2")
-	start = time.Now()
 	if err := os.Rename(filepath.Join(outside, "app"), filepath.Join(project, "app")); err != nil {
 		t.Fatal(err)
 	}
-	waitProtected("move in a directory holding .env.local", filepath.Join(project, "app", ".env.local"), start)
+	waitProtected("move in a directory holding .env.local", filepath.Join(project, "app", ".env.local"))
 
 	// Changes are reported in order, so once a file created after these is
 	// protected the watch has seen them too.
@@ -102,14 +138,36 @@ func TestWatchDotenvFilesProtectsFilesThatAppear(t *testing.T) {
 	write(dep, "X=1")
 	write(example, "API_KEY=")
 	last := filepath.Join(project, ".env.last")
-	start = time.Now()
 	write(last, "API_KEY=3")
-	waitProtected("create .env.last", last, start)
+	waitProtected("create .env.last", last)
 	for _, p := range []string{dep, example} {
 		if dotenvIsProtected(t, root, p) {
 			t.Errorf("%s was protected; it should stay as it is", p)
 		}
 	}
+}
+
+// TestWatchDotenvFilesEndToEnd starts the watch through watchDotenvFiles, as a
+// launch does, with nothing of the test's own between the project and Windows.
+// It polls for the result against dotenvWatchBudget, which is long enough that
+// only a watch that never acts runs it out.
+func TestWatchDotenvFilesEndToEnd(t *testing.T) {
+	nvxHome, project, root := dotenvWatchProject(t)
+	w := watchDotenvFiles(nvxHome, project)
+	defer w.stop()
+
+	env := filepath.Join(project, ".env")
+	if err := os.WriteFile(env, []byte("API_KEY=1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	for !dotenvIsProtected(t, root, env) {
+		if time.Since(start) > dotenvWatchBudget {
+			t.Fatalf("%s was not protected within %v", env, dotenvWatchBudget)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Logf("protected %v after the change", time.Since(start).Round(time.Millisecond))
 }
 
 // TestWatchHidesNewDotenvFromRunningProcess (NVX_PROBE=1) starts a contained
@@ -367,7 +425,7 @@ func TestWatchHidesAReplacedLaunchFileWithoutARecord(t *testing.T) {
 	if err := os.Rename(unrecorded+".tmp", unrecorded); err != nil {
 		t.Fatal(err)
 	}
-	for deadline := time.Now().Add(10 * time.Second); !dotenvIsProtected(t, root, unrecorded) && time.Now().Before(deadline); {
+	for deadline := time.Now().Add(dotenvWatchBudget); !dotenvIsProtected(t, root, unrecorded) && time.Now().Before(deadline); {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if !dotenvIsProtected(t, root, unrecorded) {
