@@ -71,6 +71,38 @@ func TestARuntimeUnderAShortNameHomeIsStillNvxManaged(t *testing.T) {
 	}
 }
 
+// A junction under versions is compared by where it leads. A file it reaches
+// in another folder is not nvx's, and neither is a path that cannot be
+// resolved. filepath.EvalSymlinks fails on a junction, and the path as given
+// was compared instead, so the outside file counted as a runtime nvx manages.
+func TestAJunctionUnderVersionsDoesNotMakeAnOutsideFileNvxManaged(t *testing.T) {
+	home := tempDir(t)
+	outside := tempDir(t)
+	nodeDir := filepath.Join(home, "versions", "node")
+	runtimeExe := filepath.Join(nodeDir, "v22.0.0", "node.exe")
+	for _, p := range []string{runtimeExe, filepath.Join(outside, "evil.exe")} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("MZ"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", filepath.Join(nodeDir, "sneaky"), outside).CombinedOutput(); err != nil {
+		t.Fatalf("mklink: %v %s", err, out)
+	}
+
+	if !isNvxManagedRuntimePath(home, runtimeExe) {
+		t.Errorf("%s is not seen as under the nvx home", runtimeExe)
+	}
+	if p := filepath.Join(nodeDir, "sneaky", "evil.exe"); isNvxManagedRuntimePath(home, p) {
+		t.Errorf("%s, reached through a junction to %s, is taken for a runtime nvx manages", p, outside)
+	}
+	if p := filepath.Join(nodeDir, "v23.0.0", "node.exe"); isNvxManagedRuntimePath(home, p) {
+		t.Errorf("%s does not exist and is taken for a runtime nvx manages", p)
+	}
+}
+
 // The uninstall refusal finds a process started from either spelling.
 func TestProcessesRunningFromMatchesEitherSpelling(t *testing.T) {
 	short, long := shortAndLongSpellings(t)

@@ -18,8 +18,13 @@ var procQueryFullProcessImageNameW = modKernel32.NewProc("QueryFullProcessImageN
 //
 // Both sides go through comparablePath. Windows reports an image path the way
 // the process was started, so a node.exe started by an 8.3 spelling was not
-// found under the long one.
+// found under the long one. An image whose path cannot be resolved is left
+// out, like one this user may not query.
 func processesRunningFrom(dir string) []runningProcess {
+	root, ok := comparablePath(dir)
+	if !ok {
+		return nil
+	}
 	const th32csSnapProcess = 0x00000002
 	const processQueryLimitedInformation = 0x1000
 	snap, _, _ := procCreateToolhelp32Snapshot.Call(uintptr(th32csSnapProcess), 0)
@@ -28,7 +33,6 @@ func processesRunningFrom(dir string) []runningProcess {
 	}
 	defer syscall.CloseHandle(syscall.Handle(snap))
 
-	root := comparablePath(dir)
 	var found []runningProcess
 	var entry processEntry32W
 	entry.Size = uint32(unsafe.Sizeof(entry))
@@ -45,7 +49,8 @@ func processesRunningFrom(dir string) []runningProcess {
 		if ok == 0 {
 			continue
 		}
-		if image := syscall.UTF16ToString(buf[:size]); isPathStrictlyUnder(comparablePath(image), root) {
+		image := syscall.UTF16ToString(buf[:size])
+		if resolved, ok := comparablePath(image); ok && isPathStrictlyUnder(resolved, root) {
 			found = append(found, runningProcess{Name: image, PID: entry.ProcessID})
 		}
 	}

@@ -681,7 +681,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   into nvx's folder for the sandbox, and pnpm from a version's `npm_global` was
   refused. Measured 2026-10-07 with a short alias of a local folder, the copy
   for Node 22.23.3 was 99 MB in 2024 files. Both spellings now compare equal,
-  and uninstall finds a `node.exe` started by either one.
+  and uninstall finds a `node.exe` started by either one. A path through a
+  junction is compared by where the junction leads, and a path nvx cannot
+  resolve counts as outside the home.
 
 ## [0.7.0] - 2026-10-06
 
