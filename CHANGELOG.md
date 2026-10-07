@@ -70,6 +70,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* **Abbreviated npm commands are contained and checked.** npm accepts any
+  unambiguous prefix of a command, and camelCase, so `npm exe` is `npm exec`,
+  `npm cre` is `npm create` and `npm installTest` is `npm install-test`. nvx
+  knew a fixed list of spellings, and every other one ran as your own code,
+  with no sandbox and no pre-install checks. Measured 2026-10-07 with npm
+  11.19.0 in a Linux container, with a canary file in the home directory,
+  `nvx npm exe --yes --package=cowsay -c "cat ~/canary.txt"` printed it. With
+  this change it runs contained and cannot. nvx now reads the command with npm's own rule, as the npm
+  releases bundled with Node.js 18 to 26 and npm 12 apply it, and contains an
+  npm command it does not recognise. pnpm's `uni`, `dislink`, `edit`,
+  `recursive <command>`, `with <version> <command>` and `runtime set`, Yarn 1's
+  `upgradeInteractive`, yarn's `workspace <name> <command>` and
+  `workspaces foreach <command>`, and bun's `r`, `uninstall` and `ci` ran as
+  your own code too, and are contained now.
+
+* **A project `.npmrc` with `ignore-scripts=true` no longer skips the
+  install-script check for yarn.** yarn does not read that setting. Measured
+  2026-10-07 in a container, Yarn 1.22.22, 2.4.3 and 3.8.7 ran a dependency's
+  postinstall under it, while nvx recorded the check as skipped. For yarn, nvx
+  now counts `--ignore-scripts`, and for Yarn 2 and later `--mode=skip-build`
+  and `enableScripts: false` in `.yarnrc.yml`, when `packageManager` names
+  Yarn 2 or later or `.yarnrc.yml` sets `yarnPath`.
+
+* **A version with no publish time is asked about by the release-age check.**
+  It passed unasked, so a registry that leaves a version out of its `time`
+  field let every release through the cooling-off window. nvx now asks, and
+  refuses when nobody can answer, as it does for a version inside the window.
+  `nvx policy check --online` reports it too. For a registry that sends no
+  publish times, list its packages in `release_age.trusted_packages`, or set
+  `release_age.enabled` to `false`.
+
+* **A package OSV lists as malicious is refused whatever approves prompts.**
+  `-y`, `--agent-mode` and `NVX_YES` approved a `MAL-` advisory like any other.
+  Measured 2026-10-07 in a container, `NVX_AGENT_MODE=1 nvx npm install
+  discord.dll` installed it despite `MAL-2025-18479` and exited 0. It is now
+  refused without a prompt, and only a `vulnerabilities.allowed_advisories`
+  entry naming that advisory lets it through. A pattern such as `"MAL-*"` and
+  `vulnerabilities.min_severity` do not.
+
+* **Short package names are no longer flagged as typosquats two edits from a
+  popular name.** `nvx npm install upm` was refused non-interactively as a
+  typosquat of `pnpm`, though upm had 8,842 weekly downloads. For a name of
+  four characters or fewer, the check now counts one edit, two swapped
+  letters, or characters added around the popular name. Measured 2026-10-07
+  against the 2,000-name popular list with that day's download counts. A
+  random sample of 4,000 npm names of four characters or fewer near a popular
+  name held 195 with at least 1,000 weekly downloads, and 140 of those were
+  flagged, now 39. Of 874 npm-high-impact names ranked below the top 2,000
+  and near one of them, 40 were flagged, now 19. Of 301 names from OSV's
+  malicious-package records that are one edit, one swap, or a one- or
+  two-character affix from a popular name, 298 were flagged before and after.
+
 * **pnpm runs inside the Windows sandbox on a machine that never ran
   `nvx setup`.** pnpm loads a module that resolves the temp directory with
   Node's synchronous `realpath` as soon as it starts. Without a drive-root
@@ -105,12 +157,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entries. While the run lasts it watches the project's folders and covers
   each `.env` that is created, moved in, or replaced by your editor or
   `git checkout` within a few milliseconds. A process that reads the file in
-  that moment can still see it. A contained process that creates a `.env`
-  itself keeps the file it has open, but cannot open it again, rename it or
-  delete it. If the watch cannot start, the run says so and goes on with the
-  launch's protection. On macOS the Seatbelt profile refuses reading and writing those
-  names anywhere, so a contained tool cannot create a `.env` there either.
-  Windows is covered by the entry below.
+  that moment can still see it. A contained process cannot get around this by
+  making its own user namespace, because nvx stops it creating one. If the
+  machine runs out of file-watch slots, nvx searches the project again every
+  two seconds so a `.env` in a folder it could not watch is still covered. A
+  contained process that creates a `.env` itself keeps the file it has open, but
+  cannot open it again, rename it or delete it. If the watch cannot start, the
+  run says so and goes on with the launch's protection. On macOS the Seatbelt
+  profile refuses reading and writing those names anywhere, so a contained tool
+  cannot create a `.env` there either. Windows is covered by the entry below.
 
 * **A contained install on Windows can no longer read the project's `.env`
   files.** At each contained launch nvx now changes the permissions of the
@@ -135,6 +190,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Past that it warns once and leaves the rest readable in the sandbox, so a
   contained process that creates thousands cannot make nvx rewrite its record
   without end.
+
+* **When a host refuses the sandbox its namespaces on Linux, the message now
+  says what happened and what to do.** On default Docker and AppArmor-hardened
+  Ubuntu the kernel refuses the sandbox its user and network namespaces, so a
+  contained command fails closed and does not run. That part is right, but the
+  message was `Landlock sandbox execution failed: fork/exec ...: operation not
+  permitted`, which named neither the cause nor a fix. nvx now says it could not
+  create the sandbox, names the AppArmor restriction that usually causes it, and
+  points to `nvx doctor` for how to fix it or `--no-sandbox` to run without
+  containment. The command still does not run.
 
 * **On Windows, `yarn` classic installs in a project under your user profile
   even when you have a `~/.yarnrc` or `~/.npmrc`.** yarn reads those files from

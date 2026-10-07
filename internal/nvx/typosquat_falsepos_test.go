@@ -58,3 +58,36 @@ func TestDistanceAcrossShortNamesIsNotSimilarity(t *testing.T) {
 		}
 	}
 }
+
+// Two edits inside a name of four characters or fewer are not a typo, and the
+// shapes real typosquats of short names take still count.
+//
+// `nvx npm install upm` was refused non-interactively until 2026-10-07 as a
+// typosquat of pnpm. upm is a package manager with 8,842 weekly downloads that
+// day, against pnpm's 245,213,442, so the ratio test could not tell it from a
+// squat, and the name is two edits from pnpm's four letters. The squat shapes
+// below come from OSV's malicious-package records for npm.
+func TestTwoEditsInsideAShortNameAreNotATyposquat(t *testing.T) {
+	downloads := map[string]int{
+		"upm": 8842, "pnpm": 245213442,
+		"jest": 56822254, "pako": 146865787, "uuid": 200000000, "glob": 300000000,
+	}
+	orig := weeklyDownloads
+	t.Cleanup(func() { weeklyDownloads = orig })
+	weeklyDownloads = func(name string) (int, error) { return downloads[name], nil }
+	popular := []string{"pnpm", "jest", "pako", "uuid", "glob"}
+
+	if got := CheckTyposquattingAuthority("upm", popular, 2); got != "" {
+		t.Errorf("upm, with 8,842 weekly downloads, was flagged as a typosquat of %q", got)
+	}
+	for name, want := range map[string]string{
+		"jestjs": "jest", // two characters added
+		"pako-1": "pako",
+		"uiud":   "uuid", // neighbouring letters swapped
+		"gloob":  "glob", // one edit
+	} {
+		if got := CheckTyposquattingAuthority(name, popular, 2); got != want {
+			t.Errorf("%s was not flagged as a typosquat of %s (got %q)", name, want, got)
+		}
+	}
+}

@@ -403,12 +403,42 @@ const popularityFloor = 50000
 // suggestion whose distance is not smaller than the word -- and this is the same
 // rule applied to package names, where the consequence of getting it wrong is a
 // refused install rather than an unhelpful hint.
+//
+// Where either name has four characters or fewer, two edits count only when
+// they add characters around the shorter name, as `jestjs` does to `jest`.
+// One edit, or two neighbouring letters swapped, still counts. Two edits
+// inside a short name rewrite half of it, and short names sit that close by
+// chance. `upm`, a package manager with 8,842 weekly downloads, was refused as
+// a typosquat of `pnpm`. Measured 2026-10-07 against the 2,000-name popular
+// list, with each package's weekly downloads that day. Of 195 established
+// short names (a random sample of npm names of four characters or fewer near
+// a popular name, kept where they had 1,000 or more weekly downloads), 140
+// were flagged and 39 are now. Of the 301 npm names in OSV's malicious-package
+// records that are one edit, one swap or a one- or two-character affix from a
+// popular name, 298 were flagged before and after.
 func plausibleTypo(a, b string, dist int) bool {
-	shorter := len(a)
-	if len(b) < shorter {
-		shorter = len(b)
+	shorter, longer := a, b
+	if len(b) < len(a) {
+		shorter, longer = b, a
 	}
-	return dist < shorter
+	if dist >= len(shorter) {
+		return false
+	}
+	return len(shorter) > 4 || dist == 1 || adjacentSwap(a, b) || strings.Contains(longer, shorter)
+}
+
+// adjacentSwap reports whether b is a with two neighbouring characters
+// swapped, `axois` for `axios`, which Levenshtein distance counts as two
+// edits.
+func adjacentSwap(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	i := 0
+	for i < len(a) && a[i] == b[i] {
+		i++
+	}
+	return i+1 < len(a) && a[i] == b[i+1] && a[i+1] == b[i] && a[i+2:] == b[i+2:]
 }
 
 // NpmDownloadsResponse represents the structure returned by api.npmjs.org

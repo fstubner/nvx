@@ -317,7 +317,11 @@ func checkProjectReleaseAge(policy Policy, deps []projectDependency, result *pol
 			continue
 		}
 		checked++
-		if publishAgeShouldWarn(pubTime, window, now) {
+		// No publish time is an unknown age, which is reported as the install
+		// check asks about it. It used to pass.
+		if pubTime.IsZero() {
+			add("release_age", "%s has no publish time on the registry, so its age against the %d hour release_age window is unknown", dep.Name, window)
+		} else if publishAgeShouldWarn(pubTime, window, now) {
 			add("release_age", "%s was published within the %d hour release_age window", dep.Name, window)
 		}
 	}

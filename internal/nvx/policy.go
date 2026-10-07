@@ -168,7 +168,15 @@ func (p Policy) SeverityFloor() (int, bool) {
 // Fail-closed twice over: an advisory nvx could not rate blocks whatever the
 // floor says, and a policy with no floor blocks everything, which is the
 // behaviour that existed before a floor could be set.
+//
+// A known-malicious package (see isMaliciousAdvisory) blocks unless an entry
+// names that advisory exactly. The floor never lets one through, and neither
+// does a pattern such as "MAL-*", because a severity or a pattern is not a
+// judgement about one malicious package.
 func (p Policy) BlocksInstall(v OSVVuln) bool {
+	if isMaliciousAdvisory(v.ID) {
+		return !p.namesAdvisory(v.ID)
+	}
 	if p.IsAllowedAdvisory(v.ID) {
 		return false
 	}
@@ -549,6 +557,26 @@ func (p Policy) InstallScriptsTrusted(pkgName string) bool {
 // this OSV advisory.
 func (p Policy) IsAllowedAdvisory(advisoryID string) bool {
 	return policyListMatches(p.Vulnerabilities.AllowedAdvisories, advisoryID)
+}
+
+// namesAdvisory reports an allowed_advisories entry that is this advisory's ID,
+// not a pattern matching it.
+func (p Policy) namesAdvisory(advisoryID string) bool {
+	id := strings.TrimSpace(advisoryID)
+	for _, a := range p.Vulnerabilities.AllowedAdvisories {
+		if strings.EqualFold(strings.TrimSpace(a), id) {
+			return true
+		}
+	}
+	return false
+}
+
+// isMaliciousAdvisory reports an OSV advisory that says the package is
+// malicious, a MAL- record from the OpenSSF malicious-packages feed. Such a
+// package is its own payload, which is a different finding from a
+// vulnerability someone may have assessed.
+func isMaliciousAdvisory(id string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(id)), "MAL-")
 }
 
 // policyListMatches compares one value against a list of literals and globs,
