@@ -134,15 +134,19 @@ $env:NVX_YES = "true"
 
 # Can this host create an AppContainer at all? GitHub-hosted Windows runners could
 # not until 2026-09-21 (see the sibling smoke script). Probe once and skip with that
-# reason, so a host that refuses is not reported as a product failure.
+# reason, so a developer machine that refuses is not reported as a product failure.
+# On GitHub Actions the refusal is a failure, for the reason the sibling gives.
 $probe = (Invoke-NativeCapture $nvx @('shim', 'node', '-e', 'process.exit(0)')).Output
 if ($probe -match 'AppContainer launch failed') {
     # Only the two shapes a HOST refusal takes, the same narrowed test as
     # sandbox-enforcement-windows.ps1, which explains it. Any other launch
     # failure is a regression and fails here.
     if ($probe -match 'Access is denied' -or $probe -match 'The system cannot find the file specified') {
-        Write-Host "This host cannot create AppContainer children; skipping the egress assertions."
         Write-Host ("  " + $probe.Trim())
+        if ($env:GITHUB_ACTIONS -eq 'true') {
+            Write-Error "this runner cannot create AppContainer children, so the egress assertions did not run. On GitHub Actions that is a failure, because a pass would verify nothing."
+        }
+        Write-Host "This host cannot create AppContainer children; skipping the egress assertions."
         exit 0
     }
     Write-Host ("  " + $probe.Trim())

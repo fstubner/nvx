@@ -121,10 +121,10 @@ launched a live contained process skipped there. Since PR #52 they launch them.
 In run 37244525606 the enforcement script and the probe step both passed
 (the probe step had 8 skips, none of them a refusal to launch).
 
-The enforcement
-script still detects a refused launch and skips, so a runner image that refuses
-again shows up as a skip. The by-hand run on a real machine stays part of the
-release checklist.
+The enforcement script detects a refused launch. On a developer machine it
+skips. On GitHub Actions it fails, as do both smoke scripts and the probe step,
+so a runner image that refuses again turns CI red. The by-hand run on a real
+machine stays part of the release checklist.
 
 **A Windows runner with broken sockets calls for a re-run.** Seen on
 2026-09-03, `listen tcp 127.0.0.1:0: socket: An operation was attempted on

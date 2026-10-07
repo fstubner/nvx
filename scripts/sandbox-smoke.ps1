@@ -107,16 +107,24 @@ if ($installCode -ne 0 -or $defaultCode -ne 0) {
 # Can this host create an AppContainer at all? GitHub-hosted Windows runners could
 # not until 2026-09-21: CreateProcess returned "Access is denied" for every
 # executable, including cmd.exe (measured in CI run 32077425413). Probing once and
-# skipping with that reason keeps a host that refuses from being reported as a
-# product failure -- while still failing normally everywhere the sandbox does work.
+# skipping with that reason keeps a developer machine that refuses from being
+# reported as a product failure -- while still failing normally everywhere the
+# sandbox does work.
+#
+# On GitHub Actions the refusal is a failure. The runners launch AppContainers now,
+# and a skip there is a green step that asserted nothing, as the blanket `exit 0`
+# described above did on every run.
 $probe = (Invoke-NativeCapture $nvx @('shim', 'node', '-e', 'process.exit(0)')).Output
 if ($probe -match 'AppContainer launch failed') {
     # Only the two shapes a HOST refusal takes, the same narrowed test as
     # sandbox-enforcement-windows.ps1, which explains it. Any other launch
     # failure is a regression and fails here.
     if ($probe -match 'Access is denied' -or $probe -match 'The system cannot find the file specified') {
-        Write-Host "This host cannot create AppContainer children; skipping the containment assertions."
         Write-Host ("  " + $probe.Trim())
+        if ($env:GITHUB_ACTIONS -eq 'true') {
+            Write-Error "this runner cannot create AppContainer children, so the containment assertions did not run. On GitHub Actions that is a failure, because a pass would verify nothing."
+        }
+        Write-Host "This host cannot create AppContainer children; skipping the containment assertions."
         exit 0
     }
     Write-Host ("  " + $probe.Trim())
