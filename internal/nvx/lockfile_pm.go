@@ -174,26 +174,31 @@ func pmLockTargets(lock pmLockfile, platform nodePlatform, dir string) []verifyT
 	return targets
 }
 
-// workspaceMemberSpecs reads the dependencies of each workspace member that
-// package.json's workspaces field names, for a lockfile that does not record
-// them. A pattern is matched as filepath.Glob matches it, so ** is one folder.
-func workspaceMemberSpecs(dir string, m manifestDeps) []string {
-	raw := strings.TrimSpace(string(m.Workspaces))
-	if raw == "" || raw == "null" {
+// workspacePatterns reads package.json's workspaces field, which is a list of
+// patterns or an object holding them as "packages".
+func workspacePatterns(raw json.RawMessage) []string {
+	if s := strings.TrimSpace(string(raw)); s == "" || s == "null" {
 		return nil
 	}
 	var patterns []string
-	if json.Unmarshal(m.Workspaces, &patterns) != nil {
+	if json.Unmarshal(raw, &patterns) != nil {
 		var obj struct {
 			Packages []string `json:"packages"`
 		}
-		if json.Unmarshal(m.Workspaces, &obj) != nil {
+		if json.Unmarshal(raw, &obj) != nil {
 			return nil
 		}
 		patterns = obj.Packages
 	}
+	return patterns
+}
+
+// workspaceMemberSpecs reads the dependencies of each workspace member that
+// package.json's workspaces field names, for a lockfile that does not record
+// them. A pattern is matched as filepath.Glob matches it, so ** is one folder.
+func workspaceMemberSpecs(dir string, m manifestDeps) []string {
 	var specs []string
-	for _, p := range patterns {
+	for _, p := range workspacePatterns(m.Workspaces) {
 		if strings.HasPrefix(p, "!") {
 			continue
 		}

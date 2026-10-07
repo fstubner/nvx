@@ -103,6 +103,13 @@ func verifyBeforeRun(req verifyRequest) (int, string, string) {
 	// The command as the package manager reads it, `npm exe` as `npm exec`. npm's
 	// own resolution step is still given the arguments as typed.
 	args, _ := readCommand(req.pmCmd, req.pmArgs)
+	// A tool already in node_modules/.bin is run and not fetched, so there is no
+	// package to check. The checks asked about its install scripts, and denied
+	// the run when nobody could answer.
+	if runsProjectBin(req.pmCmd, args) {
+		LogDetail("%s runs a tool that is already in node_modules/.bin, so nothing is fetched and no package is checked.", req.pmCmd)
+		return 0, "", ""
+	}
 	var targets []verifyTarget
 	if strings.EqualFold(req.pmCmd, "npm") {
 		resolved, code, reason := npmResolvedTargets(req, args, platform)

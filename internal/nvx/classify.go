@@ -35,7 +35,9 @@ func (c invocationClass) String() string {
 
 // executorCommands are ad-hoc tool runners: they fetch and execute a package
 // that was not explicitly installed into the project, so every invocation is
-// untrusted-code-by-default regardless of subcommand.
+// untrusted-code-by-default regardless of subcommand. The exception is a tool
+// already in the project's node_modules/.bin, which they run without fetching
+// anything (see runsProjectBin).
 //
 // Only the commands nvx actually shims. `uvx` and `pyx` were listed here, and
 // `uv`/`deno` had their own branches below, left behind when the Deno, Go and
@@ -405,7 +407,8 @@ func hasAuditFix(args []string) bool {
 // arguments (see hasInstallVerb) — not just whether the first non-flag
 // argument happens to be one, since a preceding value-taking flag this
 // classifier doesn't recognize would otherwise let an install slip through
-// uncontained.
+// uncontained. A runner that only starts a tool already in the project's
+// node_modules/.bin is your code (see runsProjectBin).
 func classifyInvocation(cmd string, args []string) invocationClass {
 	// `corepack pnpm add x` and `node .../npm-cli.js install x` are classified
 	// as the package-manager command they run, and `npm exe` as `npm exec`.
@@ -413,13 +416,15 @@ func classifyInvocation(cmd string, args []string) invocationClass {
 	lower := strings.ToLower(cmd)
 	args, knownSafe := readCommand(lower, args)
 
-	if executorCommands[lower] {
-		return classAdHocTool
-	}
-	// The same fetch-and-run operation spelled as a subcommand (npm exec,
-	// pnpm dlx, bun x, npm create). Checked before the install verbs because it
-	// is the stronger classification and some spellings overlap.
-	if hasExecutorVerb(lower, args) || commandVerbIndex(args, adHocCommandVerbs[lower]...) >= 0 {
+	// npx and bunx, and the same fetch-and-run operation spelled as a subcommand
+	// (npm exec, pnpm dlx, bun x, npm create). Checked before the install verbs
+	// because it is the stronger classification and some spellings overlap.
+	if executorCommands[lower] || hasExecutorVerb(lower, args) || commandVerbIndex(args, adHocCommandVerbs[lower]...) >= 0 {
+		// A tool that is already in node_modules/.bin is run and not fetched. It is
+		// the project's own code, as it is through `npm run`.
+		if runsProjectBin(lower, args) {
+			return classYourCode
+		}
 		return classAdHocTool
 	}
 	if lower == "npm" && fetchesRemoteSource(args) {
