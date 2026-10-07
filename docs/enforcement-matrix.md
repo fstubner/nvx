@@ -950,10 +950,19 @@ provider mounts the project as it is.
   `EROFS`, a rename with `EBUSY` and a hard link with `EXDEV`. The target runs
   as root in its user namespace, so the supervisor drops `CAP_DAC_OVERRIDE` and
   `CAP_DAC_READ_SEARCH` from it, which would read past the mode, and
-  `CAP_SYS_ADMIN`, which would unmount the mask. A symbolic link named `.env` is
-  followed, and the file it names is covered. `TestContainedProcessCannotReadDotenvFiles`
-  covers this in the privileged CI step, and `scripts/sandbox-enforcement-linux.sh`
-  on the runner.
+  `CAP_SYS_ADMIN`, which would unmount the mask. The target could otherwise make
+  a user namespace of its own, where it holds `CAP_SYS_ADMIN` again and can build
+  a mount namespace the run-time masks never reach. The supervisor stops that by
+  writing 0 to `/proc/sys/user/max_user_namespaces` before Landlock keeps `/proc`
+  read-only, and by dropping `CAP_SYS_RESOURCE`, so the target cannot create one
+  or raise the limit back. The limit is checked when the kernel makes the
+  namespace, so it covers `clone3` as well, which a seccomp filter cannot inspect.
+  A tool that runs its own sandbox from a user namespace, such as Chromium under
+  `--strict`, cannot do so and has to run with that tool's `--no-sandbox`. A
+  symbolic link named `.env` is followed, and the file it names is covered.
+  `TestContainedProcessCannotReadDotenvFiles` covers the masking in the privileged
+  CI step, `TestContainedProcessCannotCreateUserNamespace` covers the namespace
+  block, and `scripts/sandbox-enforcement-linux.sh` runs on the runner.
 
   A file created during the run, or one an editor or git replaces from outside,
   is covered too. A thread of the supervisor joins the target's mount namespace
@@ -962,10 +971,17 @@ provider mounts the project as it is.
   2026-10-07 on WSL2 kernel 6.18 in a privileged container, the mask landed
   between 0.2 ms and 3.9 ms after the change, and in every run a process reading
   the file in a loop read it before then. A process that created the file keeps the descriptor
-  it opened. If the watcher cannot start, the run says so and carries on with the
-  launch's masks. `TestContainedProcessCannotReadDotenvFilesCreatedDuringRun`
-  covers a created file, a replaced `.env` and a moved-in folder, and the
-  enforcement script covers a file the contained process creates itself.
+  it opened. If the machine's inotify watch limit is reached and a directory
+  cannot be watched, the watcher searches the whole project again every two
+  seconds and masks what it finds, so a file in an unwatched folder is covered
+  within that window. Measured the same day, one such search of a 5,400-entry
+  project took about 16 ms. If the watcher cannot start at all, the run says so
+  and carries on with the launch's masks.
+  `TestContainedProcessCannotReadDotenvFilesCreatedDuringRun` covers a created
+  file, a replaced `.env` and a moved-in folder,
+  `TestContainedProcessStillMasksDotenvAfterWatchExhaustion` covers a file
+  created after the watch limit is reached, and the enforcement script covers a
+  file the contained process creates itself.
 - **macOS** denies `file-read-data` and `file-write*` on these names anywhere
   on disk, after the profile's allows, `node_modules` included. Writes are
   denied because a process that could rename or hard-link `.env` could read it

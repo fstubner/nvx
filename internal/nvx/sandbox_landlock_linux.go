@@ -452,6 +452,13 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	} else {
 		LogWarn("Could not give the sandbox its own /proc (%v); it stays denied, and a runtime that reads it (Bun) will not run contained.", mountNSErr)
 	}
+	// Stop the target creating a user namespace of its own, which it could
+	// otherwise use to escape the run-time .env watcher. Before Landlock, which
+	// then keeps /proc read-only. See denyNestedUserNamespaces.
+	if err := denyNestedUserNamespaces(); err != nil {
+		LogError("Could not stop the sandbox creating nested user namespaces (fail-closed): %v", err)
+		return 1
+	}
 	// The repository's git metadata, read-only, before Landlock refuses mounts.
 	if err := mountGitMetadataReadOnly(workDir, mountNSErr); err != nil {
 		LogError("Could not make this repository's .git read-only for the sandbox (fail-closed): %v", err)
