@@ -141,7 +141,7 @@ func applyProjectGrants(config SandboxConfig, sid uintptr, scope, guestHome, wor
 		// reset` deleted the sandbox's write access to the user's own project while
 		// reporting it had withdrawn a read/execute permission.
 		intended := planReadExecRecords(ledger.ReadExecGrants, config.ReadExecRoots, scopeCaps)
-		if len(intended) != beforeCount || len(revokedNow) > 0 {
+		if len(intended) != beforeCount || len(revokedNow) > 0 || gainedIdentity(ledger.ReadExecGrants, intended) {
 			// Under the ledger's lock, the freshly loaded entries ARE the stored ones
 			// mergeLedgerForSave reconciles against; the separate unlocked re-read
 			// this used to do was an approximation of the same thing.
@@ -427,6 +427,11 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 		LogError("%v", err)
 		return 1, refusedToStart("the command could not be staged where the sandbox can run it")
 	}
+	packageSID, _ := appContainerSidToString(sid)
+	if script := unreadablePackageManagerScript(config.Command, config.Args, sandboxReaderSIDs(packageSID, scopeCaps)); script != "" {
+		LogError("AppContainer executable access failed: %v", notReadableScriptError(script))
+		return 1, refusedToStart("a package manager's script is outside what the sandbox can read")
+	}
 
 	cleanEnv = containedEnv(cleanEnv, guestHome, cmdPath, config.NvxHome)
 
@@ -556,6 +561,7 @@ func platformLaunchNative(config SandboxConfig, guestHome, workDir, cmdPath stri
 	// bun's own error for this is a bare EBADF. See sandbox_bun_ebadf_hint.
 	if exitCode != 0 {
 		noteBunOffSystemDrive(config.Command, config.Args, workDir, exitCode)
+		notePnpmLimits(config.Command, config.Args, exitCode)
 	}
 	if launchDir != workDir {
 		exitCode = reportRelocatedWrites(config.Command, launchDir, exitCode)

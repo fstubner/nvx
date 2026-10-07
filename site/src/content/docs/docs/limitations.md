@@ -114,14 +114,48 @@ and the evidence and measurements for each platform are in the
   during a contained install.
   pnpm 12 stops with `Access is denied. (os error 5)` as it reads its `--dir`
   argument, and `next build` with `failed to canonicalize jsc.baseUrl`. Run
-  these with `nvx --no-sandbox`, or use pnpm 11, which runs contained.
+  these with `nvx --no-sandbox`. For pnpm, an earlier version runs contained.
+  `npm install -g pnpm` and corepack choose pnpm 12 today, unless the project's
+  `packageManager` field in package.json names another version, so pin one
+  there. Installs with install scripts have a limit of their own, in the next
+  item.
+- **pnpm 9, 10 and 11 stop with a Rust panic when an install includes a package
+  that has install scripts.** pnpm copies such a package into `node_modules`
+  with a native copy-on-write call, whatever `package-import-method` says, and
+  the call asks Windows about the drive's root folder, which the sandbox cannot
+  open. pnpm prints `Failed to get source volume info: ... Access is denied.`
+  and exits 127. Measured with pnpm 9.15.9, 10.34.6 and 11.28.5 installing
+  bufferutil 4.1.0. With pnpm 10.34.6, `--ignore-scripts`,
+  `package-import-method=copy` and `side-effects-cache=false` each left the
+  panic as it was. A workspace is not the cause, though it can look like it. A
+  workspace root named `ws` at version 1.0.0 gets bufferutil and utf-8-validate
+  from a built-in extension that pnpm 10 has for the npm package `ws` below
+  7.2.1. Run the install with `nvx --no-sandbox pnpm install`, or install with
+  npm.
 - **A `pnpm` or `yarn` kept outside nvx's folders does not run contained.** That
   covers a standalone `pnpm.exe` and the global folder of another Node install,
   such as `%APPDATA%\npm`. nvx copies only Node and Bun installs for the sandbox,
   because a copy is readable by every sandbox, and the run is refused with a
   message saying so. Install the tool with `nvx --no-sandbox npm install -g pnpm`
   under a Node that nvx manages, or add its folder to
-  `isolation.filesystem.allow_read_exec`, and nvx runs it where it is.
+  `isolation.filesystem.allow_read_exec`, and nvx runs it where it is. The same
+  refusal covers `node` started on such a tool's script, which is what npm's own
+  `pnpm` launchers do when their folder is ahead of nvx's shims on `PATH`. It
+  names the package's folder, such as `%APPDATA%\npm\node_modules\pnpm`, for
+  `allow_read_exec`.
+- **`curl.exe` fails TLS with `CRYPT_E_REVOCATION_OFFLINE`.** curl.exe uses
+  Windows' own TLS library, schannel, which asks the certificate authority
+  whether a server's certificate was revoked. It makes that request itself,
+  without the proxy variables nvx sets, and the sandbox has no network of its
+  own, so the request cannot be made. The handshake then fails for
+  a host the allowlist names, with `schannel: next InitializeSecurityContext
+  failed: CRYPT_E_REVOCATION_OFFLINE` and curl's exit code 35. Allowing the
+  authority's host does not help, because the request never reaches nvx.
+  Measured with the curl.exe that ships with Windows 11 on
+  `https://registry.npmjs.org/ms`, whose chain lists `c.pki.goog` for revocation
+  lists. The hosts differ by authority. `curl --ssl-no-revoke` skips the check
+  and returned 200 where the plain command failed, twice each. Node, npm and bun
+  bring their own TLS and are not affected.
 - **Native addons cannot be built from source contained.** node-gyp does not find
   Visual Studio from inside the sandbox, so a package with no prebuilt binary for
   your Node fails to install. Packages that download a prebuilt binary, such as
