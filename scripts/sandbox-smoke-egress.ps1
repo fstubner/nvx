@@ -183,6 +183,105 @@ if ($allowed.ExitCode -ne 0) {
     Write-Error "an allowlisted host was blocked; the sandbox is denying everything rather than enforcing a policy (this phase needs outbound network access)"
 }
 
+$utf8n = New-Object System.Text.UTF8Encoding $false
+
+# A server and a client in one sandbox reach each other, and the policy names
+# nothing for that. They talk over 127.0.0.1 and Node's fetch and http follow the
+# proxy variables, so unless NO_PROXY lists loopback each request goes to nvx's
+# proxy, which dials that port on this machine instead and refuses it. The port
+# here is not one nvx opened, so only the loopback listing can make this pass.
+Write-Host "Testing a server and a client in one sandbox..."
+[System.IO.File]::WriteAllText((Join-Path $proj "pair.js"), @'
+const http = require('http');
+const srv = http.createServer((q, r) => r.end('INSIDE_OK'));
+srv.listen(0, '127.0.0.1', async () => {
+  const url = 'http://127.0.0.1:' + srv.address().port + '/';
+  const out = [];
+  try { const r = await fetch(url); out.push('fetch=' + r.status + ':' + (await r.text())); } catch (e) { out.push('fetch=failed'); }
+  await new Promise(done => http.get(url, r => { let b = ''; r.on('data', d => (b += d)); r.on('end', () => { out.push('get=' + r.statusCode + ':' + b); done(); }); })
+    .on('error', () => { out.push('get=failed'); done(); }));
+  console.log('PAIR ' + out.join(' '));
+  srv.close();
+});
+'@, $utf8n)
+$pair = Invoke-NativeCapture $nvx @('shim', 'node', 'pair.js')
+if ($pair.Output -notmatch 'PAIR fetch=200:INSIDE_OK get=200:INSIDE_OK') {
+    Write-Host $pair.Output
+    Write-Error "a server and a client in one sandbox could not reach each other: the request went to nvx's proxy"
+}
+
+# An allow_hosts entry for a loopback host sends requests to it through the proxy
+# instead, so a service on this machine stays reachable for a client that tunnels.
+# fetch tunnels with CONNECT, which the proxy serves. The proxy is the only thing
+# that writes egress_allow, so the record shows the request went through it.
+# Without the entry the same request is refused by the AppContainer, and must not
+# reach the service. Both are run, the one without the entry first, because a
+# sandbox that shared this machine's loopback would answer 200 to both.
+Write-Host "Testing an allow_hosts entry for a service on this machine..."
+$hostNode = (Get-ChildItem (Join-Path $env:NVX_HOME "versions\node\*\node.exe") | Select-Object -First 1).FullName
+$portFile = Join-Path $probeRoot "service-port.txt"
+[System.IO.File]::WriteAllText((Join-Path $probeRoot "service.js"), @'
+const fs = require('fs'), http = require('http');
+const s = http.createServer((q, r) => r.end('SERVICE_OK'));
+s.listen(0, '127.0.0.1', () => fs.writeFileSync(process.argv[2], String(s.address().port)));
+'@, $utf8n)
+[System.IO.File]::WriteAllText((Join-Path $proj "host-fetch.js"), @'
+fetch('http://127.0.0.1:' + process.argv[2] + '/')
+  .then(async r => console.log('HOSTFETCH ' + r.status + ' ' + (await r.text())))
+  .catch(e => console.log('HOSTFETCH failed ' + ((e.cause && (e.cause.code || e.cause.message)) || e.message)));
+'@, $utf8n)
+$service = Start-Process -FilePath $hostNode -ArgumentList @("`"$(Join-Path $probeRoot 'service.js')`"", "`"$portFile`"") -PassThru -WindowStyle Hidden
+try {
+    for ($i = 0; $i -lt 100 -and -not (Test-Path $portFile); $i++) { Start-Sleep -Milliseconds 100 }
+    if (-not (Test-Path $portFile)) {
+        Write-Error "the stand-in host service never reported its port"
+    }
+    $servicePort = (Get-Content $portFile -Raw).Trim()
+
+    $noEntry = Invoke-NativeCapture $nvx @('shim', 'node', 'host-fetch.js', $servicePort)
+    if ($noEntry.Output -match 'HOSTFETCH 200 SERVICE_OK') {
+        Write-Error "a contained fetch reached 127.0.0.1:$servicePort on this machine with no allow_hosts entry"
+    }
+    if ($noEntry.Output -notmatch 'HOSTFETCH failed') {
+        Write-Host $noEntry.Output
+        Write-Error "the unreachable-without-an-entry check did not run: the probe neither connected nor reported a failure"
+    }
+
+    @'
+{
+  "isolation": {
+    "enabled": true,
+    "level": "strict",
+    "network": {
+      "mode": "proxy",
+      "default_allow": ["TARGET:443"],
+      "allow_hosts": ["127.0.0.1:SERVICE"],
+      "prompt_unknown": false
+    }
+  }
+}
+'@.Replace("TARGET", $target).Replace("SERVICE", $servicePort) | Write-PolicyFile
+
+    # An allow_hosts entry widens the policy, which NVX_YES does not approve.
+    $env:NVX_TRUST_YES = "true"
+    try {
+        $withEntry = Invoke-NativeCapture $nvx @('shim', 'node', 'host-fetch.js', $servicePort)
+    } finally {
+        Remove-Item Env:NVX_TRUST_YES -ErrorAction SilentlyContinue
+    }
+    if ($withEntry.Output -notmatch 'HOSTFETCH 200 SERVICE_OK') {
+        Write-Host $withEntry.Output
+        Write-Error "an allow_hosts entry for 127.0.0.1:$servicePort did not reach the service through the proxy"
+    }
+    $recorded = Select-String -Path (Join-Path $env:NVX_HOME "audit.log") -SimpleMatch -Pattern "`"event`":`"egress_allow`",`"host`":`"127.0.0.1:$servicePort`"" |
+        Where-Object { $_.Line -match '"rule":"allow_hosts"' }
+    if (-not $recorded) {
+        Write-Error "the request reached the service, but the proxy wrote no egress_allow for it: it did not go through the proxy"
+    }
+} finally {
+    Stop-Process -Id $service.Id -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host "Egress smoke passed: denied what it should, allowed what it should." -ForegroundColor Green
 }
 finally {

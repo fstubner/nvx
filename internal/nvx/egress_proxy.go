@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -983,8 +984,8 @@ func (p *EgressProxy) handleSOCKSConn(conn net.Conn) {
 // agent ignores it, and so does a raw socket. Every other request goes to the
 // proxy, including one to 127.0.0.1. Measured on Windows and on Linux with
 // 22.23.2, a server and a client in the same sandbox could no longer reach each
-// other with fetch (rejected) or http.get (405). The ports nvx opens inside the
-// sandbox are the exception. See inSandboxNoProxy.
+// other with fetch (rejected) or http.get (405). NO_PROXY is how a request to
+// loopback avoids it. See applyProxyEnv.
 //
 // 22.23.2 prints "[UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental" to
 // stderr when a process that has it set exits, whether or not the process made a
@@ -1024,10 +1025,84 @@ func isProxyEnvName(e string) bool {
 	return proxyEnvNames[strings.ToUpper(name)]
 }
 
+// loopbackNoProxy is NO_PROXY when requests to this machine's own names connect
+// directly instead of going to the proxy.
+const loopbackNoProxy = "localhost,127.0.0.1,::1"
+
+// admitsLoopback reports whether the proxy lets a contained process reach an
+// address on this machine's loopback. admit does so in two cases. network.mode
+// loopback is defined by it, and an allowlist entry can name 127.0.0.1, localhost
+// or ::1. offline admits nothing, whatever the allowlist holds, and a prompt is
+// never offered for loopback.
+func (p *EgressProxy) admitsLoopback() bool {
+	if p == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(p.policy.Isolation.Network.Mode)) {
+	case "loopback":
+		return true
+	case "offline":
+		return false
+	}
+	for entry := range p.allow {
+		if allowEntryNamesLoopback(entry) {
+			return true
+		}
+	}
+	return false
+}
+
+// allowEntryNamesLoopback reports whether entry, as normalizeAllowEntry wrote it,
+// is one admit can match a loopback destination with. allowKeysFor looks a
+// loopback destination up as 127.0.0.1, localhost and ::1, each with its port or
+// *, so those are the entries that count. Any other spelling, such as [::1]:80,
+// never matches and routes nothing.
+func allowEntryNamesLoopback(entry string) bool {
+	i := strings.LastIndex(entry, ":")
+	if i < 0 {
+		return false
+	}
+	switch entry[:i] {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	return false
+}
+
+// sandboxHasOwnLoopback reports whether 127.0.0.1 inside the sandbox is a
+// different address from the one on this machine. It is on Windows, where an
+// AppContainer keeps its loopback to itself, and on Linux, which gives the
+// sandbox a network namespace. On macOS the sandbox shares this machine's
+// loopback.
+func sandboxHasOwnLoopback() bool {
+	return runtime.GOOS == "windows" || runtime.GOOS == "linux"
+}
+
+// loopbackViaProxy reports whether a contained process's requests to a loopback
+// address go to the proxy, as opposed to connecting directly. They do where the
+// sandbox has a loopback of its own and the policy has the proxy admit loopback.
+// A service on this machine is then reached through the proxy, which dials it.
+func loopbackViaProxy(proxy *EgressProxy) bool {
+	return sandboxHasOwnLoopback() && proxy.admitsLoopback()
+}
+
 // applyProxyEnv adds the proxy variables to the contained process's environment,
 // after the scrub, so the scrub's short list of names cannot take them away. Any
 // inherited value of a name set here is replaced rather than duplicated.
-func applyProxyEnv(cleanEnv []string, proxy *EgressProxy) []string {
+//
+// NO_PROXY lists this machine's own names, so a client that follows the proxy
+// variables connects to them directly. Without the list a server and a client in
+// the same sandbox, which talk over 127.0.0.1, could not reach each other once
+// Node followed the variables. The request went to the proxy, which dials that
+// port on this machine instead and refuses it. Connecting directly reaches what
+// the sandbox itself runs. Where the sandbox's loopback is its own, it reaches
+// nothing on this machine.
+//
+// loopbackToProxy leaves the names off the list. The policy then has the proxy
+// admit loopback, and a service on this machine, such as a local registry named
+// in allow_hosts, is reached through the proxy, which dials it. See
+// loopbackViaProxy.
+func applyProxyEnv(cleanEnv []string, proxy *EgressProxy, loopbackToProxy bool) []string {
 	if proxy == nil {
 		return cleanEnv
 	}
@@ -1044,10 +1119,12 @@ func applyProxyEnv(cleanEnv []string, proxy *EgressProxy) []string {
 		"HTTP_PROXY="+httpURL,
 		"HTTPS_PROXY="+httpURL,
 		"ALL_PROXY="+socksURL,
-		"NO_PROXY=127.0.0.1,localhost,::1",
 		nodeUseEnvProxy+"=1",
 		yarnHTTPProxy+"="+httpURL,
 		yarnHTTPSProxy+"="+httpURL,
 	)
+	if !loopbackToProxy {
+		filtered = append(filtered, "NO_PROXY="+loopbackNoProxy)
+	}
 	return filtered
 }

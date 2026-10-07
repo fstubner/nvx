@@ -104,7 +104,7 @@ func TestGitGetsPastTheFirst407(t *testing.T) {
 	if err := os.WriteFile(emptyConfig, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	env := append(applyProxyEnv(os.Environ(), p),
+	env := append(applyProxyEnv(os.Environ(), p, false),
 		"https_proxy="+p.HTTProxyURL(),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_NOSYSTEM=1",

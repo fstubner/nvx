@@ -26,7 +26,7 @@ func envValues(env []string, name string) []string {
 
 func TestProxyEnvironmentPointsYarnAtTheProxy(t *testing.T) {
 	p := testProxyForEnv()
-	env := applyProxyEnv([]string{"PATH=/bin", "YARN_HTTP_PROXY=http://host-proxy.example:8080"}, p)
+	env := applyProxyEnv([]string{"PATH=/bin", "YARN_HTTP_PROXY=http://host-proxy.example:8080"}, p, false)
 
 	want := p.HTTProxyURL()
 	for _, name := range []string{"YARN_HTTP_PROXY", "YARN_HTTPS_PROXY"} {
@@ -36,7 +36,7 @@ func TestProxyEnvironmentPointsYarnAtTheProxy(t *testing.T) {
 		}
 	}
 	// With no proxy, which is network.mode open, the environment comes back as it was.
-	if got := envValues(applyProxyEnv([]string{"YARN_HTTPS_PROXY=http://host-proxy.example:8080"}, nil), "YARN_HTTPS_PROXY"); len(got) != 1 {
+	if got := envValues(applyProxyEnv([]string{"YARN_HTTPS_PROXY=http://host-proxy.example:8080"}, nil, false), "YARN_HTTPS_PROXY"); len(got) != 1 {
 		t.Errorf("with no proxy the environment is returned as it was: %q", got)
 	}
 }

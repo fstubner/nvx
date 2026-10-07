@@ -32,7 +32,7 @@ func testProxyForEnv() *EgressProxy {
 }
 
 func TestProxyEnvironmentTellsNodeToUseTheProxy(t *testing.T) {
-	env := applyProxyEnv([]string{"PATH=/bin"}, testProxyForEnv())
+	env := applyProxyEnv([]string{"PATH=/bin"}, testProxyForEnv(), false)
 	if got := nodeProxyValues(env); len(got) != 1 || got[0] != "1" {
 		t.Fatalf("NODE_USE_ENV_PROXY entries = %q, want exactly [1]; env: %q", got, env)
 	}
@@ -45,7 +45,7 @@ func TestProxyEnvironmentTellsNodeToUseTheProxy(t *testing.T) {
 // No proxy, no variable. network.mode open sets nothing, and a Node told to use
 // a proxy that is not there would only be a Node told to fail.
 func TestNoProxyMeansNoNodeProxyVariable(t *testing.T) {
-	env := applyProxyEnv([]string{"PATH=/bin"}, nil)
+	env := applyProxyEnv([]string{"PATH=/bin"}, nil, false)
 	if got := nodeProxyValues(env); len(got) != 0 {
 		t.Fatalf("NODE_USE_ENV_PROXY was set without a proxy: %q", got)
 	}
@@ -64,7 +64,7 @@ func TestTheScrubDoesNotRemoveTheNodeProxyVariableNvxSets(t *testing.T) {
 		if got := nodeProxyValues(scrubbed.Env); len(got) != 0 {
 			t.Fatalf("the scrub passed the host's NODE_USE_ENV_PROXY: %q", got)
 		}
-		env := applyProxyEnv(scrubbed.Env, testProxyForEnv())
+		env := applyProxyEnv(scrubbed.Env, testProxyForEnv(), false)
 		if got := nodeProxyValues(env); len(got) != 1 || got[0] != "1" {
 			t.Fatalf("NODE_USE_ENV_PROXY entries after the scrub = %q, want exactly [1]", got)
 		}
@@ -75,7 +75,7 @@ func TestTheScrubDoesNotRemoveTheNodeProxyVariableNvxSets(t *testing.T) {
 		if got := nodeProxyValues(scrubbed.Env); len(got) != 1 || got[0] != "0" {
 			t.Fatalf("the allowed variable did not pass the scrub: %q", got)
 		}
-		env := applyProxyEnv(scrubbed.Env, testProxyForEnv())
+		env := applyProxyEnv(scrubbed.Env, testProxyForEnv(), false)
 		if got := nodeProxyValues(env); len(got) != 1 || got[0] != "1" {
 			t.Fatalf("NODE_USE_ENV_PROXY entries = %q, want exactly [1]: nvx sets the proxy variables, and a project cannot turn Node's use of them off", got)
 		}
@@ -120,32 +120,5 @@ func TestInSandboxNoProxyNamesThePortsNvxOpened(t *testing.T) {
 	}
 	if got := inSandboxNoProxy(supervisorExecArgs{}); got != "" {
 		t.Fatalf("inSandboxNoProxy with no ports = %q, want nothing, so NO_PROXY stays unset", got)
-	}
-}
-
-func TestRelayEnvironmentSetsNoProxyOnlyWhenThereAreInSandboxPorts(t *testing.T) {
-	noProxyValues := func(env []string) []string {
-		var out []string
-		for _, e := range env {
-			if name, value, _ := strings.Cut(e, "="); strings.EqualFold(name, "NO_PROXY") {
-				out = append(out, name+"="+value)
-			}
-		}
-		return out
-	}
-	// What the parent put there, which the supervisor replaces.
-	inherited := []string{"NO_PROXY=127.0.0.1,localhost,::1", "HTTPS_PROXY=http://nvx:tok@127.0.0.1:41000"}
-
-	got := noProxyValues(applyRelayProxyEnv(inherited, "127.0.0.1:42000", "127.0.0.1:19222,localhost:19222"))
-	if strings.Join(got, "|") != "NO_PROXY=127.0.0.1:19222,localhost:19222|no_proxy=127.0.0.1:19222,localhost:19222" {
-		t.Fatalf("NO_PROXY entries = %q", got)
-	}
-	// Loopback as a whole stays out of it, because the proxy is how a service on
-	// this machine is reached from in here.
-	if got := noProxyValues(applyRelayProxyEnv(inherited, "127.0.0.1:42000", "")); len(got) != 0 {
-		t.Fatalf("with no in-sandbox ports NO_PROXY was set: %q", got)
-	}
-	if got := noProxyValues(applyRelayProxyEnv(inherited, "", "127.0.0.1:19222")); len(got) != 0 {
-		t.Fatalf("with no relay NO_PROXY was set: %q", got)
 	}
 }

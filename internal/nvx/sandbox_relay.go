@@ -58,9 +58,10 @@ func startProxyRelay(ctx context.Context, sockPath string) (addr string, stop fu
 // Measured on Linux with Node 22.23.2, a --connect service answered 200 before that
 // and 405 (http.get) or a rejection (fetch) after. Node reads host:port entries.
 //
-// Nothing else on loopback is listed, so every other loopback destination still
-// goes to the proxy, which is how allow_hosts and network.mode loopback reach a
-// service on this machine.
+// They matter when the policy has the proxy admit loopback. NO_PROXY then leaves
+// loopback off, so every other loopback destination goes to the proxy, which is
+// how allow_hosts and network.mode loopback reach a service on this machine.
+// Otherwise the parent's NO_PROXY already lists all of loopback. See applyProxyEnv.
 func inSandboxNoProxy(a supervisorExecArgs) string {
 	var ports []int
 	for _, m := range a.ConnectPorts {
@@ -81,13 +82,16 @@ func inSandboxNoProxy(a supervisorExecArgs) string {
 // applyRelayProxyEnv points the standard proxy variables at the relay address.
 // An empty addr means no relay is in use (network.mode=open), in which case any
 // inherited proxy settings are stripped rather than left to leak host config in.
-// noProxy is what NO_PROXY becomes when there is a relay, and "" leaves it unset.
-func applyRelayProxyEnv(env []string, addr, noProxy string) []string {
+// inSandbox lists more NO_PROXY entries to add to the parent's, and "" adds none.
+func applyRelayProxyEnv(env []string, addr, inSandbox string) []string {
 	// The parent's proxy URL carries this session's credential. Carry it across to
 	// the relay address, or the target would talk to the relay anonymously and the
 	// parent proxy would answer 407. It is read from the environment rather than
 	// passed as an argument on purpose: command lines are readable machine-wide.
 	cred := proxyCredentialFromEnv(env)
+	// The parent's NO_PROXY is its decision about loopback, made where the policy
+	// is known. Whatever the environment held before nvx set it was removed there.
+	noProxy := strings.Trim(noProxyFromEnv(env)+","+inSandbox, ",")
 
 	out := make([]string, 0, len(env)+7)
 	for _, e := range env {
@@ -114,6 +118,16 @@ func applyRelayProxyEnv(env []string, addr, noProxy string) []string {
 		out = append(out, "NO_PROXY="+noProxy, "no_proxy="+noProxy)
 	}
 	return out
+}
+
+// noProxyFromEnv returns the value of NO_PROXY, or "" when it is not set.
+func noProxyFromEnv(env []string) string {
+	for _, e := range env {
+		if name, value, ok := strings.Cut(e, "="); ok && strings.EqualFold(name, "NO_PROXY") {
+			return value
+		}
+	}
+	return ""
 }
 
 // proxyCredentialFromEnv pulls the "user:pass@" userinfo out of whichever proxy

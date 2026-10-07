@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -65,7 +64,7 @@ func TestNodeFetchUsesTheProxyNvxPutsInItsEnvironment(t *testing.T) {
 		t.Setenv(k, "")
 	}
 	p := proxyAllowing(t, "allowed.example.test:"+port)
-	env := applyProxyEnv(os.Environ(), p)
+	env := applyProxyEnv(os.Environ(), p, false)
 
 	fetchBody := func(host string) string {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -94,62 +93,5 @@ func TestNodeFetchUsesTheProxyNvxPutsInItsEnvironment(t *testing.T) {
 	}
 	if !auditContains(t, p.nvxHome, "denied.example.test:"+port) {
 		t.Error("the refusal of the other host was not recorded")
-	}
-}
-
-// A port nvx opened inside the sandbox is dialled directly, and any other loopback
-// port still goes to the proxy. Measured on Linux with Node 22.23.2, a --connect
-// service answered a fetch with 200 before nvx set NODE_USE_ENV_PROXY=1 and
-// refused it after, until the port was listed in NO_PROXY.
-func TestNodeFetchToAPortNvxOpenedInsideTheSandboxBypassesTheProxy(t *testing.T) {
-	node := nodeOnPathHonoursEnvProxy(t)
-
-	newOrigin := func(body string) (port string) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(body))
-		}))
-		t.Cleanup(srv.Close)
-		_, port, _ = net.SplitHostPort(srv.Listener.Addr().String())
-		return port
-	}
-	inside := newOrigin("inside-ok")
-	elsewhere := newOrigin("elsewhere-ok")
-
-	for _, k := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
-		t.Setenv(k, "")
-	}
-	p := proxyAllowing(t, "unrelated.example.test:443")
-
-	insidePort, _ := strconv.Atoi(inside)
-	fetchBody := func(env []string, port string) string {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		script := fmt.Sprintf(`fetch('http://127.0.0.1:%s/').then(r => r.text()).then(t => console.log('BODY=' + t))`+
-			`.catch(e => console.log('ERR=' + ((e.cause && (e.cause.code || e.cause.message)) || e.message)))`, port)
-		cmd := exec.CommandContext(ctx, node, "-e", script)
-		cmd.Env = env
-		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("node -e for port %s: %v", port, err)
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	// As the supervisor builds it: the parent's environment, rewritten for the relay.
-	parent := applyProxyEnv(os.Environ(), p)
-	args := supervisorExecArgs{ConnectPorts: []connectMapping{{Host: 9222, Inside: insidePort}}}
-	listed := applyRelayProxyEnv(parent, p.httpAddr, inSandboxNoProxy(args))
-	unlisted := applyRelayProxyEnv(parent, p.httpAddr, "")
-
-	if got := fetchBody(listed, inside); got != "BODY=inside-ok" {
-		t.Errorf("fetch to the in-sandbox port printed %q, want BODY=inside-ok", got)
-	}
-	if got := fetchBody(listed, elsewhere); !strings.HasPrefix(got, "ERR=") {
-		t.Errorf("fetch to another loopback port printed %q, want it refused by the proxy", got)
-	}
-	// The control. Without the entry the same request goes to the proxy, which is
-	// what made --connect stop working for Node.
-	if got := fetchBody(unlisted, inside); !strings.HasPrefix(got, "ERR=") {
-		t.Errorf("with no NO_PROXY entry the fetch printed %q, want it refused by the proxy", got)
 	}
 }
