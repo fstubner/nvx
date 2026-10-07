@@ -165,3 +165,15 @@ func TestNpxOfAProjectToolRunsOutsideTheSandboxOnWindows(t *testing.T) {
 		t.Errorf("the tool ran with %+v, want the arguments `a b` and no sandbox marker", got)
 	}
 }
+
+// A bun install on Windows leaves .exe and .bunx, which npx does not look for.
+func TestNpxDoesNotRunWhatBunInstalledOnWindows(t *testing.T) {
+	root := binProject(t, "")
+	for _, ext := range []string{".exe", ".bunx"} {
+		writeTestFile(t, filepath.Join(root, "node_modules", ".bin", "vitest"+ext), "x", 0o644)
+	}
+	checkClasses(t, []classRow{
+		{"npx", "npx", []string{"vitest"}, classAdHocTool},
+		{"bunx", "bunx", []string{"vitest"}, classYourCode},
+	})
+}

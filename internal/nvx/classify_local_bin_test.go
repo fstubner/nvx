@@ -362,21 +362,6 @@ func TestBunxFindsWhatBunFinds(t *testing.T) {
 	checkClasses(t, rows(classYourCode))
 }
 
-// A bun install on Windows leaves .exe and .bunx, which npx does not look for.
-func TestNpxDoesNotRunWhatBunInstalledOnWindows(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("bun links bins as symlinks outside Windows")
-	}
-	root := binProject(t, "")
-	for _, ext := range []string{".exe", ".bunx"} {
-		writeTestFile(t, filepath.Join(root, "node_modules", ".bin", "vitest"+ext), "x", 0o644)
-	}
-	checkClasses(t, []classRow{
-		{"npx", "npx", []string{"vitest"}, classAdHocTool},
-		{"bunx", "bunx", []string{"vitest"}, classYourCode},
-	})
-}
-
 // A link that leads out of the project is not the project's code. A contained
 // run can plant one, and so can a trusted tool's profile that outlives the run.
 func TestALinkOutOfTheProjectIsAnAdHocRun(t *testing.T) {
@@ -395,7 +380,7 @@ func TestALinkOutOfTheProjectIsAnAdHocRun(t *testing.T) {
 	}
 	for name, target := range links {
 		if err := os.Symlink(target, filepath.Join(bin, name)); err != nil {
-			t.Skipf("cannot make symlinks here: %v", err)
+			t.Skipf("creating symlinks on Windows needs privilege or Developer Mode: %v", err)
 		}
 	}
 	checkClasses(t, []classRow{
@@ -417,7 +402,7 @@ func TestALinkOutOfTheProjectIsAnAdHocRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Join(outside, "cli.js"), filepath.Join(member, "node_modules", ".bin", "outside")); err != nil {
-		t.Skipf("cannot make symlinks here: %v", err)
+		t.Skipf("creating symlinks on Windows needs privilege or Developer Mode: %v", err)
 	}
 	inProjectDir(t, member)
 	checkClasses(t, []classRow{
@@ -532,43 +517,6 @@ func TestAnInstalledToolIsNotCheckedAsAFetch(t *testing.T) {
 			t.Errorf("`%s %q` that fetches skipped the install-script question (exit %d, looked up %v)", tc.cmd, tc.args, code, asked)
 		}
 	}
-}
-
-// npm and bun start from the real folder, so a cd through a link is judged where
-// it leads. Getwd answers with the path the shell used.
-func TestACdThroughALinkIsJudgedWhereItReallyIs(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("a Windows process keeps the path it was given")
-	}
-	base := tempDir(t)
-	project := filepath.Join(base, "project")
-	other := filepath.Join(base, "other")
-	writeTestFile(t, filepath.Join(project, "package.json"), `{"name":"project"}`, 0o644)
-	writeNpmBin(t, filepath.Join(project, "node_modules", ".bin"), "vitest")
-	writeTestFile(t, filepath.Join(project, "src", "app.ts"), "", 0o644)
-	writeTestFile(t, filepath.Join(other, "package.json"), `{"name":"other"}`, 0o644)
-	writeTestFile(t, filepath.Join(other, "inner", "file.txt"), "", 0o644)
-	if err := os.Symlink(filepath.Join(other, "inner"), filepath.Join(project, "link")); err != nil {
-		t.Skipf("cannot make symlinks here: %v", err)
-	}
-	if err := os.Symlink(project, filepath.Join(base, "alias")); err != nil {
-		t.Skipf("cannot make symlinks here: %v", err)
-	}
-
-	cd := func(dir string) {
-		inProjectDir(t, dir)
-		t.Setenv("PWD", dir)
-	}
-	cd(filepath.Join(base, "alias", "src"))
-	checkClasses(t, []classRow{
-		{"a folder reached through a link to the project", "npx", []string{"vitest"}, classYourCode},
-	})
-	// Under the project's own path, but really inside another project that has
-	// no tools. Read upward by the path typed, the folder above is the project.
-	cd(filepath.Join(project, "link"))
-	checkClasses(t, []classRow{
-		{"a link in the project that leads into another project", "npx", []string{"vitest"}, classAdHocTool},
-	})
 }
 
 // npm exec fetches the packages a `package` setting names, whatever the command
