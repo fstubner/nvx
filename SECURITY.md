@@ -705,21 +705,27 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   is writable by anything else running as you. The log is useful for reviewing
   your own usage. It is no proof against someone who already runs code as you.
 
-- **On Windows, a server started inside the sandbox needs `--expose` to be
-  reachable from the host.** Windows refuses connections into an AppContainer, so
-  a contained `npx vite` binds its port, prints that it is listening, and serves
-  nobody. `--expose` publishes it:
+- **On Windows and Linux, a server started inside the sandbox needs `--expose`
+  to be reachable from the host.** Windows refuses connections into an
+  AppContainer, so a contained `npx vite` binds its port, prints that it is
+  listening, and serves nobody. A Linux sandbox has a network namespace of its
+  own, and its loopback is not yours, so the result is the same. `--expose`
+  publishes it:
 
   ```
   nvx --expose 5173:8080 npx vite
   ```
 
-  The two numbers cannot be the same. An AppContainer shares the host's network
-  stack and does not get its own. So one port number cannot hold both the
-  contained server and the host listener. In a test, the contained server lost
-  the race and died on `EADDRINUSE`.
+  The two numbers cannot be the same. On Windows an AppContainer shares the
+  host's network stack and does not get its own. So one port number cannot hold
+  both the contained server and the host listener. In a test, the contained
+  server lost the race and died on `EADDRINUSE`. Linux keeps the rule so that a
+  mapping means the same on both.
   Give the port your server uses inside, then the port you want to visit. With the
-  second omitted (`--expose 5173`) nvx picks a free one and prints the URL.
+  second omitted (`--expose 5173`) nvx picks a free one and prints the URL. With
+  `network.mode: open` a Linux sandbox shares your network and needs no flag. On
+  macOS `--expose` does nothing, and nobody has measured whether a contained
+  server can listen there.
 
   Nothing is relaxed to make this work. The contained side dials *outward* over a
   UNIX socket and the parent splices inbound requests onto it. No network

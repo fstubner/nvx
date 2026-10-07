@@ -46,7 +46,7 @@ var beforeChildStart func()
 // running would be wrong. Terminate and hangup do escalate, because those do
 // mean exit.
 func runChildForwardingSignals(cmd *exec.Cmd) error {
-	return startChildForwardingSignals(cmd, nil)
+	return startChildForwardingSignals(cmd, nil, 0)
 }
 
 // forwardedSignals returns the signals to pass on, leaving out any this process
@@ -79,9 +79,10 @@ func terminalGaveChildTheInterrupt() bool {
 	return errno == 0 && int(pgrp) == syscall.Getpgrp()
 }
 
-// startChildForwardingSignals is runChildForwardingSignals with a hook that
-// receives the child's pid once it is running.
-func startChildForwardingSignals(cmd *exec.Cmd, onStart func(pid int)) error {
+// startChildForwardingSignals is runChildForwardingSignals with two hooks.
+// onStart receives the child's pid once it is running. interruptAs, when it is
+// not zero, is the signal the child gets in place of an interrupt.
+func startChildForwardingSignals(cmd *exec.Cmd, onStart func(pid int), interruptAs syscall.Signal) error {
 	// Pdeathsig, where a caller asks for it, fires when the THREAD that forked
 	// the child exits, not when the process does. The Go scheduler is free to
 	// retire threads, so without this the child could be killed under a healthy
@@ -123,7 +124,11 @@ func startChildForwardingSignals(cmd *exec.Cmd, onStart func(pid int)) error {
 				if sig == syscall.SIGINT && terminalGaveChildTheInterrupt() {
 					continue
 				}
-				_ = proc.Signal(sig)
+				out := sig
+				if sig == syscall.SIGINT && interruptAs != 0 {
+					out = interruptAs
+				}
+				_ = proc.Signal(out)
 				if sig == syscall.SIGTERM || sig == syscall.SIGHUP {
 					go func() {
 						select {

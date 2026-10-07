@@ -177,7 +177,11 @@ func landlockAddRule(rulesetFD int, access uint64, path string) error {
 		return err
 	}
 	defer syscall.Close(parentFD)
+	return landlockAddRuleFD(rulesetFD, access, parentFD)
+}
 
+// landlockAddRuleFD adds the rule for a directory the caller has already opened.
+func landlockAddRuleFD(rulesetFD int, access uint64, parentFD int) error {
 	// #nosec G115 -- parentFD is a file descriptor from syscall.Open; the kernel's per-process limit is orders of magnitude below int32
 	attr := landlockPathBeneathAttr{allowedAccess: access, parentFd: int32(parentFD)}
 	_, errno := landlockCall(
@@ -323,6 +327,23 @@ func applyLandlockSandboxForABI(abi int, guestHome, workDir, nvxHome string, rea
 		}
 	}
 
+	// The sandbox's /tmp is the guest home's tmp directory shown a second time (see
+	// sandboxTmpDir). Landlock walks up from a file by mount, so the guest home's
+	// rule does not reach it by that path and the directory needs a rule of its
+	// own. Skipped when there is none, as in a test that has no guest skeleton.
+	// Opened without following a link, as the bind was.
+	if tmp := sandboxTmpDir(guestHome); tmp != "" {
+		tmpFD, err := openDirNoFollow(tmp)
+		if err != nil {
+			return fmt.Errorf("landlock rule for %q: %w", tmp, err)
+		}
+		err = landlockAddRuleFD(fd, handled, tmpFD)
+		_ = syscall.Close(tmpFD)
+		if err != nil {
+			return fmt.Errorf("landlock rule for %q: %w", tmp, err)
+		}
+	}
+
 	// Extra read/execute roots from isolation.filesystem.allow_read_exec. Same
 	// rights as the system read-only roots below: read, list and execute, never
 	// write. A missing path is skipped rather than fatal -- the parent already
@@ -365,6 +386,13 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	// between, and 0 of 300 either way with this lock. Never unlocked: the
 	// process exits when this returns.
 	runtime.LockOSThread()
+
+	// nvx asks for an interrupt with supervisorInterruptSignal. Registered before
+	// the setup below, so a request that lands during it waits in the channel and
+	// reaches the target once it runs. The other signals are registered just
+	// before the target starts, as they were.
+	sigs := make(chan os.Signal, 4)
+	signal.Notify(sigs, supervisorInterruptSignal)
 
 	guestHome, workDir, nvxHome := a.GuestHome, a.WorkDir, a.NvxHome
 	networkMode, egressSocket := a.NetworkMode, a.EgressSocket
@@ -409,6 +437,13 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 			return 1
 		}
 		defer stopConnect()
+	}
+
+	// The in-sandbox half of --expose. It dials out to the parent's socket and
+	// parks, so it needs nothing from the namespace but its own loopback. Started
+	// before the sandbox closes around this process, like the relays above.
+	for _, port := range a.ExposePorts {
+		startExposeTunnels(relayCtx, guestHome, port)
 	}
 
 	// network.mode loopback: every loopback TCP connection goes to the host's
@@ -476,7 +511,7 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	// kernels below Landlock ABI v9. See enterSandboxRoot.
 	visible := sandboxVisiblePaths(guestHome, workDir, nvxHome, a.ReadExecRoots, privateProc, networkMode)
 	plan := sandboxBindPlan(visible)
-	if err := enterSandboxRoot(plan); err != nil {
+	if err := enterSandboxRoot(plan, sandboxTmpDir(guestHome)); err != nil {
 		LogError("Could not build the sandbox's filesystem view (fail-closed): %v", err)
 		return 1
 	}
@@ -514,7 +549,6 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	// namespace, and a signal sent to it from outside only arrives when a handler
 	// exists. Without one the Go runtime's default ends this process, and PID 1
 	// dying SIGKILLs the target before it can run its own shutdown.
-	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	if err := cmd.Start(); err != nil {
 		LogError("Sandbox execution failed: %v", err)
@@ -526,11 +560,32 @@ func runLandlockExecChild(a supervisorExecArgs) int {
 	}
 	go func() {
 		for sig := range sigs {
-			_ = syscall.Kill(targetPid, sig.(syscall.Signal))
+			if out, ok := signalForTarget(sig); ok {
+				_ = syscall.Kill(targetPid, out)
+			}
 		}
 	}()
 	// Not cmd.Wait(): this process is PID 1 of a PID namespace, so orphaned
 	// descendants reparent here and only an explicit wait4 loop will reap them.
 	// Waiting in two places would race os/exec for the target's exit status.
 	return reapUntilChildExits(cmd.Process.Pid)
+}
+
+// signalForTarget is what the supervisor passes to the target for a signal it
+// received, and whether it passes anything.
+//
+// A SIGINT here is the terminal's own copy of Ctrl-C. The target shares this
+// process's foreground group (see applyLinuxNamespaces), so it has the interrupt
+// already, and passing this one on delivers a second. Measured 2026-10-07, a
+// contained node counted two SIGINTs for one Ctrl-C when the supervisor passed it
+// on. nvx asks for an interrupt it forwards with supervisorInterruptSignal.
+func signalForTarget(sig os.Signal) (syscall.Signal, bool) {
+	switch sig {
+	case syscall.SIGINT:
+		return 0, false
+	case supervisorInterruptSignal:
+		return syscall.SIGINT, true
+	}
+	s, ok := sig.(syscall.Signal)
+	return s, ok
 }

@@ -420,9 +420,11 @@ type NetworkLaunchContext struct {
 	// AppContainer profile does. See windowsSocketPrefix.
 	egress *EgressProxy
 	// ExposePorts maps ports inside the sandbox to ports on the host's loopback
-	// (isolation.network.expose_ports, or --expose). Windows only: it exists
-	// because Windows refuses connections INTO an AppContainer, which Linux and
-	// macOS do not do, so a contained server is already reachable there.
+	// (isolation.network.expose_ports, or --expose). Windows and Linux. Windows
+	// refuses connections INTO an AppContainer, and a Linux sandbox's network
+	// namespace has a loopback of its own, so a contained server is unreachable
+	// from the host on both until it is published. macOS shares the host's
+	// network stack.
 	ExposePorts []exposeMapping
 	// ConnectPorts are host services the sandbox may reach
 	// (isolation.network.connect_ports, or --connect).
@@ -616,11 +618,11 @@ func runSandbox(config SandboxConfig) int {
 		netCtx.HTTPProxyHost, netCtx.HTTPProxyPort = egress.HTTPListenHostPort()
 		netCtx.SOCKSProxyHost, netCtx.SOCKSProxyPort = egress.SOCKSListenHostPort()
 	}
-	// --expose is implemented for AppContainer only. Said out loud rather than
-	// silently ignored: a developer who asked for a port and got nothing debugs
-	// their own server first, and finds nothing wrong with it.
-	if runtime.GOOS != "windows" && len(netCtx.ExposePorts) > 0 {
-		LogWarn("--expose is a Windows feature; ports are not published on %s.", runtime.GOOS)
+	// --expose is carried by the native provider on Windows and Linux. Said out
+	// loud elsewhere rather than silently ignored. A developer who asked for a port
+	// and got nothing debugs their own server first, and finds nothing wrong with it.
+	if len(netCtx.ExposePorts) > 0 && !exposeCarriedBy(canonical, runtime.GOOS) {
+		LogWarn("--expose is carried by the native provider on Windows and Linux. Ports are not published with the %s provider on %s.", canonical, runtime.GOOS)
 	}
 	// --connect is carried by the native and sandbox-exec providers on all three
 	// platforms. The two cases below are where it cannot be, and each is reported

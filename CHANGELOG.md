@@ -71,6 +71,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prints it as `rule=`. A host you approve at the prompt keeps its own
   `egress_allow_prompted` record.
 
+* **`--expose` publishes a contained server's port on Linux.** A contained
+  server on Linux was unreachable from your machine, and the docs said it
+  needed no flag. Outside `network.mode: open` the sandbox has a network
+  namespace of its own, and its 127.0.0.1 is not yours. Measured 2026-10-07 in a
+  Linux container, `npx -y http-server -p 8099 -a 127.0.0.1` printed that it was
+  serving, and `curl` from outside got exit 7 on port 8099. With
+  `nvx --expose 8099:18099 npx -y http-server -p 8099 -a 127.0.0.1`, `curl` got
+  200 on port 18099, and so did 20 parallel requests. It works as it does on
+  Windows. The two numbers must differ, and leaving out the second has nvx pick a
+  free port and print the URL. The port is open on your loopback only, for that
+  run, and the sandbox gains no way out. `network.mode: loopback` publishes the
+  same way. `network.mode: open` needs no flag, and `--expose` says so.
+  `network.mode: offline` allows the sandbox no IP socket on Linux, so a server
+  cannot listen there and `--expose` is refused with a warning. The docs said a
+  contained server on macOS needs no flag either. Nothing has measured one there,
+  and the macOS profile grants no `network-bind` in the default mode, so they now
+  say it is not measured.
+
 ### Changed
 
 * **nvx never asks before widening the sandbox, and refuses instead.**
@@ -432,6 +450,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not even `example.com`, and everything to that domain was refused without a
   word. nvx now warns when it loads one, and the policy page says to list each
   host in full. The port may still be `*`, as in `localhost:*`.
+
+* **Ctrl-C stops a contained `npx` tool or `--strict` script on Linux, and a
+  contained process can read the terminal.** The contained process was started
+  in a process group of its own, outside the terminal's foreground group. Ctrl-C
+  reached nvx and not the processes the tool had started, and npm and sh pass an
+  interrupt to none of them. Measured 2026-10-07 in a pseudo-terminal in a Linux
+  container, `nvx npx -y http-server` and `nvx --strict npm run` were both still
+  running 15 seconds after Ctrl-C. A contained `node` REPL did not answer
+  `1+1`, because a process in a background group is stopped when it reads the
+  terminal. The process now stays in the foreground group, so the terminal
+  reaches all of it, as it does outside nvx. The same two commands stopped
+  0.10 to 0.27 seconds after Ctrl-C, the REPL answers, and Ctrl-Z followed by `fg`
+  stops and resumes the run. One Ctrl-C reaches the process once. An interrupt
+  sent to nvx with `kill`, from a backgrounded job or with no terminal, still
+  reaches the process once. The macOS launcher does not start the process in a
+  group of its own, so this did not affect it.
+
+* **A contained pnpm 12 install no longer fails on Linux.** The sandbox's root
+  had no `/tmp`, and pnpm 12 makes its store lock directory there, so the
+  install stopped with `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` and "Permission
+  denied". Measured 2026-10-07 in a Linux container, `mkdir("/tmp")` came back
+  `EACCES`. The sandbox now shows its temp directory at `/tmp`. It is the
+  directory `$TMPDIR` already names, so the two are the same place, and it goes
+  with the sandbox's home when the run ends. Your own `/tmp` stays out of reach.
+  pnpm 12.9.1 now installs contained. pnpm 9.15.9, 10.34.6 and 11.28.5 installed
+  contained before the change and after it.
 
 ## [0.7.0] - 2026-10-06
 

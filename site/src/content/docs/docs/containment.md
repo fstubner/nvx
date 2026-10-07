@@ -27,7 +27,7 @@ The shims live in `~/.nvx/project-bin/<project hash>`, not inside the project, a
 
 When running in the sandbox:
 * Environment secrets (e.g. `AWS_*`, `GITHUB_*`, `SSH_*`) are scrubbed. A contained command sees almost none of your environment, so a tool reading `CI` or `NODE_ENV` changes behaviour without erroring. nvx names the variables it drops, and `isolation.environment.allow` keeps the ones a project needs.
-* Home and temp paths point into a guest profile under `~/.nvx`, never your real home. It is thrown away after each run. The exceptions are pnpm, which keeps one per project so its package store is there for the next install, and tools you approved as trusted.
+* Home and temp paths point into a guest profile under `~/.nvx`, never your real home. It is thrown away after each run. The exceptions are pnpm, which keeps one per project so its package store is there for the next install, and tools you approved as trusted. On Linux `/tmp` inside the sandbox is that profile's temp directory too, the one `$TMPDIR` names, so a tool that hard-codes `/tmp` writes there and never to your own.
 * **Writes** go to the guest profile and the project directory. On macOS a few device files, such as `/dev/null`, are writable as well. The project's `.git` is the exception. A contained command can read it and cannot write it. Git runs outside the sandbox, so a hook or config entry left there would run as you. Everything else in the project stays writable, `package.json`, `node_modules` and lockfiles included, because an install has to write them.
 * **Git hook installers** cannot set themselves up during a contained install. husky's `prepare` script, simple-git-hooks and lefthook write to `.git`. Run their setup yourself afterwards, for example `npx husky`, or run the install with `nvx --no-sandbox`.
 * **Global installs** write outside the project, so `npm install -g` is refused inside the sandbox. `nvx --no-sandbox npm install -g` is an uncontained install, so treat it as one.
@@ -39,9 +39,20 @@ When running in the sandbox:
 
 ## Local servers and services
 
-**A contained server needs `--expose` on Windows** to be reachable from your
-machine, because Windows refuses connections into an AppContainer from outside
-it. On Linux and macOS it is reachable without a flag.
+**A contained server needs `--expose` on Windows and on Linux** to be reachable
+from your machine. Windows refuses connections into an AppContainer from outside
+it. On Linux the sandbox has a network namespace of its own, so the loopback it
+sees is not yours. A server binds, reports that it is listening, and serves
+nobody. `nvx --expose 5173:8080 npx vite` publishes the sandbox's port 5173 at
+`http://127.0.0.1:8080`, on your loopback only and for that run. The two numbers
+must differ. Leave out the second one and nvx picks a free port and prints the
+URL.
+
+With `network.mode: open` the sandbox shares your network on Linux, so a server
+is reachable on its own port and `--expose` has nothing to do. With
+`network.mode: offline` the sandbox may open no IP socket on Linux, so a server
+cannot listen and `--expose` is refused. On macOS `--expose` does nothing, and
+whether a contained server can listen there has not been measured.
 
 **A service already running on your machine** is out of reach of a contained
 tool until you allow it. Use `--connect` for one run, `allow_hosts` for a tool
@@ -74,7 +85,7 @@ means the generated policy says so and nothing has tested the running system.
 | Allowlisted host reachable through the proxy | Yes, measured (AppContainer + parent proxy over a UNIX socket) | Yes, CI (loopback-only netns + parent proxy over a UNIX socket) | Yes, CI (Seatbelt + loopback proxy) |
 | Raw TCP/UDP bypass blocked at OS | Yes, measured (no network capability granted) | Yes, CI (netns + seccomp UDP deny) | Yes, CI (TCP and UDP. Which layer refuses TCP is untested) |
 | Fail-closed if FS/network primitive missing | Yes, measured | Yes, CI (Landlock 5.13+, iproute2 for netns) | Yes, CI (refuses to run without `sandbox-exec`) |
-| A contained server reachable from the host | Only via `--expose` | Yes | Yes |
+| A contained server reachable from the host | Only via `--expose` | Only via `--expose`, except in `network.mode: open`. CI | Not measured |
 | One named host service reachable from the sandbox | Via `allow_hosts` for proxy-aware clients, or `--connect` | Via `allow_hosts` for proxy-aware clients, or `--connect` except in `offline` | Via `allow_hosts` for proxy-aware clients, or `--connect` |
 
 **What backs the Windows column.** Every "measured" above means a person ran

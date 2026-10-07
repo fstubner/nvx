@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows || linux
 
 package nvx
 
@@ -11,6 +11,13 @@ import (
 )
 
 // Publishing a port from inside the sandbox to the host's loopback.
+//
+// Linux needs this as well, for another reason. Outside network.mode open the
+// sandbox runs in a network namespace of its own, so 127.0.0.1 in there is not
+// the host's and nothing on the host can connect to a server in it. The tunnel is
+// the one described next. The supervisor dials a UNIX socket in the guest home,
+// which is a filesystem object and so crosses the namespace, and the parent
+// splices host connections onto it. See sandbox_expose_linux.go.
 //
 // Windows refuses connections INTO an AppContainer. A dev server started in the
 // sandbox binds its port and reports itself listening, and nothing on the host
@@ -46,13 +53,6 @@ const (
 	exposeDialTimeout = 5 * time.Second
 )
 
-// windowsExposeSocketPath is where the parent listens for tunnels for one port.
-// Mirrors windowsEgressSocketPath: under the session's socket prefix, which
-// already carries the grants the container needs. See windowsSocketPrefix.
-func windowsExposeSocketPath(prefix string, port int) string {
-	return prefix + fmt.Sprintf("expose-%d.sock", port)
-}
-
 // exposedPortListener is the parent's half: a host loopback listener plus the
 // AF_UNIX socket the contained side dials.
 type exposedPortListener struct {
@@ -67,7 +67,7 @@ type exposedPortListener struct {
 // error rather than warning and continuing: a developer who asked for a port and
 // did not get it should be told, not left wondering why the browser hangs.
 func publishExposedPort(ctx context.Context, sockets string, m exposeMapping) (*exposedPortListener, error) {
-	sock := windowsExposeSocketPath(sockets, m.Container)
+	sock := exposeSocketPath(sockets, m.Container)
 	// A leftover file from a previous run makes bind fail with "address already
 	// in use" even though nothing holds it.
 	_ = os.Remove(sock)
@@ -80,10 +80,11 @@ func publishExposedPort(ctx context.Context, sockets string, m exposeMapping) (*
 	// it on the network of whatever coffee shop the laptop is in, which is not
 	// what "reachable from the host" is meant to mean.
 	//
-	// Host port 0 asks the OS for a free one, which is the default because the
-	// obvious choice -- the same number the server uses inside -- cannot work:
-	// the container shares this network stack, so binding it here is what stops
-	// the contained server binding it there.
+	// Host port 0 asks the OS for a free one. That is the default because the
+	// obvious choice, the same number the server uses inside, cannot work on
+	// Windows. The container shares this network stack, so binding the number here
+	// stops the contained server binding it there. Linux keeps the rule so a
+	// mapping means the same on both.
 	hostLn, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", m.Host))
 	if err != nil {
 		_ = tunnelL.Close()
@@ -157,7 +158,7 @@ func (e *exposedPortListener) Close() {
 // and bridge each one to the server inside the container when it carries a
 // request.
 func startExposeTunnels(ctx context.Context, sockets string, containerPort int) {
-	sock := windowsExposeSocketPath(sockets, containerPort)
+	sock := exposeSocketPath(sockets, containerPort)
 	local := fmt.Sprintf("127.0.0.1:%d", containerPort)
 	for i := 0; i < exposeTunnelPoolSize; i++ {
 		go maintainExposeTunnel(ctx, sock, local)

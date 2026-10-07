@@ -70,7 +70,7 @@ FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i
 | `nvx --standard <command>` | Drop back to the default level for one run. Never uncontains an install. |
 | `nvx --no-sandbox <command>` | Run uncontained, for the cases nvx refuses by design, such as a global install. |
 | `nvx --connect <port>` | Let one contained run reach one service already running on your machine. |
-| `nvx --expose <port>` | Windows only. Publish a port a contained server listens on, so your browser can reach it. |
+| `nvx --expose <port>` | Windows and Linux. Publish a port a contained server listens on, so your browser can reach it. |
 | `nvx init-shims` | Write the shims in `~/.nvx/bin`, and the project bin shims when run inside a project. |
 
 ## Checking and policy
@@ -195,10 +195,10 @@ Options:
   --strict               Contain your own code too (not just installs/ad-hoc
                          tools). Must come BEFORE the command, like the two
                          above; after it, the flag belongs to the command
-  --expose <in>[:<host>] (Windows) Publish a port a server inside the sandbox
-                         listens on, so the host can reach it. The two numbers
-                         must differ. Omit the host port to have one picked and
-                         printed. Must come BEFORE the command
+  --expose <in>[:<host>] (Windows, Linux) Publish a port a server inside the
+                         sandbox listens on, so the host can reach it. The two
+                         numbers must differ. Omit the host port to have one
+                         picked and printed. Must come BEFORE the command
   --connect <host>[:<in>]  Let the sandbox reach ONE service already
                          running on your machine, over a tunnel nvx dials. The
                          two numbers must differ; the in-sandbox one is printed
