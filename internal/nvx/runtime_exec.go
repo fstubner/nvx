@@ -74,7 +74,14 @@ func (n NodeProvider) ResolveBinary(cmd string, nvxHome string, pinnedVer string
 	// the bundled node_modules/npm. Check there first so a self-update
 	// actually takes effect; node itself is never installed this way, so it
 	// always resolves to the bundled binary only.
-	if cmd == "npm" || cmd == "npx" {
+	//
+	// corepack, yarn and pnpm are looked for there too. A Node.js release with no
+	// bundled corepack gets one from `npm install -g corepack`, and so can yarn and
+	// pnpm. The shim now sets the prefix for an npm started with no integration, so
+	// those installs land here in every shell, and PATH would find them only in the
+	// ones with the integration loaded.
+	switch cmd {
+	case "npm", "npx", "corepack", "yarn", "pnpm":
 		if p := npmGlobalOverridePath(nvxHome, versionDir, cmd); p != "" {
 			return p
 		}
@@ -91,10 +98,14 @@ func (n NodeProvider) ResolveBinary(cmd string, nvxHome string, pinnedVer string
 			binaryPath = filepath.Join(versionDir, "npx.cmd")
 		case "corepack":
 			binaryPath = filepath.Join(versionDir, "corepack.cmd")
+		case "yarn", "pnpm":
+			// Linked here by `corepack enable`, which nvx's corepack shim points
+			// at this directory. See corepack_enable.go.
+			binaryPath = filepath.Join(versionDir, cmd+".cmd")
 		}
 	} else {
 		switch cmd {
-		case "node", "npm", "npx", "corepack":
+		case "node", "npm", "npx", "corepack", "yarn", "pnpm":
 			binaryPath = filepath.Join(versionDir, "bin", cmd)
 		}
 	}
@@ -108,7 +119,8 @@ func (n NodeProvider) ResolveBinary(cmd string, nvxHome string, pinnedVer string
 }
 
 // npmGlobalOverridePath returns the path to cmd inside versionDir's npm_global
-// prefix — where a self-updated npm/npx lands — if it exists there, else "".
+// prefix — where a self-updated npm/npx lands, and a globally installed corepack,
+// yarn or pnpm — if it exists there, else "".
 //
 // This override is trusted with no further integrity check once it exists,
 // and every command resolved through it (isGlobalInstall blocks contained

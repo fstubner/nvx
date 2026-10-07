@@ -64,15 +64,10 @@ func seedDoctorShims(t *testing.T, home string) {
 	t.Helper()
 	assumeProtectedProfile(t)
 	binDir := filepath.Join(home, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
+	// The shims nvx writes, not stand-ins. Doctor reads what is in the directory
+	// now and calls a file that is not an nvx shim a foreign one.
+	if err := generateShims(home); err != nil {
 		t.Fatal(err)
-	}
-	for _, cmd := range coreShimCommands() {
-		for _, name := range []string{cmd, cmd + ".exe"} {
-			if err := os.WriteFile(filepath.Join(binDir, name), []byte("shim"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-		}
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+stubRuntimeDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
