@@ -88,16 +88,6 @@ type protectedDotenv struct {
 	SDDL string `json:"sddl"`
 }
 
-// hasProtectedDotenv reports whether existing holds a record for path.
-func hasProtectedDotenv(existing []protectedDotenv, path string) bool {
-	for _, r := range existing {
-		if sameGrantPath(r.Path, path) {
-			return true
-		}
-	}
-	return false
-}
-
 // recordProtectedDotenv adds the record for path, or replaces it when replace
 // is set. The caller replaces a record only for a file that inherits its
 // permissions, which is a new file an editor or git put in place, so the

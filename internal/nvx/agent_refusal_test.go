@@ -52,6 +52,61 @@ func TestAgentModeRefusesInsteadOfApproving(t *testing.T) {
 	}
 }
 
+// Agent mode wins over -y, --yes and NVX_YES, however each is given. Agents
+// pass -y by habit, and with -y beside --agent-mode a release inside the
+// cooling-off window was approved and recorded as check_approved by=yes_flag.
+// The refusal says, in one line, which of them it ignored.
+func TestAgentModeIgnoresYesAndNvxYes(t *testing.T) {
+	sc := checkScenario{pkg: "some-pkg", policy: `{"typosquatting":{"enabled":false}}`, age: 2 * time.Hour}
+	for _, c := range []struct {
+		name    string
+		flags   []string
+		env     map[string]string
+		ignored string
+	}{
+		{"--agent-mode -y", []string{"--agent-mode", "-y"}, nil, "-y was ignored"},
+		{"-y --agent-mode", []string{"-y", "--agent-mode"}, nil, "-y was ignored"},
+		{"--agent-mode --yes", []string{"--agent-mode", "--yes"}, nil, "-y was ignored"},
+		{"--agent-mode and NVX_YES", []string{"--agent-mode"}, map[string]string{"NVX_YES": "true"}, "NVX_YES was ignored"},
+		{"NVX_AGENT_MODE and -y", []string{"-y"}, map[string]string{"NVX_AGENT_MODE": "1"}, "-y was ignored"},
+		{"NVX_AGENT_MODE and NVX_YES", nil, map[string]string{"NVX_AGENT_MODE": "1", "NVX_YES": "1"}, "NVX_YES was ignored"},
+		{"all of them", []string{"--agent-mode", "-y"}, map[string]string{"NVX_YES": "true"}, "-y and NVX_YES were ignored"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			for _, k := range []string{"NVX_YES", "NVX_AGENT_MODE", "NVX_TRUST_YES", "NVX_QUIET", "NVX_VERBOSE"} {
+				t.Setenv(k, "")
+			}
+			for k, v := range c.env {
+				t.Setenv(k, v)
+			}
+			oldY, oldA, oldQ, oldV := yesFlag, agentModeFlag, quietFlag, verboseFlag
+			t.Cleanup(func() { yesFlag, agentModeFlag, quietFlag, verboseFlag = oldY, oldA, oldQ, oldV })
+			yesFlag, agentModeFlag, quietFlag, verboseFlag = false, false, false, false
+
+			// As the startup code reads them: the leading flags, then the environment.
+			args := append(append([]string{"nvx"}, c.flags...), "npm", "install", sc.pkg)
+			_, yes, _, _, _ := parseStartupFlags(args)
+			yesFlag = yes
+			applyEnvironmentFlags()
+
+			code, out, home := runScenario(t, sc)
+			if code == 0 {
+				t.Fatalf("a release inside the cooling-off window was approved in agent mode:\n%s", out)
+			}
+			recs := readAuditRecords(t, home)
+			if r := findRecord(recs, "check_refused", "release_age"); r == nil || r["by"] != "agent_mode" {
+				t.Errorf("want the refusal recorded as check_refused by=agent_mode, got %v", recs)
+			}
+			if findRecord(recs, "check_approved", "release_age") != nil {
+				t.Errorf("agent mode recorded an approval: %v", recs)
+			}
+			if n := strings.Count(out, "ignored, because agent mode is on"); n != 1 || !strings.Contains(out, c.ignored) {
+				t.Errorf("want one line saying %q, got %d such lines:\n%s", c.ignored, n, out)
+			}
+		})
+	}
+}
+
 // Every check refusal ends with one paragraph for an agent. It says not to
 // approve the check itself, to tell the person, and gives the line the person
 // can add. Only the global-install refusal spoke to an agent. The others named -y, NVX_YES and
@@ -178,26 +233,39 @@ func TestDoctorWarnsAboutApprovalVariables(t *testing.T) {
 		}
 	}
 
-	t.Setenv("NVX_YES", "true")
-	t.Setenv("NVX_AGENT_MODE", "1")
-	t.Setenv("NVX_TRUST_YES", "1")
-	out := captureStderrHere(t, func() { runDoctorQuietly(t, home) })
-	for name, turnsOff := range map[string]string{
-		"NVX_YES":        "pre-install checks",
-		"NVX_AGENT_MODE": "questions",
-		"NVX_TRUST_YES":  "widen the sandbox",
-	} {
+	warning := func(out, name string) string {
 		i := strings.Index(out, name+" is set")
 		if i < 0 {
 			t.Errorf("doctor does not warn that %s is set:\n%s", name, out)
-			continue
+			return ""
 		}
 		line := out[i:]
 		if j := strings.Index(line, "\n"); j >= 0 {
 			line = line[:j]
 		}
-		if !strings.Contains(line, "turns off") || !strings.Contains(line, turnsOff) {
+		return line
+	}
+
+	t.Setenv("NVX_YES", "true")
+	t.Setenv("NVX_TRUST_YES", "1")
+	out := captureStderrHere(t, func() { runDoctorQuietly(t, home) })
+	for name, turnsOff := range map[string]string{
+		"NVX_YES":       "pre-install checks",
+		"NVX_TRUST_YES": "widen the sandbox",
+	} {
+		if line := warning(out, name); !strings.Contains(line, "turns off") || !strings.Contains(line, turnsOff) {
 			t.Errorf("the %s warning does not say what it turns off (%s):\n%s", name, turnsOff, line)
 		}
+	}
+
+	// Agent mode ignores NVX_YES, and doctor says that rather than what
+	// NVX_YES would turn off.
+	t.Setenv("NVX_AGENT_MODE", "1")
+	out = captureStderrHere(t, func() { runDoctorQuietly(t, home) })
+	if line := warning(out, "NVX_AGENT_MODE"); !strings.Contains(line, "turns off") || !strings.Contains(line, "questions") {
+		t.Errorf("the NVX_AGENT_MODE warning does not say what it turns off (questions):\n%s", line)
+	}
+	if line := warning(out, "NVX_YES"); !strings.Contains(line, "ignores NVX_YES") || strings.Contains(line, "turns off") {
+		t.Errorf("with NVX_AGENT_MODE set, the NVX_YES warning does not say agent mode ignores it:\n%s", line)
 	}
 }

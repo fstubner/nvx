@@ -124,7 +124,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   install-script and advisory checks into log lines. In agent mode nvx now
   asks nothing, even at a terminal. It refuses, says why and what a person can
   do, and exits 77, and the audit log records `check_refused` with
-  `by=agent_mode`. `-y`, `--yes` and `NVX_YES` still approve the checks, and
+  `by=agent_mode`. `-y`, `--yes` and `NVX_YES` do not approve a check in agent
+  mode either, because agents pass `-y` by habit, and the refusal names the
+  ones it ignored. Without agent mode they approve the checks as before, and
   `-y -q` is what agent mode used to do. The policy line each refusal prints is
   the narrower way to let one package through.
 
@@ -478,10 +480,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   permissions, and `nvx grants reset` puts them back. A file nvx may not
   change stays readable in the sandbox, and the run says so and carries on. A
   link named `.env` is left alone, and a hard link is changed under every
-  name, because it is one file. nvx hides at most 200 `.env` files per project.
-  Past that it warns once and leaves the rest readable in the sandbox, so a
-  contained process that creates thousands cannot make nvx rewrite its record
-  without end.
+  name, because it is one file. Every `.env` file present at launch is hidden,
+  however many there are. nvx records the earlier permissions of at most 200
+  per project, so a contained process that creates thousands cannot make nvx
+  rewrite its record without end. `.env`, `.env.local` and the other names
+  dotenv tools load get a record first. Past 200 the launch warns, and
+  `nvx grants reset` cannot put back the permissions of the files without a
+  record. During a run, a `.env` created once the record holds 200 stays
+  readable until the next launch, which hides it, and nvx says so once.
 
 * **When a host refuses the sandbox its namespaces on Linux, the message now
   says what happened and what to do.** On default Docker and AppArmor-hardened
@@ -628,6 +634,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1.22.22 each install a package contained. pnpm 12 still cannot run contained,
   see Known limitations.
 
+  Arguments reach the batch file as they were given. nvx escapes them for
+  `cmd.exe` the way Rust's standard library does for batch files, so `&`, `|`,
+  `<`, `>`, `^`, `%PATH%` and quotes in an argument stay part of it. An
+  argument that holds a line break is refused, because `cmd.exe` would drop
+  the rest of the line. A batch file run outside the sandbox, such as a
+  project's own bin, gets the same escaping. Before, Go's escaping was used
+  there, which `cmd.exe` does not follow, and an argument such as
+  `x&echo.INJECTED>file` ran a second command as you. The path outside the
+  sandbox was affected in 0.7.0 too, where the second command also ran as you,
+  outside the sandbox. Measured with 0.7.0,
+  `nvx shim tsc "x&echo.INJECTED>file"` in a project wrote the file.
+
 * **Project commands run under strict isolation on Windows.** With
   `isolation.level: strict`, `tsc`, `eslint` and every other command in
   `node_modules\.bin` stopped with "is not in a Node or Bun install". nvx tried
@@ -666,7 +684,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   into nvx's folder for the sandbox, and pnpm from a version's `npm_global` was
   refused. Measured 2026-10-07 with a short alias of a local folder, the copy
   for Node 22.23.3 was 99 MB in 2024 files. Both spellings now compare equal,
-  and uninstall finds a `node.exe` started by either one.
+  and uninstall finds a `node.exe` started by either one. A path through a
+  junction is compared by where the junction leads, and a path nvx cannot
+  resolve counts as outside the home.
 
 ## [0.7.0] - 2026-10-06
 

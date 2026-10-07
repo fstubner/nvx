@@ -2,6 +2,7 @@ package nvx
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1070,11 +1071,17 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 	}
 
 	cmd, err := directCommand(cmdName, args, nvxHome, true)
+	if errors.As(err, new(startError)) {
+		LogError("Failed to execute %s: %v", cmdName, err)
+		return 1
+	}
 	if err != nil {
 		reportNoRealExecutable(cmdName, nvxHome)
 		return exitCommandNotFound
 	}
-	cmd.Env = withDefaultNpmPrefix(cmd.Env, cmdName, nvxHome, cmd.Path, policy)
+	// Args[0], the command nvx resolved. A batch file runs with cmd.exe as
+	// cmd.Path (see directExecCommand).
+	cmd.Env = withDefaultNpmPrefix(cmd.Env, cmdName, nvxHome, cmd.Args[0], policy)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -1133,12 +1140,20 @@ func directCommand(cmdName string, args []string, nvxHome string, warnPin bool) 
 		}
 	}
 
-	// #nosec G702 -- running the runtime nvx resolved for this project is what
-	// a shim is for; launchPath comes from nvx's own resolution, not from input.
-	cmd := exec.Command(launchPath, launchArgs...)
+	cmd, err := directExecCommand(launchPath, launchArgs)
+	if err != nil {
+		return nil, startError{err}
+	}
 	cmd.Env = childEnv // nil inherits, exactly as before
 	return cmd, nil
 }
+
+// startError is a command directCommand found and could not build a launch
+// for, such as a batch file given an argument cmd.exe would cut short. Its
+// callers report it as it is, not as a missing command.
+type startError struct{ err error }
+
+func (e startError) Error() string { return e.err.Error() }
 
 // ToBashPath converts a Windows path to Git Bash path format (e.g. C:\Users -> /c/Users)
 func ToBashPath(winPath string) string {

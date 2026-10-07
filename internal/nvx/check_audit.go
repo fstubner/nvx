@@ -66,22 +66,48 @@ type checkInfo struct {
 	aborted string
 }
 
-// autoApprovalSource reports which switch answers prompts without asking, or ""
-// when none is set. It mirrors the first two tests in PromptYesNo, in the same
-// order, so the two cannot disagree about whether a prompt was asked.
+// autoApprovalSource reports which switch answers the pre-install checks
+// without asking, or "" when none does. Outside agent mode it mirrors the first
+// two tests in PromptYesNo, in the same order, so the two cannot disagree about
+// whether a prompt was asked.
 //
 // --agent-mode is not one of them. It approved every check until it was made to
 // refuse whatever would ask. A person who set NVX_AGENT_MODE in an agent's
 // environment to stop it hanging had turned the typosquat, release-age,
 // install-script and advisory checks into log lines.
+//
+// In agent mode -y and NVX_YES answer nothing either. Agents pass -y by habit,
+// and with -y beside --agent-mode a release inside the cooling-off window went
+// ahead with "Approved without asking (-y)". TestAgentModeIgnoresYesAndNvxYes
+// pins it. askCheck says which of them it ignored.
 func autoApprovalSource() (token, label string) {
 	switch {
+	case agentModeFlag:
+		return "", ""
 	case yesFlag:
 		return "yes_flag", "-y"
 	case nvxYesSet():
 		return "nvx_yes", "NVX_YES"
 	}
 	return "", ""
+}
+
+// noteApprovalsIgnored says, in agent mode, that -y and NVX_YES did not
+// approve the check that was refused.
+func noteApprovalsIgnored() {
+	var set []string
+	if yesFlag {
+		set = append(set, "-y")
+	}
+	if nvxYesSet() {
+		set = append(set, "NVX_YES")
+	}
+	switch len(set) {
+	case 1:
+		LogWarn("%s was ignored, because agent mode is on and nothing approves a check in agent mode.", set[0])
+	case 2:
+		LogWarn("-y and NVX_YES were ignored, because agent mode is on and nothing approves a check in agent mode.")
+	}
 }
 
 // nobodyIsHere mirrors the non-interactive tests in PromptYesNo.
@@ -127,6 +153,7 @@ func askCheck(nvxHome string, c checkInfo, message string, remedy checkRemedy) b
 		// Even with a terminal on stdin. An agent that drives a pseudo-terminal
 		// looks like a person there, and --agent-mode says it is not one.
 		LogWarn("--agent-mode is set, so nvx refuses instead of asking: %s", message)
+		noteApprovalsIgnored()
 		recordCheck(nvxHome, "check_refused", c, answeredByAgentMode)
 	case nobodyIsHere():
 		LogWarn("Non-interactive environment: denying prompt. Prompt was: %s", message)

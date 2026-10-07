@@ -16,3 +16,11 @@ func runDirectChild(cmd *exec.Cmd) error {
 	killChildWhenParentDies(cmd)
 	return runChildForwardingSignals(cmd)
 }
+
+// directExecCommand builds a launch of path outside the sandbox. Only Windows
+// has batch files to treat differently, see the Windows version.
+func directExecCommand(path string, args []string) (*exec.Cmd, error) {
+	// #nosec G702 -- path is a program nvx resolved itself, the runtime a
+	// shim exists to run or the docker CLI. It does not come from input.
+	return exec.Command(path, args...), nil
+}

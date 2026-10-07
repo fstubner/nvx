@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -152,8 +153,8 @@ func TestWatchDotenvFilesProtectsFilesThatAppear(t *testing.T) {
 // only a watch that never acts runs it out.
 func TestWatchDotenvFilesEndToEnd(t *testing.T) {
 	nvxHome, project, root := dotenvWatchProject(t)
-	stop := watchDotenvFiles(nvxHome, project)
-	defer stop()
+	w := watchDotenvFiles(nvxHome, project)
+	defer w.stop()
 
 	env := filepath.Join(project, ".env")
 	if err := os.WriteFile(env, []byte("API_KEY=1"), 0o600); err != nil {
@@ -232,8 +233,8 @@ fs.writeFileSync(process.argv[2], out.join('\n'));
 			_ = os.Remove(filepath.Join(workDir, f))
 		}
 		if watch {
-			stop := watchDotenvFiles(tempDir(t), workDir)
-			defer stop()
+			w := watchDotenvFiles(tempDir(t), workDir)
+			defer w.stop()
 		}
 		driven := make(chan []string, 1)
 		go func() {
@@ -286,8 +287,8 @@ fs.writeFileSync(process.argv[2], out.join('\n'));
 
 // TestWatchDotenvFilesStopsAtTheCap floods the project with dotenv files while
 // the watch runs. Only the cap's worth are protected, nvx says so once, and a
-// file past the cap is left alone. A file with a record still gets its
-// protection back after it is replaced.
+// file past the cap is left alone until the next launch. A file with a record
+// still gets its protection back after it is replaced.
 func TestWatchDotenvFilesStopsAtTheCap(t *testing.T) {
 	lowerDotenvCap(t, 5)
 	nvxHome := tempDir(t)
@@ -310,7 +311,7 @@ func TestWatchDotenvFilesStopsAtTheCap(t *testing.T) {
 		}
 	}
 	var files []string
-	for i := 0; i < maxProtectedDotenv+3; i++ {
+	for i := 0; i < maxRecordedDotenv+3; i++ {
 		files = append(files, filepath.Join(project, fmt.Sprintf(".env.%02d", i)))
 	}
 	protected := func() (n int) {
@@ -323,13 +324,13 @@ func TestWatchDotenvFilesStopsAtTheCap(t *testing.T) {
 	}
 
 	warnings := captureStderr(t, func() {
-		stop := watchDotenvFiles(nvxHome, project)
-		defer stop()
+		w := watchDotenvFiles(nvxHome, project)
+		defer w.stop()
 		for _, p := range files {
 			write(p)
 		}
 		deadline := time.Now().Add(10 * time.Second)
-		for protected() < maxProtectedDotenv && time.Now().Before(deadline) {
+		for protected() < maxRecordedDotenv && time.Now().Before(deadline) {
 			time.Sleep(5 * time.Millisecond)
 		}
 
@@ -337,8 +338,8 @@ func TestWatchDotenvFilesStopsAtTheCap(t *testing.T) {
 		// changes in order, so once the first is protected again it has seen the
 		// second too.
 		records := loadProjectGrants(nvxHome, project).ProtectedDotenv
-		if len(records) != maxProtectedDotenv {
-			t.Fatalf("the record holds %d files, want the cap, %d", len(records), maxProtectedDotenv)
+		if len(records) != maxRecordedDotenv {
+			t.Fatalf("the record holds %d files, want the cap, %d", len(records), maxRecordedDotenv)
 		}
 		replaced := records[0].Path
 		late := filepath.Join(project, ".env.late")
@@ -358,13 +359,79 @@ func TestWatchDotenvFilesStopsAtTheCap(t *testing.T) {
 			t.Errorf("a file past the cap was protected")
 		}
 	})
-	if n := protected(); n != maxProtectedDotenv {
-		t.Errorf("%d files are protected, want the cap, %d", n, maxProtectedDotenv)
+	if n := protected(); n != maxRecordedDotenv {
+		t.Errorf("%d files are protected, want the cap, %d", n, maxRecordedDotenv)
 	}
-	if n := len(loadProjectGrants(nvxHome, project).ProtectedDotenv); n != maxProtectedDotenv {
-		t.Errorf("the record holds %d files, want the cap, %d", n, maxProtectedDotenv)
+	if n := len(loadProjectGrants(nvxHome, project).ProtectedDotenv); n != maxRecordedDotenv {
+		t.Errorf("the record holds %d files, want the cap, %d", n, maxRecordedDotenv)
 	}
-	if n := strings.Count(warnings, "nvx hides at most"); n != 1 {
+	if n := strings.Count(warnings, "is full"); n != 1 {
 		t.Errorf("nvx said it had stopped %d times, want once:\n%s", n, warnings)
+	}
+}
+
+// Past the cap the watch still hides a file the launch found when an editor
+// replaces it, record or not, as the launch hid it. A file created during the
+// run stays readable.
+func TestWatchHidesAReplacedLaunchFileWithoutARecord(t *testing.T) {
+	lowerDotenvCap(t, 5)
+	nvxHome := tempDir(t)
+	project := tempDir(t)
+	capSID, err := scopeCapabilitySID(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(p string) {
+		t.Helper()
+		if err := os.WriteFile(p, []byte("API_KEY=1"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var atLaunch []string
+	for i := 0; i < maxRecordedDotenv+2; i++ {
+		p := filepath.Join(project, fmt.Sprintf(".env.%02d", i))
+		write(p)
+		atLaunch = append(atLaunch, p)
+	}
+	if err := grantSandboxModify(capSID, project); err != nil {
+		t.Fatal(err)
+	}
+	root, err := finalPathOf(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// As platformLaunchNative does it: the watch, then the launch scan.
+	w := watchDotenvFiles(nvxHome, project)
+	defer w.stop()
+	w.presentAtLaunch(hideDotenvFromSandbox(nvxHome, project))
+
+	records := loadProjectGrants(nvxHome, project).ProtectedDotenv
+	unrecorded := ""
+	for _, p := range atLaunch {
+		if !slices.ContainsFunc(records, func(r protectedDotenv) bool { return sameGrantPath(r.Path, p) }) {
+			unrecorded = p
+		}
+	}
+	if unrecorded == "" {
+		t.Fatalf("every file has a record, so this checks nothing: %+v", records)
+	}
+
+	// The watch reports changes in order, so once the replaced file is
+	// protected again it has seen the new one too.
+	late := filepath.Join(project, ".env.late")
+	write(late)
+	write(unrecorded + ".tmp")
+	if err := os.Rename(unrecorded+".tmp", unrecorded); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(dotenvWatchBudget); !dotenvIsProtected(t, root, unrecorded) && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !dotenvIsProtected(t, root, unrecorded) {
+		t.Errorf("%s, found at launch and replaced, was not protected again", filepath.Base(unrecorded))
+	}
+	if dotenvIsProtected(t, root, late) {
+		t.Errorf("a file created during the run past the cap was protected")
 	}
 }

@@ -632,21 +632,31 @@ func ensureAppContainerCommand(nvxHome, cmdPath string) (string, error) {
 	return usePath, nil
 }
 
+// isNvxManagedRuntimePath reports whether cmdPath is a file under the nvx
+// home's versions folder. A path that cannot be resolved is not.
 func isNvxManagedRuntimePath(nvxHome, cmdPath string) bool {
 	if nvxHome == "" {
 		return false
 	}
-	versionsRoot := comparablePath(filepath.Join(nvxHome, "versions"))
-	rel, err := filepath.Rel(versionsRoot, comparablePath(cmdPath))
+	versionsRoot, ok := comparablePath(filepath.Join(nvxHome, "versions"))
+	if !ok {
+		return false
+	}
+	cmdReal, ok := comparablePath(cmdPath)
+	if !ok {
+		return false
+	}
+	rel, err := filepath.Rel(versionsRoot, cmdReal)
 	if err != nil {
 		return false
 	}
 	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
 }
 
-// comparablePath spells path the way filepath.EvalSymlinks does, with links
-// resolved and 8.3 short names expanded, so two spellings of one folder compare
-// equal. A path that cannot be resolved is returned cleaned, as given.
+// comparablePath returns the real path of path, as Windows names the file it
+// opens: links and junctions followed, 8.3 short names expanded. So two
+// spellings of one folder compare equal. ok is false when path cannot be
+// opened, and the caller then treats it as unknown.
 //
 // ensureAppContainerCommand resolves the command with EvalSymlinks and then
 // asks whether it lies under the nvx home, which is spelled however NVX_HOME
@@ -656,11 +666,17 @@ func isNvxManagedRuntimePath(nvxHome, cmdPath string) bool {
 // and refused with "is not in a Node or Bun install", and every other runtime
 // was copied for the sandbox where a grant would do. Reproduced with TEMP set
 // to an 8.3 alias of a local folder.
-func comparablePath(path string) string {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return resolved
+//
+// This used filepath.EvalSymlinks and fell back to the path as given when that
+// failed. EvalSymlinks fails on a junction, so a junction under versions that
+// led to another folder made a file there count as nvx's own, and the sandbox
+// would have been granted the folder it led to.
+func comparablePath(path string) (string, bool) {
+	resolved, err := finalPathOf(path)
+	if err != nil {
+		return "", false
 	}
-	return filepath.Clean(path)
+	return resolved, true
 }
 
 func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {

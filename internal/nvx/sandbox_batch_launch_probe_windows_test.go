@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -194,5 +195,47 @@ func TestProbeContainedNodeStartsWhenItsFileLacksTheSandboxEntry(t *testing.T) {
 	// names while the launch failed to see the runtime as nvx's.
 	if !appContainerHasGrantFor(runtimeCap, nodeExe, grantReadExec) {
 		t.Error("node ran, but node.exe still lacks the sandbox's read and execute; the launch went around it")
+	}
+}
+
+// A project's batch shim gets batchArgCases as they were given, run contained
+// under strict isolation and run uncontained, through the built binary. None
+// of them runs a command of its own.
+func TestProbeBatchShimArgumentsArriveIntact(t *testing.T) {
+	f := newBatchProbeFixture(t)
+	// A test before this one can leave this process marked as a shim's, and the
+	// built nvx would then not say which way it ran.
+	f.env = slices.DeleteFunc(slices.Clone(f.env), func(e string) bool {
+		return strings.HasPrefix(strings.ToUpper(e), nvxActiveEnvVar+"=")
+	})
+	script := filepath.Join(f.project, "node_modules", "typescript", "bin", "tsc")
+	if err := os.WriteFile(script, []byte(`console.log("ARGV" + JSON.stringify(process.argv.slice(2)))`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(f.project, "injected")
+	want := append(batchArgCases(marker), "last")
+	for _, mode := range []struct {
+		name, says string
+		flags      []string
+	}{
+		{"contained", "Running in native sandbox", []string{"--strict", "--verbose"}},
+		{"uncontained", "Running directly (not sandboxed)", []string{"--verbose"}},
+	} {
+		args := append(append(mode.flags, "shim", "tsc"), want...)
+		out, err := f.run(t, args...)
+		if !strings.Contains(out, mode.says) {
+			t.Errorf("%s: the run does not say %q, so it may not be the launch under test (%v):\n%s", mode.name, mode.says, err, out)
+		}
+		_, argv, found := strings.Cut(out, "ARGV")
+		if !found {
+			t.Errorf("%s: tsc printed no argument list (%v):\n%s", mode.name, err, out)
+			continue
+		}
+		argv, _, _ = strings.Cut(argv, "\n")
+		requireArgsRoundTrip(t, mode.name, want, []byte(strings.TrimSpace(argv)))
+		if _, err := os.Stat(marker); err == nil {
+			t.Errorf("%s: an argument ran a command of its own, which wrote %s", mode.name, marker)
+			os.Remove(marker)
+		}
 	}
 }

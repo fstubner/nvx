@@ -209,12 +209,13 @@ Options:
                          nvx npm --filesystem-provider=...
   -y, --yes              Approve the pre-install checks without asking. Must come
                          BEFORE the command. After it, it is the command's own
-                         flag. Never widens the sandbox
+                         flag. Never widens the sandbox. Ignored in agent mode
   -q, --quiet            Suppress success/info messages (errors and warnings still print)
   --verbose              Show what nvx is doing on the way: checks, session ids, permission work
   --agent-mode           Never ask. Refuse whatever would need an answer, say why
                          and what a person can do, and exit 77. Also hides
-                         success/info messages, like -q. Approves nothing. Must
+                         success/info messages, like -q. Approves nothing, and
+                         -y and NVX_YES approve no check while it is on. Must
                          come BEFORE the command, or set NVX_AGENT_MODE=1
 
 Environment:

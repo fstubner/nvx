@@ -197,12 +197,14 @@ These are deliberate trade-offs, and this section documents each one:
   terminal. The pre-install checks still ask at a terminal, so an agent with a
   pseudo-terminal can approve one of those. `--agent-mode`, or
   `NVX_AGENT_MODE=1` in the agent's environment, makes nvx refuse instead of
-  asking. An agent with a shell of its own outside the sandbox can still do
-  what a person can. It can run `nvx trust`, `nvx allow-host`, `nvx -y`,
-  `nvx --no-sandbox` or `nvx --connect`, put `NVX_YES=1` or `NVX_TRUST_YES=1`
-  in front of a command, or edit `~/.nvx/policy.json`. Every refusal tells it
-  not to, and nothing in nvx enforces that. Block those in the harness's own
-  permission settings if the agent should not have them.
+  asking. While it is on, `-y`, `--yes` and `NVX_YES` approve no check either,
+  because agents pass `-y` by habit, and the refusal says it ignored them. An
+  agent with a shell of its own outside the sandbox can still do what a person
+  can. It can run `nvx trust`, `nvx allow-host`, `nvx --no-sandbox` or
+  `nvx --connect`, clear `NVX_AGENT_MODE` and run `nvx -y`, put `NVX_YES=1` or
+  `NVX_TRUST_YES=1` in front of a command, or edit `~/.nvx/policy.json`. Every
+  refusal tells it not to, and nothing in nvx enforces that. Block those in the
+  harness's own permission settings if the agent should not have them.
   `NVX_TRUST_YES=true` approves every request to widen the sandbox without
   asking, so setting it hands those decisions to whatever sets the environment.
 - **Same-origin checksums.** Runtime archives and their `SHASUMS256.txt` are
@@ -338,18 +340,23 @@ These are deliberate trade-offs, and this section documents each one:
   a replaced one for between 6.3 and 25.5 ms in twelve. A contained node
   process that polled for a new `.env` read it in ten of ten trials. So a
   secret written into the project during a long contained run can be read. A
-  `.env` that exists when the run starts is not affected. Linux has the same
-  gap, and macOS does not, because it refuses the read by name. nvx hides at
-  most 200 `.env` files per project. A contained process could otherwise
-  create thousands and keep nvx busy. Past 200, nvx warns and leaves the rest
-  readable. A contained process that creates 200 files uses up that allowance,
-  and a `.env` you create after that stays readable until you delete the extra
-  files and start the next run. A file nvx may not change stays readable, with
-  a warning. On every platform a contained process cannot read the project's
+  `.env` that exists when the run starts is hidden before the contained
+  process starts, however many there are, so it has no such gap until it is
+  replaced. Linux has the same gap, and macOS does not, because it refuses the
+  read by name. nvx records the earlier permissions of at most 200 `.env`
+  files per project, so a contained process that creates thousands cannot make
+  nvx rewrite its record without end. Past 200 the launch still hides every
+  file and warns, and `nvx grants reset` cannot put back the permissions of
+  the files without a record. During a run, once the record holds 200, a
+  `.env` created after that stays readable until the next launch, which hides
+  it, and nvx warns. A file that was there at launch is still hidden again when
+  it is replaced. A file nvx may not change stays readable, with a warning. On
+  every platform a contained process cannot read the project's
   `.env` or `.env.*` files, except the templates `.env.example`,
   `.env.sample`, `.env.template` and `.env.dist`. On Linux and Windows that
   covers the files present when the run starts, and the files that appear
-  during it apart from the gap above. On Linux a contained process cannot
+  during it apart from the gap above and, on Windows, a new file once the
+  record holds 200. On Linux a contained process cannot
   reach one by making a user namespace of its own, and nvx keeps covering new
   files even when the machine runs out of file-watch slots.
   `docs/enforcement-matrix.md` note 15 has the details. Secrets outside the
@@ -778,7 +785,8 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   does not. That setting widens the window for every package you install. The
   third is the broadest. `NVX_YES` also approves the
   typosquat, install-script and known-advisory checks for that server, so it is
-  the last resort. It never approves a package OSV lists as malicious. Each check it approves is printed on stderr and written to
+  the last resort. It never approves a package OSV lists as malicious, and
+  approves nothing where `NVX_AGENT_MODE` is set too. Each check it approves is printed on stderr and written to
   `~/.nvx/audit.log` as a `check_approved` record.
 
   Until 0.6.0 the only exemption list was `typosquatting.trusted_packages`, which

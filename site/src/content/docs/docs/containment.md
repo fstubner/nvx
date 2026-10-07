@@ -67,7 +67,7 @@ The pre-install checks (typosquats, fresh releases, install scripts, known vulne
 
 Requests that widen the sandbox are never asked about, at a terminal or anywhere else. They are a project policy that loosens settings, a host the allowlist does not name, and a tool asking to keep a persistent profile. nvx refuses with exit 77 and prints `nvx trust` or `nvx allow-host` for you to run in your own terminal. `NVX_TRUST_YES=true` approves them without the command, for every run started from that environment. Setting it hands those decisions to whatever sets the environment.
 
-A coding agent that drives a terminal can answer a check's prompt itself. `--agent-mode`, or `NVX_AGENT_MODE=1` in the agent's environment, stops that. nvx then asks nothing. It refuses whatever would need an answer, says why and what you can do, and exits 77. It approves nothing. `nvx doctor` warns when `NVX_YES`, `NVX_AGENT_MODE` or `NVX_TRUST_YES` is set.
+A coding agent that drives a terminal can answer a check's prompt itself. `--agent-mode`, or `NVX_AGENT_MODE=1` in the agent's environment, stops that. nvx then asks nothing. It refuses whatever would need an answer, says why and what you can do, and exits 77. It approves nothing, and while it is on `-y`, `--yes` and `NVX_YES` approve no check either, because agents pass `-y` by habit. The refusal says which of them it ignored. `nvx doctor` warns when `NVX_YES`, `NVX_AGENT_MODE` or `NVX_TRUST_YES` is set.
 
 ## Verification matrix
 

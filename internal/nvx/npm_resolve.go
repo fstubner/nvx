@@ -253,6 +253,10 @@ func runNpmResolution(cfg SandboxConfig, contain bool) int {
 		return runSandbox(cfg)
 	}
 	cmd, err := directCommand(cfg.Command, cfg.Args, cfg.NvxHome, false)
+	if errors.As(err, new(startError)) {
+		LogError("Failed to execute %s: %v", cfg.Command, err)
+		return 1
+	}
 	if err != nil {
 		reportNoRealExecutable(cfg.Command, cfg.NvxHome)
 		return 127
