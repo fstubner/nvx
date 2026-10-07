@@ -99,6 +99,28 @@ and the evidence and measurements for each platform are in the
   [oven-sh/bun#38365](https://github.com/oven-sh/bun/pull/38365) would fix it
   in bun. Use `nvx --no-sandbox bun install`, which runs it uncontained, or use
   npm, yarn or pnpm.
+- **git, pnpm 12 and the Next.js compiler cannot run contained.** Each asks
+  Windows for the full path of a folder, and Windows refuses that request inside
+  the sandbox. git stops with
+  `Unable to read current working directory: Permission denied`, so a dependency
+  from a git URL does not install contained and husky cannot set up its hooks
+  during a contained install.
+  pnpm 12 stops with `Access is denied. (os error 5)` as it reads its `--dir`
+  argument, and `next build` with `failed to canonicalize jsc.baseUrl`. Run
+  these with `nvx --no-sandbox`, or use pnpm 11, which runs contained.
+- **A `pnpm` or `yarn` kept outside nvx's folders does not run contained.** That
+  covers a standalone `pnpm.exe` and the global folder of another Node install,
+  such as `%APPDATA%\npm`. nvx copies only Node and Bun installs for the sandbox,
+  because a copy is readable by every sandbox, and the run is refused with a
+  message saying so. Install the tool with `nvx --no-sandbox npm install -g pnpm`
+  under a Node that nvx manages, or add its folder to
+  `isolation.filesystem.allow_read_exec`, and nvx runs it where it is.
+- **Native addons cannot be built from source contained.** node-gyp does not find
+  Visual Studio from inside the sandbox, so a package with no prebuilt binary for
+  your Node fails to install. Packages that download a prebuilt binary, such as
+  better-sqlite3, sqlite3 and bcrypt, fetch it from `github.com` and
+  `release-assets.githubusercontent.com`, and both need to be in
+  `isolation.network.allow_hosts`. Build from source with `nvx --no-sandbox`.
 - **`yarn` classic fails in a project under your user profile if you have a
   `~/.yarnrc`.** yarn reads every `.yarnrc` from the project up to the drive
   root, and treats the sandbox's refusal of the one in your real home as fatal.

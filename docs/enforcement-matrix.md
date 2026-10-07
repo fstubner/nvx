@@ -1188,6 +1188,21 @@ they date quickly. Each carries the date and machine of its measurement.
   grant removed. Contained `npx`, `pnpm` and `bun` 1.4.2 each install on `C:`.
   Nothing measured needs the grant, so setup stopped adding it.
 
+  git and pnpm 12 fail contained, and the grant would not have fixed either.
+  Measured 2026-10-07 on Windows 11 build 26300, from a native probe inside the
+  container. `GetFinalPathNameByHandle` for a drive-letter path is refused on
+  every drive tried, and so are `QueryDosDevice` and opening the mount manager.
+  pnpm 12 and Next.js's compiler stop with Rust's `canonicalize` failing on
+  `Access is denied. (os error 5)`, and that function is this call, so no file
+  permission changes their answer. git falls back to `GetLongPathName`, which
+  lists each folder above the working directory, and stops with `Unable to read
+  current working directory: Permission denied` unless every one of them can be
+  listed. Through a `subst` drive, git ran once the drive's root and every
+  folder below it down to the project could be listed, and failed with one
+  middle folder unlistable. The old grant covered the drive root and `C:\Users`
+  only, and the folders between them and a project get traverse and stat from
+  nvx, never list.
+
   `nvx setup` is now the way to take back what an older one left. From an
   Administrator terminal it removes the drive-root and Users-folder entries, the
   entries made to the older sandbox identity, and the pre-0.5.0 loopback exemption.

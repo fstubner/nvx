@@ -619,10 +619,8 @@ func ensureAppContainerCommand(nvxHome, cmdPath string) (string, error) {
 	if err := grantRuntimeReadExecTree(dir); err != nil {
 		return "", err
 	}
-	if dir != usePath {
-		if err := grantRuntimeTraverse(usePath); err != nil {
-			return "", err
-		}
+	if err := grantRuntimeReadExecFile(usePath); err != nil {
+		return "", err
 	}
 	// dir's own subtree is now granted, but dir itself commonly sits several
 	// levels below the profile root (e.g. ~/.nvx/versions/node/<version>/) —
@@ -638,12 +636,31 @@ func isNvxManagedRuntimePath(nvxHome, cmdPath string) bool {
 	if nvxHome == "" {
 		return false
 	}
-	versionsRoot := filepath.Join(nvxHome, "versions")
-	rel, err := filepath.Rel(versionsRoot, cmdPath)
+	versionsRoot := comparablePath(filepath.Join(nvxHome, "versions"))
+	rel, err := filepath.Rel(versionsRoot, comparablePath(cmdPath))
 	if err != nil {
 		return false
 	}
 	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
+}
+
+// comparablePath spells path the way filepath.EvalSymlinks does, with links
+// resolved and 8.3 short names expanded, so two spellings of one folder compare
+// equal. A path that cannot be resolved is returned cleaned, as given.
+//
+// ensureAppContainerCommand resolves the command with EvalSymlinks and then
+// asks whether it lies under the nvx home, which is spelled however NVX_HOME
+// or the temp folder spelled it. On GitHub's Windows runners TEMP is
+// C:\Users\RUNNER~1\..., and EvalSymlinks answers C:\Users\runneradmin\..., so
+// the two never matched. pnpm from a version's npm_global was sent to staging
+// and refused with "is not in a Node or Bun install", and every other runtime
+// was copied for the sandbox where a grant would do. Reproduced with TEMP set
+// to an 8.3 alias of a local folder.
+func comparablePath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
 }
 
 func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {
@@ -653,10 +670,7 @@ func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {
 
 	runtimeExe := runtimeInstallExecutable(srcDir)
 	if runtimeExe == "" {
-		return "", fmt.Errorf("%s is not in a Node or Bun install (there is no node.exe or bun.exe beside it), "+
-			"so nvx will not copy its folder for the sandbox: whatever else is in that folder would become readable "+
-			"to every sandbox. Use a runtime nvx manages ('nvx install lts'), or put a Node or Bun install first on PATH",
-			cmdPath)
+		return "", notARuntimeInstallError(cmdPath)
 	}
 
 	key, err := stagedCommandKey(cmdPath)
@@ -688,6 +702,32 @@ func stageAppContainerExecutable(nvxHome, cmdPath string) (string, error) {
 		return "", err
 	}
 	return destExe, nil
+}
+
+// notARuntimeInstallError is the refusal for a command staging will not copy,
+// with the ways to run it that do work.
+//
+// The refusal itself stays. A copy is readable by every sandbox on the machine,
+// and the folders that reach here are a global npm prefix holding every global
+// package, pnpm's home holding its store, or a project's node_modules. What
+// the old text left out was what to do, and its one suggestion, a Node or Bun
+// install first on PATH, does nothing for pnpm. A command already readable by
+// the launch runs in place instead (commandRunsInPlace), so allow_read_exec
+// is a way through. Measured 2026-10-07 with pnpm 10.34.6 installed by
+// `npm install -g --prefix` into a folder outside nvx. It was refused before,
+// and installed contained once the folder was in allow_read_exec.
+func notARuntimeInstallError(cmdPath string) error {
+	dir := filepath.Dir(cmdPath)
+	if strings.EqualFold(filepath.Base(dir), ".bin") && strings.EqualFold(filepath.Base(filepath.Dir(dir)), "node_modules") {
+		return fmt.Errorf("%s is a project's own command, and this sandbox may not read that project's "+
+			"node_modules from here. Run it from the project's root folder, %s", cmdPath, filepath.Dir(filepath.Dir(dir)))
+	}
+	name := strings.TrimSuffix(filepath.Base(cmdPath), filepath.Ext(cmdPath))
+	return fmt.Errorf("%s is not in a Node or Bun install (there is no node.exe or bun.exe beside it). "+
+		"nvx copies only those for the sandbox, because a copy is readable by every sandbox. To run it contained, "+
+		"use a runtime nvx manages ('nvx install lts', and for a package 'nvx --no-sandbox npm install -g %s'), "+
+		"or add %s to isolation.filesystem.allow_read_exec in your nvx policy so this project's sandbox reads it "+
+		"where it is. To run it uncontained, use 'nvx --no-sandbox'", cmdPath, name, dir)
 }
 
 // stagedRuntimeExecutables mark a directory as a runtime install, the only kind
@@ -903,6 +943,34 @@ func grantRuntimeReadExecTree(path string) error {
 	// cost; done separately it would be one propagation per entry.
 	if err := writeDACLEntryDropping(path, sidStr, aclMaskReadExec, nvxInheritFlags, isPackageSID); err != nil {
 		return fmt.Errorf("read/execute tree grant for the sandbox runtime identity: %w", err)
+	}
+	return nil
+}
+
+// grantRuntimeReadExecFile makes sure the identity every sandbox carries may
+// read and execute path itself, the file a launch is about to start.
+//
+// The tree grant above checks the directory, and a directory's entry reaches
+// a file only through inheritance. A file whose list is protected, or was
+// written without its folder's entries, keeps its own answer. Then every
+// contained launch failed with "fork/exec ...\node.exe: Access is denied."
+// while the check on the folder passed. That state was seen by an icacls
+// listing on a real NVX_HOME, entry on the version folder and none on
+// node.exe, and the same error follows from making it by hand. Measured
+// 2026-10-07, a contained `node` failed exactly so, and this used to add a
+// traverse-only entry to node.exe, which does not let it start.
+//
+// The entry written here is the one the folder already intends, for one file.
+func grantRuntimeReadExecFile(path string) error {
+	sidStr, err := runtimeCapabilitySID()
+	if err != nil {
+		return err
+	}
+	if appContainerHasGrantFor(sidStr, path, grantReadExec) {
+		return nil
+	}
+	if err := grantACLWithin(path, sidStr, aclMaskReadExec, 0, directGrantTimeout, nil); err != nil {
+		return fmt.Errorf("read/execute grant for the sandbox runtime identity: %w", err)
 	}
 	return nil
 }
