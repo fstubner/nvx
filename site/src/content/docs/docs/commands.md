@@ -154,7 +154,7 @@ This is what `nvx help` prints, including every flag and environment
 variable.
 
 ```text
-nvx - A Node.js and Bun version manager that runs package installs in an OS sandbox
+nvx - Runs npm install and npx in an OS sandbox, and manages Node.js and Bun versions
 
 Usage:
   nvx <command> [arguments]
