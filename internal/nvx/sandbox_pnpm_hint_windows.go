@@ -8,9 +8,9 @@ import "strings"
 //
 // pnpm 12 reads its --dir argument by asking Windows for the full path of a
 // folder, which the sandbox refuses, and stops with "canonicalizing the `--dir`
-// argument ... Access is denied. (os error 5)". Measured 2026-10-07, every pnpm
-// 12 command did, including `pnpm --version`, and it is what `npm install -g
-// pnpm` and corepack install without a pin.
+// argument ... Access is denied. (os error 5)". The limitations page has listed
+// it for some time. It is what `npm install -g pnpm` and corepack install without
+// a pin, since pnpm 12 is the latest.
 //
 // pnpm 9, 10 and 11 stop with a Rust panic, "Failed to get source volume info:
 // ... Access is denied.", exit 127, when an install includes a package that has

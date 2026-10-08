@@ -26,10 +26,8 @@ func TestAProjectBinTypedAfterNvxPointsAtTheShimForm(t *testing.T) {
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for name, body := range map[string]string{"package.json": `{"name":"p","version":"1.0.0"}`} {
-		if err := os.WriteFile(filepath.Join(proj, name), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(proj, "package.json"), []byte(`{"name":"p","version":"1.0.0"}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	tsc := "tsc"
 	if runtime.GOOS == "windows" {
