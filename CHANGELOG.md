@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0]
+
 This release stops nvx asking questions an agent could answer, closes a set of
 sandbox and check gaps that 0.7.0 shipped with, and makes pnpm, yarn and bun
 installs as checked as npm ones. Read "Upgrading from 0.7.0" first. Several

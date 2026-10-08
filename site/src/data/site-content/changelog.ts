@@ -38,6 +38,8 @@ export const changelogSurfaces: ChangelogSurface[] = [
 ];
 
 export const releaseSummaries: Record<string, string> = {
+  'v0.8.0':
+    'Security release. Closes three ways code could get out of the 0.7.0 sandbox or run as you, and makes widening the sandbox a command you run yourself. Agent mode refuses instead of approving, every .env is hidden on all three systems, and installs use the exact lockfile nvx checked.',
   'v0.7.0':
     'The first Authenticode-signed release, and nvx is on npm. pnpm installs inside the Windows sandbox, nvx setup takes seconds, and the pre-install checks cover every package an npm install brings in.',
   'v0.6.0':
