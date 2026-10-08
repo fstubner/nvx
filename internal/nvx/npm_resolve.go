@@ -20,6 +20,8 @@ import (
 // node_modules/.cache, so the project's own files are not touched. The
 // lockfile it writes lists every package at the version npm chose, with its
 // tarball URL and hash, and the checks run on what is not installed already.
+// The install then starts from that same lockfile and does not resolve again.
+// See npm_resolved_install.go.
 //
 // A copy of those files cannot stand in for a project whose package.json names
 // workspaces or local folders, so those are not resolved, and the run says so.
@@ -209,8 +211,19 @@ func resolveNpmInstall(req verifyRequest, root string, platform nodePlatform) ([
 	}
 	defer func() { _ = os.RemoveAll(scratch) }()
 
+	// What the pass is given is kept as well, so that the install can tell
+	// whether the project changed while the checks ran. See adopt.
+	given := map[string][]byte{}
 	for _, name := range []string{"package.json", "package-lock.json", "npm-shrinkwrap.json", ".npmrc"} {
-		if err := copyFileIfExists(filepath.Join(root, name), filepath.Join(scratch, name)); err != nil {
+		data, err := readIfExists(filepath.Join(root, name))
+		if err != nil {
+			return nil, fmt.Errorf("could not copy %s: %w", name, err)
+		}
+		if data == nil {
+			continue
+		}
+		given[name] = data
+		if err := os.WriteFile(filepath.Join(scratch, name), data, 0o600); err != nil {
 			return nil, fmt.Errorf("could not copy %s: %w", name, err)
 		}
 	}
@@ -251,6 +264,8 @@ func resolveNpmInstall(req verifyRequest, root string, platform nodePlatform) ([
 	if targets == nil {
 		targets = []verifyTarget{}
 	}
+	// The install starts from the lockfile that was just checked.
+	req.resolved.record(root, scratch, given)
 	return targets, nil
 }
 
@@ -322,13 +337,18 @@ func missingDirs(dir string) []string {
 	}
 }
 
-func copyFileIfExists(src, dst string) error {
-	data, err := os.ReadFile(src)
+// readIfExists returns the file's bytes, nil when there is no such file, and an
+// empty slice that is not nil for a file with nothing in it.
+func readIfExists(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return os.WriteFile(dst, data, 0o600)
+	if data == nil {
+		data = []byte{}
+	}
+	return data, nil
 }

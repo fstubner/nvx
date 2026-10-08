@@ -66,7 +66,12 @@ install and run scripts. Its defenses are layered:
    `--package-lock-only --ignore-scripts`, contained like the install, on a
    scratch copy of `package.json` and the lockfile. Every package in the tree
    it writes is checked, dependencies included, apart from those already
-   installed at the same version, which npm leaves alone. For `npm ci`, `npm rebuild` and
+   installed at the same version, which npm leaves alone. An `npm install`
+   then starts from the lockfile that resolver wrote, so it installs the tree
+   that was checked even if the registry changes in between. `npm update`,
+   `npm dedupe` and an install nvx cannot pin to that lockfile (one that names
+   a version range, an alias or a git source) run npm's resolver a second time
+   instead. For `npm ci`, `npm rebuild` and
    an `npm install` whose lockfile matches `package.json`, every lockfile entry
    for this platform is checked. A lockfile entry's `resolved` URL and `integrity` hash
    must match the registry's record for its name and version, and an entry that

@@ -968,13 +968,16 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 		toolName = tool
 	}
 
+	var resolved *resolvedInstall
 	switch strings.ToLower(pmCmd) {
 	case "npm", "yarn", "pnpm", "npx", "bun", "bunx":
+		resolved = &resolvedInstall{}
 		// Returning rather than exiting here is what lets runShim record the
 		// abort. A blocked or refused install is a run, and the one a later
 		// review most wants to find.
 		if code, reason, label := verifyBeforeRun(verifyRequest{
 			pmCmd: pmCmd, pmArgs: pmArgs, nvxHome: nvxHome, contain: contain,
+			resolved: resolved,
 			launch: SandboxConfig{
 				NvxHome:            nvxHome,
 				FilesystemProvider: opts.filesystemProvider,
@@ -990,6 +993,12 @@ func runShimTraced(trace *runTrace, cmdName string, args []string, nvxHome strin
 			reportRefusalOverStdio(reason, label)
 			return verifyExitCode(code, reason)
 		}
+	}
+	// An install that was resolved for the checks starts from the lockfile they
+	// ran on, and not from a second resolution that could differ. See adopt.
+	if run, finish := resolved.adopt(cmdName, args, pmCmd, pmArgs); finish != nil {
+		args = run
+		defer finish()
 	}
 	if cmdName == "npm" || cmdName == "yarn" || cmdName == "pnpm" {
 		if cwd, err := os.Getwd(); err == nil {
