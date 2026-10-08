@@ -15,8 +15,10 @@ code do what the contract says" was circular. This is the part that is not.
 ## What it is for, from Felix
 
 **Where it started.** Setting up a new Windows laptop and wanting nvm. nvm does
-not run on Windows. nvm-windows is a different project and is no longer actively
-maintained. The want was a better, more modern nvm that is *truly* cross-platform.
+not run on Windows. nvm-windows is a different project, and Felix recorded it on
+2026-09-01 as no longer actively maintained. That stopped being true the next day.
+nvm-windows 2.0.0 was released on 2026-09-02 and has had releases since.
+The want was a better, more modern nvm that is *truly* cross-platform.
 
 Security came second. Thinking about supply-chain attacks and how much exposure
 developers still carry led to sandboxing and to checks like known-vulnerability
@@ -48,6 +50,15 @@ and security is quickly becoming the second main thing. So the ordering below is
 his, not the contract's, and the Purpose section now follows it instead of the
 other way round.
 
+**Settled again 2026-10-07, by Felix: sandbox first.** The owner chose to lead
+with the sandbox. nvx's pitch, on the README, the site, the npm package and in
+the docs, is one sentence: "nvx runs npm install and npx inside an OS sandbox on
+Windows, macOS and Linux, so a package cannot read your credentials or reach a
+host you did not allow. You and your agent type the same commands." The version
+manager is the second sentence. This reverses the 2026-09-02 ordering. Where the
+paragraphs below still say the version manager is the main thing, this decision
+wins. The consequences listed after them hold under either order.
+
 It stood unreconciled for two weeks. Which of them is true changes what this
 project should do when the two conflict, so reconciling them is a decision to
 take deliberately. Quietly editing one to match the other would skip that
@@ -72,25 +83,24 @@ And the extensible interface described as an ambition is real and shipped:
 Make the default JavaScript developer workflow safer against supply-chain
 attacks, without asking the developer to change how they work.
 
-nvx manages Node.js and Bun versions like nvm or fnm. Because it is
-already on `PATH` intercepting `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx`,
-nvx uses that position to audit what gets installed. It also contains the
-commands that execute untrusted code.
+nvx runs `npm install` and `npx` inside an OS sandbox on Windows, macOS and
+Linux, so a package cannot read your credentials or reach a host you did not
+allow. You and your agent type the same commands. It does that from its position
+on `PATH`, intercepting `npm`, `npx`, `yarn`, `pnpm`, `bun` and `bunx`, where it
+also audits what gets installed. It also manages Node.js and Bun versions like nvm
+or fnm.
 
-**The version manager is the main thing. The security layer is quickly becoming
-the second main thing.** Decided 2026-09-02. See "What it is for, from Felix"
-above, which this sentence used to contradict. It read "the security layer is the
-reason to switch; the version manager is how it earns a place on `PATH` in the
-first place". The same context that built the containment work wrote it, and tended
-to rate that work first.
+**The sandbox comes first and the version manager second.** Decided 2026-10-07,
+reversing the 2026-09-02 decision that put the version manager first. See "What it
+is for, from Felix" above. The version manager is still required, because the
+shims that intercept the toolchain are also what run each project's pinned
+version.
 
-The difference is which way a conflict resolves. Version management being primary
-means that being slower or more annoying than fnm is a defect in the main job.
-It is not a tax on an optional one. It also means that a platform where nvx
-manages runtimes badly is a worse failure than one where it contains them
-narrowly. Security being a close and rising second means it is not a bolt-on
-either. A containment guarantee is not traded away for a few milliseconds without
-that being argued for in writing.
+The difference is which way a conflict resolves. With the sandbox first, a
+containment guarantee is not traded away for convenience in the version manager.
+Being slower or more annoying than fnm is still a defect, and a platform where nvx
+manages runtimes badly is still a failure. Neither is argued away without saying
+so in writing.
 
 ## Users
 
@@ -108,7 +118,8 @@ that being argued for in writing.
 A developer can complete this, on any of the three platforms, without reading
 documentation:
 
-1. Install nvx, open a new shell, `nvx install 22` and `nvx use 22`.
+1. Install nvx, open a new shell and run `nvx install lts`. The first version
+   installed becomes the default.
 2. `npm install <package>` in a project. It completes normally, at a speed they
    would not think to complain about.
 3. A malicious `postinstall` in that package **cannot** read `~/.ssh`, `~/.aws`
@@ -231,8 +242,10 @@ Deferred with intent, not built:
   `TestOneSandboxSessionCannotReadAnother`, which passes with it in place. The
   trade the paragraph above declined was never the trade on offer.
 - **Overhead must stay invisible.** nvx sits in front of every npm invocation.
-  Measured dispatch overhead is **about 75 ms on Windows**, and is not currently
-  established on Linux or macOS.
+  Measured on Windows, `node --version` through the shim takes a median of
+  0.101 s against 0.052 s for node alone (21 interleaved runs, 2026-10-08, after
+  the housekeeping sweep moved off the end of the command). On Linux the shim
+  call measured 0.018 s. macOS has not been measured.
 
   **Every figure this constraint carried before 2026-09-03 was withdrawn, and the
   reason is worse than the numbers being wrong.** `scripts/bench.py` timed the
@@ -256,13 +269,11 @@ Deferred with intent, not built:
   design produced 140.0, 147.8, 92.9 and 42.5 ms on four consecutive runs of one
   idle laptop. In those runs the raw baseline alone swung 65→142 ms.
 
-  The Windows figure is three runs on one machine. The medians were 73.8, 74.2 and
-  77.1 ms, and p10 to p90 ran roughly 63 to 93. The script's own spread check refused a fourth
-  run on a busy machine instead of writing it down. A Linux container reported
-  4 to 10 ms with the spread swamping it, and the script declined to give a figure.
-  macOS has never been measured with a working script. This constraint now states
-  one number, for the one platform where a working script has produced a stable
-  one.
+  The figure this constraint stated until 2026-10-08 was about 75 ms on Windows,
+  three runs on one machine with medians of 73.8, 74.2 and 77.1 ms. The shim has
+  changed since, and the figure above replaces it. The script's own spread check
+  refuses a run on a busy machine instead of writing it down. macOS has never been
+  measured with a working script.
 - **Pre-1.0.** Breaking changes are acceptable between minor versions. Silently
   weakening a documented security guarantee is not.
 - **Three platforms are not equal, and the differences are published.** Replaying
@@ -290,11 +301,12 @@ Deferred with intent, not built:
 
 ## Where this sits next to an agent sandbox
 
-Docker Sandboxes (announced 2026-09) runs a coding agent inside a microVM.
+Docker Sandboxes (launched 2026-01-30) runs a coding agent inside a microVM.
 It mounts only the project workspace, the agent cannot reach the host Docker
-daemon, and allow and deny lists govern network access. macOS and Windows today,
-Linux listed as future work, driven through an `sbx` CLI. Other agent harnesses
-are converging on the same shape.
+daemon, and allow and deny lists govern network access. It launched for macOS and
+Windows, and Ubuntu 24.04 and later is supported now. It is driven through an
+`sbx` CLI. Other agent harnesses are converging on the same shape, and several
+now sandbox their own agent's commands, on Windows too.
 
 This is a neighbouring layer, not a competitor, and the distinction is
 worth being precise about because it decides what nvx is still for.

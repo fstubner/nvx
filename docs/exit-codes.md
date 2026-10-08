@@ -10,7 +10,7 @@ for each kind of failure. It ships in v0.7.0.
 | 0    | The command worked. |
 | 1    | The command failed. |
 | 2    | A usage error, such as an unknown nvx command, an unknown `--shell` value or a bad `nvx setup` flag. |
-| 77   | nvx refused to run the command: a global install it will not contain, a package that failed its pre-install checks, or a sandbox it could not establish (`exitRefused` in `internal/nvx/env.go`). v0.6.0 exits 1 for these. |
+| 77   | nvx refused to run the command: a global install it will not contain, a package that failed its pre-install checks, a project policy that loosens settings and has not been trusted (every command in that project), a question it would have asked under `--agent-mode`, a command that wrote files where it cannot keep them, or a sandbox it could not establish (`exitRefused` in `internal/nvx/env.go`). A contained command that fails after nvx refused a host the allowlist does not name exits 77 too. v0.7.0 and earlier exit 1 for most of these. |
 | 127  | The command to run was not found. A shim with no runtime behind it, such as `node` before any version is installed, exits with this and names the fix (`exitCommandNotFound` in `internal/nvx/env.go`). |
 | 129  | On Windows, nvx stopped the command because the program that started it had exited (`exitParentHungUp`). |
 

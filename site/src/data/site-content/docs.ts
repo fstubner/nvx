@@ -3,7 +3,7 @@ import type { DocsSection } from './types';
 export const docsTitle = 'nvx docs';
 
 export const docsDescription =
-  'Documentation for nvx, a Node.js and Bun version manager that runs installs inside an OS sandbox on Windows, macOS and Linux.';
+  'Documentation for nvx, which runs npm install and npx inside an OS sandbox on Windows, macOS and Linux, so a package cannot read your credentials or reach a host you did not allow.';
 
 export const docsLogo = './public/assets/wordmark.png';
 
@@ -13,6 +13,13 @@ export const docsSidebar: DocsSection[] = [
     items: [
       { label: 'Overview', link: '/docs/' },
       { label: 'Installation', link: '/docs/install/' },
+    ],
+  },
+  {
+    label: 'Use',
+    items: [
+      { label: 'Agents and CI', link: '/docs/agents/' },
+      { label: 'When nvx stops something', link: '/docs/blocked/' },
     ],
   },
   {

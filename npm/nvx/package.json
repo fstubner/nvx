@@ -1,7 +1,7 @@
 {
   "name": "@fstubner/nvx",
   "version": "0.0.0",
-  "description": "Contain what your agent installs. Installs from npm, yarn, pnpm and bun, and npx and bunx tools, run in an OS sandbox. Also a Node.js and Bun version manager.",
+  "description": "nvx runs npm install and npx inside an OS sandbox on Windows, macOS and Linux, so a package cannot read your credentials or reach a host you did not allow. You and your agent type the same commands. It also manages Node.js and Bun versions.",
   "keywords": ["sandbox", "security", "supply-chain", "npm", "agent", "node", "bun", "version-manager"],
   "homepage": "https://github.com/fstubner/nvx",
   "repository": { "type": "git", "url": "git+https://github.com/fstubner/nvx.git" },

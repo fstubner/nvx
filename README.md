@@ -5,7 +5,7 @@
   <img src="site/public/assets/wordmark-light.png" width="360" alt="nvx">
 </picture>
 
-*A Node.js and Bun version manager that runs what your agent installs inside an OS sandbox.*
+*nvx runs `npm install` and `npx` inside an OS sandbox on Windows, macOS and Linux, so a package cannot read your credentials or reach a host you did not allow. You and your agent type the same commands.*
 
 [![CI](https://github.com/fstubner/nvx/actions/workflows/ci.yml/badge.svg)](https://github.com/fstubner/nvx/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -24,25 +24,33 @@ On macOS files outside your home directory stay readable, and the
 
 **You do not change how you run anything.** nvx installs shims on `PATH`, so
 `npm install` is still `npm install`, contained when it runs code you did not
-write. Other sandboxes need `theirtool run -- npm install`, and an agent will not
-remember to type it.
+write. Wrappers such as srt and sfw need a prefix, and agent sandboxes cover only
+the commands their own agent runs. nvx contains the install whoever runs it: you,
+your agent, your editor or an MCP client.
 
 **A prompt never widens the sandbox.** An agent that drives a terminal can answer
 one, so nvx does not ask before trusting a project policy that loosens it or
 reaching a host the allowlist does not name. It refuses with exit 77, prints the
 `nvx trust` or `nvx allow-host` command for you to run, and tells the agent to
 ask you. An agent with a shell of its own could still run that command, as
-[SECURITY.md](SECURITY.md#known-limitations) explains.
+[SECURITY.md](SECURITY.md#known-limitations) explains. The package checks
+(typosquats, fresh releases, install scripts) still ask at a terminal.
+`--agent-mode` makes them refuse instead, and `-y` and `NVX_YES` do not override
+it. The [agents page](https://nvx.run/docs/agents/) has the details.
 
-It is also a Node.js and Bun version manager, because it has to be. The shims that
-intercept the toolchain also run the version each project pins, in a terminal, an
-IDE task, a git hook or CI. If you use nvm, fnm or volta today, nvx replaces them.
+nvx is also a Node.js and Bun version manager. The shims that intercept the
+toolchain also run the version each project pins, in a terminal, an IDE task, a
+git hook or CI. If you use nvm, fnm or volta today, nvx replaces them.
+
+nvx is not related to Microsoft's NVX micro-VM project
+(github.com/microsoft/nvx). On npm the package is `@fstubner/nvx`. The unscoped
+`nvx` is a different project.
 
 ## Why this exists
 
 nvx started on a fresh Windows machine and the usual version-manager headaches.
 With LLMs making it practical to build exactly the tool you want, I built one
-that also takes on the part nobody else handles.
+that also contains what it installs.
 
 Coding agents run terminal commands in your workspace, and installs are where they
 pick up code nobody has read. No tool can promise a package is safe, so the goal is
@@ -68,8 +76,11 @@ npm install -g @fstubner/nvx
 Prebuilt binaries, building from source and what the installer changes are in the
 **[install guide](https://nvx.run/docs/install/)**.
 
-To check a downloaded release asset, run this and compare the `.sha256` file
-beside it:
+Without the GitHub CLI (`gh`), the macOS and Linux one-liner checks only a
+checksum that comes from the same release page as the binary. If you want more,
+install `gh` 2.51 or newer, sign in with `gh auth login`, and check a downloaded
+release asset against the build attestation. Compare the `.sha256` file beside it
+too:
 
 ```bash
 gh attestation verify <file> --repo fstubner/nvx --signer-workflow fstubner/nvx/.github/workflows/release.yml
@@ -99,6 +110,8 @@ The full reference is in **[Commands](https://nvx.run/docs/commands/)** and
 | [Installation](https://nvx.run/docs/install/) | Every install route, per platform |
 | [Containment](https://nvx.run/docs/containment/) | What a contained command can reach, and what backs each claim |
 | [Policy](https://nvx.run/docs/policy/) | Global and project policy files, and every setting |
+| [Agents and CI](https://nvx.run/docs/agents/) | Exit 77, the approval switches, MCP servers and a snippet for AGENTS.md |
+| [When nvx stops something](https://nvx.run/docs/blocked/) | Each refusal, its cause and the command that fixes it |
 | [Known limitations](https://nvx.run/docs/limitations/) | What containment does not cover |
 | [Commands](https://nvx.run/docs/commands/) | Commands, flags and environment variables |
 

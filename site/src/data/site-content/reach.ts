@@ -9,8 +9,8 @@ import type { ReachNote, ReachRow } from './product-types';
 // of it and must not be stronger than it.
 //
 // The macOS caveat below is not a footnote to be trimmed. The matrix records
-// READ_OUTSIDE=ALLOWED there, pinned by CI so that tightening the profile fails
-// the build rather than quietly making this page right.
+// that reads under the home directory are denied there and reads elsewhere on
+// the disk are allowed, and CI pins READ_OUTSIDE=DENIED for the home.
 export const reachCopy: SectionCopy = {
   heading: 'What an install can actually reach',
   leadHtml:
@@ -39,9 +39,9 @@ export const reachRows: ReachRow[] = [
 // looking at a narrower product than someone on Windows, and finding that out
 // later is the outcome this section exists to prevent.
 export const reachNote: ReachNote = {
-  heading: 'On macOS, only credential reads are contained',
+  heading: 'On macOS, files outside your home directory stay readable',
   bodyHtml:
-    'The Seatbelt profile has to allow filesystem reads, because the dynamic linker loads system libraries whose locations move between macOS versions, and a strict read allowlist stops a process launching at all. It denies the credential stores by path, which covers the first three rows. The fourth can still be read by absolute path on macOS. Write containment, egress control and environment scrubbing are enforced there.',
+    'The Seatbelt profile denies reads under your home directory and nvx\'s home, apart from the project, the runtimes and the folders a policy names. It allows reads elsewhere on the disk, because the dynamic linker loads system libraries whose locations move between macOS versions, and a strict read allowlist stops a process launching at all. Write containment, egress control and environment scrubbing are enforced there.',
   measuredHtml:
-    'Linux is measured on real hardware, where a contained process reports <code>READ_OUTSIDE=DENIED</code> and <code>EGRESS=DENIED</code>, with <code>WRITE_INSIDE=ALLOWED</code> as the positive control that tells enforcement from a sandbox that failed to start. Windows is asserted by probe tests run before a release.',
+    'A macOS runner in CI reports <code>READ_OUTSIDE=DENIED</code> and <code>EGRESS=DENIED</code> on every build, with <code>WRITE_INSIDE=ALLOWED</code> as the positive control that tells enforcement from a sandbox that failed to start. Linux has a probe of its own on its own runner, and Windows is asserted by probe tests run before a release.',
 };

@@ -49,7 +49,7 @@ and do not verify whether the kernel honours it.
 | Host filesystem write blocked (outside workdir + guest home) | Yes⁷ | Yes⁸ | Yes⁵ |
 | Host filesystem read restricted | Yes⁴ | Yes⁸ | Partial²: the home directory denied outside what a run needs, other paths readable⁵ |
 | Project `.git` read-only, rest of project writable | Yes¹⁴ | Yes¹⁴ | Yes¹⁴ |
-| Project `.env` files unreadable | Yes¹⁵ | Yes¹⁵ | Yes¹⁵ |
+| Project `.env` files unreadable | Yes, new files within milliseconds¹⁵ | Yes, new files within milliseconds¹⁵ | Yes¹⁵ |
 | Environment secrets scrubbed | Yes | Yes | Yes |
 | Egress blocked when the allowlist does not cover the host | Yes³ | Yes⁸ | Yes⁵ |
 | Allowlisted host reachable through the proxy | Yes³ | Yes⁸ | Yes⁵ |
@@ -1360,8 +1360,7 @@ they date quickly. Each carries the date and machine of its measurement.
   the root. It no longer does. Measured 2026-10-04. On a directory holding 20,000
   files, the write took 2.67 to 3.01 s with the walk and under 1 ms without. No
   file's permissions changed either way. Setup's removals use the same write.
-- **A contained command costs a few hundred milliseconds, and the first one after nvx
-  stages a new runtime can be minutes.** A contained launch has to prepare an
+- **A contained command costs a few hundred milliseconds.** A contained launch has to prepare an
   isolated home and check permissions, which the shim's own dispatch does not. The first run in a project is slower than the rest, because
   that is when nvx makes and remembers the permission grants.
 
@@ -1383,8 +1382,10 @@ they date quickly. Each carries the date and machine of its measurement.
   nvx re-read every access-control entry on every launch, seventeen `icacls`
   processes a command. It now remembers the ones it has already verified.
 
-  The first run after nvx stages a runtime copies the whole distribution, and
-  measurements put it at 45s to 3 minutes. Uncontained commands are unaffected.
+  Measured on Windows 11 on 2026-10-07, the first contained run in a new project
+  after `nvx install 20` took 1056 ms, then 349 and 346 ms. The 45s to 3 minutes
+  this entry used to give for the first run after a runtime is staged could not be
+  reproduced and is withdrawn. Uncontained commands are unaffected.
 - **The first contained run after an install is slow, once, in proportion to the
   dependency tree.** Measured 2026-08-20. Loading a freshly installed 2,552-file
   package inside the sandbox took 5.8s the first time and 461ms every time after.
@@ -1435,7 +1436,8 @@ they date quickly. Each carries the date and machine of its measurement.
   procfs of its own. Bun reads `/proc/self` to size its stack, and before
   that a contained `bun install` failed with "JSON document is too deeply
   nested" against a valid file. Windows is below.
-- **Bun does not run inside the Windows sandbox.** Measured 2026-09-17.
+- **Bun runs inside the Windows sandbox only on the drive Windows is installed on.**
+  Measured 2026-09-17.
   `bun install` fails on every run, with `ENOENT` on 1.3.1 and `EBADF` on
   1.4.2, and `bun -e` cannot read its own working directory. The docs site's
   limitations page (`site/src/content/docs/docs/limitations.md`) has the
