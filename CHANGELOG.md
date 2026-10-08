@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   443. nvx prints the right command whenever it refuses to widen the sandbox.
   `nvx grants list` shows what is trusted, and `nvx grants reset` forgets it.
 
+* **`nvx allow-host --remove <host[:port]>` takes a host back out.** Nothing
+  undid `nvx allow-host` except editing the policy file by hand, and no page
+  said so. `--remove` deletes the host from `allow_hosts` in the file the
+  command adds to, this project's `.nvx-policy.json` or `~/.nvx/policy.json`
+  with `--global`, and keeps the rest of the file as it was. A project file that
+  was trusted stays trusted, since taking a host out only narrows it. A file
+  nobody had trusted is not trusted by it. A host the file does not list gets
+  a line saying so, and nothing changes. The audit log records
+  `allow_host_removed`.
+
 * **`nvx doctor` warns when `NVX_YES`, `NVX_AGENT_MODE` or `NVX_TRUST_YES` is
   set**, and says what each one turns off. They are usually set once, in a
   shell profile or an agent's settings, and nothing in a later run shows they
@@ -274,6 +284,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `repo.yarnpkg.com:443`, and both commands install. corepack downloads pnpm
   and Yarn 1 from `registry.npmjs.org` and `registry.yarnpkg.com`, which the
   list already named, so `corepack pnpm@10 install` worked before.
+
+* **A blocked host no longer ends with a second refusal that offers
+  `NVX_YES`.** nvx had already printed `Blocked egress: ...` and the `nvx
+  allow-host` line when the step that asks npm what an install brings in
+  failed. It then asked "Proceed?" with only the named packages checked, and
+  its refusal told the reader to set `NVX_YES=true`, which approves every check
+  in the run. Approving cannot help, since the install goes through the same
+  host. Measured 2026-10-08 on Windows, with a project `.npmrc` naming
+  `registry.example.org`, `npm install is-odd` printed both refusals and exited
+  77. It now ends with `Installation aborted: npm could not resolve what this
+  command installs, because nvx refused a connection, as said above.` and still
+  exits 77. `-y` and `NVX_YES` do not approve it. A failure nvx has not
+  explained, such as a package that does not exist, is still asked about.
+
+* **The line after a refused host no longer says the host is why the command
+  failed.** A contained command that fails after nvx refused a host exits 77,
+  and the line saying so read "The command exited 1 after nvx refused a
+  connection to ...". nvx cannot read the command's output, so it does not know
+  that. A command can shrug off a refused host, such as a telemetry host, and
+  then fail for another reason. The line now says that nvx refused the
+  connection while the command ran and that the command exited with its own
+  code, and it adds that allowing the host helps only if the command's own
+  error is about that connection. The exit code is still 77.
+
+* **`nvx --strict tsc` says how to run it.** A program in a project's
+  `node_modules/.bin` typed after nvx answered `Unknown command: tsc. Did you
+  mean 'nvx use'?`, and the form that works is `nvx --strict shim tsc`. nvx now
+  says the name is a program in this project's `node_modules/.bin` and prints
+  that form with the flags that were typed. It still exits 2 and does not run
+  the program, because running whatever `node_modules/.bin` holds for a
+  mistyped nvx command would let a cloned project answer it with its own code.
+
+* **`bunx` and a project's own programs no longer end with an `[UNDICI-EHPA]`
+  warning.** nvx adds `--disable-warning=UNDICI-EHPA` to `NODE_OPTIONS` so that
+  Node.js 22 stays quiet about the proxy variable, and it added it only for a
+  command inside a Node.js that nvx installed. `bunx cowsay hi` and a program
+  in `node_modules/.bin` run with `nvx --strict shim` both run on the Node.js
+  that a `node` they start finds first on the contained `PATH`, which is nvx's
+  own, and each ended with `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is
+  experimental`. Measured 2026-10-08 on Windows with Node.js 22.23.2 and Bun
+  1.4.2, neither prints it now. nvx reads that Node.js's version from its folder
+  name and still adds the flag only for a version that reads the variable, so a
+  Node.js that refuses the flag does not get it.
+
+* **`nvx doctor` no longer fails yarn or pnpm for being corepack's launcher.**
+  After `corepack enable` on Windows, `yarn.cmd` and `pnpm.cmd` in the Node.js
+  folder are corepack's, and a launcher downloads the package manager the first
+  time it runs. Doctor starts what the shim would start with no network, so the
+  launcher stopped and doctor printed `[FAIL] yarn cannot run in the sandbox`
+  and exited 1, whatever the sandbox could do. It now prints `[--] yarn is
+  corepack's launcher` and says why it does not start it.
+
+* **A `pnpm` or `yarn` kept outside nvx's folders is refused with the fix when
+  it starts through `node`.** The Known limitations page says that run is
+  refused with a message that names the fix, and it was when `pnpm` reached
+  nvx's shim. When the folder npm installed it in stood ahead of nvx's shims on
+  `PATH`, npm's own launchers ran `node <folder>/node_modules/pnpm/bin/pnpm.cjs`,
+  nvx contained that as a pnpm install, and node stopped with `Cannot find
+  module` on a script the sandbox could not read. Measured 2026-10-07 with pnpm
+  10.34.6 in an npm prefix under `%TEMP%`, that exited 1. nvx now looks at the
+  script's permissions before it starts node, and refuses with exit 77 when no
+  identity the launch carries can read it. The message names the package's
+  folder for `isolation.filesystem.allow_read_exec` and a runtime nvx manages as
+  the two ways to run it contained. With that folder in `allow_read_exec` the
+  same install ran contained and exited 0.
+
+* **A pnpm that fails inside the Windows sandbox now says why, and the limits
+  are written down.** Two pnpm failures there name no sandbox. pnpm 12 stops
+  with `Access is denied. (os error 5)` as it reads its `--dir` argument. pnpm
+  9, 10 and 11 stop with a Rust panic, `Failed to get source volume info:
+  ... Access is denied.`, and exit 127, when an install includes a package that
+  has install scripts. Measured 2026-10-07 with pnpm 9.15.9, 10.34.6 and
+  11.28.5 on bufferutil 4.1.0, all three panic. The panic comes from a native
+  copy-on-write call, copy_on_write 0.1.3, that asks Windows about the drive's
+  root folder, which the sandbox cannot open. pnpm 10 makes that call for every
+  package it still has to build, whatever `package-import-method` says. With
+  pnpm 10.34.6, `--ignore-scripts`, `package-import-method=copy` and
+  `side-effects-cache=false` each left the panic as it was, so there is no pnpm
+  option nvx could set to avoid it. A
+  workspace is not the cause. The first report had a workspace root named `ws`
+  at version 1.0.0, and pnpm 10 adds bufferutil and utf-8-validate to a project
+  with that name. A contained pnpm run that exits 1 or 127 now ends with a note
+  naming both failures, and Known limitations lists them with the ways round.
+
+* **`nvx grants reset --all` finishes clean when a granted folder was deleted,
+  and follows one that was renamed.** The record held only the folder's path,
+  so for a path with nothing at it the reset could not tell a deleted folder,
+  whose permission went with it, from a renamed one, whose permission is still
+  in force. It treated both as a failure, printed `Reset all project grants, but
+  1 permission(s) could not be withdrawn`, and exited 1. A record now keeps the
+  folder's file ID beside its path. The reset finds a renamed or moved folder by
+  that ID and withdraws the permission where it is now, and it finds a deleted
+  one gone and has nothing to withdraw. Measured 2026-10-08 on NTFS, a granted
+  folder that was deleted printed `no longer exists, so no permission is left
+  on it to withdraw` and the reset exited 0, and one that was renamed had the
+  permission withdrawn at its new name and the reset exited 0. A record written
+  before IDs were kept gets one the next time a contained run starts with the
+  folder still in `allow_read_exec`, and until then it behaves as it did.
+
+* **The limitations page explains why `curl.exe` fails TLS inside the Windows
+  sandbox.** curl.exe uses Windows' own TLS library, which asks the certificate
+  authority whether a certificate was revoked. That request does not go through
+  the proxy, and the sandbox has no network of its own, so the handshake fails
+  with `schannel: next InitializeSecurityContext failed:
+  CRYPT_E_REVOCATION_OFFLINE` for a host the allowlist names. Measured
+  2026-10-08 on `https://registry.npmjs.org/ms`, curl.exe exited 35 twice, and
+  `curl --ssl-no-revoke` returned 200 both times. Allowing the authority's host
+  cannot help, because the request never reaches nvx. The page says so and names
+  `--ssl-no-revoke`.
 
 * **`nvx doctor` reports what is wrong with the shim directory.** It now reads
   the directory. It fails and names the fix, `nvx init-shims`, for a link or

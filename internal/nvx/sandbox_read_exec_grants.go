@@ -66,6 +66,11 @@ type readExecGrant struct {
 	// same directory granted by two projects has two records and losing one does
 	// not revoke the other's access.
 	SID string `json:"sid"`
+	// ID names the directory in a way a rename does not change, so a reset can
+	// tell a directory that was deleted from one that was renamed, which a path
+	// cannot. Empty on a record from before it was kept, and where the volume
+	// gives no IDs. See sandbox_file_identity_windows.go.
+	ID string `json:"id,omitempty"`
 }
 
 func sameGrantPath(a, b string) bool {
@@ -220,12 +225,38 @@ func planReadExecRecords(existing []readExecGrant, roots, capSIDs []string) []re
 
 // recordReadExecGrant adds a grant to the ledger if it is not already there.
 func recordReadExecGrant(existing []readExecGrant, sid, path string) []readExecGrant {
-	for _, g := range existing {
+	for i, g := range existing {
 		if strings.EqualFold(g.SID, sid) && sameGrantPath(g.Path, path) {
-			return existing
+			if g.ID != "" {
+				return existing
+			}
+			// A record from before IDs were kept gets one while the directory is
+			// here to give it.
+			id := directoryIdentity(path)
+			if id == "" {
+				return existing
+			}
+			out := append([]readExecGrant(nil), existing...)
+			out[i].ID = id
+			return out
 		}
 	}
-	return append(existing, readExecGrant{Path: filepath.Clean(path), SID: sid})
+	return append(existing, readExecGrant{Path: filepath.Clean(path), SID: sid, ID: directoryIdentity(path)})
+}
+
+// gainedIdentity reports whether a record in after has an ID that before lacked,
+// which is the one change recordReadExecGrant makes to a record that is already
+// there. Counted, because it only ever adds one.
+func gainedIdentity(before, after []readExecGrant) bool {
+	count := func(grants []readExecGrant) (n int) {
+		for _, g := range grants {
+			if g.ID != "" {
+				n++
+			}
+		}
+		return n
+	}
+	return count(after) > count(before)
 }
 
 // revokeAllReadExecGrants withdraws every grant in a ledger, for `nvx grants
@@ -246,9 +277,14 @@ type revokeOutcome struct {
 	// Failed could not be withdrawn and may work later. The record is KEPT so a
 	// later reset retries.
 	Failed int
-	// Stranded had no directory at the recorded path. The record is dropped -- see
-	// revokeAllReadExecGrantsWithin -- so the reset finishes.
+	// Stranded had no directory at the recorded path, and nothing says it was
+	// deleted. The record is dropped -- see revokeAllReadExecGrantsWithin -- so the
+	// reset finishes.
 	Stranded int
+	// Gone had no directory any more, and the record's ID says the directory was
+	// deleted and not renamed. The permission went with it, so nothing is left in
+	// force and nothing is unaccounted for.
+	Gone int
 	// Broadened was left in place on purpose: the permission there is wider than
 	// the read/execute one nvx recorded, so nvx will not touch it. The record is
 	// dropped with the others.
@@ -267,7 +303,13 @@ func revokeAllReadExecGrants(grants []readExecGrant, revoke func(sid, path strin
 	})
 }
 
-// revokeAllReadExecGrantsWithin returns three counts, not two.
+// revokeAllReadExecGrantsWithin returns the counts in revokeOutcome, not two.
+//
+// A grant recorded with its directory's ID is looked up by it first. A directory
+// that was renamed or moved is found, and the permission is withdrawn where it is
+// now. One that was deleted is Gone, a finished job and not a failure. A grant
+// with no ID, from before IDs were kept or on a volume that gives none, goes by
+// its path, and the paragraphs below are about a path with no directory.
 //
 // stranded is a directory that is no longer at its recorded path. That case is
 // deliberately NOT counted as failed: failed keeps the record so a later reset
@@ -287,14 +329,28 @@ func revokeAllReadExecGrants(grants []readExecGrant, revoke func(sid, path strin
 func revokeAllReadExecGrantsWithin(grants []readExecGrant, revoke func(sid, path string) error, pathExists func(string) bool) revokeOutcome {
 	var out revokeOutcome
 	for _, g := range grants {
-		if !pathExists(g.Path) {
+		path := g.Path
+		if g.ID != "" {
+			switch where, loc := locateDirectory(g); loc {
+			case locationGone:
+				LogInfo("%s no longer exists, so no permission is left on it to withdraw.", g.Path)
+				out.Gone++
+				continue
+			case locationHere:
+				if !sameGrantPath(where, g.Path) {
+					LogInfo("The directory recorded as %s is now %s. Withdrawing the permission there.", g.Path, where)
+					path = where
+				}
+			}
+		}
+		if !pathExists(path) {
 			LogWarn("%s no longer exists, so its permission could not be withdrawn.", g.Path)
 			LogInfo("If that directory was renamed rather than deleted, the permission moved with it and is still in force. "+
 				"Remove it there with: icacls \"<new path>\" /remove:g *%s", g.SID)
 			out.Stranded++
 			continue
 		}
-		if err := revoke(g.SID, g.Path); err != nil {
+		if err := revoke(g.SID, path); err != nil {
 			if errors.Is(err, errNothingToWithdraw) {
 				continue // nothing was there; nothing was removed
 			}
@@ -310,16 +366,16 @@ func revokeAllReadExecGrantsWithin(grants []readExecGrant, revoke func(sid, path
 				// nvx refuses to remove an entry wider than the one it recorded, so a
 				// later reset would refuse identically and the record would be kept for
 				// ever. It is dropped, and reported.
-				LogWarn("Left the permission on %s in place: it is now wider than the read/execute one nvx recorded.", g.Path)
+				LogWarn("Left the permission on %s in place: it is now wider than the read/execute one nvx recorded.", path)
 				// %s in literal quotes, not %q: Go's quoting doubles every backslash
 				// and the pasted command then names a path that does not exist.
 				LogInfo("nvx only withdraws the exact entry it granted. The wider entry usually carries access the sandbox "+
 					"needs for another reason, such as a writable root, so leave it unless you mean to remove all of this "+
-					"project's access to that path: icacls \"%s\" /remove:g *%s", g.Path, g.SID)
+					"project's access to that path: icacls \"%s\" /remove:g *%s", path, g.SID)
 				out.Broadened++
 				continue
 			}
-			LogWarn("Could not withdraw the sandbox's read access to %s: %v", g.Path, err)
+			LogWarn("Could not withdraw the sandbox's read access to %s: %v", path, err)
 			out.Failed++
 			continue
 		}

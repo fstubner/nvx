@@ -122,6 +122,14 @@ func forgetWideningRefusals() {
 // runShim maps the exit code of a run that refused something.
 var runShimTracedFn = runShimTraced
 
+// wideningRefusalCount is how many different requests to widen the sandbox this
+// run has refused so far.
+func wideningRefusalCount() int {
+	wideningRefusalsMu.Lock()
+	defer wideningRefusalsMu.Unlock()
+	return len(wideningRefusals)
+}
+
 func recordWideningRefusal(what string) {
 	wideningRefusalsMu.Lock()
 	defer wideningRefusalsMu.Unlock()
@@ -142,6 +150,10 @@ func recordWideningRefusal(what string) {
 // code, and a caller reading that could not tell nvx's refusal from a registry
 // outage. A command that succeeded anyway keeps its 0: a postinstall that pings
 // an analytics host it cannot reach is not worth failing an install for.
+//
+// Whether the refused host is why the command failed is not known here, since
+// nothing reads the command's output. A command can fail on something else after
+// a refusal it shrugged off, so the line says what happened and how to tell.
 func exitCodeAfterRefusedWidening(code int) int {
 	if code == 0 || code == exitRefused || code == exitParentHungUp {
 		return code
@@ -155,7 +167,12 @@ func exitCodeAfterRefusedWidening(code int) int {
 	if len(refused) > 3 {
 		refused = append(refused[:3:3], fmt.Sprintf("%d more", len(refused)-3))
 	}
-	LogError("The command exited %d after nvx refused %s. nvx exits %d instead, as it does for every refusal.", code, strings.Join(refused, ", "), exitRefused)
+	// Said as what happened, in order. nvx cannot read the command's output, so it
+	// does not know that a refused host is why the command failed. Measured
+	// 2026-10-07, `nvx --strict npx next build` had telemetry.nextjs.org refused,
+	// then failed on child_process.fork(), and the line blamed the host.
+	LogError("nvx refused %s while the command ran, and the command exited %d. nvx exits %d when it refused anything, as it does for every refusal.", strings.Join(refused, ", "), code, exitRefused)
+	LogRefusalDetail("Allowing a refused host helps only if the command's own error, above, is about that connection.")
 	return exitRefused
 }
 

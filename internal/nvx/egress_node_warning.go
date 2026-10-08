@@ -1,6 +1,7 @@
 package nvx
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -16,9 +17,11 @@ import (
 // process starts, and a Node that does not know the flag refuses to start:
 // 18.5.0, 18.20.4 and 19.9.0 answered "--disable-warning= is not allowed in
 // NODE_OPTIONS" and ran nothing. 20.11.0, 21.7.3, 22.23.2 and 24.21.0 accepted it.
-// So the flag goes in only when the Node nvx resolved for the command is one that
-// reads NODE_USE_ENV_PROXY, which are all releases that take it, and a command
-// nvx did not resolve gets none.
+// So the flag goes in only when the Node the command runs on is one nvx installed
+// and that reads NODE_USE_ENV_PROXY, which are all releases that take it. That is
+// the command's own Node, or for a command that is not Node, such as bunx or a
+// project's own program, the one a `node` it starts finds first on the contained
+// PATH. A command with no Node of nvx's behind it gets none.
 const envProxyWarningFlag = "--disable-warning=UNDICI-EHPA"
 
 // nodeReadsEnvProxy reports whether a Node of this version reads
@@ -46,6 +49,28 @@ func nodeVersionOf(cmdPath, nvxHome string) (semver, bool) {
 	return v, true
 }
 
+// containedNodeVersion returns the version of the Node a contained command runs
+// on, when it is one of nvx's own. For a Node command that is its own. A command
+// that is not Node, such as bunx or a program in a project's node_modules/.bin,
+// starts `node` through its PATH, and the contained PATH leads with nvx's
+// runtime directories (see containedRuntimeBinDirs), so the first of those that
+// holds a node is the one it gets. Read from the directory name, nothing is
+// run to ask.
+func containedNodeVersion(cmdPath, nvxHome string) (semver, bool) {
+	if v, ok := nodeVersionOf(cmdPath, nvxHome); ok {
+		return v, true
+	}
+	for _, dir := range containedRuntimeBinDirs(cmdPath, nvxHome) {
+		for _, name := range []string{"node", "node.exe"} {
+			p := filepath.Join(dir, name)
+			if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() {
+				return nodeVersionOf(p, nvxHome)
+			}
+		}
+	}
+	return semver{}, false
+}
+
 // withEnvProxyWarningSilenced adds envProxyWarningFlag to NODE_OPTIONS for a
 // contained command whose Node reads NODE_USE_ENV_PROXY. Anything already in
 // NODE_OPTIONS stays. With no proxy the variable is not set, so there is nothing
@@ -54,7 +79,7 @@ func withEnvProxyWarningSilenced(env []string, proxy *EgressProxy, cmdPath, nvxH
 	if proxy == nil {
 		return env
 	}
-	if v, ok := nodeVersionOf(cmdPath, nvxHome); !ok || !nodeReadsEnvProxy(v) {
+	if v, ok := containedNodeVersion(cmdPath, nvxHome); !ok || !nodeReadsEnvProxy(v) {
 		return env
 	}
 	for i, e := range env {

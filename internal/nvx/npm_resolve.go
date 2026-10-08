@@ -98,6 +98,16 @@ func npmResolvedTargets(req verifyRequest, args []string, platform nodePlatform)
 		}
 		return markTransitive(targets, chosen), 0, ""
 	}
+	// nvx has already said why when it refused a host. A "Proceed?" after that
+	// offers the broadest approval for a failure approving cannot fix, since the
+	// install goes through the same host, and it points away from the one-line
+	// answer printed above.
+	var failed resolutionFailed
+	if errors.As(err, &failed) && failed.explained != "" {
+		recordCheckRefused(req.nvxHome, checkInfo{check: checkResolution, detail: err.Error()})
+		LogError("Installation aborted: npm could not resolve what this command installs, %s.", failed.explained)
+		return nil, failed.code, resolutionFailedReason
+	}
 	msg := fmt.Sprintf("npm could not work out what this command installs (%v), so nvx can check only the packages named on the command line or in the project's files. Proceed?", err)
 	if !askCheck(req.nvxHome, checkInfo{check: checkResolution, detail: err.Error(),
 		what:    "the install goes ahead with only the named packages checked",
@@ -108,7 +118,6 @@ func npmResolvedTargets(req verifyRequest, args []string, platform nodePlatform)
 		// same way. A project whose devEngines asks for another Node.js got
 		// EBADDEVENGINES from npm and exit 77 from nvx, the code for nvx itself
 		// refusing. Everything else that goes wrong here is nvx's, and stays a refusal.
-		var failed resolutionFailed
 		if errors.As(err, &failed) && failed.code > 0 {
 			return nil, failed.code, resolutionFailedReason
 		}
@@ -125,7 +134,12 @@ const (
 )
 
 // resolutionFailed is npm's lockfile-only run exiting non-zero, with its code.
-type resolutionFailed struct{ code int }
+// explained is the reason nvx has already given for it, as the clause that ends
+// "npm could not resolve what this command installs, ...", or "".
+type resolutionFailed struct {
+	code      int
+	explained string
+}
 
 func (e resolutionFailed) Error() string {
 	return fmt.Sprintf("its lockfile-only run exited with %d", e.code)
@@ -224,6 +238,7 @@ func resolveNpmInstall(req verifyRequest, root string, platform nodePlatform) ([
 	// seen in practice was transient, and then reported as not started.
 	refusal := ""
 	cfg.OnRefusal = func(reason string) { refusal = reason }
+	refusedBefore := wideningRefusalCount()
 	LogDetail("Asking npm which packages this command installs, so each one is checked first.")
 	code := launchNpmResolution(cfg, req.contain)
 	if refusal != "" {
@@ -235,7 +250,11 @@ func resolveNpmInstall(req verifyRequest, root string, platform nodePlatform) ([
 		}
 	}
 	if code != 0 {
-		return nil, resolutionFailed{code: code}
+		failed := resolutionFailed{code: code}
+		if wideningRefusalCount() > refusedBefore {
+			failed.explained = "because nvx refused a connection, as said above"
+		}
+		return nil, failed
 	}
 	lock, ok, err := readProjectLockfile(scratch)
 	if err != nil {

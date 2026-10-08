@@ -394,6 +394,11 @@ func Main() {
 		if isShimCommand(command) {
 			os.Exit(runShim(command, os.Args[2:], nvxHome))
 		}
+		if hint := projectBinCommandHint(command); hint != "" {
+			LogError("Unknown command: %s", command)
+			LogInfo("%s", hint)
+			os.Exit(exitUsage)
+		}
 		if near := nearestCommand(command); near != "" {
 			LogError("Unknown command: %s. Did you mean 'nvx %s'?", command, near)
 			LogInfo("Run 'nvx help' for the full list.")
@@ -622,13 +627,15 @@ An automated agent must not run this itself. It should ask the person it works
 for.
 `
 	case "allow-host":
-		return `nvx allow-host <host[:port]> [--project | --global]
+		return `nvx allow-host [--remove] <host[:port]> [--project | --global]
 
 Let contained commands reach a host, by adding it to
 isolation.network.allow_hosts. The port defaults to 443, and host:* allows
 every port. nvx refuses a host the allowlist does not name, and prints this
 command for it. It does not ask.
 
+--remove   Undo it. Takes the host out of isolation.network.allow_hosts again,
+           from the same file. A file that was trusted stays trusted.
 --project  The default. The nearest .nvx-policy.json in this project, created
            when there is none. Adding a host loosens that file, so nvx trusts
            the result for this project. It refuses when the file loosens other
@@ -844,7 +851,7 @@ Commands:
   trust --tool <name>      Let a tool keep a persistent profile in this project
   allow-host <host[:port]> Let contained commands reach a host. Adds it to this
                            project's policy file and trusts that file, or to
-                           ~/.nvx/policy.json with --global
+                           ~/.nvx/policy.json with --global. --remove undoes it
   grants list              Show this project's egress hosts (from older nvx), trusted tools, and policy pins
   grants reset [--all]     Forget this project's grants (or every project's, with --all);
                            on Windows, put back the permissions of hidden .env files
