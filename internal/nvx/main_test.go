@@ -62,6 +62,10 @@ func TestMain(m *testing.M) {
 	// would otherwise print whatever an old setup left on the host running the
 	// suite.
 	reportSetupLeftoversFn = func(string) {}
+	// A command waits only briefly for the housekeeping sweep and leaves the rest
+	// to the next one. A test that ends while it is still running would see its
+	// temporary directory deleted under it, so the suite waits for all of it.
+	reclaimExitGrace = 0
 
 	code := m.Run()
 	cleanupProbeChildBinary()

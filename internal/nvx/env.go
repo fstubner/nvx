@@ -889,8 +889,9 @@ func runShim(cmdName string, args []string, nvxHome string) int {
 	// Housekeeping after the command, never before it: leftovers from processes
 	// that were killed cannot clean up after themselves, and waiting for someone
 	// to type `nvx cleanup` meant 91 guest homes on the machine this was found
-	// on. Bounded and silent -- see reclaimStaleSandboxes.
-	reclaimStaleSandboxes(nvxHome)
+	// on. Bounded and silent -- see reclaimStaleSandboxes. The command does not
+	// wait for it for long -- see reclaim.go.
+	reclaimAfterCommand(nvxHome)
 	return code
 }
 

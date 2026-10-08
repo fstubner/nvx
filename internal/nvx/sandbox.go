@@ -775,34 +775,9 @@ const reclaimBudgetPerRun = 8
 // `nvx cleanup` still does that, where nothing is mid-launch.
 //
 // Runs after the command rather than before, so it never delays what was typed.
+// The steps and when they run are in reclaim.go. This one runs all of them to
+// the end, which is what the tests and anything that wants the work done need.
+// A command uses reclaimAfterCommand, which does not wait for the sweep for long.
 func reclaimStaleSandboxes(nvxHome string) {
-	if nvxHome == "" {
-		return
-	}
-	cleanupStaleSandboxes(nvxHome, reclaimBudgetPerRun)
-	// AppContainer package profiles, on Windows. Swept here rather than only
-	// from `nvx cleanup` for the same reason guest homes are: a command nobody
-	// runs reclaims nothing. One profile is registered per project nvx has ever
-	// contained, and the first version of this swept only on an explicit cleanup
-	// AND only when no session at all was running -- which on a machine with a
-	// couple of long-lived MCP servers is never.
-	//
-	// Safe unprompted on the same terms: a package held by a live session is
-	// skipped, and one used inside the retention window is left alone so the
-	// common case never pays to re-register a profile it is about to use again.
-	sweepOrphanedSandboxPackages(nvxHome, reclaimBudgetPerRun)
-	// Logs rescued from failed runs. They had no sweep at all, so they
-	// accumulated for the life of the installation -- 3,146 directories and
-	// 181 MB on the development machine, which `nvx cleanup` also left alone.
-	//
-	// A larger budget than the sweeps above, because the work is not comparable: a
-	// guest home may hold a large tree and a package profile costs a registry
-	// write, while these are small directories of log files. At eight per run a
-	// three-thousand-folder backlog needs some four hundred commands to clear,
-	// which is not a reclaim so much as a rumour of one.
-	sweepRescuedLogs(nvxHome, rescuedLogBudgetPerRun)
-	// Staged command copies whose command has changed. One per run: each is a
-	// whole directory, up to tens of thousands of files, and this runs before
-	// the prompt comes back.
-	pruneStaleCommandCopies(nvxHome, 1)
+	reclaim(nvxHome, 0)
 }
