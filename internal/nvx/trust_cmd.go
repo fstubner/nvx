@@ -375,7 +375,7 @@ func removeHostGlobally(nvxHome, entry string) int {
 	path := filepath.Join(nvxHome, "policy.json")
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return hostNotListed(entry, path, false)
+		return hostNotListed(entry, path, false, false)
 	}
 	if err != nil {
 		LogError("Could not read %s: %v", path, err)
@@ -387,7 +387,7 @@ func removeHostGlobally(nvxHome, entry string) int {
 		return 1
 	}
 	if !removed {
-		return hostNotListed(entry, path, false)
+		return hostNotListed(entry, path, false, true)
 	}
 	policy := DefaultPolicy()
 	if err := json.Unmarshal(out, &policy); err != nil {
@@ -419,7 +419,7 @@ func removeHostInProject(nvxHome, entry string) int {
 	target := projectPolicyFileFor(cwd, scope, nvxHome)
 	data, err := os.ReadFile(target)
 	if os.IsNotExist(err) {
-		return hostNotListed(entry, target, true)
+		return hostNotListed(entry, target, true, false)
 	}
 	if err != nil {
 		LogError("Could not read %s: %v", target, err)
@@ -431,7 +431,7 @@ func removeHostInProject(nvxHome, entry string) int {
 		return 1
 	}
 	if !removed {
-		return hostNotListed(entry, target, true)
+		return hostNotListed(entry, target, true, true)
 	}
 	trusted := policyPinned(nvxHome, loadProjectGrants(nvxHome, scope), target, hashPolicyBytes(data))
 	if _, _, err := parseProjectPolicyBytes(target, out); err != nil {
@@ -458,8 +458,12 @@ func removeHostInProject(nvxHome, entry string) int {
 
 // hostNotListed answers a removal of a host the file does not list. Nothing is
 // wrong, so it exits 0, as allowing a host twice does.
-func hostNotListed(entry, path string, project bool) int {
-	LogInfo("%s is not in isolation.network.allow_hosts in %s, so there is nothing to remove.", entry, path)
+func hostNotListed(entry, path string, project, fileExists bool) int {
+	if fileExists {
+		LogInfo("%s is not in isolation.network.allow_hosts in %s, so there is nothing to remove.", entry, path)
+	} else {
+		LogInfo("There is no %s, so there is nothing to remove %s from.", path, entry)
+	}
 	if project {
 		LogInfo("A host allowed for every project is in ~/.nvx/policy.json. Add --global to remove it from there.")
 	}

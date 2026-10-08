@@ -29,8 +29,10 @@ import "strings"
 
 // pnpmFailedContained reports whether a command that exited with exitCode was a
 // pnpm run, whether typed as pnpm, through corepack or as pnpm's entry script.
+// Only the two codes the failures end with count, 1 for pnpm 12 and 127 for the
+// panic, so an interrupted install does not get the note.
 func pnpmFailedContained(command string, args []string, exitCode int) bool {
-	if exitCode == 0 {
+	if exitCode != 1 && exitCode != 127 {
 		return false
 	}
 	pm, _ := packageManagerBehind(command, args)

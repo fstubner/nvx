@@ -365,8 +365,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   option nvx could set to avoid it. A
   workspace is not the cause. The first report had a workspace root named `ws`
   at version 1.0.0, and pnpm 10 adds bufferutil and utf-8-validate to a project
-  with that name. A contained pnpm run that fails now ends with a note naming
-  both failures, and Known limitations lists them with the ways round.
+  with that name. A contained pnpm run that exits 1 or 127 now ends with a note
+  naming both failures, and Known limitations lists them with the ways round.
 
 * **`nvx grants reset --all` finishes clean when a granted folder was deleted,
   and follows one that was renamed.** The record held only the folder's path,

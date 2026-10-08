@@ -24,6 +24,7 @@ func TestAPnpmRunIsRecognisedHoweverItIsStarted(t *testing.T) {
 		{"corepack", []string{"pnpm", "install"}, 1, true},
 		{"node", []string{`C:\g\node_modules\pnpm\bin\pnpm.cjs`, "install"}, 1, true},
 		{"pnpm", []string{"install"}, 0, false},
+		{"pnpm", []string{"install"}, 130, false}, // interrupted
 		{"npm", []string{"install"}, 1, false},
 		{"yarn", []string{"install"}, 1, false},
 		{"node", []string{"build.js"}, 1, false},
