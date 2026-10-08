@@ -93,6 +93,9 @@ type verifyRequest struct {
 	// npm's resolution step runs the same way.
 	contain bool
 	launch  SandboxConfig
+	// resolved, when set, is filled with what npm's resolution pass wrote, for
+	// the install that follows to start from. See npm_resolved_install.go.
+	resolved *resolvedInstall
 }
 
 // verifyBeforeRun runs the pre-install checks for a package-manager command.

@@ -89,14 +89,13 @@ func watchStdinForHangup(nvxHome string, onHangup func()) {
 	// process even after it exits, so a recycled PID cannot later be mistaken
 	// for our parent still running -- or worse, an unrelated new process's exit
 	// mistaken for ours.
-	parent, ok := openParentProcess()
+	parent, ppid, ok := openParentProcessWithID()
 	if !ok {
 		// Cannot tell a finished pipeline from a departed client; do nothing.
 		noteHangupWatch(nvxHome, "not-armed", "the parent process could not be identified or opened")
 		return
 	}
 
-	ppid, _ := parentProcessID()
 	noteHangupWatch(nvxHome, "armed", fmt.Sprintf("watching stdin pipe against parent pid %d", ppid))
 
 	// Read once, here, rather than inside the goroutine. The goroutine outlives
@@ -192,11 +191,19 @@ func noteHangupWatch(nvxHome, state, reason string) {
 
 // openParentProcess returns a handle to the process that started this one.
 func openParentProcess() (syscall.Handle, bool) {
+	h, _, ok := openParentProcessWithID()
+	return h, ok
+}
+
+// openParentProcessWithID is openParentProcess that also says which pid it
+// opened, so a caller that records the pid does not look it up a second time.
+func openParentProcessWithID() (syscall.Handle, uint32, bool) {
 	ppid, ok := parentProcessID()
 	if !ok {
-		return 0, false
+		return 0, 0, false
 	}
-	return openIfOlderThanSelf(ppid)
+	h, ok := openIfOlderThanSelf(ppid)
+	return h, ppid, ok
 }
 
 // openIfOlderThanSelf opens pid to wait on, but only if that process was created
@@ -237,12 +244,58 @@ func processCreationTime(h syscall.Handle) (uint64, bool) {
 	return uint64(created.HighDateTime)<<32 | uint64(created.LowDateTime), true
 }
 
-// parentProcessID finds this process's parent via a process snapshot.
+// parentProcessID finds this process's parent.
 //
-// Toolhelp rather than NtQueryInformationProcess: the parent PID is not exposed
-// by the Go standard library on Windows, and of the two ways to get it this one
-// is documented and stable.
+// It is asked of the kernel, which keeps it in this process's own record. The
+// answer used to come from a snapshot of every process on the machine, taken
+// twice to arm the watch. Measured 2026-10-07 on the development machine, one
+// snapshot took 19 to 27 ms (three runs of 40 calls). Arming runs at the start
+// of every shimmed command whose stdin is a pipe, as an agent harness or an MCP
+// client leaves it. The snapshot stays as the fallback for a kernel that does
+// not answer.
 func parentProcessID() (uint32, bool) {
+	if pid, ok := parentProcessIDFromKernel(); ok {
+		return pid, true
+	}
+	return parentProcessIDFromSnapshot()
+}
+
+var (
+	modNtdll                      = syscall.NewLazyDLL("ntdll.dll")
+	procNtQueryInformationProcess = modNtdll.NewProc("NtQueryInformationProcess")
+)
+
+// processBasicInfo is PROCESS_BASIC_INFORMATION. Every field is pointer sized
+// because ExitStatus and BasePriority, which are 32 bits wide, are padded to the
+// next pointer on 64-bit Windows.
+type processBasicInfo struct {
+	exitStatus   uintptr
+	pebAddress   uintptr
+	affinityMask uintptr
+	basePriority uintptr
+	processID    uintptr
+	parentID     uintptr
+}
+
+// parentProcessIDFromKernel reads InheritedFromUniqueProcessId, the pid the
+// snapshot reports as the parent. A variable so a test can show that arming the
+// watch does not take the snapshot.
+var parentProcessIDFromKernel = func() (uint32, bool) {
+	const processBasicInformation = 0
+	var info processBasicInfo
+	self, _, _ := procGetCurrentProcess.Call()
+	status, _, _ := procNtQueryInformationProcess.Call(self, processBasicInformation,
+		uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info), 0)
+	// An NTSTATUS of zero is success. Anything else is not an answer.
+	if status != 0 || info.parentID == 0 {
+		return 0, false
+	}
+	return uint32(info.parentID), true
+}
+
+// parentProcessIDFromSnapshot finds the parent in a snapshot of the process
+// list. It is the documented route, and the slow one.
+var parentProcessIDFromSnapshot = func() (uint32, bool) {
 	const th32csSnapProcess = 0x00000002
 	snap, _, _ := procCreateToolhelp32Snapshot.Call(uintptr(th32csSnapProcess), 0)
 	if snap == uintptr(syscall.InvalidHandle) || snap == 0 {

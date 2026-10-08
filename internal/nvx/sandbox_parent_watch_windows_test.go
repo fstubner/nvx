@@ -185,3 +185,58 @@ func TestHangupWatchRecordsWhyItDidNotArm(t *testing.T) {
 		t.Errorf("the reason must name what stopped it arming, got %q", e["reason"])
 	}
 }
+
+// Finding the parent must not list every process on the machine. Arming the
+// watch took a process snapshot twice, 19 to 27 ms a call on the development
+// machine, at the start of every shimmed command whose stdin is a pipe. The
+// kernel keeps the parent's pid in the process's own record, so the snapshot is
+// there only for a kernel that gives no answer.
+func TestFindingTheParentDoesNotListEveryProcess(t *testing.T) {
+	orig := parentProcessIDFromSnapshot
+	t.Cleanup(func() { parentProcessIDFromSnapshot = orig })
+	parentProcessIDFromSnapshot = func() (uint32, bool) {
+		t.Error("the process list was snapshotted to find the parent")
+		return 0, false
+	}
+
+	if _, ok := parentProcessID(); !ok {
+		t.Fatal("no parent found")
+	}
+	h, pid, ok := openParentProcessWithID()
+	if !ok {
+		t.Fatal("could not open the parent")
+	}
+	defer syscall.CloseHandle(h)
+	if pid == 0 {
+		t.Error("openParentProcessWithID opened a parent and reported pid 0")
+	}
+}
+
+// The two ways of asking must agree, or the watchdog would wait on the wrong
+// process.
+func TestTheKernelAndTheProcessListNameTheSameParent(t *testing.T) {
+	fromKernel, ok := parentProcessIDFromKernel()
+	if !ok {
+		t.Fatal("the kernel gave no parent")
+	}
+	fromList, ok := parentProcessIDFromSnapshot()
+	if !ok {
+		t.Fatal("the process list gave no parent")
+	}
+	if fromKernel != fromList {
+		t.Errorf("the kernel says the parent is %d and the process list says %d", fromKernel, fromList)
+	}
+}
+
+// A kernel that does not answer leaves the process list to do it, so the
+// watchdog still arms.
+func TestTheProcessListAnswersWhenTheKernelDoesNot(t *testing.T) {
+	origKernel, origList := parentProcessIDFromKernel, parentProcessIDFromSnapshot
+	t.Cleanup(func() { parentProcessIDFromKernel, parentProcessIDFromSnapshot = origKernel, origList })
+	parentProcessIDFromKernel = func() (uint32, bool) { return 0, false }
+	parentProcessIDFromSnapshot = func() (uint32, bool) { return 4242, true }
+
+	if pid, ok := parentProcessID(); !ok || pid != 4242 {
+		t.Errorf("parentProcessID() = %d, %v, want the process list's 4242", pid, ok)
+	}
+}

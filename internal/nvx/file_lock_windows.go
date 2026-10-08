@@ -34,3 +34,22 @@ func unlockFile(f *os.File) error {
 	}
 	return nil
 }
+
+const (
+	lockfileFailImmediately = 0x00000001
+	errorLockViolation      = 33
+)
+
+// tryLockFileExclusive takes the lock lockFileExclusive does without waiting for
+// it. It reports false and no error when another handle holds the lock.
+func tryLockFileExclusive(f *os.File) (bool, error) {
+	var ov syscall.Overlapped
+	r, _, err := procLockFileEx.Call(f.Fd(), lockfileExclusiveLock|lockfileFailImmediately, 0, 1, 0, uintptr(unsafe.Pointer(&ov)))
+	if r != 0 {
+		return true, nil
+	}
+	if errno, ok := err.(syscall.Errno); ok && errno == errorLockViolation {
+		return false, nil
+	}
+	return false, err
+}

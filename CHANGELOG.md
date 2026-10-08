@@ -198,6 +198,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Administrators full control (and you, for your profile). Otherwise it says
   why and changes nothing. `nvx doctor` points at `nvx setup` for this.
 
+* **An npm install now installs the lockfile nvx checked.** An install that
+  brings in new packages runs npm twice. The first run resolves the tree and
+  nvx checks what it wrote. The second run used to resolve the tree again from
+  the registry, so a version published between the two runs was installed
+  without a check, and it repeated the first run's work. It now starts from the
+  lockfile the first run wrote, and npm asks the registry for nothing but the
+  tarballs. An install that names packages first makes each name exact from
+  that lockfile, so `foo` and `foo@latest` become `foo@1.2.3`, because npm
+  asks the registry again about any package it is told to install. Your
+  `package.json` and `package-lock.json` come out as npm leaves them. Against a
+  fake registry that publishes new versions between the two runs, a bare
+  install and an install of a name, a tag and `-D` left both files byte for byte
+  as a plain npm run does, with npm 7.24.2, 8.19.4, 9.9.4, 10.9.3, 10.9.9 and
+  11.11.0. If npm does not write the lockfile itself, as with
+  `package-lock=false` in `.npmrc` or `--no-save`, nvx takes the one it put
+  there out again. `npm update`, `npm dedupe` and an install that names a
+  version range, an alias, a URL or a git source resolve again in the second
+  run, as before, and `--verbose` says why. pnpm, Yarn and Bun have no
+  resolving run and are unchanged. Measured 2026-10-08 as the median of 5
+  interleaved runs through the contained shim, on machines busy with other
+  work. The 321-package project with no lockfile took 88.2 s on Windows and
+  now takes 64.8 s. In a Linux container it took 89.8 s and now takes 61.4 s.
+  An install of one package did not change, 8.7 s and 8.8 s on Windows and
+  2.47 s and 2.39 s on Linux.
+
+* **A command no longer waits for nvx's housekeeping.** After a shimmed
+  command, nvx deletes what killed runs left behind, and the command did not
+  exit until it had finished. On a Windows machine with 638 package profiles,
+  the sweep of those alone took 83 to 91 ms a call, and `node -e 0` took 3.50 s
+  with one guest home of 12,000 files left behind, because it waited for the
+  home to be deleted (medians of 5 interleaved runs). Package profiles, rescued
+  logs and staged command copies only count once they are a week or two old,
+  so they are now looked at when the last full look is an hour old, and sooner
+  while one of them is working through a backlog. The sweep runs in the
+  background, and the command waits for it for 100 ms at most and leaves the
+  rest to the next command. One sweep runs at a time, under a lock that
+  Windows or Linux releases if the sweep dies. Profile deletions stay on the
+  command's own thread, so leaving never stops one halfway. On Windows
+  `node --version` through the shim took a median of 0.221 s and now takes
+  0.101 s, against 0.052 s for node alone (21 interleaved runs, stdin from
+  NUL), and `node -e 0` with the leftover home took 3.50 s and now takes
+  0.25 s. On Linux the same home took 0.46 s and now takes 0.18 s, and
+  `node --version` through the shim stayed at 0.018 s.
+
+* **On Windows, a command whose stdin is a pipe no longer lists every process
+  as it starts.** An agent harness or an MCP client leaves stdin as a pipe,
+  and nvx then watches for the program that started it to go away. Finding that
+  program meant a snapshot of every process on the machine, taken twice. One
+  snapshot took 19 to 27 ms (three runs of 40 calls). nvx now asks Windows for
+  the parent's process id, which took about 0.4 microseconds a call (three runs
+  of 2000), and falls back to the snapshot only if that fails. Measured as the
+  median of 21 interleaved runs of `node --version` through the shim, it took
+  0.300 s with stdin a pipe and 0.221 s with stdin from NUL before, and takes
+  0.103 s and 0.101 s now.
+
 ### Security
 
 * **Windows: in 0.7.0 a contained launch could, rarely, start the command
