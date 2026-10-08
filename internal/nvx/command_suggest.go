@@ -63,7 +63,7 @@ func projectBinCommandHint(command string) string {
 	case noSandboxFlag:
 		form += "--no-sandbox "
 	}
-	return fmt.Sprintf("%s is a program in this project's node_modules/.bin, not an nvx command. To run it with nvx, put shim before it: %sshim %s ...", command, form, command)
+	return fmt.Sprintf("%s is a program in this project's node_modules/.bin, and nvx has no command by that name. To run it with nvx, put shim before it: %sshim %s ...", command, form, command)
 }
 
 // commandNamesFromHelp reads the command names out of the help text, which is

@@ -4,7 +4,7 @@ package nvx
 type directoryLocation int
 
 const (
-	// locationUnknown means the question could not be answered: no identity was
+	// locationUnknown means the question could not be answered. No identity was
 	// recorded, the volume gives none, or the lookup failed for a reason that does
 	// not say the directory is gone.
 	locationUnknown directoryLocation = iota

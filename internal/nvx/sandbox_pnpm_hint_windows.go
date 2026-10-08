@@ -15,9 +15,10 @@ import "strings"
 // pnpm 9, 10 and 11 stop with a Rust panic, "Failed to get source volume info:
 // ... Access is denied.", exit 127, when an install includes a package that has
 // install scripts. Measured the same day with 9.15.9, 10.34.6 and 11.28.5 on
-// bufferutil 4.1.0. Such a package is copied into node_modules with a native
-// copy-on-write call whatever package-import-method says, and the call asks
-// Windows about the drive's root folder, which the sandbox cannot open.
+// bufferutil 4.1.0. The panic comes from a native copy-on-write call, from
+// copy_on_write 0.1.3, that asks Windows about the drive's root folder, which the
+// sandbox cannot open. pnpm 10's source picks that copy for every package it
+// still has to build, whatever package-import-method says. With 10.34.6,
 // `--ignore-scripts`, `package-import-method=copy` and `side-effects-cache=false`
 // each left the panic as it was. A workspace is not the cause. The first report
 // had one whose root was named ws at version 1.0.0, and pnpm 10 has a built-in
@@ -41,6 +42,6 @@ func notePnpmLimits(command string, args []string, exitCode int) {
 	if !pnpmFailedContained(command, args, exitCode) {
 		return
 	}
-	LogWarn("pnpm stopped inside the Windows sandbox. If the error above is pnpm 12's \"Access is denied. (os error 5)\" as it reads its --dir argument, or a panic that names \"Failed to get source volume info\" (pnpm 9 to 11, for an install with a package that has install scripts), it is a limit of the sandbox and not of your project.")
-	LogWarn("Run it with `nvx --no-sandbox pnpm ...`, which runs it uncontained. Known limitations lists the other ways round.")
+	LogWarn("pnpm stopped inside the Windows sandbox. Two pnpm failures there come from the sandbox itself. pnpm 12 stops with `Access is denied. (os error 5)` as it reads its --dir argument, and pnpm 9 to 11 stop with a panic that names `Failed to get source volume info` when an install has a package with install scripts.")
+	LogWarn("If the error above is one of those, run it with `nvx --no-sandbox pnpm ...`, which runs it uncontained. Known limitations lists the other ways round.")
 }

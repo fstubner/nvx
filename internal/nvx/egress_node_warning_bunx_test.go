@@ -9,9 +9,10 @@ import (
 
 // bunx and a project's own programs run on a Node they start through PATH, and
 // printed the warning even though nvx has installed that Node and knows its
-// version. Measured 2026-10-07 with Node 22.23.3: `bunx cowsay hi` and
-// `nvx --strict shim tsc` each ended with "[UNDICI-EHPA] Warning". The flag went
-// only to a command inside a Node nvx installed.
+// version. Measured 2026-10-08 with Node 22.23.2 and Bun 1.4.2, `bunx cowsay hi`
+// and a program in node_modules/.bin run with `nvx --strict shim` each ended with
+// "[UNDICI-EHPA] Warning". The flag went only to a command inside a Node nvx
+// installed.
 
 // installedNodeOnPath puts a Node of this version in a scratch nvx home and
 // puts its directory on PATH, as an active shell has it.
@@ -54,10 +55,16 @@ func TestTheWarningFlagReachesProgramsThatRunOnNvxsNode(t *testing.T) {
 		{"bunx with Node 20", "v20.11.0", func(home string) string {
 			return filepath.Join(home, "versions", "bun", "v1.4.2", "bunx.exe")
 		}, false},
+		// No Node of nvx's behind the command. Whatever `node` it finds is
+		// unknown, and a Node that does not know the flag refuses to start.
+		{"a program with no Node of nvx's behind it", "", func(string) string { return tsc }, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			home, _ := installedNodeOnPath(t, tc.version)
+			home := tempDir(t)
+			if tc.version != "" {
+				home, _ = installedNodeOnPath(t, tc.version)
+			}
 			env := withEnvProxyWarningSilenced([]string{"PATH=/bin"}, testProxyForEnv(), tc.cmd(home), home)
 			got := nodeOptions(env)
 			if tc.want {
@@ -70,15 +77,5 @@ func TestTheWarningFlagReachesProgramsThatRunOnNvxsNode(t *testing.T) {
 				t.Fatalf("NODE_OPTIONS = %q, want none", got)
 			}
 		})
-	}
-}
-
-// With no Node of nvx's behind the command, whatever `node` it finds is unknown,
-// and a Node that does not know the flag refuses to start with it.
-func TestTheWarningFlagIsNotGuessedForAProgramWithNoNvxNode(t *testing.T) {
-	home := tempDir(t)
-	tsc := filepath.Join(tempDir(t), "node_modules", ".bin", "tsc")
-	if got := nodeOptions(withEnvProxyWarningSilenced([]string{"PATH=/bin"}, testProxyForEnv(), tsc, home)); len(got) != 0 {
-		t.Fatalf("NODE_OPTIONS = %q for a program with no Node of nvx's behind it", got)
 	}
 }

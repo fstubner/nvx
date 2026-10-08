@@ -84,7 +84,7 @@ func TestAScriptIsUnreadableUntilSomeoneTheLaunchCarriesIsNamed(t *testing.T) {
 	}
 
 	// Not node, a relative path, a script that is not there, a script that is not a
-	// package manager's: none of them is this check's to refuse.
+	// package manager's. None of them is this check's to refuse.
 	other := filepath.Join(tempDir(t), "tool.js")
 	_ = os.WriteFile(other, []byte("0"), 0o600)
 	for name, c := range map[string]struct {

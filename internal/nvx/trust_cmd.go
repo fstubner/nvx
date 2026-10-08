@@ -407,7 +407,7 @@ func removeHostGlobally(nvxHome, entry string) int {
 // the undo for `nvx allow-host`.
 //
 // Taking a host out only narrows the file, so a file that was trusted as it
-// stood stays trusted: the pin moves to the new content. A file nobody had
+// stood stays trusted, and the pin moves to the new content. A file nobody had
 // trusted is not pinned here, because that would trust whatever else it says.
 func removeHostInProject(nvxHome, entry string) int {
 	cwd, err := os.Getwd()

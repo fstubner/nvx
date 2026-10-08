@@ -29,8 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command adds to, this project's `.nvx-policy.json` or `~/.nvx/policy.json`
   with `--global`, and keeps the rest of the file as it was. A project file that
   was trusted stays trusted, since taking a host out only narrows it. A file
-  nobody had trusted is not trusted by it. A host the file does not list is
-  said so, and nothing changes. The audit log records `allow_host_removed`.
+  nobody had trusted is not trusted by it. A host the file does not list gets
+  a line saying so, and nothing changes. The audit log records
+  `allow_host_removed`.
 
 * **`nvx doctor` warns when `NVX_YES`, `NVX_AGENT_MODE` or `NVX_TRUST_YES` is
   set**, and says what each one turns off. They are usually set once, in a
@@ -355,12 +356,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   9, 10 and 11 stop with a Rust panic, `Failed to get source volume info:
   ... Access is denied.`, and exit 127, when an install includes a package that
   has install scripts. Measured 2026-10-07 with pnpm 9.15.9, 10.34.6 and
-  11.28.5 on bufferutil 4.1.0, the panic comes from a native copy-on-write call
-  that asks Windows about the drive's root folder, which the sandbox cannot
-  open. pnpm makes that call for every package it builds, whatever
-  `package-import-method` says. With pnpm 10.34.6, `--ignore-scripts`,
-  `package-import-method=copy` and `side-effects-cache=false` each left the
-  panic as it was, so there is no pnpm option nvx could set to avoid it. A
+  11.28.5 on bufferutil 4.1.0, all three panic. The panic comes from a native
+  copy-on-write call, copy_on_write 0.1.3, that asks Windows about the drive's
+  root folder, which the sandbox cannot open. pnpm 10 makes that call for every
+  package it still has to build, whatever `package-import-method` says. With
+  pnpm 10.34.6, `--ignore-scripts`, `package-import-method=copy` and
+  `side-effects-cache=false` each left the panic as it was, so there is no pnpm
+  option nvx could set to avoid it. A
   workspace is not the cause. The first report had a workspace root named `ws`
   at version 1.0.0, and pnpm 10 adds bufferutil and utf-8-validate to a project
   with that name. A contained pnpm run that fails now ends with a note naming

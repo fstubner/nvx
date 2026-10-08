@@ -80,8 +80,8 @@ func TestAnIDThatCannotBeFollowedIsUnknownNotGone(t *testing.T) {
 }
 
 // Through the real permission and the real command, which is the layer the
-// person who reported this used: grant a folder, delete it, `nvx grants reset
-// --all`. It exited 1 and told them a permission could not be withdrawn.
+// person who reported this used. Grant a folder, delete it, run `nvx grants reset
+// --all`. It exited 1 and said a permission could not be withdrawn.
 func TestResetAllFinishesCleanWhenAGrantedFolderWasDeleted(t *testing.T) {
 	f := newGrantedFolder(t)
 	if err := os.RemoveAll(f.dir); err != nil {

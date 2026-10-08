@@ -47,8 +47,9 @@ func reportContainedLaunchers(box *doctorSandbox) bool {
 		}
 		// Corepack's launcher fetches the package manager the first time it runs, and
 		// this check has no network, so it fails there whatever the sandbox can do.
-		// Measured 2026-10-07 after `corepack enable`: doctor failed a yarn that
-		// then installed contained, exit 0.
+		// Measured 2026-10-08 with a launcher that stops the way corepack does when it
+		// needs the network, doctor printed [FAIL] and exited 1 whatever the sandbox
+		// could do.
 		if corepackLauncherScript(path) != "" {
 			fmt.Printf("  [--]   %s is corepack's launcher (%s). Corepack downloads %s the first time it runs, so doctor does not start it with no network.\n", tool, path, tool)
 			continue

@@ -19,7 +19,7 @@ import (
 // nvx's shim. nvx reads that as a pnpm install, which it contains, and node stops
 // with "Cannot find module" on a script the sandbox cannot read. Measured
 // 2026-10-07 with pnpm 10.34.6 in an npm prefix under %TEMP%, exit 1. The docs
-// say the run is refused with a message saying so.
+// say the run is refused with a message that says so.
 //
 // Only a script that is there and whose permissions name nobody the launch
 // carries counts, so a script that does not exist is still node's to report, and

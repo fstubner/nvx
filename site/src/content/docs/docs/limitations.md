@@ -120,14 +120,15 @@ and the evidence and measurements for each platform are in the
   there. Installs with install scripts have a limit of their own, in the next
   item.
 - **pnpm 9, 10 and 11 stop with a Rust panic when an install includes a package
-  that has install scripts.** pnpm copies such a package into `node_modules`
-  with a native copy-on-write call, whatever `package-import-method` says, and
-  the call asks Windows about the drive's root folder, which the sandbox cannot
+  that has install scripts.** The panic comes from a native copy-on-write call
+  that asks Windows about the drive's root folder, which the sandbox cannot
   open. pnpm prints `Failed to get source volume info: ... Access is denied.`
   and exits 127. Measured with pnpm 9.15.9, 10.34.6 and 11.28.5 installing
-  bufferutil 4.1.0. With pnpm 10.34.6, `--ignore-scripts`,
-  `package-import-method=copy` and `side-effects-cache=false` each left the
-  panic as it was. A workspace is not the cause, though it can look like it. A
+  bufferutil 4.1.0. In pnpm 10 the call is made for every package it still has
+  to build, whatever `package-import-method` says. With pnpm 10.34.6,
+  `--ignore-scripts`, `package-import-method=copy` and `side-effects-cache=false`
+  each left the panic as it was. A workspace is not the cause, though it can
+  look like it. A
   workspace root named `ws` at version 1.0.0 gets bufferutil and utf-8-validate
   from a built-in extension that pnpm 10 has for the npm package `ws` below
   7.2.1. Run the install with `nvx --no-sandbox pnpm install`, or install with

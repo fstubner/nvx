@@ -18,10 +18,10 @@ import (
 // and for a path that is not there it cannot tell a directory that was deleted,
 // whose permission went with it, from one that was renamed, whose permission is
 // still in force somewhere else. It had to treat both as a failure. The file ID
-// NTFS and ReFS give a directory tells them apart: the object can be opened by
+// NTFS and ReFS give a directory tells them apart. The object can be opened by
 // that ID wherever it is now, and cannot be opened once it is deleted.
 //
-// Measured 2026-10-08 on NTFS: after a rename and after a move to another folder
+// Measured 2026-10-08 on NTFS, after a rename and after a move to another folder
 // the ID opened and the final path of the handle was the new path, and after the
 // delete OpenFileById failed with ERROR_INVALID_PARAMETER, also for the ID of a
 // directory recreated at the same path.

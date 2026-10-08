@@ -7,7 +7,7 @@ import (
 )
 
 // `nvx allow-host --remove` is the undo for `nvx allow-host`. Nothing else took a
-// host back out: the only way was to edit the policy file, and nowhere said so.
+// host back out. The only way was to edit the policy file, and no page said so.
 
 // It takes the host out of the project's policy file, leaves the other host in,
 // and the file is still trusted, because removing a host only narrows it.
