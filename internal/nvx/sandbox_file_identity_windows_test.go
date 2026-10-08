@@ -4,9 +4,19 @@ package nvx
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
+
+// sameDirectory reports whether two paths name one directory, however they are
+// spelled. A CI runner's temp folder is a short name, and the path found by ID is
+// the long one.
+func sameDirectory(a, b string) bool {
+	x, errA := os.Stat(a)
+	y, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(x, y)
+}
 
 // A directory is found by its ID wherever it went, and is found gone once it is
 // deleted. Real folders on a real volume.
@@ -22,14 +32,14 @@ func TestADirectoryIsFoundByItsIDAfterARenameAndAMove(t *testing.T) {
 	}
 	g := readExecGrant{Path: dir, SID: "S-1-15-3-1024-a", ID: id}
 
-	if where, loc := locateGrantedDirectory(g); loc != locationHere || !sameGrantPath(where, dir) {
-		t.Fatalf("a directory that has not moved is at %q, %v", where, loc)
+	if where, loc := locateGrantedDirectory(g); loc != locationHere || where != dir {
+		t.Fatalf("a directory that has not moved is at %q, %v; want the recorded path %s", where, loc, dir)
 	}
 	renamed := filepath.Join(base, "renamed")
 	if err := os.Rename(dir, renamed); err != nil {
 		t.Fatal(err)
 	}
-	if where, loc := locateGrantedDirectory(g); loc != locationHere || !sameGrantPath(where, renamed) {
+	if where, loc := locateGrantedDirectory(g); loc != locationHere || !sameDirectory(where, renamed) {
 		t.Fatalf("after a rename it is at %q, %v; want %s", where, loc, renamed)
 	}
 	if err := os.Mkdir(filepath.Join(base, "sub"), 0o700); err != nil {
@@ -39,7 +49,7 @@ func TestADirectoryIsFoundByItsIDAfterARenameAndAMove(t *testing.T) {
 	if err := os.Rename(renamed, moved); err != nil {
 		t.Fatal(err)
 	}
-	if where, loc := locateGrantedDirectory(g); loc != locationHere || !sameGrantPath(where, moved) {
+	if where, loc := locateGrantedDirectory(g); loc != locationHere || !sameDirectory(where, moved) {
 		t.Fatalf("after a move it is at %q, %v; want %s", where, loc, moved)
 	}
 
@@ -55,6 +65,31 @@ func TestADirectoryIsFoundByItsIDAfterARenameAndAMove(t *testing.T) {
 	}
 	if where, loc := locateGrantedDirectory(g); loc != locationGone {
 		t.Fatalf("a directory recreated at the old path was taken for the old one: %q, %v", where, loc)
+	}
+}
+
+// A path that reaches the directory through a junction, a short name or a
+// substituted drive is spelled differently from the final path Windows gives
+// back, and the directory has not moved. The CI runner's temp folder is a short
+// name, and reported every unmoved directory as renamed.
+func TestADirectoryReachedThroughAJunctionIsNotReportedAsMoved(t *testing.T) {
+	base := tempDir(t)
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(real, "granted"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if out, err := exec.Command("cmd.exe", "/c", "mklink", "/J", link, real).CombinedOutput(); err != nil {
+		t.Skipf("cannot make a junction here: %v: %s", err, out)
+	}
+	recorded := filepath.Join(link, "granted")
+	id := directoryIdentity(recorded)
+	if id == "" {
+		t.Skip("this volume gives directories no ID")
+	}
+	where, loc := locateGrantedDirectory(readExecGrant{Path: recorded, SID: "S-1-15-3-1024-a", ID: id})
+	if loc != locationHere || where != recorded {
+		t.Fatalf("a directory that has not moved is at %q, %v; want the recorded path %s", where, loc, recorded)
 	}
 }
 

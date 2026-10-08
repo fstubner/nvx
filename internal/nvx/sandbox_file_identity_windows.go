@@ -124,6 +124,12 @@ func locateGrantedDirectory(g readExecGrant) (string, directoryLocation) {
 	}
 	defer syscall.CloseHandle(syscall.Handle(h))
 
+	// The object at the recorded path is the one: a short name, a link or a
+	// substituted drive can spell the path differently from the final path below.
+	if directoryIdentity(g.Path) == g.ID {
+		return g.Path, locationHere
+	}
+
 	path, err := finalPathOfHandle(syscall.Handle(h))
 	if err != nil {
 		return "", locationUnknown
