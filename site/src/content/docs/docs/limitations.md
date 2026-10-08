@@ -115,10 +115,11 @@ and the evidence and measurements for each platform are in the
   pnpm 12 stops with `Access is denied. (os error 5)` as it reads its `--dir`
   argument, and `next build` with `failed to canonicalize jsc.baseUrl`. Run
   these with `nvx --no-sandbox`. For pnpm, an earlier version runs contained.
-  `npm install -g pnpm` and corepack choose pnpm 12 today, unless the project's
-  `packageManager` field in package.json names another version, so pin one
-  there. Installs with install scripts have a limit of their own, in the next
-  item.
+  corepack chooses pnpm 12 today, unless the project's `packageManager` field in
+  package.json names another version, so pin one there. `npm install -g pnpm`
+  installs pnpm 12 too, so install an earlier one instead, such as
+  `npm install -g pnpm@11`. Installs with install scripts have a limit of their
+  own, in the next item.
 - **pnpm 9, 10 and 11 stop with a Rust panic when an install includes a package
   that has install scripts.** The panic comes from a native copy-on-write call
   that asks Windows about the drive's root folder, which the sandbox cannot
