@@ -11,7 +11,11 @@ description: Install nvx on Windows, macOS or Linux, and check that it worked.
 - **Linux** on x86_64 or arm64. The sandbox needs kernel 5.13 or later with
   Landlock enabled and unprivileged user namespaces. The network allowlist also
   needs the `ip` command from iproute2. When one is missing, contained commands
-  refuse to run, so nothing runs uncontained.
+  refuse to run, so nothing runs uncontained. nvx downloads the glibc build of
+  Node.js and Bun, so Alpine and other musl systems are refused with a message
+  that names the cause. On Ubuntu 23.10 and later, AppArmor can refuse the
+  sandbox its user namespaces. `nvx doctor` names the setting and the two ways
+  forward, and [Known limitations](/docs/limitations/) explains them.
 
 nvx is one static binary and needs nothing installed alongside it.
 
@@ -39,16 +43,33 @@ curl -fsSL https://nvx.run/install.sh | sh
 Read a script before piping it to a shell. [What the installer
 changes](#what-the-installer-changes) lists everything these two write.
 
+**Without the GitHub CLI (`gh`), this one-liner checks only a checksum.** The
+`.sha256` file comes from the same release page as the binary, so it catches a
+damaged download and does not show who built the file. `install.sh` makes the
+stronger check, a build attestation made by the release workflow, only when `gh`
+2.51 or newer is installed and signed in. Otherwise it prints "Provenance check
+skipped" and carries on. If you want that check, install `gh`, run `gh auth
+login`, and either rerun the installer or check the installed binary yourself:
+
+```sh
+gh attestation verify ~/.nvx/bin/nvx --repo fstubner/nvx --signer-workflow fstubner/nvx/.github/workflows/release.yml
+```
+
+If it reports a failure, do not run the file. [Verify a
+download](#verify-a-download) covers the other checks.
+
 ## Check it worked
 
 Open a new terminal, because an installer that changed `PATH` cannot change it
 for a shell that is already running. Then run:
 
 ```sh
-nvx install 22
-nvx use 22
+nvx install lts
 nvx doctor
 ```
+
+The first version you install becomes the default, so `nvx use` is not needed
+yet. Use it later to switch one shell to another version.
 
 `nvx doctor` reports whether the shims are intercepting, whether your shell loads
 the integration, and whether anything on the machine weakens containment. It
@@ -98,7 +119,8 @@ platform and runs no install script:
 npm install -g @fstubner/nvx
 ```
 
-The package is `@fstubner/nvx`. The unscoped `nvx` on npm is a different project.
+**Type the scoped name.** `npm install -g nvx` installs a different project,
+which also provides an `nvx` command.
 
 This route writes no shims and edits no profile. Next step: run `nvx doctor`,
 which reports what is missing, and `nvx doctor --fix` to repair it.
@@ -176,13 +198,23 @@ too. The pre-install checks use the registry your `.npmrc` names. See
 [Corporate networks](/docs/policy/#corporate-networks) for what each of these
 does and which hosts nvx contacts.
 
+## Upgrade
+
+Run the installer again, or `npm install -g @fstubner/nvx`. Then run `nvx
+doctor`. It fails and names `nvx init-shims` when the shims still run an older
+nvx. If you ever ran `nvx setup` on Windows before 0.8.0, run `nvx setup` once
+from an Administrator terminal to remove the drive-root and `Users` folder
+entries that version added. The [changelog](/changelog/) lists what changed for
+someone upgrading from 0.7.0.
+
 ## Uninstall
 
-1. If you ever ran `nvx setup` on Windows, run `nvx setup --undo` from an
-   Administrator terminal. That removes the drive-root and `Users` folder
-   grants it added.
-2. Run `nvx grants reset --all` to withdraw the read and execute permissions
-   granted for `allow_read_exec` entries, and to forget approved grants.
+1. If you ever ran `nvx setup` on Windows with a version before 0.8.0, run `nvx
+   setup` from an Administrator terminal. It removes the drive-root and `Users`
+   folder entries that version added.
+2. Run `nvx grants reset --all`. It withdraws the read and execute permissions
+   granted for `allow_read_exec` entries, forgets trusted policy files and tools,
+   and on Windows puts back the permissions of the `.env` files nvx hid.
 3. Delete `~/.nvx`.
 4. Remove the nvx lines from your shell profile, or from `$PROFILE` on Windows.
 5. On Windows, remove `%USERPROFILE%\.nvx\bin` from your user `Path` variable.

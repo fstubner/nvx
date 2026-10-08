@@ -42,8 +42,7 @@ An example global policy:
     "network": {
       "mode": "proxy",
       "default_allow": ["registry.npmjs.org:443", "registry.yarnpkg.com:443", "repo.yarnpkg.com:443", "api.osv.dev:443"],
-      "allow_hosts": ["localhost:5432"],
-      "prompt_unknown": true
+      "allow_hosts": ["localhost:5432"]
     }
   },
   "environment": {
@@ -68,6 +67,42 @@ The keys
 are accepted and ignored, so setting one changes nothing, even to something
 stricter. `isolation.filesystem.mode` is not a setting, and a policy naming it
 gets an unknown-key warning.
+
+## Settings and defaults
+
+`nvx policy explain` prints these with the value in force and the file it came
+from. A project file can tighten any of them. The last column marks the ones
+where a project file that loosens the value, or adds an entry, is not honoured
+until you run `nvx trust` on it.
+
+| Key | Default | What it sets | Needs `nvx trust` |
+| --- | --- | --- | --- |
+| `enforced` | `false` | A global policy with `true` is a baseline a project file may tighten and not loosen | |
+| `blocked_packages` | none | Packages and globs nvx refuses to install | |
+| `enforce_ignore_scripts` | `false` | Refuse packages with install scripts | Turning it off |
+| `typosquatting.enabled` | `true` | The lookalike-name check | Turning it off |
+| `typosquatting.max_distance` | `2` | How many edits count as close | Lowering it |
+| `typosquatting.trusted_packages` | none | Names that are not misspellings | Adding |
+| `release_age.enabled` | `true` | The cooling-off check | Turning it off |
+| `release_age.min_age_hours` | `24` | Length of the window | Lowering it |
+| `release_age.trusted_packages` | none | Packages that skip the window | Adding |
+| `install_scripts.trusted_packages` | none | Packages whose install scripts run without asking | Adding |
+| `vulnerabilities.min_severity` | unset, so every advisory blocks | Floor below which advisories are reported and do not block | Raising it |
+| `vulnerabilities.allowed_advisories` | none | OSV advisory IDs you accepted | Adding |
+| `isolation.enabled` | `true` | The sandbox itself | Turning it off |
+| `isolation.level` | `standard` | `strict` also contains your own code | Lowering it |
+| `isolation.filesystem.provider` | `native` | `native` or `docker` | Changing it |
+| `isolation.filesystem.allow_read_exec` | none | Extra folders a contained process may read and run, never write | Adding |
+| `isolation.network.mode` | `proxy` | `proxy`, `loopback`, `offline` or `open` | Loosening it |
+| `isolation.network.default_allow` | `registry.npmjs.org:443`, `registry.yarnpkg.com:443`, `repo.yarnpkg.com:443`, `api.osv.dev:443`. A runtime adds its own hosts | Hosts a contained process may reach. A project's list replaces this one | Adding |
+| `isolation.network.allow_hosts` | none | Hosts added to the list above | Adding |
+| `isolation.network.prompt_unknown` | `true` | Whether `NVX_TRUST_YES` may approve an unknown host. nvx never asks | |
+| `isolation.network.expose_ports` | none | Ports a contained server publishes on your loopback, as `in[:host]` | Adding |
+| `isolation.network.connect_ports` | none | Services on your machine a contained process may reach, as `host[:in]` | Adding |
+| `isolation.environment.allow` | none | Environment variable names a contained process keeps. A name that holds a credential by convention is refused | Adding |
+| `environment.isolated_tools` | `false` | Scope global npm installs to the project | Turning it on |
+| `runtime.default` | `node` | The runtime a bare command means | |
+| `runtime.versions` | none | Pin runtime versions inside the sandbox, such as `"node": "20"` | |
 
 ## Reference
 * **`enforce_ignore_scripts`**: When `true`, nvx refuses to install a package that has hook scripts (`preinstall`/`postinstall`/`install`). Supply chain attacks often use these to download and execute arbitrary binaries on the host machine. A command that already turns scripts off is not refused, because the package manager runs none of them. nvx counts only the settings each package manager reads. For every one of them that is `--ignore-scripts` on the command line. For npm and pnpm it is also `npm_config_ignore_scripts=true` in the environment or `ignore-scripts=true` in the project `.npmrc`. A run inside the sandbox gets no `npm_config_*` variables, so the environment counts only outside it. yarn reads neither of those. Yarn 2 and later also turn scripts off with `--mode=skip-build` or `enableScripts: false` in `.yarnrc.yml`. nvx counts them when `packageManager` in `package.json` names Yarn 2 or later, or `.yarnrc.yml` sets `yarnPath`, because Yarn 1 ignores both. `enableScripts: false` does not count when `YARN_ENABLE_SCRIPTS` is set to anything but `false`, or a `dependenciesMeta` entry in `package.json` sets `built: true`, because Yarn runs those scripts anyway. `--ignore-scripts=false` does not count. The same holds for the install-script prompt, which is not asked when scripts are off. Otherwise the refusal comes before the package manager starts. Name the package in `install_scripts.trusted_packages` to let it through.
@@ -188,8 +223,9 @@ records it as `check_skipped` with `check` set to `public_registry_checks`.
 
 **Upstream proxy.** nvx uses one when its own environment sets `HTTPS_PROXY`,
 or `HTTP_PROXY` without it. The egress proxy sends each connection the
-allowlist permits through that proxy as a CONNECT tunnel. A user and password in the URL
-become its `Proxy-Authorization` header. Hosts in `NO_PROXY` and loopback
+allowlist permits through that proxy as a CONNECT tunnel. The proxy may be
+`http://`, `https://`, `socks5://` or `socks5h://`. A user and password in the URL
+become its `Proxy-Authorization` header, or a SOCKS5 login. Hosts in `NO_PROXY` and loopback
 destinations are dialled directly.
 
 The allowlist decides first, in nvx, so a

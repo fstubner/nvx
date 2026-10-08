@@ -64,7 +64,10 @@ export const compareRows: ComparisonRow[] = [
   // rather than hooking cd. Same result, and it is why a debugger or an IDE
   // launching node outside a project sees the wrong version.
   { feature: 'Auto-switch per project', cells: ['✓', 'shell hook', '✓', 'on invocation', 'on invocation', '✓'] },
-  { feature: 'Verified downloads', cells: ['✓', '✓', '—', '—', 'varies by plugin', '✓'] },
+  // Renamed from "Verified downloads" on 2026-10-08. nvx checks a SHA-256 that
+  // comes from the same publisher as the archive, which is a checksum and not a
+  // signature, and the old label put it level with tools that verify more.
+  { feature: 'Checksummed downloads', cells: ['✓', '✓', '—', '—', 'varies by plugin', '✓'] },
   { feature: 'Supply-chain checks', cells: ['✓', '—', '—', '—', '—', '—'] },
   // mise shipped sandboxing in April 2026, so these are no longer dashes for
   // it. Every sandbox.deny_* setting defaults to false, it covers `mise run`
@@ -89,6 +92,6 @@ export const compareRows: ComparisonRow[] = [
  *  one tool here that is ahead of nvx on integrity. Writing a competitor's
  *  obituary at length reads as score-settling however true it is. */
 export const compareNoteHtml = [
-  '<p>* With platform exceptions. On Windows, bun installs contained only on the drive Windows is installed on. On macOS, a contained install can read files outside the project, though not credential files such as <code>~/.ssh</code>. <a href="/docs/limitations/">Known limitations</a> has the rest.</p>',
-  "<p>Out-of-the-box defaults, checked against each project on 18 September 2026. volta's maintainers announced in November 2025 that it is unmaintained.</p>",
+  '<p>* With platform exceptions. On Windows, bun installs contained only on the drive Windows is installed on. On macOS, a contained install cannot read your home directory but can read files elsewhere on the disk. <a href="/docs/limitations/">Known limitations</a> has the rest.</p>',
+  "<p>Out-of-the-box defaults, checked against each project on 18 September 2026. nvx's runtime downloads are checked against a checksum from the same publisher, not an independent signature. volta's maintainers announced in November 2025 that it is unmaintained.</p>",
 ].join('');

@@ -12,9 +12,9 @@ export const hero: Hero = {
   // both restate it, in the two places a reader actually deciding on
   // platform support looks.
   releaseLink: '/changelog/',
-  heading: 'Node.js and Bun versions, with a sandbox around every install',
+  heading: 'npm install and npx, inside an OS sandbox',
   subhead:
-    'Install and switch runtimes, and nvx follows the version each project pins when you enter its folder. Installs from npm, yarn, pnpm and bun, and tools started with npx or bunx, run inside an OS sandbox. It limits where they can write and blocks hosts you did not allow.',
+    'nvx runs npm install and npx inside an OS sandbox on Windows, macOS and Linux, so a package cannot read your credentials or reach a host you did not allow. You and your agent type the same commands. It also manages your Node.js and Bun versions.',
   quickInstall: 'irm https://nvx.run/install.ps1 | iex',
   quickInstallAlt: 'curl -fsSL https://nvx.run/install.sh | sh',
   installLinkLabel: 'More install options ↓',

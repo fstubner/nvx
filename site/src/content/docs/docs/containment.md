@@ -37,7 +37,7 @@ When running in the sandbox:
 * **A stray `package.json` above your projects** merges them into one sandbox scope. `nvx doctor` reports it when the manifest sits in your home directory or at a volume root.
 * **Filesystem** (`isolation.filesystem`). Windows uses AppContainer, Linux uses Landlock with namespaces, and macOS uses Seatbelt.
 * **Network** (`isolation.network.mode: proxy`). Egress goes through a loopback proxy with an allowlist. A host the allowlist does not name is refused, and nvx prints the `nvx allow-host` command that allows it, for you to run in your own terminal. nvx does not ask, because a coding agent that drives a terminal could answer. A contained command that then fails exits 77. `NVX_TRUST_YES=true` approves an unknown host for that run. `-y`, `--agent-mode` and `NVX_YES` do not. A local service and a literal link-local address, such as the cloud metadata address `169.254.169.254`, are never approved that way. Only an `allow_hosts` entry allows one. Each host a run is allowed to reach is written to the audit log, once for each host and port in a run. nvx sets `HTTP_PROXY` and `HTTPS_PROXY`, and `NODE_USE_ENV_PROXY=1` for the Node versions that read it, so Node's `fetch`, `http` and `https` use the proxy as well. [Known limitations](/docs/limitations/) says which versions, and when a request to `127.0.0.1` goes to the proxy. On Windows the sandbox holds no network capability at all. The OS refuses direct connections, DNS does not resolve, and the only route out is nvx's proxy, reached over a UNIX socket. No elevation is required. `network.mode: open` opts out.
-* **Time.** The first contained run in a project takes seconds, because that is when nvx makes and remembers the permission grants. Later ones take a few hundred milliseconds.
+* **Time.** Measured on Windows 11 on 2026-10-07, a trivial contained command (`nvx --strict node -e 0`) took 312 ms against 53 ms for node alone. A non-contained `node --version` through the shim took a median of 0.101 s against 0.052 s for node alone (21 interleaved runs, 2026-10-08). A contained install adds two sandbox launches and the checks. Through the contained shim, on machines busy with other work, a 321-package project with no lockfile took a median of 64.8 s on Windows and 61.4 s in a Linux container, and an install of one package took 8.8 s on Windows and 2.39 s on Linux (median of 5 interleaved runs, 2026-10-08). Nothing has been measured on macOS.
 
 ## Local servers and services
 
@@ -63,7 +63,7 @@ that uses the proxy, or `network.mode: loopback`, which
 
 ## Prompts, CI and agents
 
-The pre-install checks (typosquats, fresh releases, install scripts, known vulnerabilities) ask at an interactive terminal. With no terminal they **fail closed**, and the install is refused with exit 77. Each refusal names the policy line that allows that one check, and ends with a paragraph telling an automated agent to leave the decision to you. In CI, add those lines to the policy. `NVX_YES=true` approves every check in a run, and so does `-y` before the command. Neither approves a package OSV lists as malicious. Package-manager flags after a shim command are forwarded to the package manager.
+The pre-install checks (typosquats, fresh releases, install scripts, known vulnerabilities) ask at an interactive terminal. With no terminal they **fail closed**, and the install is refused with exit 77. Each refusal names the policy line that allows that one check, and ends with a paragraph telling an automated agent to leave the decision to you. In CI, add those lines to the policy. `NVX_YES=true` approves every check in a run, and so does `-y` before the command, unless agent mode is on. Neither approves a package OSV lists as malicious. Package-manager flags after a shim command are forwarded to the package manager. [Commands](/docs/commands/#approvals) lists every switch in order of precedence, and [Agents and CI](/docs/agents/) says which to use where.
 
 Requests that widen the sandbox are never asked about, at a terminal or anywhere else. They are a project policy that loosens settings, a host the allowlist does not name, and a tool asking to keep a persistent profile. nvx refuses with exit 77 and prints `nvx trust` or `nvx allow-host` for you to run in your own terminal. `NVX_TRUST_YES=true` approves them without the command, for every run started from that environment. Setting it hands those decisions to whatever sets the environment.
 
@@ -82,10 +82,10 @@ means the generated policy says so and nothing has tested the running system.
 | Host profile write blocked | Yes, measured | Yes, CI (Landlock) | Yes, CI (Seatbelt) |
 | Workdir write allowed | Yes, measured | Yes, CI | Yes, CI |
 | Project `.git` write blocked, read allowed | Yes, measured | Yes, CI (read-only bind mount) | Yes, CI (Seatbelt deny rule) |
-| Host profile read blocked | Yes, measured | Yes, CI (Landlock allowlist) | **Partial**. CI confirms credential stores are denied and other reads are allowed |
+| Host profile read blocked | Yes, measured | Yes, CI (Landlock allowlist) | **Partial**. CI confirms reads under the home directory and nvx's home are denied and reads elsewhere on the disk are allowed |
 | Egress blocked when not allowlisted | Yes, measured | Yes, CI | Yes, CI |
 | Allowlisted host reachable through the proxy | Yes, measured (AppContainer + parent proxy over a UNIX socket) | Yes, CI (loopback-only netns + parent proxy over a UNIX socket) | Yes, CI (Seatbelt + loopback proxy) |
-| Raw TCP/UDP bypass blocked at OS | Yes, measured (no network capability granted) | Yes, CI (netns + seccomp UDP deny) | Yes, CI (TCP and UDP. Which layer refuses TCP is untested) |
+| Raw TCP/UDP bypass blocked at OS | Yes, measured (no network capability granted) | Yes, CI (netns + seccomp UDP deny) | Yes, CI (TCP and UDP. The resolver and the kernel each refuse on their own) |
 | Fail-closed if FS/network primitive missing | Yes, measured | Yes, CI (Landlock 5.13+, iproute2 for netns) | Yes, CI (refuses to run without `sandbox-exec`) |
 | A contained server reachable from the host | Only via `--expose` | Only via `--expose`, except in `network.mode: open`. CI | Not measured |
 | One named host service reachable from the sandbox | Via `allow_hosts` for proxy-aware clients, or `--connect` | Via `allow_hosts` for proxy-aware clients, or `--connect` except in `offline` | Via `allow_hosts` for proxy-aware clients, or `--connect` |
@@ -104,7 +104,7 @@ command (`CONTRIBUTING.md`) and CI's probe run together.
 **What backs the macOS column.**
 `scripts/sandbox-enforcement-macos.sh` runs on a hosted macOS runner on every CI
 build. It asserts the denials, not just that the command ran. It requires
-`WRITE_OUTSIDE=DENIED`, `WRITE_INSIDE=ALLOWED`, `READ_OUTSIDE=ALLOWED`,
+`WRITE_OUTSIDE=DENIED`, `WRITE_INSIDE=ALLOWED`, `READ_OUTSIDE=DENIED`,
 `EGRESS=DENIED`, `UDP_EGRESS=DENIED`, and an allowlisted host tunnelling through
 the proxy with `CONNECT=200`. A further phase plants a `.npmrc` and an SSH key in
 a throwaway home and requires the OS to refuse a contained read of each.
@@ -112,13 +112,7 @@ a throwaway home and requires the OS to refuse a contained read of each.
 Every other assertion
 runs with an empty allowlist, so all of them would also pass against a sandbox
 that had failed to start. Requiring an allowlisted host to *succeed* is what
-separates enforcement from breakage. The read weakness is asserted too, on
-purpose. If the profile is ever tightened, CI fails and forces this table to be
-updated with it.
-
-One macOS cell is still not claimed. The probe's outbound TCP attempt is refused,
-and nothing distinguishes a refusal at DNS from one at connect, which is a real
-distinction on macOS. That cell stays open.
+separates enforcement from breakage.
 
 The [enforcement matrix](https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md)
 has the evidence behind every cell. It lists the probe output, the CI runs, the

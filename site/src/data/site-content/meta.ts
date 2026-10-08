@@ -2,15 +2,15 @@ import type { AppSchema, Branding, Meta } from './types';
 
 export const meta: Meta = {
   domain: 'https://nvx.run',
-  // Leads with the job, not the security layer: PRODUCT.md settles that the
-  // version manager is the main thing and containment the second.
-  title: 'nvx · a Node.js and Bun version manager with a sandbox',
+  // Leads with the sandbox: PRODUCT.md records that the owner chose "sandbox
+  // first" on 2026-10-07. The version manager is the second sentence.
+  title: 'nvx · npm install and npx inside an OS sandbox',
   // Kept under 160 characters so Google shows it whole. The longer version
   // this replaced ran to 271 and was truncated mid-clause in the SERP.
   description:
-    'Install, switch and pin Node.js and Bun on Windows, macOS and Linux. One static binary, and every install runs inside an OS sandbox.',
+    'nvx runs npm install and npx inside an OS sandbox on Windows, macOS and Linux. A package cannot read your credentials or reach a host you did not allow.',
   ogDescription:
-    'A Node.js and Bun version manager for Windows, macOS and Linux that contains what it installs.',
+    'nvx runs npm install and npx inside an OS sandbox on Windows, macOS and Linux, so a package cannot read your credentials or reach a host you did not allow. It also manages Node.js and Bun versions.',
   siteName: 'nvx',
   author: { name: 'Felix Stubner', url: 'https://github.com/fstubner' },
   ogImage: 'https://nvx.run/assets/hero.png',
@@ -30,7 +30,7 @@ export const meta: Meta = {
 // template's rather than this product's.
 export const appSchema: AppSchema = {
   applicationCategory: 'DeveloperApplication',
-  applicationSubCategory: 'Runtime version manager',
+  applicationSubCategory: 'Package install sandbox and runtime version manager',
   operatingSystem: 'Windows, macOS, Linux',
   license: 'https://opensource.org/licenses/MIT',
   programmingLanguage: 'Go',

@@ -236,7 +236,7 @@ These are deliberate trade-offs, and this section documents each one:
   `NVX_NODE_MIRROR` (or `NVM_NODEJS_ORG_MIRROR`, `FNM_NODE_DIST_MIRROR`) set,
   the archives and checksums both come from that mirror, so the mirror is
   trusted exactly as nodejs.org is.
-- **Network enforcement is weakest on macOS.** On Linux a loopback-only network
+- **Network enforcement differs by platform.** On Linux a loopback-only network
   namespace and seccomp genuinely block raw sockets and non-proxied DNS. On
   Windows the AppContainer holds no network capability, so the OS refuses direct
   connections and DNS does not resolve. On both, the egress proxy runs outside the
@@ -805,7 +805,7 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   This affects any MCP server installed from npm on a floating version
   (`npx -y <pkg>` fetches the latest). It is self-inflicted if you publish the
   package yourself. Publish in the morning and the server is unavailable until
-  the next day. Three ways out, narrowest first:
+  the next day. Two ways out, narrowest first, and one to avoid:
 
   ```jsonc
   // 1. pin to a version you have already used
@@ -817,25 +817,23 @@ and the timing behind these claims are in `docs/enforcement-matrix.md`.
   { "release_age": { "trusted_packages": ["your-pkg", "@your-scope/*"] } }
   ```
 
-  ```jsonc
-  // 3. approve every nvx check for this server, not only this one
-  { "command": "npx", "args": ["-y", "your-pkg"], "env": { "NVX_YES": "true" } }
-  ```
-
   The first keeps every check, and an agent may do it itself. The second keeps
   the cooling-off window for everything else, which `release_age.min_age_hours`
-  does not. That setting widens the window for every package you install. The
-  third is the broadest. `NVX_YES` also approves the
-  typosquat, install-script and known-advisory checks for that server, so it is
-  the last resort. It never approves a package OSV lists as malicious, and
-  approves nothing where `NVX_AGENT_MODE` is set too. Each check it approves is printed on stderr and written to
-  `~/.nvx/audit.log` as a `check_approved` record.
+  does not. That setting widens the window for every package you install.
+
+  Avoid putting `NVX_YES=true` in the server's environment. It approves every
+  check for that server, the typosquat, install-script and known-advisory checks
+  included, and every refusal tells an agent not to use it. It never approves a
+  package OSV lists as malicious, and approves nothing where `NVX_AGENT_MODE` is
+  set too. Each check it approves is printed on stderr and written to
+  `~/.nvx/audit.log` as a `check_approved` record. The
+  [agents page](https://nvx.run/docs/agents/) has the whole recipe.
 
   Until 0.6.0 the only exemption list was `typosquatting.trusted_packages`, which
   waived typosquat detection at the same time. It no longer waives the
   release-age window. A file still using it that way is told to move the entry.
 
-- **On Windows and macOS, a contained tool needs `--connect` to reach a service
+- **On every platform, a contained tool needs `--connect` to reach a service
   running on your machine.** This is the other direction, for the same reason.
   The sandbox has no route to your loopback, and the egress proxy refuses a host
   loopback destination unless `allow_hosts` names it. A contained tool may need

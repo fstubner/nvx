@@ -29,7 +29,7 @@ export const surfaces: SurfaceCard[] = [
   },
   {
     title: 'Checked before it runs',
-    body: 'Before anything runs, nvx checks each package for known advisories, lookalike names and a very recent publish date. For an npm install the advisory and age checks cover every package npm resolves, dependencies included. A version published in the last 24 hours waits for your approval, because that is when a compromised release is usually caught.',
+    body: 'Before anything runs, nvx checks each package for known advisories, lookalike names and a very recent publish date. For an npm install the advisory and age checks cover every package npm resolves, dependencies included. A version published in the last 24 hours waits for your approval, because that is when a compromised release is usually caught. A package OSV lists as malicious is refused outright, and scripts you approve still run contained.',
     flip: true,
     // Captured on 2026-09-16 from a real `npm ci` in this repository's site
     // directory, which is how the check was found doing its job. Subtractive
@@ -45,7 +45,7 @@ export const surfaces: SurfaceCard[] = [
   },
   {
     title: 'Installs, contained',
-    body: 'You type the same command. nvx runs it inside the platform sandbox (AppContainer, Landlock or Seatbelt) with a throwaway <code>HOME</code> and a scrubbed environment. It can write to the project and that home. Outbound connections reach only the hosts the allowlist names or you approve.',
+    body: 'You and your agent type the same command. nvx runs it inside the platform sandbox (AppContainer, Landlock or Seatbelt) with a throwaway <code>HOME</code> and a scrubbed environment. It can write to the project and that home. Outbound connections reach only the hosts the allowlist names or you add with <code>nvx allow-host</code>.',
     // Captured from a real contained install rather than composed: on
     // 2026-09-14 with left-pad, re-captured 2026-09-24 with sample-package.
     // What this replaced showed a blocked egress against an invented host, and

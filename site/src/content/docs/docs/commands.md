@@ -59,18 +59,22 @@ puts the shim directory first on `PATH`, and it is read the same way:
 FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i
 ```
 
+Tools installed with `npm install -g` go in the active Node.js version's
+`npm_global` folder. A shell without the integration does not have that folder on
+`PATH`, so it does not find them.
+
 ## Running things
 
 <div data-ui-table="row-headers"></div>
 
 | Command | What it does |
 | --- | --- |
-| `nvx shim <command>` | Run a command through nvx explicitly, contained if it runs code you did not write. |
+| `nvx <command>` | Run a wrapped command through nvx explicitly, for example `nvx npm install` or `nvx --no-sandbox npx wrangler login`. `<command>` is `node`, `npm`, `npx`, `pnpm`, `yarn`, `corepack`, `bun` or `bunx`. It is contained if it runs code you did not write. |
 | `nvx --strict <command>` | Contain the command even when it is your own code. |
 | `nvx --standard <command>` | Drop back to the default level for one run. Never uncontains an install. |
 | `nvx --no-sandbox <command>` | Run uncontained, for the cases nvx refuses by design, such as a global install. |
-| `nvx --connect <port>` | Let one contained run reach one service already running on your machine. |
-| `nvx --expose <port>` | Windows and Linux. Publish a port a contained server listens on, so your browser can reach it. |
+| `nvx --connect <host-port>[:<in-sandbox-port>]` | Let one contained run reach one service already running on your machine. |
+| `nvx --expose <in-sandbox-port>[:<host-port>]` | Windows and Linux. Publish a port a contained server listens on, so your browser can reach it. |
 | `nvx init-shims` | Write the shims in `~/.nvx/bin`, and the project bin shims when run inside a project. |
 
 ## Checking and policy
@@ -88,11 +92,27 @@ FOR /f "tokens=*" %i IN ('nvx env --shell=cmd') DO %i
 | `nvx trust` | Trust this project's policy file that loosens nvx's settings, wherever it applies. nvx never asks about that. It refuses the command and prints this line for you to run, with `--hash` so it trusts only the content you were shown. `nvx trust <file>` trusts one file, and `nvx trust --tool <name>` lets a tool keep a persistent profile in the project. |
 | `nvx allow-host <host[:port]>` | Let contained commands reach a host. nvx adds it to `allow_hosts` in this project's `.nvx-policy.json` and trusts that file, or with `--global` adds it to `~/.nvx/policy.json`. The port defaults to 443. nvx prints this command when it refuses a host. `nvx allow-host --remove <host[:port]>` undoes it, in the same file. |
 | `nvx grants list` | This project's recorded grants: trusted tools, trusted project policy files, directories granted read and execute access for `allow_read_exec`, and egress hosts recorded by older versions. |
-| `nvx grants reset` | Forget this project's grants, or every project's with `--all`. Read and execute permissions nvx granted are withdrawn. |
+| `nvx grants reset` | Forget this project's grants, or every project's with `--all`. Read and execute permissions nvx granted are withdrawn. On Windows it also puts back the permissions of the `.env` files nvx hid. |
 | `nvx env` | Print the shell integration snippet. `--shell=<name>` picks the syntax: powershell, bash, zsh, fish or cmd. |
 | `nvx report` | A diagnostic bundle to attach to a bug report. Nothing is uploaded. |
 | `nvx cleanup` | Reclaim disk from interrupted runs now. Every run reclaims some automatically, so this is rarely needed. |
-| `nvx setup` | Windows only, from an Administrator terminal. Grants the sandbox read and list access to the root folder of every fixed drive. The same goes for the `Users` folder on the system drive, and on each drive holding your profile, nvx's home or the current folder. Each grant covers that folder only, nothing inside it. Installs and `npx` do not need it. A tool that resolves a path all the way up to a drive root does, and nvx names this command after such a failure. It also removes a loopback exemption an older nvx left. `nvx setup --undo` reverses it. |
+| `nvx setup` | Windows only, from an Administrator terminal. Removes what older versions of nvx left: sandbox access to drive roots and the `Users` folder, the loopback exemption, and the permission protection older versions switched off on `C:\Users` and your profile folder. nvx adds none of these now, so run it once after upgrading from an older version. With nothing to remove it says so and exits 0. `--undo` and `--all-drives` are accepted and change nothing. |
+
+## Approvals
+
+These switches answer nvx's questions or turn protection off. When more than
+one applies to a pre-install check, the first row that applies wins.
+
+| Switch | Who it is for | What it does |
+| --- | --- | --- |
+| `--agent-mode`, `NVX_AGENT_MODE=1` | A coding agent's environment | Refuses whatever would ask, exits 77, and approves nothing. It beats `-y` and `NVX_YES`, which approve no check while it is on |
+| `-y`, `--yes`, `NVX_YES=true` | A person | Approves the pre-install checks without asking. It never approves a package OSV lists as malicious and never widens the sandbox. `-y` works only before the command |
+| `NVX_NONINTERACTIVE=1` | A script that must not wait | Denies every prompt instead of asking. `-y` and `NVX_YES` still approve |
+| `NVX_TRUST_YES=true` | One CI job you control | Approves requests to widen the sandbox: an untrusted loosening policy, an unknown host, a persistent tool profile. Nothing else approves these |
+| `--no-sandbox` | A person | Runs one command uncontained. It goes before the command |
+
+`nvx doctor` warns when `NVX_YES`, `NVX_AGENT_MODE` or `NVX_TRUST_YES` is set.
+[Agents and CI](/docs/agents/) says which to use where.
 
 ## Policy files
 
@@ -264,9 +284,11 @@ refuses only when that path is too long as well.
 `0` means the command worked. A non-zero code from `nvx doctor` means something
 needs attention. It does not mean doctor itself failed. A contained command
 propagates whatever the wrapped program exited with. `77` means nvx refused to
-run the command, for example a package that failed its pre-install checks, or a
-project policy nobody has trusted. A contained command that fails after nvx
-refused a host the allowlist does not name exits `77` too.
+run the command, for example a package that failed its pre-install checks, a
+project policy nobody has trusted, or a question it would have asked under
+`--agent-mode`. A contained command that fails after nvx refused a host the
+allowlist does not name exits `77` too. `127` means a command was not found, and
+`2` is a usage error such as an unknown nvx command.
 `nvx policy check` has a code of its own for each kind of failure, and
 [docs/exit-codes.md](https://github.com/fstubner/nvx/blob/main/docs/exit-codes.md)
 lists them all.

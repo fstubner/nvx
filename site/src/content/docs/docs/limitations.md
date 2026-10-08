@@ -18,9 +18,16 @@ and the evidence and measurements for each platform are in the
   config and hook folders like `.husky`. `isolation.level: strict` contains them,
   at the cost of breaking anything that needs unrestricted filesystem or network
   access.
-- **A `.env` inside the project is readable by a contained install.** The project
-  directory has to be readable for the install to work, and `.env` lives in it.
-  Scrubbing covers environment *variables* only.
+- **A `.env` file can be read for a moment after it appears.** A contained
+  process cannot read the project's `.env` or `.env.*` files, except the templates
+  `.env.example`, `.env.sample`, `.env.template` and `.env.dist`. On Windows and
+  Linux nvx covers a file that appears during a run within a few milliseconds, and
+  a process that polls for it can read it in that time. A file that exists when
+  the run starts is covered before it begins. On Windows nvx records the earlier
+  permissions of at most 200 files per project, and on Linux it searches 50,000
+  entries. `.envrc` and names such as `production.env` are not covered.
+  [SECURITY.md](https://github.com/fstubner/nvx/blob/main/SECURITY.md) has the
+  measurements.
 - **A browser that a contained install downloads is deleted with the
   sandbox.** puppeteer and Playwright keep their browsers in a cache under the
   home directory, and a contained command gets a home of its own, which nvx
@@ -28,11 +35,25 @@ and the evidence and measurements for each platform are in the
   browser outside the sandbox with
   `nvx --no-sandbox npx puppeteer browsers install chrome` or
   `nvx --no-sandbox npx playwright install`.
-- **Only an `http://` upstream proxy is used.** An `https://` or `socks5://`
-  value in `HTTPS_PROXY` is ignored with a warning, and contained connections
-  are then made directly. Behind a proxy, a host nvx's own resolver cannot look
-  up is still reachable when the allowlist names it, and `NVX_TRUST_YES` cannot
-  approve it.
+- **Only `http://`, `https://`, `socks5://` and `socks5h://` upstream proxies
+  are used.** Any other scheme, such as `socks4://`, in `HTTPS_PROXY` is ignored
+  with a warning, and contained connections are then made directly. Behind a
+  proxy, a host nvx's own resolver cannot look up is still reachable when the
+  allowlist names it, and `NVX_TRUST_YES` cannot approve it.
+- **An agent with a shell of its own can do what you can.** nvx contains the
+  packages an agent installs. It does not contain the agent. An agent that runs
+  `nvx trust`, `nvx allow-host` or `nvx --no-sandbox` in a shell outside the
+  sandbox widens it. Every refusal tells the agent not to, and nothing in nvx
+  enforces that. Deny those commands in the agent's own permission settings.
+  [Agents and CI](/docs/agents/) has the list.
+- **A local folder outside the project is out of reach.** The sandbox reads the
+  project and what a policy grants, so `npm install ../shared` in a monorepo
+  cannot read the sibling folder and npm fails with an `EPERM` error. Move the
+  folder inside the project, add it to `isolation.filesystem.allow_read_exec`, or
+  use `nvx --no-sandbox`.
+- **nvx does not read `devEngines.runtime`.** npm enforces the field. The shim and
+  `nvx auto` warn when it asks for a different Node.js than the one running. Pin
+  the version with `.nvmrc`, `.node-version` or `engines`.
 - **The Docker provider cannot do `proxy` mode.** A policy that selects
   `isolation.filesystem.provider: docker` with the default `network.mode: proxy`
   is refused. Docker runs `offline` and `loopback` with no network at all, and
@@ -164,10 +185,6 @@ and the evidence and measurements for each platform are in the
   better-sqlite3, sqlite3 and bcrypt, fetch it from `github.com` and
   `release-assets.githubusercontent.com`, and both need to be in
   `isolation.network.allow_hosts`. Build from source with `nvx --no-sandbox`.
-- **`yarn` classic fails in a project under your user profile if you have a
-  `~/.yarnrc`.** yarn reads every `.yarnrc` from the project up to the drive
-  root, and treats the sandbox's refusal of the one in your real home as fatal.
-  Projects outside the profile are fine. Measured with yarn 1.22.19.
 - **A contained process cannot create a pipe.** nvx brokers synchronous and
   streaming capture. `child_process.fork` is refused outright, and the error
   names `--no-sandbox`.
@@ -177,14 +194,13 @@ and the evidence and measurements for each platform are in the
 
 ## macOS
 
-- **Reads outside your credential stores are not contained.** The Seatbelt
-  profile has to allow filesystem reads, because the dynamic linker loads system
-  libraries whose locations move between macOS versions. It denies `~/.ssh`,
-  `~/.aws`, `~/.npmrc`, the other registry and cloud credential files, and your
-  keychains by path. Other files can be read, including other projects and any
-  credential kept somewhere the list does not name.
-- **DNS lookups are not blocked.** A contained process can still query the
-  system resolver directly. Connections themselves go through the allowlist.
+- **Reads outside your home directory are not contained.** The Seatbelt profile
+  denies reads under your home directory and nvx's home, apart from the project,
+  the sandbox's home, nvx's runtimes and `allow_read_exec` folders, and denies the
+  credential stores by path. It allows reads elsewhere on the disk, because the
+  dynamic linker must read system libraries whose locations vary by macOS
+  version. A Node.js installed in your home by another tool, such as nvm, needs
+  its folder in `allow_read_exec` to run contained.
 
 ## Linux
 
@@ -224,14 +240,16 @@ and the evidence and measurements for each platform are in the
 
 - **Detection is best-effort.** Typosquat and vulnerability checks reduce risk
   without certifying a package. Containment is the backstop.
-- **Dependencies are checked for npm installs, and not for everything.**
+- **Dependencies are checked for installs, and not for everything.**
   `npm install`, `npm update` and `npm dedupe` check every package npm will
   install, and `npm ci` checks every entry of `package-lock.json` for this
-  platform. `npx`, `npm exec`, `npm create`, `npm init`, every pnpm, yarn and
-  bun command, and npm projects that use workspaces or depend on a local folder
-  are checked on the packages they name, the entries of `package-lock.json`, or
-  the versions `package.json` declares. The dependencies those bring in are not
-  checked, and pnpm, yarn and bun lockfiles are not read.
+  platform. A `pnpm install`, `yarn` or `bun install` that names no package checks
+  every entry for this platform in `pnpm-lock.yaml`, `yarn.lock` or `bun.lock`.
+  `npx`, `npm exec`, `npm create`, `npm init`, named installs such as `pnpm add
+  left-pad`, projects with Bun's binary `bun.lockb`, and npm projects that use
+  workspaces or depend on a local folder are checked on the packages they name,
+  the entries of `package-lock.json`, or the versions `package.json` declares.
+  The dependencies those bring in are not checked.
 - **Packages from git, a URL or a local path get only the blocklist.** They are
   checked against `blocked_packages` by the name they install under. The
   typosquat, advisory and release-age checks look a package up in the registry,
