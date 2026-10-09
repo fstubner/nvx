@@ -47,9 +47,9 @@ export const installByPlatform: Record<Platform, PlatformInstall> = {
 // Windows PowerShell 5.1 alike. `&&` is a parse error in PowerShell 5.1, the
 // shell a Windows reader most likely pastes into, and `;` works in all three.
 export const tryCommands: TryCommand[] = [
-  { comment: 'Install a runtime. The first one you install becomes the default', command: 'nvx install lts' },
-  { comment: 'Install packages, contained, with no change to how you type it', command: 'npm install' },
-  { comment: 'Check that nvx is intercepting, and that nothing weakens it', command: 'nvx doctor' },
+  { comment: 'Contained, typed as usual', command: 'npm install' },
+  { comment: 'Check the setup', command: 'nvx doctor' },
+  { comment: 'Optional: manage Node.js', command: 'nvx install 22' },
 ];
 
 export const installBinariesNote =

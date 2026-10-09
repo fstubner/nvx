@@ -100,20 +100,21 @@ nvx doctor               # check interception and containment
 ```
 
 The full reference is in **[Commands](https://nvx.run/docs/commands/)** and
-**[Policy](https://nvx.run/docs/policy/)**.
+**[Configuration](https://nvx.run/docs/policy/)**.
 
 ## Documentation
 
 | Page | Covers |
 | --- | --- |
-| [Overview](https://nvx.run/docs/) | What nvx does, and what it deliberately does not |
-| [Installation](https://nvx.run/docs/install/) | Every install route, per platform |
-| [Containment](https://nvx.run/docs/containment/) | What a contained command can reach, and what backs each claim |
-| [Policy](https://nvx.run/docs/policy/) | Global and project policy files, and every setting |
-| [Agents and CI](https://nvx.run/docs/agents/) | Exit 77, the approval switches, MCP servers and a snippet for AGENTS.md |
-| [When nvx stops something](https://nvx.run/docs/blocked/) | Each refusal, its cause and the command that fixes it |
-| [Known limitations](https://nvx.run/docs/limitations/) | What containment does not cover |
-| [Commands](https://nvx.run/docs/commands/) | Commands, flags and environment variables |
+| [Get started](https://nvx.run/docs/) | Install, a first contained install, and `nvx doctor` |
+| [Install, upgrade and uninstall](https://nvx.run/docs/install/) | Every install route, verifying a download, and removing nvx |
+| [When something is blocked](https://nvx.run/docs/blocked/) | Each message nvx prints when it stops something, and the fix |
+| [AI agents and MCP](https://nvx.run/docs/agents/) | Agent mode, a snippet for AGENTS.md, MCP servers and CI |
+| [Node.js and Bun versions](https://nvx.run/docs/versions/) | Installing, switching and pinning runtimes |
+| [Configuration](https://nvx.run/docs/policy/) | The policy file by example, and every setting |
+| [How it works](https://nvx.run/docs/containment/) | Shims, the checks, the sandbox per platform and the allowlist |
+| [Limitations](https://nvx.run/docs/limitations/) | What nvx does not cover, with workarounds |
+| [Commands](https://nvx.run/docs/commands/) | Commands, flags, environment variables and exit codes |
 
 The threat model is in [SECURITY.md](SECURITY.md), and the per-platform evidence
 behind every containment claim is in
