@@ -78,8 +78,9 @@ export const compareRows: ComparisonRow[] = [
   { feature: 'Secrets hidden', cells: ['✓*', '—', '—', '—', '—', 'opt-in, not Windows'] },
 ];
 
-/** Shown under the table. Two notes and no more: the exceptions behind the
- *  marked ticks, and when the other columns were checked. Detail lives on the
+/** Shown under the table. The exceptions behind the marked ticks, when the
+ *  other columns were checked, and where to send a correction. The link is
+ *  the same new-issue URL as the docs' "Suggest something" button. Detail lives on the
  *  limitations page, which the first note links.
  *
  *  volta's status is stated flatly and left there. An earlier version added
@@ -89,4 +90,5 @@ export const compareRows: ComparisonRow[] = [
 export const compareNoteHtml = [
   '<p>* With platform exceptions. On Windows, bun installs contained only on the drive Windows is installed on. On macOS, a contained install cannot read your home directory but can read files elsewhere on the disk. <a href="/docs/limitations/">Limitations</a> has the rest.</p>',
   "<p>Out-of-the-box defaults, checked against each project on 18 September 2026. volta's maintainers announced in November 2025 that it is unmaintained.</p>",
+  '<p>Something in this table wrong or out of date? <a href="https://github.com/fstubner/nvx/issues/new?labels=enhancement">Suggest a correction ↗</a></p>',
 ].join('');

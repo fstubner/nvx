@@ -37,7 +37,6 @@ In a project folder, install something the way you always do.
 
 ```text
 > npm install sample-package
-ℹ Running in native sandbox: npm install sample-package --package-lock-only --ignore-scripts ...
 ℹ Running in native sandbox: npm install sample-package@1.0.1
 
 added 1 package, and audited 2 packages in 2s
@@ -45,9 +44,9 @@ added 1 package, and audited 2 packages in 2s
 found 0 vulnerabilities
 ```
 
-The first run works out which packages the install brings in. nvx checks each
-of them, and the second run installs exactly what was checked. Both runs are
-inside the sandbox.
+Before the install you see, nvx runs npm once in the sandbox to work out which
+packages it brings in, and checks each of them. The install then gets exactly
+what was checked.
 
 If you have no Node.js yet, `npm` tells you to run `nvx install lts` first.
 

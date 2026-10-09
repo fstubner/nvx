@@ -14,8 +14,13 @@ import type { Feedback } from './types';
 // feedback belongs somewhere else. Labels and templates are optional: a repo
 // with no issue templates still gets working links, just without the
 // prefilled body. nvx has no issue forms, so neither route names one.
+// Docs pages only, since 2026-10-09. On the landing page the strip sat between
+// the FAQ and the footer, a second call to action under the install one. The
+// landing page asks for corrections to the comparison table instead, in a line
+// under it (compare.ts).
 export const feedback: Feedback = {
   enabled: true,
+  placement: ['docs'],
   prompt: 'Something wrong, or missing?',
   problem: {
     label: 'Report a problem',
