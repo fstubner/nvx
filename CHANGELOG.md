@@ -63,6 +63,11 @@ commands now exit 77 where they ran before.
 These fix problems that exist in the released 0.7.0 unless an entry says
 otherwise. Upgrade if you rely on the sandbox.
 
+* **Built with Go 1.26.9.** 0.7.0 was built with Go 1.26.6, whose `net/http`
+  client has three vulnerabilities fixed in 1.26.9 (GO-2026-6611, GO-2026-6613
+  and GO-2026-6617). nvx uses that client to download runtimes and to check
+  packages.
+
 * **Linux: a contained process could type into your terminal on kernels before
   6.2.** The contained process shares your terminal, and `ioctl(fd, TIOCSTI, &c)`
   pushes a byte into its input queue. After nvx exited, your shell read the
