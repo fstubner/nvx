@@ -1,178 +1,122 @@
 ---
-title: When nvx stops something
-description: Each refusal nvx makes, what causes it, and the exact command or policy line that fixes it.
+title: When something is blocked
+description: Each message nvx prints when it stops something, what it means, and the one command or policy line that fixes it.
 ---
 
-nvx refuses a command in one of a few ways. Each section below names the cause
-and the fix. A refusal exits with code `77`, and prints the fix as its last
-lines. Run commands in your own terminal in the project folder.
+Find the message you saw below. Each section says what it means, how to allow
+it, and how to undo that later.
 
-Policy lines go in `~/.nvx/policy.json`. If the file does not exist, create it
-with exactly the line shown. If it does, merge the line into it. `nvx policy init
---global` writes a starting file.
+Run fixes in your own terminal, in the project folder. Policy lines go in
+`~/.nvx/policy.json`. Create the file with the line shown, or merge the line
+into the file you have. `nvx policy init --global` writes a starting file.
 
-If you are an automated agent, do not run these fixes yourself. Tell the person
-you work for what was refused. [Agents and CI](/docs/agents/) explains why.
+The package checks below ask first when you are at a terminal. With nobody to
+answer, as in CI, nvx prints `Non-interactive environment: denying prompt` and
+refuses.
 
-## A host the allowlist does not name
+If you are a coding agent, do not run these fixes. Tell the person you work for
+what was blocked and quote nvx's message.
+
+## Exit code 77
+
+Every refusal exits with `77`. The command did not run, or nvx refused a
+connection while it ran. Running it again gives the same answer. The fix is in
+the last lines nvx printed.
+
+## Blocked egress: host:443
 
 ```text
-Blocked egress: registry.example.org:443
+⚠ Blocked egress: example.org:443
+ℹ To allow it, run this in your own terminal, in C:\work\app:  nvx allow-host example.org:443
 ```
 
-A contained command tried to reach a host that is not in `default_allow` or
-`allow_hosts`. nvx did not connect.
+A contained command tried to reach a host that is not on the allowlist. nvx did
+not connect.
 
-Fix: `nvx allow-host registry.example.org:443`. It adds the host to the project's
-`.nvx-policy.json` and trusts that file. `--global` writes `~/.nvx/policy.json`
-instead. The port defaults to 443. For one run in an environment you control, set
-`NVX_TRUST_YES=true`.
+- **Allow it:** `nvx allow-host example.org:443`. This adds the host to the
+  project's `.nvx-policy.json` and trusts that file. Add `--global` to write
+  `~/.nvx/policy.json` instead.
+- **Undo:** `nvx allow-host --remove example.org:443`.
 
-A local service and a literal link-local address such as `169.254.169.254` get no
-one-line command. `NVX_TRUST_YES` does not approve them. For a service on your
-machine use `nvx --connect <port>` for one run, or put the host in `allow_hosts`.
+A service on your own machine, or an address such as `169.254.169.254`, has no
+one-line fix. Use `nvx --connect <port>` for one run, or name it in
+`allow_hosts`. See [Configuration](/docs/policy/).
 
-## A project policy that loosens settings
+## Refused to run under project policy
 
 ```text
 nvx refused to run under project policy /work/app/.nvx-policy.json. It loosens nvx's security settings, and it has not been trusted
 ```
 
-A `.nvx-policy.json` in the repository widens the sandbox, for example by
-adding a host or switching `isolation.network.mode` to `open`. Every command in
-that project exits 77 until you trust the file. Read the file first.
+The repository's `.nvx-policy.json` widens the sandbox, for example by adding a
+host. Every command in the project exits 77 until you trust it. Read the file
+first.
 
-Fix: `nvx trust .nvx-policy.json --hash <hash>`, exactly as the refusal prints
-it. The hash makes nvx trust only the content you were shown. In a monorepo, a
-root file is trusted once for every package below it.
+- **Allow it:** run the `nvx trust .nvx-policy.json --hash <hash>` line the
+  message prints. The hash means nvx trusts only the content you saw.
+- **Undo:** `nvx grants reset`.
 
-## A tool that wants a persistent profile
+A tool that asks to keep a persistent profile is refused the same way. Allow it
+with `nvx trust --tool <name>`.
 
-```text
-nvx refused to let "tool" keep a persistent profile in this project
-```
-
-A tool asked to keep its logins and settings between runs.
-
-Fix: `nvx trust --tool <name>`.
-
-## Install scripts
+## Published only N hours ago
 
 ```text
-Package esbuild@0.28.2 contains installation scripts
+Package pkg@1.2.3 was published only 3.0 hours ago (on ...). Supply chain compromises are often caught within 24 hours. Proceed?
 ```
 
-The package has a `preinstall`, `install` or `postinstall` script. That is code
-that runs at install time.
+The version is newer than the cooling-off window, 24 hours by default. A
+version the registry gives no publish time for is treated the same way.
 
-Fix, for a package you trust:
+- **Allow it, narrowest first:** install an older version, `npm install
+  pkg@1.2.2` (`npm view pkg time` lists publish dates). Or exempt the package.
 
-```json
-{ "install_scripts": { "trusted_packages": ["esbuild"] } }
-```
+  ```json
+  { "release_age": { "trusted_packages": ["pkg"] } }
+  ```
 
-If the refusal says `enforce_ignore_scripts is on`, the policy blocks every
-package with such scripts, and the same line is the exception. To install with
-scripts off, pass `--ignore-scripts`.
+- **Undo:** delete the line.
 
-## Typosquats
+## Package is suspiciously close to popular package
 
-```text
-Package "expresss" is suspiciously close to popular package "express"
-```
-
-The name is a few edits from a popular package and has far fewer downloads. Check
+The name is a near miss of a popular package and has far fewer downloads. Check
 the spelling first.
 
-Fix, if the name is right:
+- **Allow it:** `{ "typosquatting": { "trusted_packages": ["expresss"] } }`
+- **Undo:** delete the line.
 
-```json
-{ "typosquatting": { "trusted_packages": ["expresss"] } }
-```
+## Vulnerability Scan Alert, or OSV lists it as malicious
 
-## Release age
+An OSV advisory covers a version in the install. A `MAL-` advisory means the
+package is malicious. It is refused without asking, and `-y` does not change
+that.
 
-A package version was published inside the cooling-off window, 24 hours by
-default. A version the registry gives no publish time for is treated the same
-way, because nvx cannot tell its age.
+- **Allow an advisory you have assessed:**
+  `{ "vulnerabilities": { "allowed_advisories": ["GHSA-xxxx-yyyy-zzzz"] } }`.
+  A `MAL-` advisory needs its exact ID. A pattern such as `"MAL-*"` does not work.
+- **Allow everything below a severity:** set `vulnerabilities.min_severity` to
+  `low`, `moderate`, `high` or `critical`.
+- **Undo:** delete the line.
 
-Fix, narrowest first:
+## Package contains installation scripts
 
-1. Name an older version: `npm install pkg@1.2.3`. `npm view pkg time` lists when
-   each version was published.
-2. Exempt the package:
+The package runs code at install time. The scripts would still run inside the
+sandbox.
 
-   ```json
-   { "release_age": { "trusted_packages": ["pkg"] } }
-   ```
+- **Allow it:** `{ "install_scripts": { "trusted_packages": ["esbuild"] } }`.
+  To install without scripts, pass `--ignore-scripts`.
+- **Undo:** delete the line.
 
-   Use a scope such as `"@your-scope/*"` for a registry that sends no publish
-   times, or set `release_age.enabled` to `false`.
-3. To approve every check in the run, `NVX_YES=true`, or `-y` before the command.
-   Do not set it for an MCP server or an agent.
+## Blocked by security policy: blacklisted
 
-## Known vulnerabilities
-
-An OSV advisory exists for a package version in the install.
-
-Fix, for advisories you have assessed:
-
-```json
-{ "vulnerabilities": { "allowed_advisories": ["GHSA-xxxx-yyyy-zzzz"] } }
-```
-
-To accept everything below a severity, set `vulnerabilities.min_severity` to
-`low`, `moderate`, `high` or `critical`.
-
-## A package listed as malicious
-
-An advisory starting `MAL-` names the package. `-y`, `NVX_YES`, `--agent-mode`,
-`NVX_TRUST_YES` and `min_severity` do not allow it.
-
-Fix: only if you checked that the advisory does not apply, add its exact ID to
-`vulnerabilities.allowed_advisories`. A pattern such as `"MAL-*"` does not work.
-
-## A blocked package
-
-```text
-Blocked by security policy: Package "is-number" is blacklisted.
-```
-
-The name is in `blocked_packages`. nvx does not say which dependency pulled it in.
-Run `npm ls is-number` to find out.
-
-Fix: remove the name from `blocked_packages` in the policy file that lists it.
-`nvx policy explain` shows which file set the value.
+The name is in `blocked_packages`. `npm ls <name>` shows which dependency pulled
+it in. `nvx policy explain` shows which policy file set it. Remove the name
+there to allow it.
 
 ## A lookup that failed
 
-The registry or `api.osv.dev` could not be reached, so a check could not run. No
-policy setting waives a failed lookup.
-
-Fix: retry when the service is reachable. To proceed without the lookup,
-`NVX_YES=true` or `-y` approves every check in the run.
-
-## npm could not work out what the command installs
-
-```text
-Installation aborted: npm could not resolve what this command installs
-```
-
-nvx asks npm what an install brings in, so it can check every package. That step
-failed. When a `Blocked egress` line comes first, the host in it is the cause, and
-`nvx allow-host` is the fix. Otherwise read npm's own error above the refusal.
-
-## A global install
-
-```text
-nvx refused: global installs (-g) can't run inside the sandbox.
-```
-
-A global install writes outside the project and would run uncontained on every
-future command.
-
-Fix, knowing it is uncontained: `nvx --no-sandbox npm install -g <package>`. For
-a tool you only need to run, `npx <package>` is contained.
+The registry or `api.osv.dev` could not be reached, so a check could not run.
+Retry when it is reachable. `nvx -y` approves every check in that one run.
 
 ## The sandbox could not start
 
@@ -180,55 +124,51 @@ a tool you only need to run, `npx <package>` is contained.
 nvx could not create the sandbox to contain this command, so it did not run.
 ```
 
-Most often on Linux, where the kernel refused the sandbox its user and network
-namespaces. On Ubuntu 23.10 and later this is AppArmor's
-`kernel.apparmor_restrict_unprivileged_userns`.
+Most often on Linux, where the kernel refused the sandbox its namespaces. On
+Ubuntu 23.10 and later the cause is AppArmor.
 
-Fix: run `nvx doctor`. It names the cause and the ways forward.
-`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` turns the
-restriction off for every program on the machine. Setting
-`isolation.network.mode` to `open` gives up the egress allowlist. `nvx
---no-sandbox` runs one command uncontained.
+- **Fix:** run `nvx doctor`. It names the cause and the ways forward.
+- **For one command:** `nvx --no-sandbox <command>` runs it uncontained.
 
-## A command that wrote where it cannot keep files
-
-A command started in your home folder, above it, or inside nvx's own folder runs
-in a temporary folder in the sandbox. If it wrote files there, nvx names them,
-deletes them and exits 77.
-
-Fix: run the command from a project folder.
-
-## A flag that went to the wrong program
+## A command outside nvx's folders
 
 ```text
--y was passed to npm, not to nvx, so it does not approve nvx's checks.
+AppContainer executable access failed: C:\Users\you\AppData\Local\pnpm\pnpm.exe is not in a Node or Bun install
 ```
 
-nvx reads its own flags only before the command.
+On Windows, a `pnpm` or `yarn` installed outside nvx cannot run in the sandbox.
 
-Fix: `nvx -y npm install ...` or `NVX_YES=true npm install ...`.
+- **Fix:** install it under a Node.js nvx manages, with
+  `nvx --no-sandbox npm install -g pnpm@11`. Or add the folder the message names to
+  `isolation.filesystem.allow_read_exec`.
+- **Undo:** remove the folder from the policy. `nvx grants reset` withdraws
+  the permission straight away.
 
-## A refusal under agent mode
+## Wrote files to a temporary folder
 
 ```text
---agent-mode is set, so nvx refuses instead of asking
+npm wrote package.json to its working folder, which was a temporary folder inside the sandbox. nvx has deleted it.
 ```
 
-`--agent-mode` or `NVX_AGENT_MODE=1` turns every question into a refusal, and
-`-y` and `NVX_YES` do not override it. The refusal also prints the policy line for
-the check that stopped.
+You ran the command from your home folder, a folder above it, or nvx's own
+folder. The sandbox may not write there. Run it from a project folder.
 
-Fix: the person adds that line, or unsets `NVX_AGENT_MODE` for their own terminal.
+## Global installs (-g) can't run inside the sandbox
 
-## Undo what you allowed
+A global install writes outside the project. Use
+`nvx --no-sandbox npm install -g <package>`, knowing it runs uncontained. For a
+tool you only want to run, `npx <package>` is contained.
 
-| You ran | Undo with |
-| --- | --- |
-| `nvx trust <file>` or `nvx trust --tool <name>` | `nvx grants reset`, in the project folder. `--all` covers every project |
-| `nvx allow-host <host>` | `nvx allow-host --remove <host>`, which edits the same file |
-| A line in `~/.nvx/policy.json` | Delete the line |
-| `NVX_YES`, `NVX_AGENT_MODE` or `NVX_TRUST_YES` in a profile | Unset it. `nvx doctor` names the ones that are set |
-| `nvx install <version>` | `nvx uninstall <version>` |
+## -y was passed to npm, not to nvx
 
-`nvx grants list` shows what is trusted for the current project. On Windows,
-`nvx grants reset` also puts back the permissions of the `.env` files nvx hid.
+nvx reads its own flags only before the command. Write `nvx -y npm install ...`.
+
+## --agent-mode is set, so nvx refuses instead of asking
+
+Agent mode turns every question into a refusal, and `-y` does not override it.
+Add the policy line the message prints. See [AI agents and MCP](/docs/agents/).
+
+## Everything you allowed
+
+`nvx grants list` shows what is trusted for the current project.
+`nvx grants reset --all` forgets it for every project.

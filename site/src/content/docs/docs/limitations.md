@@ -1,270 +1,85 @@
 ---
-title: Known limitations
-description: What containment does not cover on each platform, and what the checks miss.
+title: Limitations
+description: What nvx does not cover today, by platform and by tool, with a workaround where one exists.
 ---
 
-These are the places where nvx does not protect you or does not work. The
-threat model is in [SECURITY.md](https://github.com/fstubner/nvx/blob/main/SECURITY.md),
-and the evidence and measurements for each platform are in the
-[enforcement matrix](https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md).
+Where nvx does not protect you or does not work today. The detail is in
+[SECURITY.md](https://github.com/fstubner/nvx/blob/main/SECURITY.md#known-limitations).
 
 ## Every platform
 
-- **Your own code is not contained by default.** `npm run build`, `npm test`,
-  `node` and a tool already in `node_modules/.bin` that `npx` or `bunx` starts run
-  uncontained at the `standard` level, and so does a compromised dependency they
-  import. A contained install can write the project files those
-  commands run, such as `package.json` scripts, `node_modules`, lockfiles, build
-  config and hook folders like `.husky`. `isolation.level: strict` contains them,
-  at the cost of breaking anything that needs unrestricted filesystem or network
-  access.
-- **A `.env` file can be read for a moment after it appears.** A contained
-  process cannot read the project's `.env` or `.env.*` files, except the templates
-  `.env.example`, `.env.sample`, `.env.template` and `.env.dist`. On Windows and
-  Linux nvx covers a file that appears during a run within a few milliseconds, and
-  a process that polls for it can read it in that time. A file that exists when
-  the run starts is covered before it begins. On Windows nvx records the earlier
-  permissions of at most 200 files per project, and on Linux it searches 50,000
-  entries. `.envrc` and names such as `production.env` are not covered.
-  [SECURITY.md](https://github.com/fstubner/nvx/blob/main/SECURITY.md) has the
-  measurements.
-- **A browser that a contained install downloads is deleted with the
-  sandbox.** puppeteer and Playwright keep their browsers in a cache under the
-  home directory, and a contained command gets a home of its own, which nvx
-  deletes when the command ends. nvx warns when this happens. Install the
-  browser outside the sandbox with
-  `nvx --no-sandbox npx puppeteer browsers install chrome` or
-  `nvx --no-sandbox npx playwright install`.
-- **Only `http://`, `https://`, `socks5://` and `socks5h://` upstream proxies
-  are used.** Any other scheme, such as `socks4://`, in `HTTPS_PROXY` is ignored
-  with a warning, and contained connections are then made directly. Behind a
-  proxy, a host nvx's own resolver cannot look up is still reachable when the
-  allowlist names it, and `NVX_TRUST_YES` cannot approve it.
-- **An agent with a shell of its own can do what you can.** nvx contains the
-  packages an agent installs. It does not contain the agent. An agent that runs
-  `nvx trust`, `nvx allow-host` or `nvx --no-sandbox` in a shell outside the
-  sandbox widens it. Every refusal tells the agent not to, and nothing in nvx
-  enforces that. Deny those commands in the agent's own permission settings.
-  [Agents and CI](/docs/agents/) has the list.
-- **A local folder outside the project is out of reach.** The sandbox reads the
-  project and what a policy grants, so `npm install ../shared` in a monorepo
-  cannot read the sibling folder and npm fails with an `EPERM` error. Move the
-  folder inside the project, add it to `isolation.filesystem.allow_read_exec`, or
-  use `nvx --no-sandbox`.
-- **nvx does not read `devEngines.runtime`.** npm enforces the field. The shim and
-  `nvx auto` warn when it asks for a different Node.js than the one running. Pin
-  the version with `.nvmrc`, `.node-version` or `engines`.
-- **The Docker provider cannot do `proxy` mode.** A policy that selects
-  `isolation.filesystem.provider: docker` with the default `network.mode: proxy`
-  is refused. Docker runs `offline` and `loopback` with no network at all, and
-  `open` unfiltered. Use the native provider for an egress allowlist.
-- **Only some Node programs follow the proxy.** nvx sets `NODE_USE_ENV_PROXY=1`
-  beside `HTTP_PROXY` and `HTTPS_PROXY`. Node reads it for `fetch` from 24.0.0,
-  for `http` and `https` as well from 24.5.0, and for all three from 22.21.0.
-  Earlier releases ignore it, so a request from one connects directly and the
-  sandbox refuses it. Bun's `fetch` follows the proxy variables with no help. A
-  request that carries its own agent, such as `agent: false`, ignores them on
-  every version, and so does a raw socket. Yarn 2 and later ignores them too. It
-  reads `YARN_HTTP_PROXY` and `YARN_HTTPS_PROXY`, which nvx sets to the same
-  address. Node 22.23.2 prints `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is
-  experimental` to stderr when a process with the variable set exits. nvx adds
-  `--disable-warning=UNDICI-EHPA` to `NODE_OPTIONS` when the command it runs
-  lives in a Node it installed and that Node reads the variable. A command found
-  elsewhere on your `PATH`, such as a `yarn` you installed yourself, still prints
-  it.
-- **A request to `localhost`, `127.0.0.1` or `::1` goes to the proxy only when
-  the policy lets the proxy reach this machine.** By default nvx lists those
-  names in `NO_PROXY`, so a request to one connects directly. On Windows and on
-  Linux the sandbox has a loopback of its own, so that reaches what runs in the
-  sandbox and nothing on your machine. A server and a client in one sandbox
-  reach each other. Measured on both with Node 22.23.2, `fetch` and `http.get`
-  each returned 200 from a server in the same sandbox, by `127.0.0.1` and by
-  `localhost`. A request to a service on your machine that no policy entry names
-  fails. Measured with `fetch`, it failed with `ECONNREFUSED` on Linux and
-  `ETIMEDOUT` on Windows, and nvx printed nothing, because the proxy never saw
-  it.
+- **Your own code is not contained by default.** `npm run`, `npm test`, `node`
+  and tools in `node_modules/.bin` run uncontained, and an install can change
+  the files they run. Set `isolation.level` to `strict`.
+- **An agent with its own shell can do what you can.** It can run `nvx trust`
+  or `nvx --no-sandbox`. Deny those in the agent's permissions, as in
+  [AI agents and MCP](/docs/agents/).
+- **A `.env` created during a run can be read for a few milliseconds.**
+  `.envrc` and names such as `production.env` are never hidden.
+- **Browsers that puppeteer or Playwright download are deleted with the
+  sandbox.** Run `nvx --no-sandbox npx playwright install`.
+- **A folder outside the project is out of reach**, so `npm install ../shared`
+  fails with `EPERM`. Add the folder to `isolation.filesystem.allow_read_exec`.
+- **Some Node programs ignore the proxy and are refused.** That covers Node 20,
+  Node 22 before 22.21.0, requests with their own agent, and raw sockets.
+- **A plain `http://` request through the proxy gets `405`.** `https://` works.
+  Reach a local `http://` registry with `--connect`.
+- **The Docker provider has no allowlist.** It refuses `proxy` mode. Use the
+  native provider.
+- **nvx does not read `devEngines.runtime`.** Pin the version in `.nvmrc` or
+  `engines`.
 
-  An `allow_hosts` or `default_allow` entry for one of those names, or
-  `network.mode: loopback`, changes that. nvx leaves the names off `NO_PROXY`,
-  and a request that follows the proxy variables goes to the proxy, which dials
-  the service on your machine. A server and a client in one sandbox then reach
-  each other only on a port nvx opened, with `--connect` or `--expose`. Measured
-  on Windows and on Linux with Node 22.23.2 under `network.mode: loopback`,
-  `fetch` to a server in the same sandbox was rejected and `http.get` received
-  405. nvx lists the ports it opened in `NO_PROXY` by number, which Node reads
-  and npm does not. Any
-  other loopback port goes to the proxy, which refuses it unless the policy names
-  it or the mode is `loopback`. A request with its own agent, and a raw socket,
-  connect directly in every case. macOS shares your machine's loopback, so nvx
-  always lists the names there.
-- **The proxy refuses a plain `http://` request in proxy form.** It tunnels with
-  CONNECT and speaks SOCKS5. A client that sends it a plain `http://` request
-  gets `405 Method Not Allowed`. `https://` requests work. So does Node's `fetch`
-  for both schemes, because it tunnels. Measured with Node 22.23.2, `http.get`
-  to an `http://` address received 405. So did the npm that ships with it, on
-  Windows, for an `http://` registry on this machine that `allow_hosts` named.
-  Reach such a registry with `--connect`, and leave loopback entries out of the
-  policy. npm matches `NO_PROXY` by host name and ignores the port, so with a
-  loopback entry it sends a request to a `--connect` port to the proxy as well.
-  Measured on Windows and on Linux, a contained `npm view` of a package on an
-  `http://` registry opened with `--connect` returned the version under the
-  default policy and failed with `E405` under a policy with a loopback entry.
+## Checks
+
+- **Some commands check only what they name.** `npx`, `npm create`,
+  `pnpm add <pkg>`, `bun.lockb` projects and npm workspaces check the named
+  packages or the lockfile, and not what those bring in.
+- **Packages from git, a URL or a path get only the blocklist.**
+- **Private registries get no typosquat or advisory check.** That includes
+  Artifactory or Nexus proxies of the public registry.
+- **A contained npm reads only the project's `.npmrc` and gets no token**, so a
+  registry that needs a token for downloads cannot serve a contained install.
+- **`.yarnrc.yml` and `bunfig.toml` registries are not read.** The checks use
+  `.npmrc`.
 
 ## Windows
 
-- **Your home directory is listable.** Contents stay unreadable, so `~/.ssh`,
-  `~/.aws` and `~/.npmrc` cannot be read, but their presence is visible. That is
-  an access rule Windows ships on your profile, and nvx cannot revoke it.
-- **A loopback exemption left by an older `nvx setup` opens every service on
-  127.0.0.1** to contained code, whatever the allowlist says. Current versions
-  never add one. nvx warns on every affected launch, and `nvx doctor` reports
-  it. Treat the allowlist as unenforced until you run `nvx setup` from an
-  Administrator terminal, which removes it.
-- **`bun install` works contained only in projects on the drive Windows is
-  installed on.** On any other drive it fails with `EBADF`, and nvx names the
-  cause. Windows refuses bun's request to turn a file handle back into a path
-  inside an AppContainer, and
-  [oven-sh/bun#38365](https://github.com/oven-sh/bun/pull/38365) would fix it
-  in bun. Use `nvx --no-sandbox bun install`, which runs it uncontained, or use
-  npm, yarn or pnpm.
-- **git, pnpm 12 and the Next.js compiler cannot run contained.** Each asks
-  Windows for the full path of a folder, and Windows refuses that request inside
-  the sandbox. git stops with
-  `Unable to read current working directory: Permission denied`, so a dependency
-  from a git URL does not install contained and husky cannot set up its hooks
-  during a contained install.
-  pnpm 12 stops with `Access is denied. (os error 5)` as it reads its `--dir`
-  argument, and `next build` with `failed to canonicalize jsc.baseUrl`. Run
-  these with `nvx --no-sandbox`. For pnpm, an earlier version runs contained.
-  corepack chooses pnpm 12 today, unless the project's `packageManager` field in
-  package.json names another version, so pin one there. `npm install -g pnpm`
-  installs pnpm 12 too, so install an earlier one instead, such as
-  `npm install -g pnpm@11`. Installs with install scripts have a limit of their
-  own, in the next item.
-- **pnpm 9, 10 and 11 stop with a Rust panic when an install includes a package
-  that has install scripts.** The panic comes from a native copy-on-write call
-  that asks Windows about the drive's root folder, which the sandbox cannot
-  open. pnpm prints `Failed to get source volume info: ... Access is denied.`
-  and exits 127. Measured with pnpm 9.15.9, 10.34.6 and 11.28.5 installing
-  bufferutil 4.1.0. In pnpm 10 the call is made for every package it still has
-  to build, whatever `package-import-method` says. With pnpm 10.34.6,
-  `--ignore-scripts`, `package-import-method=copy` and `side-effects-cache=false`
-  each left the panic as it was. A workspace is not the cause, though it can
-  look like it. A
-  workspace root named `ws` at version 1.0.0 gets bufferutil and utf-8-validate
-  from a built-in extension that pnpm 10 has for the npm package `ws` below
-  7.2.1. Run the install with `nvx --no-sandbox pnpm install`, or install with
-  npm.
-- **A `pnpm` or `yarn` kept outside nvx's folders does not run contained.** That
-  covers a standalone `pnpm.exe` and the global folder of another Node install,
-  such as `%APPDATA%\npm`. nvx copies only Node and Bun installs for the sandbox,
-  because a copy is readable by every sandbox, and the run is refused with a
-  message saying so. Install the tool with `nvx --no-sandbox npm install -g pnpm`
-  under a Node that nvx manages, or add its folder to
-  `isolation.filesystem.allow_read_exec`, and nvx runs it where it is. The same
-  refusal covers `node` started on such a tool's script, which is what npm's own
-  `pnpm` launchers do when their folder is ahead of nvx's shims on `PATH`. It
-  names the package's folder, such as `%APPDATA%\npm\node_modules\pnpm`, for
-  `allow_read_exec`.
-- **`curl.exe` fails TLS with `CRYPT_E_REVOCATION_OFFLINE`.** curl.exe uses
-  Windows' own TLS library, schannel, which asks the certificate authority
-  whether a server's certificate was revoked. It makes that request itself,
-  without the proxy variables nvx sets, and the sandbox has no network of its
-  own, so the request cannot be made. The handshake then fails for
-  a host the allowlist names, with `schannel: next InitializeSecurityContext
-  failed: CRYPT_E_REVOCATION_OFFLINE` and curl's exit code 35. Allowing the
-  authority's host does not help, because the request never reaches nvx.
-  Measured with the curl.exe that ships with Windows 11 on
-  `https://registry.npmjs.org/ms`, whose chain lists `c.pki.goog` for revocation
-  lists. The hosts differ by authority. `curl --ssl-no-revoke` skips the check
-  and returned 200 where the plain command failed, twice each. Node, npm and bun
-  bring their own TLS and are not affected.
-- **Native addons cannot be built from source contained.** node-gyp does not find
-  Visual Studio from inside the sandbox, so a package with no prebuilt binary for
-  your Node fails to install. Packages that download a prebuilt binary, such as
-  better-sqlite3, sqlite3 and bcrypt, fetch it from `github.com` and
-  `release-assets.githubusercontent.com`, and both need to be in
-  `isolation.network.allow_hosts`. Build from source with `nvx --no-sandbox`.
-- **A contained process cannot create a pipe.** nvx brokers synchronous and
-  streaming capture. `child_process.fork` is refused outright, and the error
-  names `--no-sandbox`.
-- **A background process your own code started ends with nvx if nvx is stopped
-  before the command finishes.** That happens, for example, when the program that
-  started nvx exits. A command that finishes on its own leaves it running.
+- **Your home folder is listable.** Names are visible and contents are not.
+- **`bun install` works contained only on the drive Windows is installed on.**
+  Elsewhere it fails with `EBADF`. Use `nvx --no-sandbox bun install`, or npm.
+- **git, pnpm 12 and `next build` cannot run contained.** So a git dependency
+  and husky's setup fail during a contained install. Use `nvx --no-sandbox`, or
+  `npm install -g pnpm@11`.
+- **pnpm 9 to 11 crash when an install has a package with install scripts.**
+  Use `nvx --no-sandbox pnpm install`, or npm.
+- **A `pnpm` or `yarn` installed outside nvx is refused.** Install it under a
+  Node.js nvx manages, with `nvx --no-sandbox npm install -g pnpm@11`.
+- **`curl.exe` fails with `CRYPT_E_REVOCATION_OFFLINE`.** Use
+  `curl --ssl-no-revoke`.
+- **Native addons cannot build from source.** Prebuilt binaries need
+  `github.com` and `release-assets.githubusercontent.com` in `allow_hosts`. To
+  build, use `nvx --no-sandbox`.
+- **`child_process.fork` is refused** inside the sandbox.
+- **A loopback exemption from an old `nvx setup` opens every local service.**
+  `nvx doctor` reports it. Run `nvx setup` as Administrator to remove it.
 
 ## macOS
 
-- **Reads outside your home directory are not contained.** The Seatbelt profile
-  denies reads under your home directory and nvx's home, apart from the project,
-  the sandbox's home, nvx's runtimes and `allow_read_exec` folders, and denies the
-  credential stores by path. It allows reads elsewhere on the disk, because the
-  dynamic linker must read system libraries whose locations vary by macOS
-  version. A Node.js installed in your home by another tool, such as nvm, needs
-  its folder in `allow_read_exec` to run contained.
+- **Files outside your home folder stay readable**, because the dynamic linker
+  needs system libraries whose locations change between macOS versions.
+- **A Node.js that another tool installed in your home cannot run contained.**
+  Add its folder to `allow_read_exec`.
+- **Whether a contained server can listen has not been measured.** `--expose`
+  does nothing on macOS.
 
 ## Linux
 
-- **A UNIX socket inside the project can be reached.** A contained process sees
-  only the directories it is granted, so host sockets such as Docker's are
-  absent. A socket placed in the project directory, or in a directory added with
-  `allow_read_exec`, can still be connected to.
-- **Run as root, nvx cannot install every prebuilt binary contained.** A
-  contained process runs as the user who started nvx, so for root it is root,
-  in a user namespace that holds no other user. A tool that unpacks an archive
-  as root gives each file the owner the archive records, and any other owner
-  fails with `EINVAL`. sqlite3's prebuilt binary is one such archive. Run nvx as
-  an ordinary user.
-- **On Ubuntu 23.10 and later, the sandbox may refuse to start.** Ubuntu
-  restricts the user namespaces it is built on, through
-  `kernel.apparmor_restrict_unprivileged_userns`. Contained commands then fail
-  with "Operation not permitted", and nvx does not run them uncontained instead.
-  `nvx doctor` names this setting when it is the cause, and says whether `open`
-  starts. `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` turns
-  the restriction off for every program on the machine. Or set
-  `isolation.network.mode` to `open`, which gives up the network namespace, so
-  contained code shares your network and the egress allowlist is not enforced.
-- **Before Linux 6.12, a contained process loses part of the terminal.** From
-  Linux 6.12 the kernel keeps a contained process's signals inside the sandbox.
-  Before that, nvx runs the process in a process group of its own, so that it
-  cannot signal nvx or the processes beside it. It is stopped if it reads the
-  terminal, so a contained `node` REPL does not answer. Ctrl-C still ends it,
-  though a process that catches Ctrl-C, as Node and Go programs do, may need it
-  more than once. Ctrl-Z stops nvx while the process runs on.
-- **Before Linux 6.12, `network.mode: open` leaves your abstract UNIX sockets
-  reachable.** An abstract socket has no path for the sandbox to hide, and
-  `open` mode shares your network namespace. A contained process can connect to
-  one that a program on your machine listens on, such as Xvfb. From Linux 6.12
-  the kernel refuses the connection. The other modes never reach these sockets.
-
-## Checks and registries
-
-- **Detection is best-effort.** Typosquat and vulnerability checks reduce risk
-  without certifying a package. Containment is the backstop.
-- **Dependencies are checked for installs, and not for everything.**
-  `npm install`, `npm update` and `npm dedupe` check every package npm will
-  install, and `npm ci` checks every entry of `package-lock.json` for this
-  platform. A `pnpm install`, `yarn` or `bun install` that names no package checks
-  every entry for this platform in `pnpm-lock.yaml`, `yarn.lock` or `bun.lock`.
-  `npx`, `npm exec`, `npm create`, `npm init`, named installs such as `pnpm add
-  left-pad`, projects with Bun's binary `bun.lockb`, and npm projects that use
-  workspaces or depend on a local folder are checked on the packages they name,
-  the entries of `package-lock.json`, or the versions `package.json` declares.
-  The dependencies those bring in are not checked.
-- **Packages from git, a URL or a local path get only the blocklist.** They are
-  checked against `blocked_packages` by the name they install under. The
-  typosquat, advisory and release-age checks look a package up in the registry,
-  and these are not in it.
-- **Packages from a registry other than the public one get no typosquat or
-  advisory check.** Both ask a public service about a package by name, so nvx
-  does not send them a private name. A registry that proxies the public one,
-  such as an Artifactory or Nexus virtual repository, counts as another
-  registry. The blocklist, release-age, install-script and lockfile checks
-  still run against that registry's metadata.
-- **A contained npm reads only the project's `.npmrc`.** It gets a fresh home
-  and none of your `npm_config_*` variables, so a registry or scope set in
-  `~/.npmrc` does not apply inside the sandbox. Your `_authToken` never reaches
-  the sandbox either, so a registry that needs one for downloads cannot serve a
-  contained install. Put the registry in the project's `.npmrc` and its host in
-  `isolation.network.allow_hosts`.
-- **yarn's `.yarnrc.yml` and bun's `bunfig.toml` do not change where the checks
-  look.** nvx reads registries from `.npmrc` only.
+- **On Ubuntu 23.10 and later the sandbox may not start.** `nvx doctor` names
+  the AppArmor setting and the ways forward.
+- **A UNIX socket inside the project can be reached.**
+- **Run as root, some prebuilt binaries fail with `EINVAL`.** Run nvx as an
+  ordinary user.
+- **Before kernel 6.12, a contained REPL does not answer**, and Ctrl-C may be
+  needed more than once.
+- **Before kernel 6.12, `network.mode: open` leaves abstract UNIX sockets
+  reachable.** The other modes do not.

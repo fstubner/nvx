@@ -51,23 +51,19 @@ export const compareColumns: ComparisonColumn[] = [
 // v2.0.0 release (2026-09-02) and the "What's new in v2" page at
 // docs.nvm-windows.com/features/newv2.
 export const compareRows: ComparisonRow[] = [
+  // Cut to seven rows on 2026-10-09. "Checksummed downloads" and "Policy file in
+  // repo" went: neither is what someone choosing between these tools asks
+  // first, and the checksum row put nvx level with tools that verify more.
   // Labels cut to a few words on 2026-09-24; the rows read as a list of
   // sentences. "Single static binary" and "Switch affects only this shell"
   // went: both describe how a tool is built, and neither is what someone
   // choosing a version manager, or a safer way to run installs, is asking.
-  // "Policy file in repo" came in, checked against mise's sandboxing page the
-  // same day: its sandbox settings can live in a project's mise.toml, are off
-  // unless set, and are not enforced on Windows.
   { feature: 'Windows, macOS, Linux', cells: ['✓', 'macOS, Linux', '✓', '✓', 'macOS, Linux', '✓'] },
   { feature: 'Runtimes', cells: ['Node.js, Bun', 'Node.js', 'Node.js', 'Node.js', 'many, via plugins', 'many, via backends'] },
   // volta and asdf resolve the version inside a shim when the command runs,
   // rather than hooking cd. Same result, and it is why a debugger or an IDE
   // launching node outside a project sees the wrong version.
   { feature: 'Auto-switch per project', cells: ['✓', 'shell hook', '✓', 'on invocation', 'on invocation', '✓'] },
-  // Renamed from "Verified downloads" on 2026-10-08. nvx checks a SHA-256 that
-  // comes from the same publisher as the archive, which is a checksum and not a
-  // signature, and the old label put it level with tools that verify more.
-  { feature: 'Checksummed downloads', cells: ['✓', '✓', '—', '—', 'varies by plugin', '✓'] },
   { feature: 'Supply-chain checks', cells: ['✓', '—', '—', '—', '—', '—'] },
   // mise shipped sandboxing in April 2026, so these are no longer dashes for
   // it. Every sandbox.deny_* setting defaults to false, it covers `mise run`
@@ -80,7 +76,6 @@ export const compareRows: ComparisonRow[] = [
   { feature: 'Sandboxed installs', cells: ['✓*', '—', '—', '—', '—', 'opt-in, not Windows'] },
   { feature: 'Network allowlist', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
   { feature: 'Secrets hidden', cells: ['✓*', '—', '—', '—', '—', 'opt-in, not Windows'] },
-  { feature: 'Policy file in repo', cells: ['✓', '—', '—', '—', '—', 'opt-in, not Windows'] },
 ];
 
 /** Shown under the table. Two notes and no more: the exceptions behind the
@@ -92,6 +87,6 @@ export const compareRows: ComparisonRow[] = [
  *  one tool here that is ahead of nvx on integrity. Writing a competitor's
  *  obituary at length reads as score-settling however true it is. */
 export const compareNoteHtml = [
-  '<p>* With platform exceptions. On Windows, bun installs contained only on the drive Windows is installed on. On macOS, a contained install cannot read your home directory but can read files elsewhere on the disk. <a href="/docs/limitations/">Known limitations</a> has the rest.</p>',
-  "<p>Out-of-the-box defaults, checked against each project on 18 September 2026. nvx's runtime downloads are checked against a checksum from the same publisher, not an independent signature. volta's maintainers announced in November 2025 that it is unmaintained.</p>",
+  '<p>* With platform exceptions. On Windows, bun installs contained only on the drive Windows is installed on. On macOS, a contained install cannot read your home directory but can read files elsewhere on the disk. <a href="/docs/limitations/">Limitations</a> has the rest.</p>',
+  "<p>Out-of-the-box defaults, checked against each project on 18 September 2026. volta's maintainers announced in November 2025 that it is unmaintained.</p>",
 ].join('');

@@ -7,27 +7,32 @@ export const docsDescription =
 
 export const docsLogo = './public/assets/wordmark.png';
 
+// Configuration lives at /docs/policy/ and How it works at /docs/containment/.
+// Those were the pages' names before the 2026-10-09 rewrite, and links already
+// published point at them. The site has no redirects, so renaming the files
+// would break those links.
 export const docsSidebar: DocsSection[] = [
   {
     label: 'Start',
     items: [
-      { label: 'Overview', link: '/docs/' },
-      { label: 'Installation', link: '/docs/install/' },
+      { label: 'Get started', link: '/docs/' },
+      { label: 'Install, upgrade and uninstall', link: '/docs/install/' },
     ],
   },
   {
     label: 'Use',
     items: [
-      { label: 'Agents and CI', link: '/docs/agents/' },
-      { label: 'When nvx stops something', link: '/docs/blocked/' },
+      { label: 'When something is blocked', link: '/docs/blocked/' },
+      { label: 'AI agents and MCP', link: '/docs/agents/' },
+      { label: 'Node.js and Bun versions', link: '/docs/versions/' },
+      { label: 'Configuration', link: '/docs/policy/' },
     ],
   },
   {
-    label: 'Security',
+    label: 'Understand',
     items: [
-      { label: 'Containment', link: '/docs/containment/' },
-      { label: 'Policy', link: '/docs/policy/' },
-      { label: 'Known limitations', link: '/docs/limitations/' },
+      { label: 'How it works', link: '/docs/containment/' },
+      { label: 'Limitations', link: '/docs/limitations/' },
     ],
   },
   {

@@ -27,25 +27,20 @@ import type { Terminal } from './terminal-types';
 // being read.
 // nvx renders the hero terminal as text (hero.ts, heroTerminalHtml), so this
 // draws only public/assets/hero.png, the social card image. Same capture as
-// the text panel: nvx 0.6.0 on Windows, 2026-09-24, edited only by removing
-// lines (see the note in hero.ts).
+// the text panel: nvx 0.8.0 on Windows, 2026-10-09, edited only by removing
+// (see the note in hero.ts).
 export const terminal: Terminal = {
   title: 'nvx',
   chrome: 'windows',
   lines: [
-    [['$ ', 'prompt'], ['cd new-project', 'command']],
-    // One printed line, wrapped where a terminal this wide would wrap it. The
-    // renderer clips rather than wraps, which cut it off mid-word.
-    [['? ', 'warn'], ['Directory requires Node.js 22 (from .nvmrc), but it is not installed.', 'text']],
-    [['Install it now? ', 'text'], ['[y/N]: ', 'muted'], ['y', 'command']],
-    [['ℹ ', 'info'], ['Verifying checksum for node-v22.23.2-win-x64.zip...', 'text']],
+    [['$ ', 'prompt'], ['nvx install 22', 'command']],
+    [['ℹ ', 'info'], ['Verifying checksum for node-v22.23.3-win-x64.zip...', 'text']],
     [['✓ ', 'ok'], ['Checksum verified successfully.', 'strong']],
-    [['✓ ', 'ok'], ['Node.js v22.23.2 installed successfully', 'text']],
-    [['ℹ ', 'info'], ['[nvx] Found .nvmrc: switching to Node.js v22.23.2', 'text']],
+    [['✓ ', 'ok'], ['Node.js v22.23.3 installed successfully', 'text']],
     null,
     [['$ ', 'prompt'], ['npm install sample-package', 'command']],
-    [['ℹ ', 'info'], ['Running in native sandbox: npm install sample-package', 'strong']],
-    [['added 1 package, and audited 2 packages in 1s', 'text']],
+    [['ℹ ', 'info'], ['Running in native sandbox: npm install sample-package@1.0.1', 'strong']],
+    [['added 1 package, and audited 2 packages in 2s', 'text']],
     [['found 0 vulnerabilities', 'text']],
   ],
 };

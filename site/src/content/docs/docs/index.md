@@ -1,96 +1,91 @@
 ---
-title: Overview
-description: What nvx is, what it deliberately does not do, and where to go next.
+title: Get started
+description: Install nvx, run your first contained npm install, and check that everything works.
 ---
 
 nvx runs `npm install` and `npx` inside an OS sandbox on Windows, macOS and
-Linux, so a package cannot read your credentials or reach a host you did not
-allow. You and your agent type the same commands. It is one binary, and it also
-manages your Node.js and Bun versions.
+Linux. A package you install cannot read your credentials or reach a host you
+did not allow. You keep typing the same commands. nvx also manages your Node.js
+and Bun versions.
 
-**It contains what is installed.** `npm install` executes code from strangers
-with your credentials within reach. nvx runs it inside the platform's own
-sandbox. That is AppContainer on Windows, Landlock with a network namespace and
-seccomp on Linux, and Seatbelt on macOS. The install gets a throwaway `HOME`,
-scrubbed environment variables and an outbound allowlist. It can write to the
-project and that home.
+## 1. Install nvx
 
-You do not change how you type anything. nvx puts shims on `PATH`, so
-`npm install` is still `npm install`. The shims cover whoever runs the command:
-you, your coding agent, your editor or an MCP client.
+On Windows, in PowerShell:
 
-**It checks packages before they install,** as the next section describes.
+```powershell
+irm https://nvx.run/install.ps1 | iex
+```
 
-**It manages runtimes.** Install, switch and pin Node.js and Bun per project, and
-switch automatically on `cd` from a `.nvmrc`, `.node-version` or `package.json`.
-Switching is scoped to the shell you run it in, so another terminal is unaffected
-until it reads the same pin. The shims read the pin too, so an IDE task, a git
-hook or CI runs the project's version without any shell setup.
+On macOS or Linux:
 
-## Install-time checks
+```sh
+curl -fsSL https://nvx.run/install.sh | sh
+```
 
-Before an install runs, nvx checks what it is about to fetch.
+On Linux the sandbox needs kernel 5.13 or later with Landlock, unprivileged
+user namespaces, and the `ip` command from iproute2. [Install, upgrade and
+uninstall](/docs/install/) has the other routes and what the installer changes.
 
-- **Typosquats.** The names you chose, on the command line or as the project's
-  direct dependencies, are compared with a list of popular packages. The npm
-  download counts tell a lookalike apart from a real package with a similar
-  name. Short names sit close to each other by chance, so for a name of four
-  characters or fewer only one edit, two swapped letters or characters added
-  around a popular name count. Packages that arrive as dependencies of others
-  were named by their authors, so they skip this check and get the others.
-- **Known vulnerabilities.** Direct installs, `npx`-style tool runs that fetch a
-  package, and the packages in a lockfile are checked against the OSV database.
-  `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` and `bun.lock` are all read.
-  With no lockfile the checks use the versions `package.json` declares. A package
-  OSV lists as malicious is refused, and `-y` does not change that.
-- **Fresh releases.** A version published inside a configurable window, 24
-  hours by default, is held for your approval. So is a version the registry
-  gives no publish time for.
+## 2. Open a new terminal
 
-An npm install that brings in new packages runs npm twice. The first run only
-resolves versions, contained, so each package can be checked before the second
-run installs it. The second run installs the lockfile the first one wrote, so a
-version published in between is not installed unchecked. `npm update`,
-`npm dedupe` and an install nvx cannot pin to that lockfile, such as one that
-names a version range, an alias or a git source, resolve again in the second
-run. An `npm install` whose lockfile already matches `package.json`, and
-`npm ci`, run npm once.
+The installer puts `~/.nvx/bin` at the front of your `PATH`. A terminal that was
+already open does not see that change.
 
-Each check has its own exemption list in the [policy file](/docs/policy/#reference).
-None of them certifies a package, which is why containment is the backstop.
+## 3. Run an install
 
-## Where to start
+In a project folder, install something the way you always do.
 
-| If you want to | Go to |
-| --- | --- |
-| Install nvx | [Installation](/docs/install/) |
-| Run nvx under an AI coding agent, CI or an MCP server | [Agents and CI](/docs/agents/) |
-| Fix something nvx refused | [When nvx stops something](/docs/blocked/) |
-| Undo a trust or an allowed host | [When nvx stops something](/docs/blocked/#undo-what-you-allowed) |
-| Know what is contained, per platform | [Containment](/docs/containment/) |
-| Write a policy file | [Policy](/docs/policy/) |
-| Look up a command | [Commands](/docs/commands/) |
-| See what nvx does not cover | [Known limitations](/docs/limitations/) |
+```text
+> npm install sample-package
+ℹ Running in native sandbox: npm install sample-package --package-lock-only --ignore-scripts ...
+ℹ Running in native sandbox: npm install sample-package@1.0.1
 
-## What it does not do
+added 1 package, and audited 2 packages in 2s
 
-- **It is not a package manager.** It does not resolve dependencies or write
-  lockfiles. npm, pnpm, yarn and bun still do that.
-- **It does not contain your own code by default.** `npm run build`, `npm test`
-  and `node` run uncontained at the `standard` isolation level, because that is
-  code you wrote. `strict` extends containment to them, at the cost of breaking
-  anything that needs unrestricted filesystem or network access.
-- **It does not contain every read on macOS.** Write containment and egress
-  control apply there, and reads under your home directory are denied. Reads
-  elsewhere on the disk are allowed, because the dynamic linker must read system
-  libraries whose locations vary by macOS version.
-- **It does not contain an agent.** nvx contains the packages an agent installs.
-  An agent with a shell of its own can still run what a person can. See
-  [Agents and CI](/docs/agents/).
+found 0 vulnerabilities
+```
 
-:::caution[Read the enforcement matrix before relying on any of this]
-Guarantees differ by platform. Some rows are measured and others are read off a
-generated profile. The
-[enforcement matrix](https://github.com/fstubner/nvx/blob/main/docs/enforcement-matrix.md)
-states which is which, and where the evidence for each column came from.
-:::
+The first run works out which packages the install brings in. nvx checks each
+of them, and the second run installs exactly what was checked. Both runs are
+inside the sandbox.
+
+If you have no Node.js yet, `npm` tells you to run `nvx install lts` first.
+
+nvx asks before it installs a package that looks like a misspelling of a popular
+one, was published in the last 24 hours, has a known advisory, or runs install
+scripts. Some things it refuses outright and prints the fix.
+[When something is blocked](/docs/blocked/) covers each message.
+
+## 4. Check your setup
+
+```sh
+nvx doctor
+```
+
+It checks that `node`, `npm` and `npx` go through nvx and that the sandbox
+starts.
+
+```text
+  [OK]   shim dir is on PATH at position 0, with no raw-runtime dir ahead of it
+  [OK]   the sandbox starts (AppContainer launch succeeded)
+```
+
+It exits non-zero when something needs your attention. `nvx doctor --fix`
+repairs what it safely can.
+
+## 5. Optional: let nvx manage Node.js
+
+```sh
+nvx install 22
+```
+
+The first version you install becomes the default. nvx then switches version
+when you `cd` into a project that pins one. See [Node.js and Bun
+versions](/docs/versions/).
+
+## Next
+
+- Using a coding agent or an MCP server? Read [AI agents and MCP](/docs/agents/).
+- Need a private registry or another host? See [Configuration](/docs/policy/).
+- Want to know what the sandbox does? See [How it works](/docs/containment/)
+  and [Limitations](/docs/limitations/).
